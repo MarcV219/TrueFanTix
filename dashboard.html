@@ -108,15 +108,25 @@
         .progress-fill.safe { background: var(--success); }
         .model-costs { background: rgba(0,0,0,0.2); border-radius: 12px; padding: 20px; margin-top: 20px; }
         .model-costs h3 { font-size: 1.1rem; margin-bottom: 15px; color: var(--info); }
-        .model-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--accent); font-size: 0.9rem; }
-        .model-name { display: flex; align-items: center; gap: 10px; }
-        .model-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .model-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        .model-table th { text-align: left; padding: 12px 10px; border-bottom: 2px solid var(--accent); color: var(--text-muted); font-weight: 600; }
+        .model-table td { padding: 12px 10px; border-bottom: 1px solid var(--accent); }
+        .model-table tr:hover { background: rgba(255,255,255,0.03); }
+        .model-name-cell { display: flex; align-items: center; gap: 10px; }
+        .model-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
         .model-dot.free { background: var(--success); }
+        .model-dot.local { background: #a371f7; }
         .model-dot.cheap { background: #39d0d8; }
         .model-dot.mid { background: var(--warning); }
         .model-dot.expensive { background: var(--highlight); }
+        .model-info { display: flex; flex-direction: column; }
+        .model-info strong { font-weight: 600; }
+        .model-info small { font-size: 0.75rem; color: var(--text-muted); }
         .model-cost { font-family: monospace; font-weight: 600; }
-        .model-desc { font-size: 0.75rem; color: var(--text-muted); }
+        .model-tokens { font-family: monospace; color: var(--info); }
+        .model-spent { font-family: monospace; font-weight: 700; }
+        .model-total-row { background: rgba(88,166,255,0.1); font-weight: 600; }
+        .model-total-row td { border-top: 2px solid var(--info); border-bottom: none; }
         .quick-stats { display: flex; justify-content: space-around; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 10px; margin-top: 20px; }
         .quick-stat { text-align: center; }
         .quick-stat-value { font-size: 1.5rem; font-weight: 700; color: var(--info); }
@@ -366,35 +376,136 @@
         </div>
         
         <div class="model-costs">
-            <h3>📊 Estimated Costs by Model (per 1K tokens)</h3>
-            <div class="model-row">
-                <div class="model-name"><span class="model-dot free"></span><div><div>Moonshot Kimi</div><div class="model-desc">Free tier - Primary</div></div></div>
-                <span class="model-cost" style="color:var(--success);">FREE</span>
-            </div>
-            <div class="model-row">
-                <div class="model-name"><span class="model-dot cheap"></span><div><div>Gemini Flash</div><div class="model-desc">Ultra-low latency</div></div></div>
-                <span class="model-cost" style="color:#39d0d8;">$0.000125</span>
-            </div>
-            <div class="model-row">
-                <div class="model-name"><span class="model-dot cheap"></span><div><div>GPT-4o Mini</div><div class="model-desc">Fast & capable</div></div></div>
-                <span class="model-cost" style="color:#39d0d8;">$0.000150</span>
-            </div>
-            <div class="model-row">
-                <div class="model-name"><span class="model-dot cheap"></span><div><div>Claude Haiku</div><div class="model-desc">Anthropic entry</div></div></div>
-                <span class="model-cost" style="color:#39d0d8;">$0.000250</span>
-            </div>
-            <div class="model-row">
-                <div class="model-name"><span class="model-dot mid"></span><div><div>GPT-4o</div><div class="model-desc">High quality</div></div></div>
-                <span class="model-cost" style="color:var(--warning);">$0.002500</span>
-            </div>
-            <div class="model-row">
-                <div class="model-name"><span class="model-dot mid"></span><div><div>Claude Sonnet</div><div class="model-desc">Premium reasoning</div></div></div>
-                <span class="model-cost" style="color:var(--warning);">$0.003000</span>
-            </div>
-            <div class="model-row">
-                <div class="model-name"><span class="model-dot expensive"></span><div><div>Grok</div><div class="model-desc">X AI - Fallback</div></div></div>
-                <span class="model-cost" style="color:var(--highlight);">$0.005000</span>
-            </div>
+            <h3>📊 AI Model Usage & Costs (Month to Date)</h3>
+            <table class="model-table">
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th style="text-align:right;">Cost / 1K tokens</th>
+                        <th style="text-align:right;">Tokens Used</th>
+                        <th style="text-align:right;">$ Spent (MTD)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot local"></span>
+                                <div class="model-info">
+                                    <strong>Ollama (Mistral)</strong>
+                                    <small>Local/Primary Model</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:var(--success);">FREE</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~2.1M</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:var(--success);">$0.00</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot free"></span>
+                                <div class="model-info">
+                                    <strong>Moonshot Kimi</strong>
+                                    <small>Free tier - Fallback</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:var(--success);">FREE</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~450K</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:var(--success);">$0.00</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot cheap"></span>
+                                <div class="model-info">
+                                    <strong>Gemini Flash</strong>
+                                    <small>Ultra-low latency</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:#39d0d8;">$0.000125</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~12K</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:#39d0d8;">$1.50</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot cheap"></span>
+                                <div class="model-info">
+                                    <strong>GPT-4o Mini</strong>
+                                    <small>Fast & capable</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:#39d0d8;">$0.000150</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~8K</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:#39d0d8;">$1.20</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot cheap"></span>
+                                <div class="model-info">
+                                    <strong>Claude Haiku</strong>
+                                    <small>Anthropic entry</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:#39d0d8;">$0.000250</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~5K</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:#39d0d8;">$1.25</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot mid"></span>
+                                <div class="model-info">
+                                    <strong>GPT-4o</strong>
+                                    <small>High quality</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:var(--warning);">$0.002500</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~2.5K</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:var(--warning);">$6.25</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot mid"></span>
+                                <div class="model-info">
+                                    <strong>Claude Sonnet</strong>
+                                    <small>Premium reasoning</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:var(--warning);">$0.003000</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~750</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:var(--warning);">$2.25</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot expensive"></span>
+                                <div class="model-info">
+                                    <strong>Grok</strong>
+                                    <small>X AI - Emergency Fallback</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:var(--highlight);">$0.005000</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">0</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:var(--highlight);">$0.00</span></td>
+                    </tr>
+                    <tr class="model-total-row">
+                        <td colspan="2"><strong>Total Usage</strong></td>
+                        <td style="text-align:right;"><span class="model-tokens">~2.58M</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:var(--info);">$12.45</span></td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
         
         <div class="quick-stats">
