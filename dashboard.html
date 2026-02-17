@@ -116,6 +116,7 @@
         .model-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
         .model-dot.free { background: var(--success); }
         .model-dot.local { background: #a371f7; }
+        .model-dot.tier1 { background: #79c0ff; }
         .model-dot.cheap { background: #39d0d8; }
         .model-dot.mid { background: var(--warning); }
         .model-dot.expensive { background: var(--highlight); }
@@ -150,10 +151,22 @@
             </div>
         </div>
         <div class="ceo-stats">
-            <div class="ceo-stat"><div class="ceo-stat-value">2</div><div class="ceo-stat-label">Active Projects</div></div>
-            <div class="ceo-stat"><div class="ceo-stat-value">4</div><div class="ceo-stat-label">Departments</div></div>
-            <div class="ceo-stat"><div class="ceo-stat-value">2</div><div class="ceo-stat-label">Team Members</div></div>
-            <div class="ceo-stat"><div class="ceo-stat-value">28</div><div class="ceo-stat-label">Total Tasks</div></div>
+            <div class="ceo-stat" style="cursor:pointer;" onclick="scrollToSection('departments-container')" title="Click to view projects">
+                <div class="ceo-stat-value">2</div>
+                <div class="ceo-stat-label">Active Projects</div>
+            </div>
+            <div class="ceo-stat" style="cursor:pointer;" onclick="scrollToSection('departments-container')" title="Click to view departments">
+                <div class="ceo-stat-value">4</div>
+                <div class="ceo-stat-label">Departments</div>
+            </div>
+            <div class="ceo-stat" style="cursor:pointer;" onclick="scrollToSection('dept-dev')" title="Click to view team">
+                <div class="ceo-stat-value">2</div>
+                <div class="ceo-stat-label">Team Members</div>
+            </div>
+            <div class="ceo-stat" style="cursor:pointer;" onclick="scrollToSection('myTasksSection')" title="Click to view tasks">
+                <div class="ceo-stat-value">7</div>
+                <div class="ceo-stat-label">Your Tasks</div>
+            </div>
         </div>
     </div>
     
@@ -161,18 +174,20 @@
         <div class="my-tasks-header" onclick="toggleSection('myTasksSection')">
             <span style="font-size: 2rem;">📋</span>
             <h2>My Tasks</h2>
-            <span style="background: var(--info); color: var(--primary); padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">5 Assigned</span>
+            <span style="background: var(--info); color: var(--primary); padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">7 Awaiting Action</span>
             <span class="expand-arrow">▶</span>
         </div>
         <div class="my-tasks-content">
             <div class="task-section">
                 <div class="task-section-title">🟡 Awaiting Your Action</div>
                 <ul class="task-list">
-                    <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Review Stripe Connect integration approach</span><span class="task-assignee">from Jim (Dev)</span></li>
+                    <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Review and test TrueFanTix implementation</span><span class="task-assignee">from Jim (Dev)</span></li>
+                    <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Review and test Dialed In Golf features</span><span class="task-assignee">from Jim (Dev)</span></li>
                     <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Approve TrueFanTix Phase 4 scope</span><span class="task-assignee">from Jim (Dev)</span></li>
+                    <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Review Stripe Connect integration approach</span><span class="task-assignee">from Jim (Dev)</span></li>
                     <li class="task-item task-in-progress"><span class="task-priority priority-medium"></span><span>Review golf game monetization strategy</span><span class="task-assignee">from Jim (Dev)</span></li>
-                    <li class="task-item task-on-hold"><span class="task-priority priority-medium"></span><span>Interview Marketing Director candidates</span><span class="task-assignee">from Strategy</span></li>
-                    <li class="task-item task-on-hold"><span class="task-priority priority-low"></span><span>Interview Finance Director candidates</span><span class="task-assignee">from Strategy</span></li>
+                    <li class="task-item task-on-hold"><span class="task-priority priority-medium"></span><span>Create Marketing Agent/Department</span><span class="task-assignee">from Strategy</span></li>
+                    <li class="task-item task-on-hold"><span class="task-priority priority-low"></span><span>Create Finance Agent/Department</span><span class="task-assignee">from Strategy</span></li>
                 </ul>
             </div>
             <div class="task-section">
@@ -180,12 +195,13 @@
                 <ul class="task-list">
                     <li class="task-item task-completed"><span>Approved golf game feature set</span></li>
                     <li class="task-item task-completed"><span>Reviewed dashboard design</span></li>
+                    <li class="task-item task-completed"><span>Renamed game to "Dialed In Golf"</span></li>
                 </ul>
             </div>
         </div>
     </div>
     
-    <div class="departments-container">
+    <div class="departments-container" id="departments-container">
         <div class="departments-grid">
             
             <div class="dept-card dev" id="dept-dev">
@@ -199,7 +215,7 @@
                 </div>
                 <div class="dept-meta">
                     <span class="badge badge-primary">2 Projects</span>
-                    <span class="badge badge-success">12 Tasks</span>
+                    <span class="badge badge-success">3 In Progress</span>
                 </div>
                 <div class="dept-content">
                     <div class="project-item" id="project-tft">
@@ -316,7 +332,7 @@
                 </div>
                 <div class="dept-meta">
                     <span class="badge badge-primary">1 Project</span>
-                    <span class="badge badge-success">3 Tasks</span>
+                    <span class="badge badge-success">2 In Progress</span>
                 </div>
                 <div class="dept-content">
                     <div class="project-item" id="project-corp">
@@ -368,11 +384,11 @@
             <div class="budget-card"><div class="budget-label">Daily Limit</div><div class="budget-value daily">$10</div></div>
             <div class="budget-card">
                 <div class="budget-label">Spent (MTD)</div>
-                <div class="budget-value spent">$12.45</div>
-                <div class="progress-bar"><div class="progress-fill safe" style="width:6.2%"></div></div>
-                <div style="font-size:0.8rem;color:var(--text-muted);margin-top:5px;">6.2% used</div>
+                <div class="budget-value spent">$20.01</div>
+                <div class="progress-bar"><div class="progress-fill safe" style="width:10.0%"></div></div>
+                <div style="font-size:0.8rem;color:var(--text-muted);margin-top:5px;">10.0% used</div>
             </div>
-            <div class="budget-card"><div class="budget-label">Remaining</div><div class="budget-value remaining">$187.55</div></div>
+            <div class="budget-card"><div class="budget-label">Remaining</div><div class="budget-value remaining">$179.99</div></div>
         </div>
         
         <div class="model-costs">
@@ -392,8 +408,8 @@
                             <div class="model-name-cell">
                                 <span class="model-dot local"></span>
                                 <div class="model-info">
-                                    <strong>Ollama (Mistral)</strong>
-                                    <small>Local/Primary Model</small>
+                                    <strong>Ollama Mistral</strong>
+                                    <small>Local Primary - 7B</small>
                                 </div>
                             </div>
                         </td>
@@ -404,16 +420,44 @@
                     <tr>
                         <td>
                             <div class="model-name-cell">
-                                <span class="model-dot free"></span>
+                                <span class="model-dot local"></span>
                                 <div class="model-info">
-                                    <strong>Moonshot Kimi</strong>
-                                    <small>Free tier - Fallback</small>
+                                    <strong>Ollama Qwen 2.5</strong>
+                                    <small>Local - 7B</small>
                                 </div>
                             </div>
                         </td>
                         <td style="text-align:right;"><span class="model-cost" style="color:var(--success);">FREE</span></td>
-                        <td style="text-align:right;"><span class="model-tokens">~450K</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~180K</span></td>
                         <td style="text-align:right;"><span class="model-spent" style="color:var(--success);">$0.00</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot local"></span>
+                                <div class="model-info">
+                                    <strong>Ollama Qwen Coder</strong>
+                                    <small>Local Code Specialist - 7B</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:var(--success);">FREE</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~95K</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:var(--success);">$0.00</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="model-name-cell">
+                                <span class="model-dot tier1"></span>
+                                <div class="model-info">
+                                    <strong>Moonshot Kimi</strong>
+                                    <small>Tier 1 - Mostly free, occasional credits</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="text-align:right;"><span class="model-cost" style="color:#79c0ff;">~$0.00001</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~520K</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:#79c0ff;">$7.56</span></td>
                     </tr>
                     <tr>
                         <td>
@@ -501,15 +545,15 @@
                     </tr>
                     <tr class="model-total-row">
                         <td colspan="2"><strong>Total Usage</strong></td>
-                        <td style="text-align:right;"><span class="model-tokens">~2.58M</span></td>
-                        <td style="text-align:right;"><span class="model-spent" style="color:var(--info);">$12.45</span></td>
+                        <td style="text-align:right;"><span class="model-tokens">~2.89M</span></td>
+                        <td style="text-align:right;"><span class="model-spent" style="color:var(--info);">$20.01</span></td>
                     </tr>
                 </tbody>
             </table>
         </div>
         
         <div class="quick-stats">
-            <div class="quick-stat"><div class="quick-stat-value">7</div><div class="quick-stat-label">AI Providers</div></div>
+            <div class="quick-stat"><div class="quick-stat-value">10</div><div class="quick-stat-label">AI Providers</div></div>
             <div class="quick-stat"><div class="quick-stat-value">80%</div><div class="quick-stat-label">Alert Threshold</div></div>
             <div class="quick-stat"><div class="quick-stat-value">2x</div><div class="quick-stat-label">Daily Checks</div></div>
             <div class="quick-stat"><div class="quick-stat-value">✓</div><div class="quick-stat-label">On Track</div></div>
@@ -525,6 +569,13 @@
         function toggleSection(id) {
             const element = document.getElementById(id);
             if (element) element.classList.toggle('expanded');
+        }
+        function scrollToSection(id) {
+            const element = document.getElementById(id);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                element.classList.add('expanded');
+            }
         }
         document.getElementById('lastUpdated').textContent = new Date().toLocaleString('en-US', {timeZone:'America/Toronto',dateStyle:'medium',timeStyle:'short'});
     </script>
