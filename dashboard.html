@@ -1,220 +1,421 @@
-                    <span class="badge badge-primary">1 Project</span>
-                    <span class="badge badge-success">3 Tasks</span>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IgniteX Innovations - CEO Command Center</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root { 
+            --primary: #0f1419; --secondary: #161b22; --accent: #21262d;
+            --highlight: #f78166; --success: #3fb950; --warning: #d29922;
+            --info: #58a6ff; --purple: #a371f7; --text: #c9d1d9;
+            --text-muted: #8b949e; --danger: #f85149;
+        }
+        body { 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            background: linear-gradient(135deg, var(--primary) 0%, #0d1117 100%); 
+            color: var(--text); min-height: 100vh; padding: 20px;
+        }
+        .header { text-align: center; padding: 30px; border-bottom: 2px solid var(--accent); margin-bottom: 30px; }
+        .header h1 { font-size: 2.5rem; background: linear-gradient(135deg, var(--highlight), #ff9e7d); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; }
+        .header .subtitle { color: var(--text-muted); font-size: 1.1rem; }
+        .header .tagline { color: var(--purple); font-size: 0.95rem; margin-top: 10px; font-style: italic; }
+        .ceo-section { max-width: 1400px; margin: 0 auto 30px; background: linear-gradient(135deg, rgba(247,129,102,0.1), rgba(163,113,247,0.1)); border: 2px solid var(--highlight); border-radius: 16px; padding: 25px; }
+        .ceo-header { display: flex; align-items: center; gap: 20px; margin-bottom: 20px; }
+        .ceo-avatar { font-size: 4rem; }
+        .ceo-info h2 { font-size: 1.8rem; color: var(--highlight); }
+        .ceo-info .role { color: var(--text-muted); font-size: 1.1rem; }
+        .ceo-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .ceo-stat { background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px; text-align: center; }
+        .ceo-stat-value { font-size: 1.8rem; font-weight: 700; color: var(--success); }
+        .ceo-stat-label { font-size: 0.85rem; color: var(--text-muted); margin-top: 5px; }
+        .my-tasks-section { max-width: 1400px; margin: 0 auto 30px; background: linear-gradient(135deg, rgba(88,166,255,0.1), rgba(163,113,247,0.1)); border: 2px solid var(--info); border-radius: 16px; padding: 25px; }
+        .my-tasks-header { display: flex; align-items: center; gap: 15px; margin-bottom: 20px; cursor: pointer; }
+        .my-tasks-header h2 { font-size: 1.4rem; color: var(--info); }
+        .expand-arrow { font-size: 1.5rem; transition: transform 0.3s; margin-left: auto; }
+        .expanded .expand-arrow { transform: rotate(90deg); }
+        .my-tasks-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .expanded .my-tasks-content { max-height: 2000px; }
+        .departments-container { max-width: 1400px; margin: 0 auto 30px; }
+        .departments-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+        @media (max-width: 1200px) { .departments-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 768px) { .departments-grid { grid-template-columns: 1fr; } .ceo-stats { grid-template-columns: repeat(2, 1fr); } }
+        .dept-card { background: var(--secondary); border: 1px solid var(--accent); border-radius: 12px; overflow: hidden; }
+        .dept-card.dev { border-left: 4px solid var(--highlight); }
+        .dept-card.marketing { border-left: 4px solid var(--info); }
+        .dept-card.finance { border-left: 4px solid var(--success); }
+        .dept-card.strategy { border-left: 4px solid var(--purple); }
+        .dept-header { display: flex; align-items: center; gap: 12px; padding: 20px; cursor: pointer; background: rgba(0,0,0,0.2); }
+        .dept-icon { font-size: 2rem; }
+        .dept-title { flex: 1; }
+        .dept-name { font-size: 1.1rem; font-weight: 600; }
+        .dept-lead-name { font-size: 0.8rem; color: var(--text-muted); }
+        .dept-arrow { font-size: 1.3rem; transition: transform 0.3s; }
+        .dept-card.expanded .dept-arrow { transform: rotate(90deg); }
+        .dept-content { max-height: 0; overflow: hidden; transition: max-height 0.4s ease; }
+        .dept-card.expanded .dept-content { max-height: 3000px; }
+        .dept-meta { display: flex; gap: 10px; padding: 0 20px 15px; }
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+        .badge-primary { background: var(--highlight); color: var(--primary); }
+        .badge-success { background: var(--success); color: var(--primary); }
+        .badge-muted { background: var(--accent); color: var(--text-muted); }
+        .project-item { margin: 0 15px 10px; background: rgba(0,0,0,0.2); border-radius: 8px; overflow: hidden; }
+        .project-header { display: flex; align-items: center; gap: 10px; padding: 12px 15px; cursor: pointer; }
+        .project-icon { font-size: 1.3rem; }
+        .project-title { flex: 1; }
+        .project-name { font-weight: 600; font-size: 0.95rem; }
+        .project-desc { font-size: 0.75rem; color: var(--text-muted); }
+        .project-status { display: flex; align-items: center; gap: 5px; font-size: 0.8rem; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .status-active { background: var(--success); }
+        .project-arrow { font-size: 1.2rem; transition: transform 0.3s; }
+        .project-item.expanded .project-arrow { transform: rotate(90deg); }
+        .project-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .project-item.expanded .project-content { max-height: 2000px; }
+        .employee-item { margin: 0 10px 8px; background: rgba(0,0,0,0.15); border-radius: 6px; overflow: hidden; }
+        .employee-header { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; }
+        .employee-avatar { font-size: 1.5rem; }
+        .employee-name { font-weight: 600; font-size: 0.9rem; }
+        .employee-role { font-size: 0.75rem; color: var(--text-muted); }
+        .employee-arrow { font-size: 1.1rem; transition: transform 0.3s; }
+        .employee-item.expanded .employee-arrow { transform: rotate(90deg); }
+        .employee-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; padding: 0 12px; }
+        .employee-item.expanded .employee-content { max-height: 1500px; padding: 0 12px 12px; }
+        .task-section { margin: 10px 0; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 6px; }
+        .task-section-title { font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; }
+        .task-list { list-style: none; }
+        .task-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 4px; background: rgba(255,255,255,0.03); border-radius: 4px; font-size: 0.85rem; }
+        .task-priority { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+        .priority-high { background: var(--danger); }
+        .priority-medium { background: var(--warning); }
+        .priority-low { background: var(--success); }
+        .task-in-progress { border-left: 3px solid var(--info); }
+        .task-completed { border-left: 3px solid var(--success); opacity: 0.7; }
+        .task-on-hold { border-left: 3px solid var(--warning); }
+        .task-assignee { font-size: 0.75rem; color: var(--text-muted); margin-left: auto; font-style: italic; }
+        .budget-section { max-width: 1400px; margin: 30px auto; background: var(--secondary); border: 2px solid var(--accent); border-radius: 16px; padding: 25px; }
+        .budget-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 25px; }
+        .budget-card { background: rgba(0,0,0,0.2); padding: 20px; border-radius: 12px; text-align: center; }
+        .budget-label { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; }
+        .budget-value { font-size: 2rem; font-weight: 700; }
+        .budget-value.monthly { color: var(--highlight); }
+        .budget-value.daily { color: var(--warning); }
+        .budget-value.spent { color: var(--info); }
+        .budget-value.remaining { color: var(--success); }
+        .progress-bar { background: rgba(0,0,0,0.3); height: 12px; border-radius: 6px; overflow: hidden; margin-top: 10px; }
+        .progress-fill { height: 100%; border-radius: 6px; }
+        .progress-fill.safe { background: var(--success); }
+        .model-costs { background: rgba(0,0,0,0.2); border-radius: 12px; padding: 20px; margin-top: 20px; }
+        .model-costs h3 { font-size: 1.1rem; margin-bottom: 15px; color: var(--info); }
+        .model-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--accent); font-size: 0.9rem; }
+        .model-name { display: flex; align-items: center; gap: 10px; }
+        .model-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .model-dot.free { background: var(--success); }
+        .model-dot.cheap { background: #39d0d8; }
+        .model-dot.mid { background: var(--warning); }
+        .model-dot.expensive { background: var(--highlight); }
+        .model-cost { font-family: monospace; font-weight: 600; }
+        .model-desc { font-size: 0.75rem; color: var(--text-muted); }
+        .quick-stats { display: flex; justify-content: space-around; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 10px; margin-top: 20px; }
+        .quick-stat { text-align: center; }
+        .quick-stat-value { font-size: 1.5rem; font-weight: 700; color: var(--info); }
+        .quick-stat-label { font-size: 0.8rem; color: var(--text-muted); }
+        .footer { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.85rem; margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔥 IgniteX Innovations</h1>
+        <div class="subtitle">CEO Command Center</div>
+        <div class="tagline">Where Vision Meets Execution</div>
+    </div>
+    
+    <div class="ceo-section">
+        <div class="ceo-header">
+            <div class="ceo-avatar">👤</div>
+            <div class="ceo-info">
+                <h2>Marc Villeneuve</h2>
+                <div class="role">Chief Executive Officer</div>
+            </div>
+        </div>
+        <div class="ceo-stats">
+            <div class="ceo-stat"><div class="ceo-stat-value">2</div><div class="ceo-stat-label">Active Projects</div></div>
+            <div class="ceo-stat"><div class="ceo-stat-value">4</div><div class="ceo-stat-label">Departments</div></div>
+            <div class="ceo-stat"><div class="ceo-stat-value">2</div><div class="ceo-stat-label">Team Members</div></div>
+            <div class="ceo-stat"><div class="ceo-stat-value">28</div><div class="ceo-stat-label">Total Tasks</div></div>
+        </div>
+    </div>
+    
+    <div class="expandable my-tasks-section" id="myTasksSection">
+        <div class="my-tasks-header" onclick="toggleSection('myTasksSection')">
+            <span style="font-size: 2rem;">📋</span>
+            <h2>My Tasks</h2>
+            <span style="background: var(--info); color: var(--primary); padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">5 Assigned</span>
+            <span class="expand-arrow">▶</span>
+        </div>
+        <div class="my-tasks-content">
+            <div class="task-section">
+                <div class="task-section-title">🟡 Awaiting Your Action</div>
+                <ul class="task-list">
+                    <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Review Stripe Connect integration approach</span><span class="task-assignee">from Jim (Dev)</span></li>
+                    <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Approve TrueFanTix Phase 4 scope</span><span class="task-assignee">from Jim (Dev)</span></li>
+                    <li class="task-item task-in-progress"><span class="task-priority priority-medium"></span><span>Review golf game monetization strategy</span><span class="task-assignee">from Jim (Dev)</span></li>
+                    <li class="task-item task-on-hold"><span class="task-priority priority-medium"></span><span>Interview Marketing Director candidates</span><span class="task-assignee">from Strategy</span></li>
+                    <li class="task-item task-on-hold"><span class="task-priority priority-low"></span><span>Interview Finance Director candidates</span><span class="task-assignee">from Strategy</span></li>
+                </ul>
+            </div>
+            <div class="task-section">
+                <div class="task-section-title" style="color: var(--success);">✅ Recently Completed</div>
+                <ul class="task-list">
+                    <li class="task-item task-completed"><span>Approved golf game feature set</span></li>
+                    <li class="task-item task-completed"><span>Reviewed dashboard design</span></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <div class="departments-container">
+        <div class="departments-grid">
+            
+            <div class="dept-card dev" id="dept-dev">
+                <div class="dept-header" onclick="toggleSection('dept-dev')">
+                    <span class="dept-icon">💻</span>
+                    <div class="dept-title">
+                        <div class="dept-name">Development</div>
+                        <div class="dept-lead-name">Jim • Technical Lead</div>
+                    </div>
+                    <span class="dept-arrow">▶</span>
+                </div>
+                <div class="dept-meta">
+                    <span class="badge badge-primary">2 Projects</span>
+                    <span class="badge badge-success">12 Tasks</span>
                 </div>
                 <div class="dept-content">
-                    
-                    <!-- General Corporate Project -->
-                    <div class="project-item" id="project-corp">
-                        <div class="project-header" onclick="toggleSection('project-corp')">
-                            <span class="project-icon">🏢</span>
-                            <div class="project-title">
-                                <div class="project-name">General Corporate</div>
-                                <div class="project-desc">Company Operations</div>
-                            </div>
-                            <span class="project-status">
-                                <span class="status-dot status-active"></span>
-                                Active
-                            </span>
+                    <div class="project-item" id="project-tft">
+                        <div class="project-header" onclick="toggleSection('project-tft')">
+                            <span class="project-icon">🎟️</span>
+                            <div class="project-title"><div class="project-name">TrueFanTix</div><div class="project-desc">Ethical Ticket Marketplace</div></div>
+                            <span class="project-status"><span class="status-dot status-active"></span>Phase 3</span>
                             <span class="project-arrow">▶</span>
                         </div>
                         <div class="project-content">
-                            
-                            <!-- Marc -->
-                            <div class="employee-item" id="emp-marc">
-                                <div class="employee-header" onclick="toggleSection('emp-marc')">
-                                    <span class="employee-avatar">👤</span>
-                                    <div class="employee-title">
-                                        <div class="employee-name">Marc Villeneuve</div>
-                                        <div class="employee-role">CEO</div>
-                                    </div>
+                            <div class="employee-item" id="emp-jim-tft">
+                                <div class="employee-header" onclick="toggleSection('emp-jim-tft')">
+                                    <span class="employee-avatar">🤖</span>
+                                    <div class="employee-title"><div class="employee-name">Jim</div><div class="employee-role">Technical Lead</div></div>
                                     <span class="employee-arrow">▶</span>
                                 </div>
                                 <div class="employee-content">
                                     <div class="task-section">
                                         <div class="task-section-title">🟡 In Progress</div>
                                         <ul class="task-list">
-                                            <li class="task-item task-in-progress">
-                                                <span class="task-priority priority-high"></span>
-                                                <span>Define product roadmap for TrueFanTix Phase 4</span>
-                                            </li>
-                                            <li class="task-item task-in-progress">
-                                                <span class="task-priority priority-medium"></span>
-                                                <span>Review golf game monetization strategy</span>
-                                            </li>
+                                            <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Automate seller onboarding with Stripe</span></li>
+                                            <li class="task-item task-in-progress"><span class="task-priority priority-medium"></span><span>Finalize test cases for payment processing</span></li>
+                                        </ul>
+                                    </div>
+                                    <div class="task-section">
+                                        <div class="task-section-title" style="color: var(--success);">✅ Completed</div>
+                                        <ul class="task-list">
+                                            <li class="task-item task-completed"><span>User management</span></li>
+                                            <li class="task-item task-completed"><span>Stripe PaymentIntent integration</span></li>
+                                            <li class="task-item task-completed"><span>Email/SMS integration</span></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="project-item" id="project-dig">
+                        <div class="project-header" onclick="toggleSection('project-dig')">
+                            <span class="project-icon">⛳</span>
+                            <div class="project-title"><div class="project-name">Dialed In Golf</div><div class="project-desc">Mobile Golf Game</div></div>
+                            <span class="project-status"><span class="status-dot status-active"></span>Prototype</span>
+                            <span class="project-arrow">▶</span>
+                        </div>
+                        <div class="project-content">
+                            <div class="employee-item" id="emp-jim-dig">
+                                <div class="employee-header" onclick="toggleSection('emp-jim-dig')">
+                                    <span class="employee-avatar">🤖</span>
+                                    <div class="employee-title"><div class="employee-name">Jim</div><div class="employee-role">Technical Lead</div></div>
+                                    <span class="employee-arrow">▶</span>
+                                </div>
+                                <div class="employee-content">
+                                    <div class="task-section">
+                                        <div class="task-section-title">🟡 In Progress</div>
+                                        <ul class="task-list">
+                                            <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Multiplayer mechanics</span></li>
+                                        </ul>
+                                    </div>
+                                    <div class="task-section">
+                                        <div class="task-section-title" style="color: var(--success);">✅ Completed</div>
+                                        <ul class="task-list">
+                                            <li class="task-item task-completed"><span>Core physics</span></li>
+                                            <li class="task-item task-completed"><span>AI Personality System</span></li>
+                                            <li class="task-item task-completed"><span>Mobile controls</span></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="dept-card marketing" id="dept-mkt">
+                <div class="dept-header" onclick="toggleSection('dept-mkt')">
+                    <span class="dept-icon">📢</span>
+                    <div class="dept-title"><div class="dept-name">Marketing</div><div class="dept-lead-name">Hiring Soon</div></div>
+                    <span class="dept-arrow">▶</span>
+                </div>
+                <div class="dept-meta">
+                    <span class="badge badge-muted">0 Projects</span>
+                    <span class="badge badge-muted">0 Tasks</span>
+                </div>
+                <div class="dept-content">
+                    <div style="padding: 20px; text-align: center; color: var(--text-muted);">
+                        <p>📝 Department planned</p>
+                        <p style="margin-top: 10px; font-size: 0.85rem;">Recruiting Marketing Director</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="dept-card finance" id="dept-fin">
+                <div class="dept-header" onclick="toggleSection('dept-fin')">
+                    <span class="dept-icon">💰</span>
+                    <div class="dept-title"><div class="dept-name">Finance</div><div class="dept-lead-name">Hiring Soon</div></div>
+                    <span class="dept-arrow">▶</span>
+                </div>
+                <div class="dept-meta">
+                    <span class="badge badge-muted">0 Projects</span>
+                    <span class="badge badge-muted">0 Tasks</span>
+                </div>
+                <div class="dept-content">
+                    <div style="padding: 20px; text-align: center; color: var(--text-muted);">
+                        <p>📝 Department planned</p>
+                        <p style="margin-top: 10px; font-size: 0.85rem;">Recruiting Finance Director</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="dept-card strategy" id="dept-strat">
+                <div class="dept-header" onclick="toggleSection('dept-strat')">
+                    <span class="dept-icon">📊</span>
+                    <div class="dept-title"><div class="dept-name">Business Strategy</div><div class="dept-lead-name">Marc • CEO</div></div>
+                    <span class="dept-arrow">▶</span>
+                </div>
+                <div class="dept-meta">
+                    <span class="badge badge-primary">1 Project</span>
+                    <span class="badge badge-success">3 Tasks</span>
+                </div>
+                <div class="dept-content">
+                    <div class="project-item" id="project-corp">
+                        <div class="project-header" onclick="toggleSection('project-corp')">
+                            <span class="project-icon">🏢</span>
+                            <div class="project-title"><div class="project-name">General Corporate</div><div class="project-desc">Company Operations</div></div>
+                            <span class="project-status"><span class="status-dot status-active"></span>Active</span>
+                            <span class="project-arrow">▶</span>
+                        </div>
+                        <div class="project-content">
+                            <div class="employee-item" id="emp-marc">
+                                <div class="employee-header" onclick="toggleSection('emp-marc')">
+                                    <span class="employee-avatar">👤</span>
+                                    <div class="employee-title"><div class="employee-name">Marc Villeneuve</div><div class="employee-role">CEO</div></div>
+                                    <span class="employee-arrow">▶</span>
+                                </div>
+                                <div class="employee-content">
+                                    <div class="task-section">
+                                        <div class="task-section-title">🟡 In Progress</div>
+                                        <ul class="task-list">
+                                            <li class="task-item task-in-progress"><span class="task-priority priority-high"></span><span>Define TrueFanTix Phase 4 roadmap</span></li>
                                         </ul>
                                     </div>
                                     <div class="task-section">
                                         <div class="task-section-title" style="color: var(--success);">✅ Completed</div>
                                         <ul class="task-list">
                                             <li class="task-item task-completed"><span>Company structure established</span></li>
-                                            <li class="task-item task-completed"><span>Initial project briefs created</span></li>
-                                            <li class="task-item task-completed"><span>AI budget framework set ($200/month)</span></li>
-                                        </ul>
-                                    </div>
-                                    <div class="task-section">
-                                        <div class="task-section-title" style="color: var(--warning);">⏸️ On Hold</div>
-                                        <ul class="task-list">
-                                            <li class="task-item task-on-hold"><span>Hire Marketing Director</span></li>
-                                            <li class="task-item task-on-hold"><span>Hire Finance Director</span></li>
+                                            <li class="task-item task-completed"><span>AI budget framework set</span></li>
                                         </ul>
                                     </div>
                                 </div>
                             </div>
-                            
                         </div>
                     </div>
-                    
                 </div>
             </div>
             
         </div>
     </div>
     
-    <!-- Operations Budget Section -->
     <div class="budget-section">
-        <div class="budget-header">
+        <div class="budget-header" style="display:flex;align-items:center;gap:15px;margin-bottom:20px;padding-bottom:15px;border-bottom:1px solid var(--accent);">
             <span style="font-size: 2rem;">💳</span>
-            <h2>Operations Budget</h2>
+            <h2 style="font-size:1.4rem;">Operations Budget</h2>
         </div>
         
         <div class="budget-grid">
-            <div class="budget-card">
-                <div class="budget-label">Monthly Budget</div>
-                <div class="budget-value monthly">$200</div>
-            </div>
-            <div class="budget-card">
-                <div class="budget-label">Daily Limit</div>
-                <div class="budget-value daily">$10</div>
-            </div>
+            <div class="budget-card"><div class="budget-label">Monthly Budget</div><div class="budget-value monthly">$200</div></div>
+            <div class="budget-card"><div class="budget-label">Daily Limit</div><div class="budget-value daily">$10</div></div>
             <div class="budget-card">
                 <div class="budget-label">Spent (MTD)</div>
                 <div class="budget-value spent">$12.45</div>
-                <div class="progress-bar">
-                    <div class="progress-fill safe" style="width: 6.2%"></div>
-                </div>
-                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 5px;">6.2% used</div>
+                <div class="progress-bar"><div class="progress-fill safe" style="width:6.2%"></div></div>
+                <div style="font-size:0.8rem;color:var(--text-muted);margin-top:5px;">6.2% used</div>
             </div>
-            <div class="budget-card">
-                <div class="budget-label">Remaining</div>
-                <div class="budget-value remaining">$187.55</div>
-            </div>
+            <div class="budget-card"><div class="budget-label">Remaining</div><div class="budget-value remaining">$187.55</div></div>
         </div>
         
-        <!-- Model Costs -->
         <div class="model-costs">
             <h3>📊 Estimated Costs by Model (per 1K tokens)</h3>
             <div class="model-row">
-                <div class="model-name">
-                    <span class="model-dot free"></span>
-                    <div>
-                        <div>Moonshot Kimi</div>
-                        <div class="model-desc">Free tier - Primary</div>
-                    </div>
-                </div>
-                <span class="model-cost" style="color: var(--success);">FREE</span>
+                <div class="model-name"><span class="model-dot free"></span><div><div>Moonshot Kimi</div><div class="model-desc">Free tier - Primary</div></div></div>
+                <span class="model-cost" style="color:var(--success);">FREE</span>
             </div>
             <div class="model-row">
-                <div class="model-name">
-                    <span class="model-dot cheap"></span>
-                    <div>
-                        <div>Gemini Flash</div>
-                        <div class="model-desc">Ultra-low latency</div>
-                    </div>
-                </div>
-                <span class="model-cost" style="color: #39d0d8;">$0.000125</span>
+                <div class="model-name"><span class="model-dot cheap"></span><div><div>Gemini Flash</div><div class="model-desc">Ultra-low latency</div></div></div>
+                <span class="model-cost" style="color:#39d0d8;">$0.000125</span>
             </div>
             <div class="model-row">
-                <div class="model-name">
-                    <span class="model-dot cheap"></span>
-                    <div>
-                        <div>GPT-4o Mini</div>
-                        <div class="model-desc">Fast & capable</div>
-                    </div>
-                </div>
-                <span class="model-cost" style="color: #39d0d8;">$0.000150</span>
+                <div class="model-name"><span class="model-dot cheap"></span><div><div>GPT-4o Mini</div><div class="model-desc">Fast & capable</div></div></div>
+                <span class="model-cost" style="color:#39d0d8;">$0.000150</span>
             </div>
             <div class="model-row">
-                <div class="model-name">
-                    <span class="model-dot cheap"></span>
-                    <div>
-                        <div>Claude Haiku</div>
-                        <div class="model-desc">Anthropic entry</div>
-                    </div>
-                </div>
-                <span class="model-cost" style="color: #39d0d8;">$0.000250</span>
+                <div class="model-name"><span class="model-dot cheap"></span><div><div>Claude Haiku</div><div class="model-desc">Anthropic entry</div></div></div>
+                <span class="model-cost" style="color:#39d0d8;">$0.000250</span>
             </div>
             <div class="model-row">
-                <div class="model-name">
-                    <span class="model-dot mid"></span>
-                    <div>
-                        <div>GPT-4o</div>
-                        <div class="model-desc">High quality</div>
-                    </div>
-                </div>
-                <span class="model-cost" style="color: var(--warning);">$0.002500</span>
+                <div class="model-name"><span class="model-dot mid"></span><div><div>GPT-4o</div><div class="model-desc">High quality</div></div></div>
+                <span class="model-cost" style="color:var(--warning);">$0.002500</span>
             </div>
             <div class="model-row">
-                <div class="model-name">
-                    <span class="model-dot mid"></span>
-                    <div>
-                        <div>Claude Sonnet</div>
-                        <div class="model-desc">Premium reasoning</div>
-                    </div>
-                </div>
-                <span class="model-cost" style="color: var(--warning);">$0.003000</span>
+                <div class="model-name"><span class="model-dot mid"></span><div><div>Claude Sonnet</div><div class="model-desc">Premium reasoning</div></div></div>
+                <span class="model-cost" style="color:var(--warning);">$0.003000</span>
             </div>
             <div class="model-row">
-                <div class="model-name">
-                    <span class="model-dot expensive"></span>
-                    <div>
-                        <div>Grok</div>
-                        <div class="model-desc">X AI - Fallback</div>
-                    </div>
-                </div>
-                <span class="model-cost" style="color: var(--highlight);">$0.005000</span>
+                <div class="model-name"><span class="model-dot expensive"></span><div><div>Grok</div><div class="model-desc">X AI - Fallback</div></div></div>
+                <span class="model-cost" style="color:var(--highlight);">$0.005000</span>
             </div>
         </div>
         
         <div class="quick-stats">
-            <div class="quick-stat">
-                <div class="quick-stat-value">7</div>
-                <div class="quick-stat-label">AI Providers</div>
-            </div>
-            <div class="quick-stat">
-                <div class="quick-stat-value">80%</div>
-                <div class="quick-stat-label">Alert Threshold</div>
-            </div>
-            <div class="quick-stat">
-                <div class="quick-stat-value">2x</div>
-                <div class="quick-stat-label">Daily Checks</div>
-            </div>
-            <div class="quick-stat">
-                <div class="quick-stat-value">✓</div>
-                <div class="quick-stat-label">On Track</div>
-            </div>
+            <div class="quick-stat"><div class="quick-stat-value">7</div><div class="quick-stat-label">AI Providers</div></div>
+            <div class="quick-stat"><div class="quick-stat-value">80%</div><div class="quick-stat-label">Alert Threshold</div></div>
+            <div class="quick-stat"><div class="quick-stat-value">2x</div><div class="quick-stat-label">Daily Checks</div></div>
+            <div class="quick-stat"><div class="quick-stat-value">✓</div><div class="quick-stat-label">On Track</div></div>
         </div>
     </div>
     
-    <!-- Footer -->
     <div class="footer">
         <p>IgniteX Innovations • Dashboard auto-updates daily at 4:00 AM EST</p>
-        <p style="margin-top: 5px; font-size: 0.75rem;">Last updated: <span id="lastUpdated"></span></p>
+        <p style="margin-top:5px;font-size:0.75rem;">Last updated: <span id="lastUpdated"></span></p>
     </div>
     
     <script>
         function toggleSection(id) {
             const element = document.getElementById(id);
-            if (element) {
-                element.classList.toggle('expanded');
-            }
+            if (element) element.classList.toggle('expanded');
         }
-        
-        // Set last updated time
-        document.getElementById('lastUpdated').textContent = new Date().toLocaleString('en-US', {
-            timeZone: 'America/Toronto',
-            dateStyle: 'medium',
-            timeStyle: 'short'
-        });
+        document.getElementById('lastUpdated').textContent = new Date().toLocaleString('en-US', {timeZone:'America/Toronto',dateStyle:'medium',timeStyle:'short'});
     </script>
 </body>
 </html>
