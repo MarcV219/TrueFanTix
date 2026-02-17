@@ -1,802 +1,76 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IgniteX Innovations - CEO Command Center</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        :root { 
-            --primary: #0f1419; 
-            --secondary: #161b22; 
-            --accent: #21262d; 
-            --highlight: #f78166; 
-            --success: #3fb950; 
-            --warning: #d29922; 
-            --info: #58a6ff; 
-            --purple: #a371f7; 
-            --text: #c9d1d9; 
-            --text-muted: #8b949e;
-            --danger: #f85149;
-        }
-        body { 
-            font-family: 'Segoe UI', system-ui, sans-serif; 
-            background: linear-gradient(135deg, var(--primary) 0%, #0d1117 100%); 
-            color: var(--text); 
-            min-height: 100vh; 
-            padding: 20px; 
-        }
-        
-        /* Header */
-        .header { 
-            text-align: center; 
-            padding: 30px; 
-            border-bottom: 2px solid var(--accent); 
-            margin-bottom: 30px; 
-        }
-        .header h1 { 
-            font-size: 2.5rem; 
-            background: linear-gradient(135deg, var(--highlight), #ff9e7d); 
-            -webkit-background-clip: text; 
-            -webkit-text-fill-color: transparent; 
-            margin-bottom: 10px; 
-        }
-        .header .subtitle { 
-            color: var(--text-muted); 
-            font-size: 1.1rem; 
-        }
-        .header .tagline { 
-            color: var(--purple); 
-            font-size: 0.95rem; 
-            margin-top: 10px; 
-            font-style: italic; 
-        }
-        
-        /* CEO Section */
-        .ceo-section {
-            max-width: 1400px;
-            margin: 0 auto 30px;
-            background: linear-gradient(135deg, rgba(247,129,102,0.1), rgba(163,113,247,0.1));
-            border: 2px solid var(--highlight);
-            border-radius: 16px;
-            padding: 25px;
-        }
-        .ceo-header {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        .ceo-avatar {
-            font-size: 4rem;
-        }
-        .ceo-info h2 {
-            font-size: 1.8rem;
-            color: var(--highlight);
-        }
-        .ceo-info .role {
-            color: var(--text-muted);
-            font-size: 1.1rem;
-        }
-        .ceo-stats {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 15px;
-        }
-        .ceo-stat {
-            background: rgba(0,0,0,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-        }
-        .ceo-stat-value {
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: var(--success);
-        }
-        .ceo-stat-label {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            margin-top: 5px;
-        }
-        
-        /* Department Hierarchy */
-        .hierarchy-container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        
-        /* Expandable Sections */
-        .expandable {
-            background: var(--secondary);
-            border: 1px solid var(--accent);
-            border-radius: 12px;
-            margin-bottom: 15px;
-            overflow: hidden;
-        }
-        .expandable-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 20px 25px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .expandable-header:hover {
-            background: rgba(255,255,255,0.05);
-        }
-        .expandable-title {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-        .expandable-icon {
-            font-size: 1.8rem;
-        }
-        .expandable-name {
-            font-size: 1.3rem;
-            font-weight: 600;
-        }
-        .expandable-meta {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }
-        .badge {
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-        .badge-primary {
-            background: var(--highlight);
-            color: var(--primary);
-        }
-        .badge-success {
-            background: var(--success);
-            color: var(--primary);
-        }
-        .badge-info {
-            background: var(--info);
-            color: var(--primary);
-        }
-        .badge-warning {
-            background: var(--warning);
-            color: var(--primary);
-        }
-        .expand-arrow {
-            font-size: 1.5rem;
-            transition: transform 0.3s;
-        }
-        .expandable.expanded .expand-arrow {
-            transform: rotate(90deg);
-        }
-        .expandable-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease;
-            padding: 0 25px;
-        }
-        .expandable.expanded .expandable-content {
-            max-height: 5000px;
-            padding: 0 25px 25px;
-        }
-        
-        /* Department Level */
-        .department {
-            border-left: 4px solid var(--highlight);
-        }
-        .dept-lead {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 15px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 8px;
-            margin-bottom: 15px;
-        }
-        
-        /* Project Level */
-        .project {
-            margin-left: 20px;
-            margin-bottom: 10px;
-            border-left: 3px solid var(--info);
-        }
-        .project .expandable-header {
-            padding: 15px 20px;
-        }
-        .project .expandable-name {
-            font-size: 1.1rem;
-        }
-        .project-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-        .status-active { background: var(--success); }
-        .status-planning { background: var(--warning); }
-        .status-hold { background: var(--danger); }
-        
-        /* Employee Level */
-        .employee {
-            margin-left: 20px;
-            margin-bottom: 8px;
-            border-left: 2px solid var(--purple);
-        }
-        .employee .expandable-header {
-            padding: 12px 18px;
-        }
-        .employee .expandable-name {
-            font-size: 1rem;
-        }
-        .employee-avatar {
-            font-size: 1.5rem;
-        }
-        .employee-role {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-        }
-        
-        /* Task Lists */
-        .task-section {
-            margin: 15px 0;
-            padding: 15px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 8px;
-        }
-        .task-section-title {
-            font-size: 0.9rem;
-            font-weight: 600;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .task-list {
-            list-style: none;
-        }
-        .task-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 12px;
-            margin-bottom: 6px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 6px;
-            font-size: 0.9rem;
-        }
-        .task-item:hover {
-            background: rgba(255,255,255,0.06);
-        }
-        .task-priority {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-        }
-        .priority-high { background: var(--danger); }
-        .priority-medium { background: var(--warning); }
-        .priority-low { background: var(--success); }
-        .task-in-progress { border-left: 3px solid var(--info); }
-        .task-completed { border-left: 3px solid var(--success); opacity: 0.7; }
-        .task-on-hold { border-left: 3px solid var(--warning); }
-        
-        /* Budget Section (Bottom) */
-        .budget-section {
-            max-width: 1400px;
-            margin: 30px auto;
-            background: var(--secondary);
-            border: 2px solid var(--accent);
-            border-radius: 16px;
-            padding: 25px;
-        }
-        .budget-header {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid var(--accent);
-        }
-        .budget-header h2 {
-            font-size: 1.4rem;
-        }
-        .budget-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 20px;
-            margin-bottom: 25px;
-        }
-        .budget-card {
-            background: rgba(0,0,0,0.2);
-            padding: 20px;
-            border-radius: 12px;
-            text-align: center;
-        }
-        .budget-label {
-            color: var(--text-muted);
-            font-size: 0.9rem;
-            margin-bottom: 10px;
-        }
-        .budget-value {
-            font-size: 2rem;
-            font-weight: 700;
-        }
-        .budget-value.monthly { color: var(--highlight); }
-        .budget-value.daily { color: var(--warning); }
-        .budget-value.spent { color: var(--info); }
-        .budget-value.remaining { color: var(--success); }
-        .progress-bar {
-            background: rgba(0,0,0,0.3);
-            height: 12px;
-            border-radius: 6px;
-            overflow: hidden;
-            margin-top: 10px;
-        }
-        .progress-fill {
-            height: 100%;
-            border-radius: 6px;
-            transition: width 0.5s ease;
-        }
-        .progress-fill.safe { background: var(--success); }
-        .progress-fill.warning { background: var(--warning); }
-        .progress-fill.danger { background: var(--danger); }
-        
-        /* Quick Stats Bar */
-        .quick-stats {
-            display: flex;
-            justify-content: space-around;
-            padding: 15px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 10px;
-            margin-top: 20px;
-        }
-        .quick-stat {
-            text-align: center;
-        }
-        .quick-stat-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--info);
-        }
-        .quick-stat-label {
-            font-size: 0.8rem;
-            color: var(--text-muted);
-        }
-        
-        /* Footer */
-        .footer {
-            text-align: center;
-            padding: 20px;
-            color: var(--text-muted);
-            font-size: 0.85rem;
-            margin-top: 30px;
-        }
-        
-        /* Responsive */
-        @media (max-width: 768px) {
-            .ceo-stats { grid-template-columns: repeat(2, 1fr); }
-            .budget-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-    </style>
-</head>
-<body>
-    <!-- Header -->
-    <div class="header">
-        <h1>🔥 IgniteX Innovations</h1>
-        <div class="subtitle">CEO Command Center</div>
-        <div class="tagline">Where Vision Meets Execution</div>
-    </div>
-    
-    <!-- CEO Section -->
-    <div class="ceo-section">
-        <div class="ceo-header">
-            <div class="ceo-avatar">👤</div>
-            <div class="ceo-info">
-                <h2>Marc Villeneuve</h2>
-                <div class="role">Chief Executive Officer</div>
-            </div>
-        </div>
-        <div class="ceo-stats">
-            <div class="ceo-stat">
-                <div class="ceo-stat-value">2</div>
-                <div class="ceo-stat-label">Active Projects</div>
-            </div>
-            <div class="ceo-stat">
-                <div class="ceo-stat-value">4</div>
-                <div class="ceo-stat-label">Departments</div>
-            </div>
-            <div class="ceo-stat">
-                <div class="ceo-stat-value">2</div>
-                <div class="ceo-stat-label">Team Members</div>
-            </div>
-            <div class="ceo-stat">
-                <div class="ceo-stat-value">28</div>
-                <div class="ceo-stat-label">Total Tasks</div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Department Hierarchy -->
-    <div class="hierarchy-container">
-        
-        <!-- Development Department -->
-        <div class="expandable department" onclick="toggleExpand(this)">
-            <div class="expandable-header">
-                <div class="expandable-title">
-                    <span class="expandable-icon">💻</span>
-                    <div>
-                        <div class="expandable-name">Development Department</div>
-                        <div class="dept-lead">
-                            <span>👤</span>
-                            <div>
-                                <div style="font-weight: 600;">Jim</div>
-                                <div style="font-size: 0.8rem; color: var(--text-muted);">Technical Lead (Employee #1)</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="expandable-meta">
-                    <span class="badge badge-primary">2 Projects</span>
-                    <span class="badge badge-success">12 Tasks</span>
-                    <span class="expand-arrow">▶</span>
-                </div>
-            </div>
-            <div class="expandable-content">
-                
-                <!-- TrueFanTix Project -->
-                <div class="expandable project" onclick="event.stopPropagation(); toggleExpand(this)">
-                    <div class="expandable-header">
-                        <div class="expandable-title">
-                            <span class="expandable-icon">🎟️</span>
-                            <div>
-                                <div class="expandable-name">TrueFanTix</div>
-                                <div style="font-size: 0.85rem; color: var(--text-muted);">Ethical Ticket Resale Marketplace</div>
-                            </div>
-                        </div>
-                        <div class="expandable-meta">
-                            <span class="project-status">
-                                <span class="status-dot status-active"></span>
-                                Phase 3
-                            </span>
-                            <span class="badge badge-info">8 Tasks</span>
-                            <span class="expand-arrow">▶</span>
-                        </div>
-                    </div>
-                    <div class="expandable-content">
-                        
-                        <!-- Jim - TrueFanTix -->
-                        <div class="expandable employee" onclick="event.stopPropagation(); toggleExpand(this)">
-                            <div class="expandable-header">
-                                <div class="expandable-title">
-                                    <span class="employee-avatar">🤖</span>
-                                    <div>
-                                        <div class="expandable-name">Jim</div>
-                                        <div class="employee-role">Technical Lead • AI Assistant</div>
-                                    </div>
-                                </div>
-                                <div class="expandable-meta">
-                                    <span class="badge badge-primary">8 Tasks</span>
-                                    <span class="expand-arrow">▶</span>
-                                </div>
-                            </div>
-                            <div class="expandable-content">
-                                <div class="task-section">
-                                    <div class="task-section-title">🟡 Tasks In Progress</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-in-progress">
-                                            <span class="task-priority priority-high"></span>
-                                            <span>Automate seller onboarding with Stripe</span>
-                                        </li>
-                                        <li class="task-item task-in-progress">
-                                            <span class="task-priority priority-medium"></span>
-                                            <span>Finalize test cases for payment processing</span>
-                                        </li>
-                                        <li class="task-item task-in-progress">
-                                            <span class="task-priority priority-medium"></span>
-                                            <span>Review authentication system</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                                <div class="task-section">
-                                    <div class="task-section-title" style="color: var(--success);">✅ Tasks Completed</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-completed">
-                                            <span>User management (registration, login)</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Profile editing functionality</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Password reset system</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Stripe PaymentIntent integration</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Email/SMS integration (SendGrid/Twilio)</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Ticket search with QR delivery</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                                <div class="task-section">
-                                    <div class="task-section-title" style="color: var(--warning);">⏸️ Tasks On Hold</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-on-hold">
-                                            <span>Multi-provider AI fallback chain optimization</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        
-                    </div>
-                </div>
-                
-                <!-- Dialed In Golf Project -->
-                <div class="expandable project" onclick="event.stopPropagation(); toggleExpand(this)">
-                    <div class="expandable-header">
-                        <div class="expandable-title">
-                            <span class="expandable-icon">⛳</span>
-                            <div>
-                                <div class="expandable-name">Dialed In Golf</div>
-                                <div style="font-size: 0.85rem; color: var(--text-muted);">Mobile Golf Game</div>
-                            </div>
-                        </div>
-                        <div class="expandable-meta">
-                            <span class="project-status">
-                                <span class="status-dot status-active"></span>
-                                Prototype
-                            </span>
-                            <span class="badge badge-info">4 Tasks</span>
-                            <span class="expand-arrow">▶</span>
-                        </div>
-                    </div>
-                    <div class="expandable-content">
-                        
-                        <!-- Jim - Dialed In Golf -->
-                        <div class="expandable employee" onclick="event.stopPropagation(); toggleExpand(this)">
-                            <div class="expandable-header">
-                                <div class="expandable-title">
-                                    <span class="employee-avatar">🤖</span>
-                                    <div>
-                                        <div class="expandable-name">Jim</div>
-                                        <div class="employee-role">Technical Lead • AI Assistant</div>
-                                    </div>
-                                </div>
-                                <div class="expandable-meta">
-                                    <span class="badge badge-primary">4 Tasks</span>
-                                    <span class="expand-arrow">▶</span>
-                                </div>
-                            </div>
-                            <div class="expandable-content">
-                                <div class="task-section">
-                                    <div class="task-section-title">🟡 Tasks In Progress</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-in-progress">
-                                            <span class="task-priority priority-high"></span>
-                                            <span>Multiplayer mechanics implementation</span>
-                                        </li>
-                                        <li class="task-item task-in-progress">
-                                            <span class="task-priority priority-medium"></span>
-                                            <span>Tournament formats</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                                <div class="task-section">
-                                    <div class="task-section-title" style="color: var(--success);">✅ Tasks Completed</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-completed">
-                                            <span>Core physics and ball controller</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Mobile controls (touch, joystick, haptics)</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>AI Personality System (10 personalities)</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Particle effects system</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Audio integration</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Replay sharing</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>User profiles & stats</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Achievements system</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Game events</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Settings & options</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                                <div class="task-section">
-                                    <div class="task-section-title" style="color: var(--warning);">⏸️ Tasks On Hold</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-on-hold">
-                                            <span>Graphics assets integration</span>
-                                        </li>
-                                        <li class="task-item task-on-hold">
-                                            <span>Sound design</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        
-                    </div>
-                </div>
-                
-            </div>
-        </div>
-        
-        <!-- Marketing Department -->
-        <div class="expandable department" onclick="toggleExpand(this)">
-            <div class="expandable-header">
-                <div class="expandable-title">
-                    <span class="expandable-icon">📢</span>
-                    <div>
-                        <div class="expandable-name">Marketing Department</div>
-                        <div style="font-size: 0.85rem; color: var(--text-muted); font-style: italic;">Hiring Soon</div>
-                    </div>
-                </div>
-                <div class="expandable-meta">
-                    <span class="badge badge-warning">0 Projects</span>
-                    <span class="badge badge-warning">0 Tasks</span>
-                    <span class="expand-arrow">▶</span>
-                </div>
-            </div>
-            <div class="expandable-content">
-                <div style="padding: 20px; text-align: center; color: var(--text-muted);">
-                    <p>📝 Department planned - recruiting Marketing Director</p>
-                    <p style="margin-top: 10px; font-size: 0.9rem;">Will handle brand strategy, social media, and user acquisition for TrueFanTix and Dialed In Golf</p>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Finance Department -->
-        <div class="expandable department" onclick="toggleExpand(this)">
-            <div class="expandable-header">
-                <div class="expandable-title">
-                    <span class="expandable-icon">💰</span>
-                    <div>
-                        <div class="expandable-name">Finance Department</div>
-                        <div style="font-size: 0.85rem; color: var(--text-muted); font-style: italic;">Hiring Soon</div>
-                    </div>
-                </div>
-                <div class="expandable-meta">
-                    <span class="badge badge-warning">0 Projects</span>
-                    <span class="badge badge-warning">0 Tasks</span>
-                    <span class="expand-arrow">▶</span>
-                </div>
-            </div>
-            <div class="expandable-content">
-                <div style="padding: 20px; text-align: center; color: var(--text-muted);">
-                    <p>📝 Department planned - recruiting Finance Director</p>
-                    <p style="margin-top: 10px; font-size: 0.9rem;">Will manage AI budget tracking, cost optimization, and financial reporting</p>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Business Strategy Department -->
-        <div class="expandable department" onclick="toggleExpand(this)">
-            <div class="expandable-header">
-                <div class="expandable-title">
-                    <span class="expandable-icon">📊</span>
-                    <div>
-                        <div class="expandable-name">Business Strategy Department</div>
-                        <div style="font-size: 0.85rem; color: var(--text-muted); font-style: italic;">Marc (CEO) - Overseeing</div>
-                    </div>
-                </div>
-                <div class="expandable-meta">
                     <span class="badge badge-primary">1 Project</span>
                     <span class="badge badge-success">3 Tasks</span>
-                    <span class="expand-arrow">▶</span>
                 </div>
-            </div>
-            <div class="expandable-content">
-                
-                <!-- General Corporate Project -->
-                <div class="expandable project" onclick="event.stopPropagation(); toggleExpand(this)">
-                    <div class="expandable-header">
-                        <div class="expandable-title">
-                            <span class="expandable-icon">🏢</span>
-                            <div>
-                                <div class="expandable-name">General Corporate</div>
-                                <div style="font-size: 0.85rem; color: var(--text-muted);">Company Operations & Strategy</div>
+                <div class="dept-content">
+                    
+                    <!-- General Corporate Project -->
+                    <div class="project-item" id="project-corp">
+                        <div class="project-header" onclick="toggleSection('project-corp')">
+                            <span class="project-icon">🏢</span>
+                            <div class="project-title">
+                                <div class="project-name">General Corporate</div>
+                                <div class="project-desc">Company Operations</div>
                             </div>
-                        </div>
-                        <div class="expandable-meta">
                             <span class="project-status">
                                 <span class="status-dot status-active"></span>
                                 Active
                             </span>
-                            <span class="badge badge-info">3 Tasks</span>
-                            <span class="expand-arrow">▶</span>
+                            <span class="project-arrow">▶</span>
                         </div>
-                    </div>
-                    <div class="expandable-content">
-                        
-                        <!-- Marc - General Corporate -->
-                        <div class="expandable employee" onclick="event.stopPropagation(); toggleExpand(this)">
-                            <div class="expandable-header">
-                                <div class="expandable-title">
+                        <div class="project-content">
+                            
+                            <!-- Marc -->
+                            <div class="employee-item" id="emp-marc">
+                                <div class="employee-header" onclick="toggleSection('emp-marc')">
                                     <span class="employee-avatar">👤</span>
-                                    <div>
-                                        <div class="expandable-name">Marc Villeneuve</div>
+                                    <div class="employee-title">
+                                        <div class="employee-name">Marc Villeneuve</div>
                                         <div class="employee-role">CEO</div>
                                     </div>
+                                    <span class="employee-arrow">▶</span>
                                 </div>
-                                <div class="expandable-meta">
-                                    <span class="badge badge-primary">3 Tasks</span>
-                                    <span class="expand-arrow">▶</span>
-                                </div>
-                            </div>
-                            <div class="expandable-content">
-                                <div class="task-section">
-                                    <div class="task-section-title">🟡 Tasks In Progress</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-in-progress">
-                                            <span class="task-priority priority-high"></span>
-                                            <span>Define product roadmap for TrueFanTix Phase 4</span>
-                                        </li>
-                                        <li class="task-item task-in-progress">
-                                            <span class="task-priority priority-medium"></span>
-                                            <span>Review golf game monetization strategy</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                                <div class="task-section">
-                                    <div class="task-section-title" style="color: var(--success);">✅ Tasks Completed</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-completed">
-                                            <span>Company structure established</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>Initial project briefs created</span>
-                                        </li>
-                                        <li class="task-item task-completed">
-                                            <span>AI budget framework set ($200/month)</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                                <div class="task-section">
-                                    <div class="task-section-title" style="color: var(--warning);">⏸️ Tasks On Hold</div>
-                                    <ul class="task-list">
-                                        <li class="task-item task-on-hold">
-                                            <span>Hire Marketing Director</span>
-                                        </li>
-                                        <li class="task-item task-on-hold">
-                                            <span>Hire Finance Director</span>
-                                        </li>
-                                    </ul>
+                                <div class="employee-content">
+                                    <div class="task-section">
+                                        <div class="task-section-title">🟡 In Progress</div>
+                                        <ul class="task-list">
+                                            <li class="task-item task-in-progress">
+                                                <span class="task-priority priority-high"></span>
+                                                <span>Define product roadmap for TrueFanTix Phase 4</span>
+                                            </li>
+                                            <li class="task-item task-in-progress">
+                                                <span class="task-priority priority-medium"></span>
+                                                <span>Review golf game monetization strategy</span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                    <div class="task-section">
+                                        <div class="task-section-title" style="color: var(--success);">✅ Completed</div>
+                                        <ul class="task-list">
+                                            <li class="task-item task-completed"><span>Company structure established</span></li>
+                                            <li class="task-item task-completed"><span>Initial project briefs created</span></li>
+                                            <li class="task-item task-completed"><span>AI budget framework set ($200/month)</span></li>
+                                        </ul>
+                                    </div>
+                                    <div class="task-section">
+                                        <div class="task-section-title" style="color: var(--warning);">⏸️ On Hold</div>
+                                        <ul class="task-list">
+                                            <li class="task-item task-on-hold"><span>Hire Marketing Director</span></li>
+                                            <li class="task-item task-on-hold"><span>Hire Finance Director</span></li>
+                                        </ul>
+                                    </div>
                                 </div>
                             </div>
+                            
                         </div>
-                        
                     </div>
+                    
                 </div>
-                
             </div>
+            
         </div>
-        
     </div>
     
-    <!-- Operations Budget Section (Bottom) -->
+    <!-- Operations Budget Section -->
     <div class="budget-section">
         <div class="budget-header">
             <span style="font-size: 2rem;">💳</span>
@@ -823,6 +97,81 @@
             <div class="budget-card">
                 <div class="budget-label">Remaining</div>
                 <div class="budget-value remaining">$187.55</div>
+            </div>
+        </div>
+        
+        <!-- Model Costs -->
+        <div class="model-costs">
+            <h3>📊 Estimated Costs by Model (per 1K tokens)</h3>
+            <div class="model-row">
+                <div class="model-name">
+                    <span class="model-dot free"></span>
+                    <div>
+                        <div>Moonshot Kimi</div>
+                        <div class="model-desc">Free tier - Primary</div>
+                    </div>
+                </div>
+                <span class="model-cost" style="color: var(--success);">FREE</span>
+            </div>
+            <div class="model-row">
+                <div class="model-name">
+                    <span class="model-dot cheap"></span>
+                    <div>
+                        <div>Gemini Flash</div>
+                        <div class="model-desc">Ultra-low latency</div>
+                    </div>
+                </div>
+                <span class="model-cost" style="color: #39d0d8;">$0.000125</span>
+            </div>
+            <div class="model-row">
+                <div class="model-name">
+                    <span class="model-dot cheap"></span>
+                    <div>
+                        <div>GPT-4o Mini</div>
+                        <div class="model-desc">Fast & capable</div>
+                    </div>
+                </div>
+                <span class="model-cost" style="color: #39d0d8;">$0.000150</span>
+            </div>
+            <div class="model-row">
+                <div class="model-name">
+                    <span class="model-dot cheap"></span>
+                    <div>
+                        <div>Claude Haiku</div>
+                        <div class="model-desc">Anthropic entry</div>
+                    </div>
+                </div>
+                <span class="model-cost" style="color: #39d0d8;">$0.000250</span>
+            </div>
+            <div class="model-row">
+                <div class="model-name">
+                    <span class="model-dot mid"></span>
+                    <div>
+                        <div>GPT-4o</div>
+                        <div class="model-desc">High quality</div>
+                    </div>
+                </div>
+                <span class="model-cost" style="color: var(--warning);">$0.002500</span>
+            </div>
+            <div class="model-row">
+                <div class="model-name">
+                    <span class="model-dot mid"></span>
+                    <div>
+                        <div>Claude Sonnet</div>
+                        <div class="model-desc">Premium reasoning</div>
+                    </div>
+                </div>
+                <span class="model-cost" style="color: var(--warning);">$0.003000</span>
+            </div>
+            <div class="model-row">
+                <div class="model-name">
+                    <span class="model-dot expensive"></span>
+                    <div>
+                        <div>Grok</div>
+                        <div class="model-desc">X AI - Fallback</div>
+                    </div>
+                </div>
+                <span class="model-cost" style="color: var(--highlight);">$0.005000</span>
             </div>
         </div>
         
@@ -853,8 +202,11 @@
     </div>
     
     <script>
-        function toggleExpand(element) {
-            element.classList.toggle('expanded');
+        function toggleSection(id) {
+            const element = document.getElementById(id);
+            if (element) {
+                element.classList.toggle('expanded');
+            }
         }
         
         // Set last updated time
@@ -862,11 +214,6 @@
             timeZone: 'America/Toronto',
             dateStyle: 'medium',
             timeStyle: 'short'
-        });
-        
-        // Auto-expand Development department on load
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelector('.department').classList.add('expanded');
         });
     </script>
 </body>
