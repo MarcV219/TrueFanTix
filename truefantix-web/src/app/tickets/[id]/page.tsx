@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Footer from "@/components/Footer";
+import TicketImage from "@/components/TicketImage";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 
@@ -17,7 +18,32 @@ async function getTicket(id: string) {
       event: true,
     },
   });
-  return ticket;
+  
+  // Serialize to plain object to avoid BigInt issues
+  if (!ticket) return null;
+  
+  return {
+    ...ticket,
+    id: String(ticket.id),
+    sellerId: String(ticket.sellerId),
+    seller: ticket.seller ? {
+      ...ticket.seller,
+      id: String(ticket.seller.id),
+      badges: ticket.seller.badges.map(b => ({
+        ...b,
+        id: String(b.id),
+        sellerId: String(b.sellerId)
+      }))
+    } : null,
+    event: ticket.event ? {
+      ...ticket.event,
+      id: String(ticket.event.id)
+    } : null,
+    priceCents: Number(ticket.priceCents),
+    faceValueCents: ticket.faceValueCents ? Number(ticket.faceValueCents) : null,
+    createdAt: ticket.createdAt.toISOString(),
+    updatedAt: ticket.updatedAt.toISOString(),
+  };
 }
 
 export default async function TicketDetailPage({ params }: TicketPageProps) {
@@ -81,11 +107,10 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
             {/* Ticket Image */}
             <div className="relative h-64 bg-gray-200 dark:bg-gray-700">
-              <img
+              <TicketImage
                 src={ticket.image || "/default.jpg"}
                 alt={ticket.title}
-                className="w-full h-full object-cover"
-                onError={(e) => { (e.target as HTMLImageElement).src = "/default.jpg"; }}
+                fallbackSrc="/default.jpg"
               />
               {/* Badges */}
               <div className="absolute top-4 left-4 flex flex-wrap gap-2">
@@ -191,7 +216,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                     {seller?.badges && seller.badges.length > 0 && (
                       <div className="flex flex-wrap gap-2 mb-4">
                         {seller.badges.map((badge: any) => (
-                          <span key={badge.name || badge} className="bg-[rgba(6,74,147,0.10)] text-[var(--tft-navy)] px-2 py-1 rounded-full text-sm">
+                          <span key={badge.id || badge.name || String(Math.random())} className="bg-[rgba(6,74,147,0.10)] text-[var(--tft-navy)] px-2 py-1 rounded-full text-sm">
                             {badge.name || badge}
                           </span>
                         ))}
