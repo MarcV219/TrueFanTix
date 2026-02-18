@@ -46,6 +46,10 @@ type TicketCard = {
   rating: number;
   reviews: number;
   priceTag: "Face Value" | "Below Face Value";
+  eventType: string;
+  eventTypeLabel: string;
+  isSoldOut: boolean;
+  placeholderImage: string;
 };
 
 // Forum API shapes (based on your /api/forum/threads GET)
@@ -106,6 +110,61 @@ function resolveTicketImageSrc(raw: unknown) {
 function computePriceTag(price: number, faceValue: number | null): TicketCard["priceTag"] {
   if (faceValue == null) return "Face Value";
   return price < faceValue ? "Below Face Value" : "Face Value";
+}
+
+function getEventType(title: string): { type: string; label: string; placeholder: string } {
+  const lower = title.toLowerCase();
+  
+  // Sports - specific types
+  if (lower.includes("basketball")) {
+    return { type: "sports-basketball", label: "Sports: Basketball", placeholder: "/basketball-placeholder.jpg" };
+  }
+  if (lower.includes("football") && !lower.includes("hockey")) {
+    return { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" };
+  }
+  if (lower.includes("hockey")) {
+    return { type: "sports-hockey", label: "Sports: Hockey", placeholder: "/hockey-placeholder.jpg" };
+  }
+  if (lower.includes("soccer")) {
+    return { type: "sports-soccer", label: "Sports: Soccer", placeholder: "/sports-placeholder.jpg" };
+  }
+  if (lower.includes("lacrosse")) {
+    return { type: "sports-lacrosse", label: "Sports: Lacrosse", placeholder: "/sports-placeholder.jpg" };
+  }
+  if (lower.includes("baseball")) {
+    return { type: "sports-baseball", label: "Sports: Baseball", placeholder: "/sports-placeholder.jpg" };
+  }
+  if (lower.match(/raptors|leafs|blue jays|sports|vs\.|game/)) {
+    return { type: "sports-other", label: "Sports: Other", placeholder: "/sports-placeholder.jpg" };
+  }
+  
+  // Other event types
+  if (lower.match(/taylor swift|drake|ed sheeran|weeknd|concert|tour|live music/)) {
+    return { type: "concert", label: "Concert", placeholder: "/concert-placeholder.jpg" };
+  }
+  if (lower.match(/hamilton|theatre|theater|broadway|play/)) {
+    return { type: "theatre", label: "Theatre", placeholder: "/theatre-placeholder.jpg" };
+  }
+  if (lower.match(/comedy|stand.up|comedian|funny/)) {
+    return { type: "comedy", label: "Comedy", placeholder: "/comedy-placeholder.jpg" };
+  }
+  if (lower.match(/conference|summit|convention/)) {
+    return { type: "conference", label: "Conference", placeholder: "/conference-placeholder.jpg" };
+  }
+  if (lower.match(/festival|music fest|coachella/)) {
+    return { type: "festival", label: "Festival", placeholder: "/festival-placeholder.jpg" };
+  }
+  if (lower.match(/gala|ball|charity dinner/)) {
+    return { type: "gala", label: "Gala", placeholder: "/gala-placeholder.jpg" };
+  }
+  if (lower.match(/opera|symphony|orchestra/)) {
+    return { type: "opera", label: "Opera", placeholder: "/opera-placeholder.jpg" };
+  }
+  if (lower.match(/workshop|seminar|class|training/)) {
+    return { type: "workshop", label: "Workshop", placeholder: "/workshop-placeholder.jpg" };
+  }
+  
+  return { type: "other", label: "Other", placeholder: "/default.jpg" };
 }
 
 function formatForumTime(iso: string | null | undefined) {
@@ -247,6 +306,8 @@ export default function Page() {
 
         const normalized: TicketCard[] = available.map((t) => {
           const seller = t.seller;
+          const eventTypeInfo = getEventType(t.title);
+          const isSoldOut = t.event?.selloutStatus === "SOLD_OUT" || false;
 
           return {
             id: t.id,
@@ -262,6 +323,10 @@ export default function Page() {
             rating: seller?.rating ?? 0,
             reviews: seller?.reviews ?? 0,
             priceTag: computePriceTag(Number(t.price ?? 0), t.faceValue ?? null),
+            eventType: eventTypeInfo.type,
+            eventTypeLabel: eventTypeInfo.label,
+            isSoldOut,
+            placeholderImage: eventTypeInfo.placeholder,
           };
         });
 
@@ -454,6 +519,10 @@ export default function Page() {
                           {ticket.priceTag}
                         </span>
                       </div>
+                      {/* Event Type */}
+                      <span className="absolute top-2 right-2 px-2 py-1 text-xs font-semibold rounded bg-gray-800 text-white">
+                        {ticket.eventTypeLabel}
+                      </span>
                     </div>
 
                     <div className="p-5 flex flex-col flex-1">
