@@ -3,6 +3,7 @@ import Footer from "@/components/Footer";
 import TicketImage from "@/components/TicketImage";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
+import { getTicketImage, getPlaceholderImage } from "@/lib/imageSearch";
 
 interface TicketPageProps {
   params: Promise<{ id: string }>;
@@ -46,6 +47,30 @@ async function getTicket(id: string) {
   };
 }
 
+function getEventTypeInfo(title: string) {
+  const lower = title.toLowerCase();
+  
+  if (lower.match(/raptors|basketball/)) return { type: "sports-basketball", label: "Sports: Basketball", class: "bg-orange-100 text-orange-800" };
+  if (lower.match(/leafs|hockey/)) return { type: "sports-hockey", label: "Sports: Hockey", class: "bg-blue-100 text-blue-800" };
+  if (lower.match(/blue jays|baseball/)) return { type: "sports-baseball", label: "Sports: Baseball", class: "bg-red-100 text-red-800" };
+  if (lower.includes("football") && !lower.includes("hockey")) return { type: "sports-football", label: "Sports: Football", class: "bg-brown-100 text-brown-800" };
+  if (lower.includes("soccer")) return { type: "sports-soccer", label: "Sports: Soccer", class: "bg-green-100 text-green-800" };
+  if (lower.includes("lacrosse")) return { type: "sports-lacrosse", label: "Sports: Lacrosse", class: "bg-purple-100 text-purple-800" };
+  if (lower.match(/argos|argonauts/)) return { type: "sports-football", label: "Sports: Football", class: "bg-brown-100 text-brown-800" };
+  if (lower.match(/tfc|toronto fc/)) return { type: "sports-soccer", label: "Sports: Soccer", class: "bg-green-100 text-green-800" };
+  if (lower.match(/sports|vs\.|game/)) return { type: "sports-other", label: "Sports: Other", class: "bg-blue-100 text-blue-800" };
+  if (lower.match(/comedy|stand.up/)) return { type: "comedy", label: "Comedy", class: "bg-yellow-100 text-yellow-800" };
+  if (lower.match(/concert|taylor|drake|sheeran|weeknd|adele|beyonce/)) return { type: "concert", label: "Concert", class: "bg-pink-100 text-pink-800" };
+  if (lower.includes("conference")) return { type: "conference", label: "Conference", class: "bg-indigo-100 text-indigo-800" };
+  if (lower.includes("festival")) return { type: "festival", label: "Festival", class: "bg-green-100 text-green-800" };
+  if (lower.includes("gala")) return { type: "gala", label: "Gala", class: "bg-purple-100 text-purple-800" };
+  if (lower.includes("opera")) return { type: "opera", label: "Opera", class: "bg-red-100 text-red-800" };
+  if (lower.match(/theatre|theater|hamilton/)) return { type: "theatre", label: "Theatre", class: "bg-amber-100 text-amber-800" };
+  if (lower.includes("workshop")) return { type: "workshop", label: "Workshop", class: "bg-teal-100 text-teal-800" };
+  
+  return { type: "other", label: "Other", class: "bg-gray-100 text-gray-800" };
+}
+
 export default async function TicketDetailPage({ params }: TicketPageProps) {
   const { id } = await params;
   const ticket = await getTicket(id);
@@ -64,26 +89,12 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   const isFaceValue = faceValue && price === faceValue;
   const isSoldOut = event?.selloutStatus === "SOLD_OUT";
 
-  // Determine event type from title
-  const titleLower = ticket.title.toLowerCase();
-  let eventType = "Other";
-  let eventTypeClass = "bg-gray-100 text-gray-800";
+  // Get event type info
+  const eventTypeInfo = getEventTypeInfo(ticket.title);
   
-  if (titleLower.includes("basketball")) { eventType = "Sports: Basketball"; eventTypeClass = "bg-orange-100 text-orange-800"; }
-  else if (titleLower.includes("football")) { eventType = "Sports: Football"; eventTypeClass = "bg-brown-100 text-brown-800"; }
-  else if (titleLower.includes("hockey")) { eventType = "Sports: Hockey"; eventTypeClass = "bg-blue-100 text-blue-800"; }
-  else if (titleLower.includes("soccer")) { eventType = "Sports: Soccer"; eventTypeClass = "bg-green-100 text-green-800"; }
-  else if (titleLower.includes("lacrosse")) { eventType = "Sports: Lacrosse"; eventTypeClass = "bg-purple-100 text-purple-800"; }
-  else if (titleLower.includes("baseball")) { eventType = "Sports: Baseball"; eventTypeClass = "bg-red-100 text-red-800"; }
-  else if (titleLower.match(/sports|vs\.|game/)) { eventType = "Sports: Other"; eventTypeClass = "bg-blue-100 text-blue-800"; }
-  else if (titleLower.includes("comedy")) { eventType = "Comedy"; eventTypeClass = "bg-yellow-100 text-yellow-800"; }
-  else if (titleLower.includes("concert") || titleLower.match(/taylor|drake|sheeran|weeknd/)) { eventType = "Concert"; eventTypeClass = "bg-pink-100 text-pink-800"; }
-  else if (titleLower.includes("conference")) { eventType = "Conference"; eventTypeClass = "bg-indigo-100 text-indigo-800"; }
-  else if (titleLower.includes("festival")) { eventType = "Festival"; eventTypeClass = "bg-green-100 text-green-800"; }
-  else if (titleLower.includes("gala")) { eventType = "Gala"; eventTypeClass = "bg-purple-100 text-purple-800"; }
-  else if (titleLower.includes("opera")) { eventType = "Opera"; eventTypeClass = "bg-red-100 text-red-800"; }
-  else if (titleLower.includes("theatre") || titleLower.includes("hamilton")) { eventType = "Theatre"; eventTypeClass = "bg-amber-100 text-amber-800"; }
-  else if (titleLower.includes("workshop")) { eventType = "Workshop"; eventTypeClass = "bg-teal-100 text-teal-800"; }
+  // Fetch dynamic image
+  const dynamicImage = await getTicketImage(ticket.title, eventTypeInfo.type);
+  const imageToShow = dynamicImage.startsWith("http") ? dynamicImage : getPlaceholderImage(eventTypeInfo.type);
 
   // Parse venue for location info
   const venueParts = ticket.venue.split(",").map(p => p.trim());
@@ -108,9 +119,9 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
             {/* Ticket Image */}
             <div className="relative h-64 bg-gray-200 dark:bg-gray-700">
               <TicketImage
-                src={ticket.image || "/default.jpg"}
+                src={imageToShow}
                 alt={ticket.title}
-                fallbackSrc="/default.jpg"
+                fallbackSrc={getPlaceholderImage(eventTypeInfo.type)}
               />
               {/* Badges */}
               <div className="absolute top-4 left-4 flex flex-wrap gap-2">
@@ -131,8 +142,8 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                 )}
               </div>
               <div className="absolute top-4 right-4">
-                <span className={`${eventTypeClass} px-3 py-1 rounded-full font-semibold text-sm`}>
-                  {eventType}
+                <span className={`${eventTypeInfo.class} px-3 py-1 rounded-full font-semibold text-sm`}>
+                  {eventTypeInfo.label}
                 </span>
               </div>
             </div>

@@ -131,6 +131,8 @@ type Ticket = {
   reviews: number;
   priceTag: string;
   isSoldOut: boolean;
+  dynamicImage?: string;
+  isImageLoading?: boolean;
 };
 
 export default function TicketsPage() {
@@ -188,6 +190,9 @@ export default function TicketsPage() {
         });
 
         setTickets(normalized);
+        
+        // Fetch dynamic images for tickets
+        fetchImagesForTickets(normalized);
       } catch (e: any) {
         setError(e?.message ?? "Failed to load tickets");
       } finally {
@@ -197,6 +202,32 @@ export default function TicketsPage() {
 
     fetchTickets();
   }, []);
+
+  // Fetch dynamic images for tickets
+  async function fetchImagesForTickets(ticketList: Ticket[]) {
+    const updatedTickets = [...ticketList];
+    
+    for (let i = 0; i < updatedTickets.length; i++) {
+      const ticket = updatedTickets[i];
+      
+      try {
+        const res = await fetch(
+          `/api/tickets/image?title=${encodeURIComponent(ticket.title)}&eventType=${encodeURIComponent(ticket.eventType)}`
+        );
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.imageUrl && !data.isPlaceholder) {
+            updatedTickets[i] = { ...ticket, dynamicImage: data.imageUrl };
+          }
+        }
+      } catch (e) {
+        // Silently fail and use placeholder
+      }
+    }
+    
+    setTickets(updatedTickets);
+  }
 
   const filteredTickets = React.useMemo(() => {
     return tickets.filter((ticket) => {
@@ -377,7 +408,7 @@ export default function TicketsPage() {
                 >
                   <div className="relative">
                     <img
-                      src={ticket.image}
+                      src={ticket.dynamicImage || ticket.placeholderImage || DEFAULT_IMAGE}
                       alt={ticket.title}
                       className="w-full h-48 object-cover"
                       onError={(e) => { (e.target as HTMLImageElement).src = ticket.placeholderImage || DEFAULT_IMAGE; }}

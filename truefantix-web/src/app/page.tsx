@@ -50,6 +50,7 @@ type TicketCard = {
   eventTypeLabel: string;
   isSoldOut: boolean;
   placeholderImage: string;
+  dynamicImage?: string;
 };
 
 // Forum API shapes (based on your /api/forum/threads GET)
@@ -340,6 +341,9 @@ export default function Page() {
         if (!alive) return;
         setAllTickets(normalized);
         setDisplayedTickets(normalized.slice(0, TICKETS_PER_PAGE));
+        
+        // Fetch dynamic images for tickets
+        fetchImagesForTickets(normalized);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message ?? "Unknown error");
@@ -347,6 +351,34 @@ export default function Page() {
         setDisplayedTickets([]);
       } finally {
         if (alive) setLoading(false);
+      }
+    }
+
+    async function fetchImagesForTickets(ticketList: TicketCard[]) {
+      const updatedTickets = [...ticketList];
+      
+      for (let i = 0; i < updatedTickets.length; i++) {
+        const ticket = updatedTickets[i];
+        
+        try {
+          const res = await fetch(
+            `/api/tickets/image?title=${encodeURIComponent(ticket.title)}&eventType=${encodeURIComponent(ticket.eventType)}`
+          );
+          
+          if (res.ok) {
+            const data = await res.json();
+            if (data.imageUrl && !data.isPlaceholder) {
+              updatedTickets[i] = { ...ticket, dynamicImage: data.imageUrl };
+            }
+          }
+        } catch (e) {
+          // Silently fail and use placeholder
+        }
+      }
+      
+      if (alive) {
+        setAllTickets(updatedTickets);
+        setDisplayedTickets(updatedTickets.slice(currentIndex, currentIndex + TICKETS_PER_PAGE));
       }
     }
 
@@ -498,7 +530,7 @@ export default function Page() {
                   >
                     <div className="relative">
                       <img
-                        src={ticket.image}
+                        src={ticket.dynamicImage || ticket.placeholderImage || DEFAULT_IMAGE}
                         alt={ticket.title}
                         className="rounded-t-xl object-cover w-full h-48"
                         loading="lazy"
