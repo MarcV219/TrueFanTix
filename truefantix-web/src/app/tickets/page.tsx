@@ -24,7 +24,8 @@ function resolveTicketImageSrc(raw: unknown) {
   return s;
 }
 
-function computePriceTag(price: number, faceValue: number | null): string {
+function computePriceTag(price: number, faceValue: number | null, isSoldOut: boolean = false): string {
+  if (isSoldOut) return "Face Value";
   if (faceValue == null) return "Face Value";
   return price < faceValue ? "Below Face Value" : "Face Value";
 }
@@ -45,15 +46,18 @@ function parseVenue(venue: string): { city: string; province: string; country: s
 function getEventType(title: string): { type: string; label: string; placeholder: string } {
   const lower = title.toLowerCase();
   
-  // Sports - specific types
-  if (lower.includes("basketball")) {
+  // Sports - specific team names first
+  if (lower.match(/raptors|basketball/)) {
     return { type: "sports-basketball", label: "Sports: Basketball", placeholder: "/basketball-placeholder.jpg" };
+  }
+  if (lower.match(/leafs|hockey/)) {
+    return { type: "sports-hockey", label: "Sports: Hockey", placeholder: "/hockey-placeholder.jpg" };
+  }
+  if (lower.match(/blue jays|baseball/)) {
+    return { type: "sports-baseball", label: "Sports: Baseball", placeholder: "/sports-placeholder.jpg" };
   }
   if (lower.includes("football") && !lower.includes("hockey")) {
     return { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" };
-  }
-  if (lower.includes("hockey")) {
-    return { type: "sports-hockey", label: "Sports: Hockey", placeholder: "/hockey-placeholder.jpg" };
   }
   if (lower.includes("soccer")) {
     return { type: "sports-soccer", label: "Sports: Soccer", placeholder: "/sports-placeholder.jpg" };
@@ -61,10 +65,13 @@ function getEventType(title: string): { type: string; label: string; placeholder
   if (lower.includes("lacrosse")) {
     return { type: "sports-lacrosse", label: "Sports: Lacrosse", placeholder: "/sports-placeholder.jpg" };
   }
-  if (lower.includes("baseball")) {
-    return { type: "sports-baseball", label: "Sports: Baseball", placeholder: "/sports-placeholder.jpg" };
+  if (lower.match(/argos|argonauts/)) {
+    return { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" };
   }
-  if (lower.match(/raptors|leafs|blue jays|sports|vs\.|game/)) {
+  if (lower.match(/tfc|toronto fc/)) {
+    return { type: "sports-soccer", label: "Sports: Soccer", placeholder: "/sports-placeholder.jpg" };
+  }
+  if (lower.match(/sports|vs\.|game/)) {
     return { type: "sports-other", label: "Sports: Other", placeholder: "/sports-placeholder.jpg" };
   }
   
@@ -175,7 +182,7 @@ export default function TicketsPage() {
             badges: t.seller?.badges ?? [],
             rating: t.seller?.rating ?? 0,
             reviews: t.seller?.reviews ?? 0,
-            priceTag: computePriceTag(Number(t.price ?? 0), t.faceValue ?? null),
+            priceTag: computePriceTag(Number(t.price ?? 0), t.faceValue ?? null, isSoldOut),
             isSoldOut,
           };
         });
