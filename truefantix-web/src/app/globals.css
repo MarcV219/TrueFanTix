@@ -1,0 +1,144 @@
+@import "tailwindcss";
+
+/* ================================
+   TrueFanTix Global Theme Tokens
+   ================================ */
+
+:root {
+  /* Core brand colors */
+  --tft-navy: #064a93;
+  --tft-navy-dark: #0b2e4e;
+  --tft-teal: #14c3e4;
+  --tft-teal-dark: #0fa8c4;
+
+  /* Neutral UI colors */
+  --background: #ffffff;
+  --foreground: #0b2e4e;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+
+  /* Semantic tokens */
+  --primary: var(--tft-navy);
+  --primary-foreground: #ffffff;
+
+  --accent: var(--tft-teal);
+  --accent-foreground: #ffffff;
+
+  --focus-ring: rgba(20, 195, 228, 0.45);
+}
+
+/* Tailwind theme bridge */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ================================
+   Dark Mode
+   ================================ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0f1a;
+    --foreground: #e6edf5;
+    --muted: #9ca3af;
+    --border: #1f2937;
+
+    --primary: #3b82f6; /* softened navy for dark mode */
+    --accent: #22d3ee;
+    --focus-ring: rgba(34, 211, 238, 0.55);
+  }
+}
+
+/* ================================
+   Base Styles
+   ================================ */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ================================
+   Links
+   ================================ */
+a {
+  color: var(--tft-teal);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* ================================
+   Buttons (global baseline)
+   ================================ */
+button {
+  font-family: inherit;
+  border-radius: 0.5rem;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+/* Primary button */
+.button-primary {
+  background: var(--tft-navy);
+  color: #ffffff;
+}
+
+.button-primary:hover {
+  background: var(--tft-navy-dark);
+}
+
+/* Secondary / accent button */
+.button-accent {
+  background: var(--tft-teal);
+  color: #ffffff;
+}
+
+.button-accent:hover {
+  background: var(--tft-teal-dark);
+}
+
+/* ================================
+   Focus & Accessibility
+   ================================ */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ================================
+   Headings
+   ================================ */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--tft-navy);
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: #e6edf5;
+  }
+}

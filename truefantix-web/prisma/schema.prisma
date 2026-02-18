@@ -1,0 +1,603 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  // url is no longer allowed in Prisma 7 schema files (you provide it via prisma.config.ts / env at runtime)
+}
+
+enum TicketStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  WITHDRAWN
+}
+
+enum OrderStatus {
+  PENDING    // order created/reservation started
+  PAID       // payment captured/confirmed
+  DELIVERED  // ticket transfer confirmed
+  COMPLETED  // PAID + DELIVERED (final)
+  CANCELLED
+  REFUNDED
+  FAILED
+}
+
+enum CreditTxType {
+  EARNED      // seller earned credits (e.g., from sale)
+  SPENT       // seller spent credits (boosts/fees/etc.)
+  HELD        // credits reserved (e.g., pending payout)
+  RELEASED    // hold released (cancel/failed payout)
+  WITHDRAWN   // payout completed (credits converted/consumed)
+  ADJUSTMENT  // system/admin adjustment
+  REVERSAL    // reversal/chargeback/refund related
+}
+
+enum CreditTxSource {
+  SOLD_OUT_PURCHASE
+  ADMIN
+  REFUND
+  UNKNOWN
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELED
+}
+
+enum PaymentStatus {
+  REQUIRES_PAYMENT
+  SUCCEEDED
+  FAILED
+  CANCELED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum EventSelloutStatus {
+  NOT_SOLD_OUT
+  SOLD_OUT
+}
+
+/**
+ * Account-level RBAC.
+ * Most people are USER. ADMIN is for back-office moderation/disputes/etc.
+ */
+enum UserRole {
+  USER
+  ADMIN
+}
+
+/**
+ * Seller verification lifecycle (for the linked Seller record).
+ */
+enum SellerVerificationStatus {
+  NOT_STARTED
+  PENDING
+  APPROVED
+  SUSPENDED
+  REJECTED
+}
+
+/**
+ * Forum moderation state for threads/posts.
+ */
+enum ForumVisibility {
+  VISIBLE
+  HIDDEN
+  DELETED
+}
+
+/**
+ * Simple topic type for threads (optional, helps filtering later).
+ */
+enum ForumTopicType {
+  ARTIST
+  TEAM
+  SHOW
+  OTHER
+}
+
+/**
+ * Verification flows.
+ */
+enum VerificationKind {
+  EMAIL
+  PHONE
+}
+
+model User {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  lastLoginAt  DateTime?
+
+  // Auth / login
+  email           String   @unique
+  passwordHash    String
+  emailVerifiedAt DateTime?
+
+  // Identity (basic)
+  firstName    String
+  lastName     String
+
+  // Community display identity
+  displayName  String?
+
+  // Contact (REQUIRED)
+  phone           String   @unique
+  phoneVerifiedAt DateTime?
+
+  // Address / location (REQUIRED) - used for merch shipping + "near me" notifications
+  streetAddress1 String
+  streetAddress2 String?
+  city           String
+  region         String   // e.g., "ON", "NY"
+  postalCode     String
+  country        String   // e.g., "CA", "US"
+
+  // Capabilities (simple gating)
+  canBuy       Boolean  @default(true)
+  canComment   Boolean  @default(true)
+  canSell      Boolean  @default(false) // typically set true when Seller.status becomes APPROVED
+
+  // Legal acceptance (versioned)
+  termsAcceptedAt   DateTime?
+  termsVersion      String?
+  privacyAcceptedAt DateTime?
+  privacyVersion    String?
+
+  // Moderation / safety controls
+  isBanned     Boolean @default(false)
+  banReason    String?
+
+  // Admin / staff role
+  role         UserRole @default(USER)
+
+  // Link to a Seller record (only if the user has started seller onboarding)
+  sellerId     String?  @unique
+  seller       Seller?  @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+
+  // Sessions (login persistence)
+  sessions     Session[]
+
+  // Community (ticket/event comments - optional)
+  comments     CommunityComment[]
+
+  // Public forum
+  forumThreads ForumThread[] @relation("ForumThreadsByAuthor")
+  forumPosts   ForumPost[]   @relation("ForumPostsByAuthor")
+
+  // Verification codes
+  verificationCodes VerificationCode[]
+
+  @@index([role])
+  @@index([createdAt])
+  @@index([country, region, city])
+  @@index([postalCode])
+}
+
+model Seller {
+  id      String @id @default(cuid())
+  name    String
+  rating  Float  @default(0)
+  reviews Int    @default(0)
+
+  // Credits stored as integer counts (NOT dollars)
+  creditBalanceCredits Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /**
+   * Verification / lifecycle
+   * (Used to gate selling + holds + disputes)
+   */
+  status          SellerVerificationStatus @default(NOT_STARTED)
+  statusUpdatedAt DateTime?
+  statusReason    String?
+
+  /**
+   * Optional legal identity (kept private)
+   * You may choose to rely entirely on Stripe verification and not store DOB here.
+   */
+  legalFirstName String?
+  legalLastName  String?
+  dateOfBirth    DateTime?
+
+  /**
+   * Stripe Connect fields (placeholders for later implementation)
+   */
+  stripeAccountId        String?  @unique
+  stripeDetailsSubmitted Boolean  @default(false)
+  stripeChargesEnabled   Boolean  @default(false)
+  stripePayoutsEnabled   Boolean  @default(false)
+
+  /**
+   * Safety controls
+   */
+  payoutHold       Boolean @default(false)
+  payoutHoldReason String?
+
+  // Marketplace relations
+  tickets            Ticket[]
+  badges             SellerBadge[]
+  creditTransactions CreditTransaction[]
+  orders             Order[]
+  buyerOrders        Order[] @relation("BuyerOrders")
+
+  payouts  Payout[]
+  metrics  SellerMetrics?
+  user     User?
+
+  @@index([createdAt])
+  @@index([status])
+}
+
+model SellerMetrics {
+  sellerId String @id
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  lifetimeSalesCents  Int @default(0)
+  lifetimeOrders      Int @default(0)
+  lifetimeTicketsSold Int @default(0)
+
+  updatedAt DateTime @updatedAt
+}
+
+model SellerBadge {
+  id       String @id @default(cuid())
+  name     String
+  sellerId String
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@unique([sellerId, name])
+  @@index([sellerId])
+}
+
+model Ticket {
+  id    String @id @default(cuid())
+  title String
+
+  // price stored as integer cents
+  priceCents     Int
+  faceValueCents Int?
+
+  image String
+  venue String
+
+  // Seating information
+  row  String?
+  seat String?
+
+  eventId String?
+  event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  // Keep as String for now to avoid breaking current input format.
+  date String
+
+  status TicketStatus @default(AVAILABLE)
+
+  // Reservation fields
+  reservedUntil     DateTime?
+  reservedByOrderId String?
+
+  soldAt      DateTime?
+  withdrawnAt DateTime?
+
+  viewCount    Int       @default(0)
+  lastViewedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sellerId String
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  // A ticket can appear in many OrderItems over time (retries/history)
+  orderItems OrderItem[]
+
+  creditTransactions CreditTransaction[]
+
+  // Community comments (optional)
+  comments CommunityComment[]
+
+  @@index([sellerId, status, createdAt])
+  @@index([eventId])
+}
+
+model Order {
+  id String @id @default(cuid())
+
+  // MVP constraint: one order = one seller (enforced in code when creating OrderItems)
+  sellerId      String
+  buyerSellerId String
+
+  status         OrderStatus @default(PENDING)
+  idempotencyKey String?     @unique
+
+  // Money totals for the whole order (sum of items)
+  amountCents   Int
+  adminFeeCents Int
+  totalCents    Int
+
+  createdAt DateTime @default(now())
+
+  seller      Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  buyerSeller Seller @relation("BuyerOrders", fields: [buyerSellerId], references: [id], onDelete: Cascade)
+
+  items   OrderItem[]
+  payment Payment?
+
+  creditTransactions CreditTransaction[]
+
+  @@index([sellerId, createdAt])
+  @@index([buyerSellerId, createdAt])
+  @@index([status, createdAt])
+
+  @@map("Order")
+}
+
+model OrderItem {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // Ticket reference (double-selling is enforced by Ticket.status + reservation fields)
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  // Snapshot pricing (so future ticket edits don't affect historical orders)
+  priceCents     Int
+  faceValueCents Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([ticketId])
+}
+
+model CreditTransaction {
+  id       String @id @default(cuid())
+  sellerId String
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  type          CreditTxType
+  amountCredits Int @default(0)
+
+  // ✅ Make source required so compound unique is reliable (no NULL weakening)
+  source CreditTxSource @default(UNKNOWN)
+
+  // Recommended: populate this for every txn (routes now do this for SOLD_OUT_PURCHASE).
+  // Keep nullable for now to avoid forcing a migration/backfill immediately.
+  balanceAfterCredits Int?
+
+  note String?
+
+  referenceType String?
+  referenceId   String?
+
+  ticketId String?
+  ticket   Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  orderId String?
+  order   Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  payoutId String?
+  payout   Payout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([sellerId, createdAt])
+  @@index([type, createdAt])
+  @@index([source, createdAt])
+  @@index([orderId])
+  @@index([payoutId])
+  @@index([ticketId])
+
+  // Prevent duplicate credit awards/spends per ticket per order
+  @@unique([orderId, ticketId, sellerId, type, source], name: "uniq_credit_per_ticket_reason")
+}
+
+model Payout {
+  id       String @id @default(cuid())
+  sellerId String
+  seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  creditTransactions CreditTransaction[]
+
+  amountCents Int
+  feeCents    Int @default(0)
+  netCents    Int
+
+  status PayoutStatus @default(PENDING)
+
+  provider    String?
+  providerRef String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerId, createdAt])
+  @@index([status, createdAt])
+}
+
+model Payment {
+  id      String @id @default(cuid())
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  amountCents Int
+  currency    String        @default("CAD")
+  status      PaymentStatus @default(REQUIRES_PAYMENT)
+
+  provider    String
+  providerRef String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Event {
+  id    String @id @default(cuid())
+  title String
+  venue String?
+  date  String?
+
+  selloutStatus EventSelloutStatus @default(NOT_SOLD_OUT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tickets Ticket[]
+
+  // Community comments (optional)
+  comments CommunityComment[]
+
+  @@index([selloutStatus])
+}
+
+model CommunityComment {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Author
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Content
+  body String
+
+  // Optional associations
+  ticketId String?
+  ticket   Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  eventId String?
+  event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  // Replies (self relation)
+  parentId String?
+  parent   CommunityComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  CommunityComment[] @relation("CommentReplies")
+
+  // Moderation / safety
+  isDeleted     Boolean  @default(false)
+  deletedAt     DateTime?
+  deletedReason String?
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([ticketId, createdAt])
+  @@index([eventId, createdAt])
+  @@index([parentId, createdAt])
+}
+
+model ForumThread {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  title String
+
+  // Topic metadata (simple MVP filtering/search)
+  topicType ForumTopicType @default(OTHER)
+  topic     String?
+
+  // Author
+  authorUserId String
+  author       User @relation("ForumThreadsByAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  // Moderation
+  visibility        ForumVisibility @default(VISIBLE)
+  visibilityReason  String?
+
+  isLocked     Boolean @default(false)
+  lockedAt     DateTime?
+  lockedReason String?
+
+  posts ForumPost[]
+
+  @@index([createdAt])
+  @@index([topicType, createdAt])
+  @@index([topic, createdAt])
+  @@index([visibility, createdAt])
+  @@index([authorUserId, createdAt])
+}
+
+model ForumPost {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  threadId String
+  thread   ForumThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  authorUserId String
+  author       User @relation("ForumPostsByAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  body String
+
+  // Replies (self relation)
+  parentId String?
+  parent   ForumPost?  @relation("ForumPostReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  ForumPost[] @relation("ForumPostReplies")
+
+  // Moderation
+  visibility        ForumVisibility @default(VISIBLE)
+  visibilityReason  String?
+
+  @@index([threadId, createdAt])
+  @@index([parentId, createdAt])
+  @@index([authorUserId, createdAt])
+  @@index([visibility, createdAt])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+/**
+ * Stores hashed one-time verification codes for email/phone.
+ * We store only a hash of the code (like sessions) so a leaked DB doesn't expose codes.
+ */
+model VerificationCode {
+  id        String           @id @default(cuid())
+  createdAt DateTime         @default(now())
+
+  userId String
+  user   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind   VerificationKind
+  // Snapshot of where we sent it (email or phone at the time)
+  destination String
+
+  // sha256(VERIFICATION_SECRET + code)
+  codeHash  String
+
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  // rate-limit + brute-force controls
+  sendCount    Int @default(0)
+  attemptCount Int @default(0)
+  lastSentAt   DateTime?
+
+  @@index([userId, kind, createdAt])
+  @@index([expiresAt])
+  @@index([kind])
+}
