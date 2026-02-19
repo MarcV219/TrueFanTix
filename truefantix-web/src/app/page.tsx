@@ -530,7 +530,7 @@ export default function Page() {
                   >
                     <div className="relative">
                       <img
-                        src={ticket.dynamicImage || ticket.placeholderImage || DEFAULT_IMAGE}
+                        src={`${ticket.dynamicImage || ticket.placeholderImage || DEFAULT_IMAGE}?v=2`}
                         alt={ticket.title}
                         className="rounded-t-xl object-cover w-full h-48"
                         loading="lazy"
