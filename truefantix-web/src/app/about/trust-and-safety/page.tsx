@@ -10,10 +10,10 @@ export default function TrustAndSafetyPage() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       {/* Hero */}
-      <section className="bg-[var(--tft-navy)] text-white py-16">
+      <section className="bg-[#064a93] text-white py-16">
         <div className="max-w-4xl mx-auto px-4 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">Trust & Safety</h1>
-          <p className="text-xl text-gray-300">
+          <h1 className="text-4xl md:text-5xl font-bold mb-4 text-white">Trust & Safety</h1>
+          <p className="text-xl text-gray-100">
             Trust is built into the platform
           </p>
         </div>
