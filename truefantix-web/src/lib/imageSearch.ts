@@ -23,57 +23,164 @@ const PLACEHOLDER_IMAGES: Record<string, string> = {
 // Cache for fetched images
 const imageCache = new Map<string, string>();
 
+// Sites that typically block hotlinking or require authentication
+const BLOCKED_DOMAINS = [
+  'gettyimages.com',
+  'gettyimages.ca',
+  'istockphoto.com',
+  'shutterstock.com',
+  'alamy.com',
+  'dreamstime.com',
+  'depositphotos.com',
+  '123rf.com',
+  'bigstockphoto.com',
+  'canstockphoto.com',
+  'agefotostock.com',
+  'pond5.com',
+  'clipartof.com',
+  'vecteezy.com',
+  'freepik.com',
+  'adobe.com/stock',
+  'facebook.com',
+  'fbcdn.net',
+  'instagram.com',
+  'cdninstagram.com',
+];
+
+// Sites that generally work well for hotlinking
+const RELIABLE_DOMAINS = [
+  'wikipedia.org',
+  'wikimedia.org',
+  'upload.wikimedia.org',
+  'amazon.com',
+  'm.media-amazon.com',
+  'imdb.com',
+  'espn.com',
+  'nba.com',
+  'nhl.com',
+  'mlb.com',
+  'nfl.com',
+  'fifa.com',
+  'last.fm',
+  'ticketmaster.com',
+  'stubhub.com',
+  'eventbrite.com',
+  'songkick.com',
+  'bandsintown.com',
+  'spotify.com',
+  'soundcloud.com',
+  'youtube.com',
+  'ytimg.com',
+  'vimeo.com',
+  'dailymotion.com',
+  'reddit.com',
+  'redd.it',
+  'imgur.com',
+  'i.imgur.com',
+  'cloudfront.net',
+  'akamaized.net',
+  'pinimg.com',
+  'twimg.com',
+  'wikia.com',
+  'fandom.com',
+  'static.wikia.nocookie.net',
+  ' billboard.com',
+  'rollingstone.com',
+  'pitchfork.com',
+  'consequenceofsound.net',
+  'stereogum.com',
+  'nme.com',
+  'kerrang.com',
+  'mtv.com',
+  'vh1.com',
+  'bet.com',
+  'complex.com',
+  'hotnewhiphop.com',
+  'xxlmag.com',
+  'thefader.com',
+  'pigeonsandplanes.com',
+  'genius.com',
+  'lyrics.com',
+  'allmusic.com',
+  'discogs.com',
+  'musicbrainz.org',
+];
+
 /**
  * Get image search query based on ticket title and event type
- * Uses more specific terms to avoid paparazzi/old photos
  */
 function getImageSearchQuery(title: string, eventType: string): string {
   const lower = title.toLowerCase();
   
-  // Specific artists/performers with better search terms
-  if (lower.includes('taylor swift')) return 'Taylor Swift official promo photo';
-  if (lower.includes('drake')) return 'Drake artist official photo';
-  if (lower.includes('ed sheeran')) return 'Ed Sheeran official press photo';
-  if (lower.includes('weeknd')) return 'The Weeknd official artist photo';
-  if (lower.includes('adele')) return 'Adele singer official photo';
-  if (lower.includes('beyoncé') || lower.includes('beyonce')) return 'Beyoncé official photo';
+  // Extract main artist/performer name from title
+  // Remove common suffixes like "- Upper Level", "vs Lakers", etc.
+  let mainName = title;
   
-  // Sports teams - official logos/current
-  if (lower.includes('raptors')) return 'Toronto Raptors logo';
-  if (lower.includes('leafs')) return 'Toronto Maple Leafs logo';
-  if (lower.includes('blue jays')) return 'Toronto Blue Jays logo';
-  if (lower.includes('argonauts') || lower.includes('argos')) return 'Toronto Argonauts logo';
-  if (lower.includes('tfc') || lower.includes('toronto fc')) return 'Toronto FC logo';
+  // Remove ticket tier info
+  mainName = mainName.replace(/\s*-\s*(Upper|Lower|Floor|VIP|Club|Mezzanine|Balcony|Orchestra).*/i, '');
+  mainName = mainName.replace(/\s*-\s*\d+\s*(Level|Row|Seat).*/i, '');
+  mainName = mainName.replace(/\s*vs\s+.*/i, '');
+  
+  // Specific artists - use simpler queries that work better
+  if (lower.includes('taylor swift')) return 'Taylor Swift';
+  if (lower.includes('drake')) return 'Drake musician';
+  if (lower.includes('ed sheeran')) return 'Ed Sheeran';
+  if (lower.includes('weeknd')) return 'The Weeknd';
+  if (lower.includes('adele')) return 'Adele';
+  if (lower.includes('beyoncé') || lower.includes('beyonce')) return 'Beyoncé';
+  
+  // Sports teams
+  if (lower.includes('raptors')) return 'Toronto Raptors';
+  if (lower.includes('leafs')) return 'Toronto Maple Leafs';
+  if (lower.includes('blue jays')) return 'Toronto Blue Jays';
+  if (lower.includes('argonauts') || lower.includes('argos')) return 'Toronto Argonauts';
+  if (lower.includes('tfc') || lower.includes('toronto fc')) return 'Toronto FC';
   
   // Theatre shows
-  if (lower.includes('hamilton')) return 'Hamilton musical official poster';
-  if (lower.includes('lion king')) return 'Lion King musical official';
-  if (lower.includes('wicked')) return 'Wicked musical official poster';
+  if (lower.includes('hamilton')) return 'Hamilton musical';
+  if (lower.includes('lion king')) return 'Lion King musical';
+  if (lower.includes('wicked')) return 'Wicked musical';
   if (lower.includes('mamma mia')) return 'Mamma Mia musical';
   
   // Comedy
-  if (lower.includes('dave chappelle')) return 'Dave Chappelle comedian official';
-  if (lower.includes('kevin hart')) return 'Kevin Hart comedian official';
-  if (lower.includes('john mulaney')) return 'John Mulaney comedian';
-  if (lower.includes('ali wong')) return 'Ali Wong comedian';
-  if (lower.includes('jim gaffigan')) return 'Jim Gaffigan comedian';
+  if (lower.includes('dave chappelle')) return 'Dave Chappelle';
+  if (lower.includes('kevin hart')) return 'Kevin Hart';
+  if (lower.includes('john mulaney')) return 'John Mulaney';
+  if (lower.includes('ali wong')) return 'Ali Wong';
+  if (lower.includes('jim gaffigan')) return 'Jim Gaffigan';
   
   // Opera
   if (lower.includes('la bohème') || lower.includes('boheme')) return 'La Bohème opera';
   if (lower.includes('magic flute')) return 'Magic Flute opera';
   if (lower.includes('carmen')) return 'Carmen opera';
   
-  // Generic based on event type with quality filters
-  if (eventType.includes('basketball')) return 'basketball game arena sports';
-  if (eventType.includes('hockey')) return 'ice hockey game arena NHL';
-  if (eventType.includes('baseball')) return 'baseball stadium MLB game';
-  if (eventType.includes('football')) return 'football stadium game';
-  if (eventType.includes('soccer')) return 'soccer football stadium match';
-  if (eventType.includes('concert')) return 'concert stage lights performance';
-  if (eventType.includes('theatre')) return 'theatre stage performance curtain';
-  if (eventType.includes('comedy')) return 'comedy show stage microphone';
+  // Generic based on event type
+  if (eventType.includes('basketball')) return 'basketball';
+  if (eventType.includes('hockey')) return 'hockey';
+  if (eventType.includes('baseball')) return 'baseball';
+  if (eventType.includes('football')) return 'football';
+  if (eventType.includes('soccer')) return 'soccer';
+  if (eventType.includes('concert')) return 'concert';
+  if (eventType.includes('theatre')) return 'theatre';
+  if (eventType.includes('comedy')) return 'comedy';
   
-  return title;
+  return mainName.trim();
+}
+
+/**
+ * Check if URL is from a blocked domain
+ */
+function isBlockedUrl(url: string): boolean {
+  const lowerUrl = url.toLowerCase();
+  return BLOCKED_DOMAINS.some(domain => lowerUrl.includes(domain));
+}
+
+/**
+ * Check if URL is from a reliable domain
+ */
+function isReliableUrl(url: string): boolean {
+  const lowerUrl = url.toLowerCase();
+  return RELIABLE_DOMAINS.some(domain => lowerUrl.includes(domain));
 }
 
 /**
@@ -88,7 +195,7 @@ async function searchImages(query: string): Promise<string[]> {
     }
     
     const response = await fetch(
-      `https://api.search.brave.com/res/v1/images/search?q=${encodeURIComponent(query)}&count=10`,
+      `https://api.search.brave.com/res/v1/images/search?q=${encodeURIComponent(query)}&count=20`,
       {
         headers: {
           'Accept': 'application/json',
@@ -105,25 +212,34 @@ async function searchImages(query: string): Promise<string[]> {
     const data = await response.json();
     const results = data.results || [];
     
-    // Filter and return image URLs
-    // Prioritize certain domains for quality
-    const priorityDomains = ['wikipedia.org', 'wikimedia.org', 'espn.com', 'nba.com', 'nhl.com', 'mlb.com'];
-    
-    const filtered = results
-      .filter((r: any) => {
-        const url = (r.properties?.url || r.thumbnail?.src || '').toLowerCase();
-        // Skip paparazzi sites, fan sites with poor quality
+    // Filter and score image URLs
+    const scored = results
+      .map((r: any) => {
+        const url = r.properties?.url || r.thumbnail?.src || '';
+        const lowerUrl = url.toLowerCase();
+        
+        // Skip blocked domains
+        if (isBlockedUrl(url)) return null;
+        
+        // Skip paparazzi/gossip sites
         const skipDomains = ['perez', 'tmz', 'justjared', 'popsugar', 'gossip', 'paparazzi'];
-        return !skipDomains.some(d => url.includes(d));
+        if (skipDomains.some(d => lowerUrl.includes(d))) return null;
+        
+        // Score the URL
+        let score = 0;
+        if (isReliableUrl(url)) score += 10;
+        if (url.includes('wikipedia.org') || url.includes('wikimedia.org')) score += 5;
+        if (url.includes('amazon.com') || url.includes('imdb.com')) score += 3;
+        
+        // Prefer HTTPS
+        if (url.startsWith('https://')) score += 1;
+        
+        return { url, score };
       })
-      .map((r: any) => ({
-        url: r.properties?.url || r.thumbnail?.src,
-        priority: priorityDomains.some(d => (r.properties?.url || '').includes(d)) ? 1 : 0
-      }))
-      .filter((item: any) => item.url && item.url.startsWith('http'))
-      .sort((a: any, b: any) => b.priority - a.priority);
+      .filter((item: any) => item !== null && item.url && item.url.startsWith('http'))
+      .sort((a: any, b: any) => b.score - a.score);
     
-    return filtered.map((item: any) => item.url);
+    return scored.map((item: any) => item.url);
   } catch (error) {
     console.error('Image search error:', error);
     return [];
@@ -149,7 +265,7 @@ export async function getTicketImage(
   const imageUrls = await searchImages(query);
   
   if (imageUrls.length > 0) {
-    // Use first result and cache it
+    // Use first (highest scored) result and cache it
     imageCache.set(cacheKey, imageUrls[0]);
     return imageUrls[0];
   }
@@ -165,4 +281,16 @@ export async function getTicketImage(
  */
 export function getPlaceholderImage(eventType: string): string {
   return PLACEHOLDER_IMAGES[eventType] || '/default.jpg';
+}
+
+/**
+ * Validate if an image URL is likely to work (not blocked)
+ */
+export async function validateImageUrl(url: string): Promise<boolean> {
+  if (!url || url.startsWith('/')) return true; // Local images always work
+  
+  // Skip validation for known blocked domains
+  if (isBlockedUrl(url)) return false;
+  
+  return true;
 }
