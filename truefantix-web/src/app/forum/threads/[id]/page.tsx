@@ -136,17 +136,17 @@ export default async function ThreadPage({
           </div>
         )}
 
-        {posts.length === 0 ? (
-          <p className="text-gray-600 dark:text-gray-400">No posts yet.</p>
-        ) : (
-          <ThreadRepliesClient
-            threadId={thread.id}
-            isLocked={thread.isLocked}
-            posts={posts}
-            viewerIsModerator={viewerIsModerator}
-            isLoggedIn={isLoggedIn}
-          />
+        {posts.length === 0 && (
+          <p className="text-gray-600 dark:text-gray-400 mb-6">No posts yet. Be the first to reply!</p>
         )}
+        
+        <ThreadRepliesClient
+          threadId={thread.id}
+          isLocked={thread.isLocked}
+          posts={posts}
+          viewerIsModerator={viewerIsModerator}
+          isLoggedIn={isLoggedIn}
+        />
       </main>
     </div>
   );
