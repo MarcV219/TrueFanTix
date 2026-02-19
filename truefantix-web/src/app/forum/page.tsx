@@ -111,8 +111,8 @@ export default async function ForumPage() {
           <ul className="space-y-4">
             {threads.map((thread: any) => {
               const authorName =
-                thread.author?.displayName ??
-                `${thread.author?.firstName ?? ''} ${thread.author?.lastName ?? ''}`.trim() ||
+                (thread.author?.displayName) ||
+                (`${thread.author?.firstName ?? ''} ${thread.author?.lastName ?? ''}`.trim()) ||
                 'Unknown';
 
               return (
