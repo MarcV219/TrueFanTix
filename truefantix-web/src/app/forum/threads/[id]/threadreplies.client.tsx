@@ -27,6 +27,7 @@ type Props = {
   isLocked: boolean;
   posts: ForumPost[];
   viewerIsModerator: boolean;
+  isLoggedIn: boolean;
   indentPx?: number; // default 18
   maxDepth?: number; // default 6
 };
@@ -282,6 +283,7 @@ export default function ThreadRepliesClient({
   isLocked,
   posts,
   viewerIsModerator,
+  isLoggedIn,
   indentPx = 18,
   maxDepth = 6,
 }: Props) {
@@ -391,7 +393,7 @@ export default function ThreadRepliesClient({
     const isHidden = String(node.visibility).toUpperCase() === "HIDDEN";
     const isReplyingHere = replyToId === node.id;
 
-    const canReply = !isLocked && (!isHidden || viewerIsModerator);
+    const canReply = isLoggedIn && !isLocked && (!isHidden || viewerIsModerator);
     const showReplyAction = !isHidden || viewerIsModerator; // ✅ key change (public cannot reply to hidden)
 
     return (
@@ -438,22 +440,35 @@ export default function ThreadRepliesClient({
           <div style={{ marginTop: "0.5rem", display: "flex", gap: 12, alignItems: "center" }}>
             {/* Reply (hidden from public if the post is hidden) */}
             {showReplyAction && (
-              <button
-                type="button"
-                onClick={() => toggleReply(node)}
-                disabled={!canReply}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: 0,
-                  cursor: canReply ? "pointer" : "not-allowed",
-                  color: canReply ? "#111" : "#999",
-                  textDecoration: "underline",
-                  fontSize: "0.85rem",
-                }}
-              >
-                {isReplyingHere ? "Close" : "Reply"}
-              </button>
+              isLoggedIn ? (
+                <button
+                  type="button"
+                  onClick={() => toggleReply(node)}
+                  disabled={!canReply}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    cursor: canReply ? "pointer" : "not-allowed",
+                    color: canReply ? "#111" : "#999",
+                    textDecoration: "underline",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  {isReplyingHere ? "Close" : "Reply"}
+                </button>
+              ) : (
+                <a
+                  href="/login"
+                  style={{
+                    color: "#0066cc",
+                    textDecoration: "underline",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  Sign in to reply
+                </a>
+              )
             )}
 
             {isLocked && <span style={{ fontSize: "0.85rem", color: "#999" }}>Locked</span>}
@@ -553,79 +568,89 @@ export default function ThreadRepliesClient({
           borderTop: "1px solid #eee",
         }}
       >
-        <div style={{ fontSize: "1rem", fontWeight: 650, color: "#111" }}>
-          Add a reply to this thread
-        </div>
-
-        {isLocked && (
-          <div style={{ marginTop: "0.5rem", color: "#999", fontSize: "0.9rem" }}>
-            This thread is locked.
+        {!isLoggedIn ? (
+          <div style={{ padding: "1rem", background: "#f5f5f5", borderRadius: 8, textAlign: "center" }}>
+            <p style={{ margin: 0, color: "#666" }}>
+              Please <a href="/login" style={{ color: "#0066cc", textDecoration: "underline" }}>sign in</a> to reply to this thread.
+            </p>
           </div>
+        ) : (
+          <>
+            <div style={{ fontSize: "1rem", fontWeight: 650, color: "#111" }}>
+              Add a reply to this thread
+            </div>
+
+            {isLocked && (
+              <div style={{ marginTop: "0.5rem", color: "#999", fontSize: "0.9rem" }}>
+                This thread is locked.
+              </div>
+            )}
+
+            <textarea
+              value={topBody}
+              onChange={(e) => setTopBody(e.target.value)}
+              rows={4}
+              placeholder="Write a new post…"
+              disabled={isLocked}
+              style={{
+                width: "100%",
+                marginTop: "0.75rem",
+                padding: "0.7rem 0.8rem",
+                borderRadius: 12,
+                border: "1px solid #ddd",
+                resize: "vertical",
+                fontFamily: "inherit",
+                fontSize: "0.95rem",
+                opacity: isLocked ? 0.7 : 1,
+              }}
+            />
+
+            {topStatusMsg && (
+              <div style={{ marginTop: "0.5rem", color: "#7a1f1f", fontSize: "0.9rem" }}>
+                {topStatusMsg}
+              </div>
+            )}
+
+            <div style={{ marginTop: "0.75rem", display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                onClick={submitTopLevelPost}
+                disabled={topSubmitting || isLocked}
+                style={{
+                  padding: "0.6rem 0.95rem",
+                  borderRadius: 12,
+                  border: "1px solid #111",
+                  background: "#111",
+                  color: "#fff",
+                  cursor: topSubmitting || isLocked ? "not-allowed" : "pointer",
+                  opacity: topSubmitting || isLocked ? 0.6 : 1,
+                }}
+              >
+                {topSubmitting ? "Posting..." : "Post"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTopStatusMsg(null);
+                  setTopBody("");
+                }}
+                disabled={topSubmitting || isLocked}
+                style={{
+                  padding: "0.6rem 0.95rem",
+                  borderRadius: 12,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  color: "#111",
+                  cursor: topSubmitting || isLocked ? "not-allowed" : "pointer",
+                  opacity: topSubmitting || isLocked ? 0.6 : 1,
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </>
         )}
-
-        <textarea
-          value={topBody}
-          onChange={(e) => setTopBody(e.target.value)}
-          rows={4}
-          placeholder="Write a new post…"
-          disabled={isLocked}
-          style={{
-            width: "100%",
-            marginTop: "0.75rem",
-            padding: "0.7rem 0.8rem",
-            borderRadius: 12,
-            border: "1px solid #ddd",
-            resize: "vertical",
-            fontFamily: "inherit",
-            fontSize: "0.95rem",
-            opacity: isLocked ? 0.7 : 1,
-          }}
-        />
-
-        {topStatusMsg && (
-          <div style={{ marginTop: "0.5rem", color: "#7a1f1f", fontSize: "0.9rem" }}>
-            {topStatusMsg}
-          </div>
-        )}
-
-        <div style={{ marginTop: "0.75rem", display: "flex", gap: 10 }}>
-          <button
-            type="button"
-            onClick={submitTopLevelPost}
-            disabled={topSubmitting || isLocked}
-            style={{
-              padding: "0.6rem 0.95rem",
-              borderRadius: 12,
-              border: "1px solid #111",
-              background: "#111",
-              color: "#fff",
-              cursor: topSubmitting || isLocked ? "not-allowed" : "pointer",
-              opacity: topSubmitting || isLocked ? 0.6 : 1,
-            }}
-          >
-            {topSubmitting ? "Posting..." : "Post"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setTopStatusMsg(null);
-              setTopBody("");
-            }}
-            disabled={topSubmitting || isLocked}
-            style={{
-              padding: "0.6rem 0.95rem",
-              borderRadius: 12,
-              border: "1px solid #ddd",
-              background: "#fff",
-              color: "#111",
-              cursor: topSubmitting || isLocked ? "not-allowed" : "pointer",
-              opacity: topSubmitting || isLocked ? 0.6 : 1,
-            }}
-          >
-            Clear
-          </button>
-        </div>
       </div>
     </div>
   );
