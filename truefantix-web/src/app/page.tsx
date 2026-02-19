@@ -355,11 +355,8 @@ export default function Page() {
     }
 
     async function fetchImagesForTickets(ticketList: TicketCard[]) {
-      const updatedTickets = [...ticketList];
-      
-      for (let i = 0; i < updatedTickets.length; i++) {
-        const ticket = updatedTickets[i];
-        
+      // Use Promise.all to fetch all images in parallel
+      const imagePromises = ticketList.map(async (ticket) => {
         try {
           const res = await fetch(
             `/api/tickets/image?title=${encodeURIComponent(ticket.title)}&eventType=${encodeURIComponent(ticket.eventType)}`
@@ -368,13 +365,16 @@ export default function Page() {
           if (res.ok) {
             const data = await res.json();
             if (data.imageUrl && !data.isPlaceholder) {
-              updatedTickets[i] = { ...ticket, dynamicImage: data.imageUrl };
+              return { ...ticket, dynamicImage: data.imageUrl };
             }
           }
         } catch (e) {
           // Silently fail and use placeholder
         }
-      }
+        return ticket;
+      });
+      
+      const updatedTickets = await Promise.all(imagePromises);
       
       if (alive) {
         setAllTickets(updatedTickets);
