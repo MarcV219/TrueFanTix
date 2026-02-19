@@ -55,7 +55,7 @@ async function getCurrentUser() {
 }
 
 function formatAuthor(a: any) {
-  return a?.displayName ?? `${a?.firstName ?? ''} ${a?.lastName ?? ''}`.trim() || 'Unknown';
+  return (a?.displayName) || (`${a?.firstName ?? ''} ${a?.lastName ?? ''}`.trim()) || 'Unknown';
 }
 
 function formatDate(iso: string) {
