@@ -10,10 +10,10 @@ export default function AccessTokensFAQPage() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       {/* Hero */}
-      <section className="bg-[#064a93] text-white py-16">
+      <section className="bg-[#064a93] py-16">
         <div className="max-w-4xl mx-auto px-4 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 text-white">Access Tokens</h1>
-          <p className="text-xl text-gray-100">Frequently Asked Questions</p>
+          <h1 className="text-4xl md:text-5xl font-bold mb-4" style={{ color: "#e6edf5" }}>Access Tokens</h1>
+          <p className="text-xl" style={{ color: "#e6edf5" }}>Frequently Asked Questions</p>
         </div>
       </section>
 

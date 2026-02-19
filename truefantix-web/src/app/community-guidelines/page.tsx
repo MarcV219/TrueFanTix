@@ -10,10 +10,10 @@ export default function CommunityGuidelinesPage() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       {/* Hero */}
-      <section className="bg-[#064a93] text-white py-16">
+      <section className="bg-[#064a93] py-16">
         <div className="max-w-4xl mx-auto px-4 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 text-white">Community Guidelines</h1>
-          <p className="text-xl text-gray-100">Help us build a positive community for fans</p>
+          <h1 className="text-4xl md:text-5xl font-bold mb-4" style={{ color: "#e6edf5" }}>Community Guidelines</h1>
+          <p className="text-xl" style={{ color: "#e6edf5" }}>Help us build a positive community for fans</p>
         </div>
       </section>
 
