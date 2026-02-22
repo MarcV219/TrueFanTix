@@ -42,6 +42,27 @@ type PurchasesResponse = {
   message?: string;
 };
 
+type SaleItem = {
+  id: string;
+  orderId: string;
+  orderStatus: string;
+  createdAt: string;
+  ticketId: string;
+  ticketTitle: string;
+  venue: string;
+  date: string;
+  amount: number;
+  adminFee: number;
+  total: number;
+};
+
+type SalesResponse = {
+  ok: boolean;
+  sales?: SaleItem[];
+  error?: string;
+  message?: string;
+};
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 860, margin: "40px auto", padding: 16 }}>
@@ -196,6 +217,54 @@ function PurchasesTable({ purchases }: { purchases: PurchaseItem[] }) {
   );
 }
 
+function SalesTable({ sales }: { sales: SaleItem[] }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "white",
+        overflowX: "auto",
+      }}
+    >
+      <div style={{ fontWeight: 950, fontSize: 18, marginBottom: 10 }}>Sales history</div>
+      {sales.length === 0 ? (
+        <div style={{ opacity: 0.8 }}>No sales yet.</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
+              <th style={{ padding: "8px 6px" }}>When</th>
+              <th style={{ padding: "8px 6px" }}>Ticket</th>
+              <th style={{ padding: "8px 6px" }}>Venue</th>
+              <th style={{ padding: "8px 6px" }}>Event Date</th>
+              <th style={{ padding: "8px 6px" }}>Amount</th>
+              <th style={{ padding: "8px 6px" }}>Fee</th>
+              <th style={{ padding: "8px 6px" }}>Total</th>
+              <th style={{ padding: "8px 6px" }}>Order Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sales.map((s) => (
+              <tr key={`${s.orderId}-${s.id}`} style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
+                <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{new Date(s.createdAt).toLocaleString()}</td>
+                <td style={{ padding: "8px 6px", fontWeight: 700 }}>{s.ticketTitle}</td>
+                <td style={{ padding: "8px 6px" }}>{s.venue}</td>
+                <td style={{ padding: "8px 6px" }}>{s.date}</td>
+                <td style={{ padding: "8px 6px" }}>${Number(s.amount ?? 0).toFixed(2)}</td>
+                <td style={{ padding: "8px 6px" }}>${Number(s.adminFee ?? 0).toFixed(2)}</td>
+                <td style={{ padding: "8px 6px" }}>${Number(s.total ?? 0).toFixed(2)}</td>
+                <td style={{ padding: "8px 6px" }}>{s.orderStatus}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function ComingSoon({ label }: { label: string }) {
   return (
     <div
@@ -218,6 +287,7 @@ function Body() {
   const [balance, setBalance] = React.useState(0);
   const [transactions, setTransactions] = React.useState<AccessTokenTxn[]>([]);
   const [purchases, setPurchases] = React.useState<PurchaseItem[]>([]);
+  const [sales, setSales] = React.useState<SaleItem[]>([]);
   const [tab, setTab] = React.useState<TxnTab>("all");
 
   React.useEffect(() => {
@@ -228,13 +298,15 @@ function Body() {
         setLoading(true);
         setError(null);
 
-        const [tokenRes, purchasesRes] = await Promise.all([
+        const [tokenRes, purchasesRes, salesRes] = await Promise.all([
           fetch("/api/account/access-tokens", { cache: "no-store" }),
           fetch("/api/account/tickets/bought", { cache: "no-store" }),
+          fetch("/api/account/transactions/sales", { cache: "no-store" }),
         ]);
 
         const tokenData = (await tokenRes.json()) as AccessTokenResponse;
         const purchasesData = (await purchasesRes.json()) as PurchasesResponse;
+        const salesData = (await salesRes.json()) as SalesResponse;
 
         if (!alive) return;
 
@@ -248,9 +320,15 @@ function Body() {
           return;
         }
 
+        if (!salesRes.ok || !salesData?.ok) {
+          setError(salesData?.message || salesData?.error || "Failed to load sales.");
+          return;
+        }
+
         setBalance(Number(tokenData.accessTokenBalance ?? 0));
         setTransactions(Array.isArray(tokenData.transactions) ? tokenData.transactions : []);
         setPurchases(Array.isArray(purchasesData.tickets) ? purchasesData.tickets : []);
+        setSales(Array.isArray(salesData.sales) ? salesData.sales : []);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || "Failed to load transaction history.");
@@ -317,7 +395,7 @@ function Body() {
         <>
           <AccessTokenTable transactions={transactions} />
           <PurchasesTable purchases={purchases} />
-          <ComingSoon label="Sales" />
+          <SalesTable sales={sales} />
           <ComingSoon label="Payouts" />
           <ComingSoon label="Refunds" />
         </>
@@ -325,7 +403,7 @@ function Body() {
 
       {tab === "accessTokens" && <AccessTokenTable transactions={transactions} />}
       {tab === "purchases" && <PurchasesTable purchases={purchases} />}
-      {tab === "sales" && <ComingSoon label="Sales" />}
+      {tab === "sales" && <SalesTable sales={sales} />}
       {tab === "payouts" && <ComingSoon label="Payouts" />}
       {tab === "refunds" && <ComingSoon label="Refunds" />}
     </div>
