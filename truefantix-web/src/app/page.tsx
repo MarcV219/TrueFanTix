@@ -148,8 +148,17 @@ async function fetchForumThreadsPreview(): Promise<ForumThreadPreview[]> {
   try {
     const res = await fetch("/api/forum/threads?take=6", { cache: "no-store" });
     if (!res.ok) return [];
-    const json: any = await res.json();
-    const raw: ApiForumThread[] = Array.isArray(json) ? json : Array.isArray(json?.threads) ? json.threads : Array.isArray(json?.items) ? json.items : [];
+
+    const json: unknown = await res.json();
+    const payload = json as { threads?: ApiForumThread[]; items?: ApiForumThread[] } | ApiForumThread[];
+    const raw: ApiForumThread[] = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.threads)
+      ? payload.threads
+      : Array.isArray(payload?.items)
+      ? payload.items
+      : [];
+
     return raw.map((t) => ({
       id: t.id,
       title: t.title,
@@ -204,10 +213,20 @@ export default function Page() {
         setLoading(true);
         setError(null);
         const res = await fetch("/api/tickets?status=AVAILABLE&take=100", { cache: "no-store" });
-        const json: any = await res.json();
-        const rawTickets: ApiTicket[] = Array.isArray(json) ? json : Array.isArray(json?.tickets) ? json.tickets : [];
+        const json: unknown = await res.json();
+        const payload = json as { tickets?: ApiTicket[]; error?: string } | ApiTicket[];
+        const rawTickets: ApiTicket[] = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.tickets)
+          ? payload.tickets
+          : [];
 
-        if (!res.ok) throw new Error(json?.error || `Tickets fetch failed (${res.status})`);
+        if (!res.ok) {
+          const message = !Array.isArray(payload) && typeof payload?.error === "string"
+            ? payload.error
+            : `Tickets fetch failed (${res.status})`;
+          throw new Error(message);
+        }
 
         const normalized: TicketCard[] = rawTickets
           .filter((t) => t.status === "AVAILABLE")
@@ -239,9 +258,9 @@ export default function Page() {
         if (!alive) return;
         setAllTickets(normalized);
         setDisplayedTickets(normalized.slice(0, TICKETS_PER_PAGE));
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!alive) return;
-        setError(e?.message ?? "Unknown error");
+        setError(e instanceof Error ? e.message : "Unknown error");
         setAllTickets([]);
         setDisplayedTickets([]);
       } finally {
@@ -305,9 +324,13 @@ export default function Page() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, source: "homepage" }),
       });
-      const json: any = await res.json().catch(() => ({}));
+      const json: unknown = await res.json().catch(() => ({}));
+      const payload = json as { message?: string; error?: string };
       if (!res.ok) {
-        setWaitlistStatus({ type: "error", message: json?.message || json?.error || "Could not join right now." });
+        setWaitlistStatus({
+          type: "error",
+          message: payload?.message || payload?.error || "Could not join right now.",
+        });
         return;
       }
       setWaitlistEmail("");
@@ -373,10 +396,27 @@ export default function Page() {
                 {displayedTickets.map((ticket) => (
                   <div key={ticket.id} className="bg-white/95 dark:bg-white/5 rounded-xl shadow-lg flex flex-col border border-[var(--border)]">
                     <div className="relative">
-                      <img src={`${ticket.dynamicImage || ticket.placeholderImage || DEFAULT_IMAGE}?v=2`} alt={ticket.title} className="rounded-t-xl object-cover w-full h-48" loading="lazy" />
+                      <Image
+                        src={`${ticket.dynamicImage || ticket.placeholderImage || DEFAULT_IMAGE}?v=2`}
+                        alt={ticket.title}
+                        width={640}
+                        height={360}
+                        className="rounded-t-xl object-cover w-full h-48"
+                      />
                       <span className="absolute top-2 right-2 px-2 py-1 text-xs font-semibold rounded bg-gray-800 text-white">{ticket.eventTypeLabel}</span>
                     </div>
                     <div className="p-5 flex flex-col flex-1">
+                      <div className="flex gap-2 mb-2 flex-wrap">
+                        {ticket.badges.map((badge, i) => (
+                          <span
+                            key={`${badge}-${i}`}
+                            title={badgeTooltips[badge] ?? badge}
+                            className="text-xs px-2 py-1 rounded-full font-semibold bg-[rgba(6,74,147,0.10)] text-[var(--tft-navy)]"
+                          >
+                            {badge}
+                          </span>
+                        ))}
+                      </div>
                       <h4 className="font-bold text-lg text-[var(--foreground)]">{ticket.title}</h4>
                       <p className={BRAND.subtle}>{ticket.date}</p>
                       <p className={`${BRAND.subtle} mb-2`}>{ticket.venue}</p>
