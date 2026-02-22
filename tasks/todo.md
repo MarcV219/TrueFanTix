@@ -11,6 +11,9 @@ Implement: (A) 9PM daily unfinished-asks sweep + dashboard update, (B) public-do
 - [x] C) Escrow MVP implementation complete + wired
 - [x] Verification complete (typecheck/tests/log review)
 - [x] Review notes posted
+- [x] Escrow lifecycle integration tests added
+- [x] Stripe webhook replay drill script added
+- [x] Verification run complete for new tests/scripts
 
 ## Plan
 1. Add nightly cron at 9PM America/Toronto for ask review + incomplete-task continuation + dashboard refresh.
@@ -30,3 +33,8 @@ Implement: (A) 9PM daily unfinished-asks sweep + dashboard update, (B) public-do
 - Extended order completion to release escrow into pending payout record (`ESCROW_INTERNAL`).
 - Verified with `npm run -s typecheck` (pass).
 - Verified ticket validation flow with `npx -y tsx scripts/smoke-ticket-verification.mjs` (pass).
+- Added escrow integration test script: `scripts/escrow-lifecycle.integration.ts`.
+- Added Stripe webhook replay drill script: `scripts/stripe-webhook-replay-drill.ts`.
+- Verified both scripts:
+  - `npx -y tsx scripts/escrow-lifecycle.integration.ts` ✅
+  - `npx -y tsx scripts/stripe-webhook-replay-drill.ts` ✅
