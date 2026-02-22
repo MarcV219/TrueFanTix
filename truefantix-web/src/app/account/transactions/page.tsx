@@ -82,6 +82,24 @@ type PayoutsResponse = {
   message?: string;
 };
 
+type RefundItem = {
+  id: string;
+  kind: string;
+  orderId: string | null;
+  status: string;
+  amount: number;
+  accessTokenDelta: number;
+  note: string;
+  createdAt: string;
+};
+
+type RefundsResponse = {
+  ok: boolean;
+  refunds?: RefundItem[];
+  error?: string;
+  message?: string;
+};
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 860, margin: "40px auto", padding: 16 }}>
@@ -330,6 +348,52 @@ function PayoutsTable({ payouts }: { payouts: PayoutItem[] }) {
   );
 }
 
+function RefundsTable({ refunds }: { refunds: RefundItem[] }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "white",
+        overflowX: "auto",
+      }}
+    >
+      <div style={{ fontWeight: 950, fontSize: 18, marginBottom: 10 }}>Refund history</div>
+      {refunds.length === 0 ? (
+        <div style={{ opacity: 0.8 }}>No refunds yet.</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
+              <th style={{ padding: "8px 6px" }}>When</th>
+              <th style={{ padding: "8px 6px" }}>Kind</th>
+              <th style={{ padding: "8px 6px" }}>Order</th>
+              <th style={{ padding: "8px 6px" }}>Status</th>
+              <th style={{ padding: "8px 6px" }}>Amount</th>
+              <th style={{ padding: "8px 6px" }}>Access Tokens Δ</th>
+              <th style={{ padding: "8px 6px" }}>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {refunds.map((r) => (
+              <tr key={r.id} style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
+                <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{new Date(r.createdAt).toLocaleString()}</td>
+                <td style={{ padding: "8px 6px" }}>{r.kind}</td>
+                <td style={{ padding: "8px 6px", fontFamily: "monospace", fontSize: 12 }}>{r.orderId ?? "—"}</td>
+                <td style={{ padding: "8px 6px" }}>{r.status}</td>
+                <td style={{ padding: "8px 6px" }}>${Number(r.amount ?? 0).toFixed(2)}</td>
+                <td style={{ padding: "8px 6px", fontWeight: 700 }}>{r.accessTokenDelta >= 0 ? "+" : ""}{r.accessTokenDelta}</td>
+                <td style={{ padding: "8px 6px" }}>{r.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function ComingSoon({ label }: { label: string }) {
   return (
     <div
@@ -354,6 +418,7 @@ function Body() {
   const [purchases, setPurchases] = React.useState<PurchaseItem[]>([]);
   const [sales, setSales] = React.useState<SaleItem[]>([]);
   const [payouts, setPayouts] = React.useState<PayoutItem[]>([]);
+  const [refunds, setRefunds] = React.useState<RefundItem[]>([]);
   const [tab, setTab] = React.useState<TxnTab>("all");
 
   React.useEffect(() => {
@@ -364,17 +429,19 @@ function Body() {
         setLoading(true);
         setError(null);
 
-        const [tokenRes, purchasesRes, salesRes, payoutsRes] = await Promise.all([
+        const [tokenRes, purchasesRes, salesRes, payoutsRes, refundsRes] = await Promise.all([
           fetch("/api/account/access-tokens", { cache: "no-store" }),
           fetch("/api/account/tickets/bought", { cache: "no-store" }),
           fetch("/api/account/transactions/sales", { cache: "no-store" }),
           fetch("/api/account/transactions/payouts", { cache: "no-store" }),
+          fetch("/api/account/transactions/refunds", { cache: "no-store" }),
         ]);
 
         const tokenData = (await tokenRes.json()) as AccessTokenResponse;
         const purchasesData = (await purchasesRes.json()) as PurchasesResponse;
         const salesData = (await salesRes.json()) as SalesResponse;
         const payoutsData = (await payoutsRes.json()) as PayoutsResponse;
+        const refundsData = (await refundsRes.json()) as RefundsResponse;
 
         if (!alive) return;
 
@@ -398,11 +465,17 @@ function Body() {
           return;
         }
 
+        if (!refundsRes.ok || !refundsData?.ok) {
+          setError(refundsData?.message || refundsData?.error || "Failed to load refunds.");
+          return;
+        }
+
         setBalance(Number(tokenData.accessTokenBalance ?? 0));
         setTransactions(Array.isArray(tokenData.transactions) ? tokenData.transactions : []);
         setPurchases(Array.isArray(purchasesData.tickets) ? purchasesData.tickets : []);
         setSales(Array.isArray(salesData.sales) ? salesData.sales : []);
         setPayouts(Array.isArray(payoutsData.payouts) ? payoutsData.payouts : []);
+        setRefunds(Array.isArray(refundsData.refunds) ? refundsData.refunds : []);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || "Failed to load transaction history.");
@@ -471,7 +544,7 @@ function Body() {
           <PurchasesTable purchases={purchases} />
           <SalesTable sales={sales} />
           <PayoutsTable payouts={payouts} />
-          <ComingSoon label="Refunds" />
+          <RefundsTable refunds={refunds} />
         </>
       )}
 
@@ -479,7 +552,7 @@ function Body() {
       {tab === "purchases" && <PurchasesTable purchases={purchases} />}
       {tab === "sales" && <SalesTable sales={sales} />}
       {tab === "payouts" && <PayoutsTable payouts={payouts} />}
-      {tab === "refunds" && <ComingSoon label="Refunds" />}
+      {tab === "refunds" && <RefundsTable refunds={refunds} />}
     </div>
   );
 }
