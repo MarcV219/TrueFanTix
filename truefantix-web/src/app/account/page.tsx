@@ -141,6 +141,8 @@ function AccountHub({ me }: { me: MeUser }) {
   // Seller eligibility:
   const sellerEligible = emailVerified && phoneVerified && stripeOk;
 
+  const [accessTokenBalance, setAccessTokenBalance] = React.useState<number>(0);
+
   // Delete form state
   const [deletePassword, setDeletePassword] = React.useState("");
   const [deleteConfirm, setDeleteConfirm] = React.useState("");
@@ -226,6 +228,31 @@ function AccountHub({ me }: { me: MeUser }) {
       if (timeout) clearTimeout(timeout);
     };
   }, [loadStripeStatus, stripeQuery]);
+
+  React.useEffect(() => {
+    let alive = true;
+
+    async function loadAccessTokenBalance() {
+      try {
+        const { res, data } = await fetchJson("/api/account/access-tokens", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        if (!alive) return;
+        if (!res.ok) return;
+
+        setAccessTokenBalance(Number(data?.accessTokenBalance ?? 0));
+      } catch {
+        // ignore; default is 0
+      }
+    }
+
+    loadAccessTokenBalance();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function startSellerOnboarding() {
     setStripeError(null);
@@ -525,6 +552,19 @@ function AccountHub({ me }: { me: MeUser }) {
         </Card>
 
         <Card title="Account tools" description="Everything you can manage from your account.">
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              border: "1px solid rgba(0,0,0,0.10)",
+              background: "rgba(240,253,244,1)",
+              color: "rgba(22,101,52,1)",
+              fontWeight: 900,
+              marginBottom: 10,
+            }}
+          >
+            Access token balance: {accessTokenBalance}
+          </div>
           <div style={{ display: "grid", gap: 10 }}>
             <ToolLink
               label="Change password"
