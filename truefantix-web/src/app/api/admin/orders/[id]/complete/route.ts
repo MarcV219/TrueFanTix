@@ -349,6 +349,20 @@ export async function POST(req: Request) {
         },
       });
 
+      // Escrow release MVP: create a payout record once order is fully completed.
+      // (One-shot because DELIVERED -> COMPLETED transition is gated above.)
+      const payout = await tx.payout.create({
+        data: {
+          sellerId: order.sellerId,
+          amountCents: order.amountCents,
+          feeCents: 0,
+          netCents: order.amountCents,
+          status: "PENDING",
+          provider: "ESCROW_INTERNAL",
+          providerRef: `order:${order.id}`,
+        },
+      });
+
       // Return the now-completed order (we already set status via gate)
       const completed = await tx.order.findUnique({
         where: { id: orderId },
@@ -364,7 +378,13 @@ export async function POST(req: Request) {
           soldOutCount,
           creditsSpentByBuyer,
           creditsAwardedToSeller,
-          next: "Payout eligibility can now be evaluated (seller kept whole = amountCents).",
+          escrowRelease: {
+            released: true,
+            payoutId: payout.id,
+            payoutStatus: payout.status,
+            netCents: payout.netCents,
+          },
+          next: "Escrow released to pending payout queue.",
         },
       };
     });

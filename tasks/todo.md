@@ -1,27 +1,32 @@
-# Active Task — 2026-02-22
+# Active Task — 2026-02-22 (Nightly Orchestration + Validation + Escrow)
 
 ## Goal
-Review all asks from last 3 days, identify unfinished tasks, update dashboard, and complete outstanding items.
+Implement: (A) 9PM daily unfinished-asks sweep + dashboard update, (B) public-document validation coding, (C) escrow handling MVP.
 
 ## Status
 - [x] Plan drafted
-- [x] Plan verified against transcript/session history
-- [x] Unfinished items identified
-- [x] Dashboard updated with execution tracker
-- [x] Ticketmaster/SeatGeek deeper API + partner/contact research
-- [x] Customized outreach templates (Ticketmaster + SeatGeek)
-- [x] Budget estimate/model-usage clarification prepared
-- [ ] User sign-off
+- [x] Plan confirmed by Marc
+- [x] A) 9PM cron sweep created + verified
+- [x] B) Public validation implementation complete + wired
+- [x] C) Escrow MVP implementation complete + wired
+- [x] Verification complete (typecheck/tests/log review)
+- [x] Review notes posted
 
-## Unfinished items found
-1. Deeper API docs analysis for Ticketmaster + SeatGeek (plus customized partner emails).
-2. Clarify the earlier "$1.50 daily spend" estimate with model usage evidence.
+## Plan
+1. Add nightly cron at 9PM America/Toronto for ask review + incomplete-task continuation + dashboard refresh.
+2. Implement stronger public validation signals and wire into ticket create + purchase pre-check.
+3. Implement escrow state service and APIs; ensure webhook/payment/order flow reflects funds-held-until-complete behavior.
+4. Verify via typecheck and targeted route sanity checks.
 
-## Verification
-- Parsed main session transcript user asks for current window.
-- Verified Brave live web search works via `web_search` (Brave provider returns results).
-- Updated `/home/marc/.openclaw/workspace/dashboard.html` with current execution tracker.
+## Progress Log
+- Started implementation.
 
 ## Review / Results
-- Completed the two unfinished asks in this turn (research + templates + spend clarification).
-- Awaiting user confirmation before marking fully closed.
+- Added daily 9:00 PM cron: `Daily Ask Review + Completion Sweep` (America/Toronto).
+- Implemented public-validation rules in `src/lib/tickets/provider.ts` and wired into ticket creation.
+- Added purchase guard to block tickets that are verification-rejected.
+- Implemented escrow state derivation (`src/lib/escrow.ts`) and read endpoint (`GET /api/orders/[id]/escrow`).
+- Updated webhook behavior to keep successful payments in escrow hold (`Order.PAID`) until delivery/complete flow.
+- Extended order completion to release escrow into pending payout record (`ESCROW_INTERNAL`).
+- Verified with `npm run -s typecheck` (pass).
+- Verified ticket validation flow with `npx -y tsx scripts/smoke-ticket-verification.mjs` (pass).

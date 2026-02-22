@@ -87,7 +87,8 @@ export async function POST(req: Request) {
             },
           });
 
-          // Update order status to PAID
+          // Escrow hold: payment succeeded means funds are held.
+          // Keep delivery finalization separate (admin deliver route).
           const order = await tx.order.update({
             where: { id: orderId },
             data: { status: OrderStatus.PAID },
@@ -109,17 +110,6 @@ export async function POST(req: Request) {
               },
             },
           });
-
-          // Update tickets to SOLD status
-          for (const item of order.items) {
-            await tx.ticket.update({
-              where: { id: item.ticketId },
-              data: {
-                status: "SOLD",
-                soldAt: new Date(),
-              },
-            });
-          }
 
           return order;
         });

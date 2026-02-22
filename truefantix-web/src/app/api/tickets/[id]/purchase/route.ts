@@ -172,6 +172,14 @@ export async function POST(req: Request, ctx: Ctx) {
         };
       }
 
+      if (ticket.verificationStatus === "REJECTED") {
+        return {
+          ok: false as const,
+          status: 409 as const,
+          body: { ok: false, error: "Ticket failed verification and cannot be purchased" },
+        };
+      }
+
       if (buyerSellerId === ticket.sellerId) {
         return {
           ok: false as const,

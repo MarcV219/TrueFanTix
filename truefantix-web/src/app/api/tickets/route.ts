@@ -305,6 +305,7 @@ export async function POST(req: Request) {
 
     const providerCheck = await verifyWithProvider({
       eventId,
+      title,
       venue,
       date,
       barcodeHash,
