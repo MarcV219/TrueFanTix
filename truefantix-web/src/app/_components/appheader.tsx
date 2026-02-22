@@ -108,6 +108,7 @@ export default function AppHeader() {
   const [me, setMe] = React.useState<MeUser | null>(null);
   const [meLoaded, setMeLoaded] = React.useState(false);
   const [logoutBusy, setLogoutBusy] = React.useState(false);
+  const [adminQueueCount, setAdminQueueCount] = React.useState<number | null>(null);
 
   const isLoggedIn = !!me;
 
@@ -177,6 +178,39 @@ export default function AppHeader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  React.useEffect(() => {
+    let alive = true;
+
+    async function loadAdminQueueCount() {
+      if (!me?.flags?.isAdmin) {
+        if (alive) setAdminQueueCount(null);
+        return;
+      }
+
+      try {
+        const { res, data } = await fetchJson("/api/admin/tickets/verification-count", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        if (!alive) return;
+        if (!res.ok || !data?.ok) {
+          setAdminQueueCount(null);
+          return;
+        }
+
+        setAdminQueueCount(Number(data?.counts?.actionable ?? 0));
+      } catch {
+        if (alive) setAdminQueueCount(null);
+      }
+    }
+
+    loadAdminQueueCount();
+    return () => {
+      alive = false;
+    };
+  }, [me?.flags?.isAdmin, pathname]);
+
   async function handleLogout() {
     if (logoutBusy) return;
     setLogoutBusy(true);
@@ -231,7 +265,15 @@ export default function AppHeader() {
           <NavPill href="/forum" label="Forum" active={isForum} />
           <NavPill href="/account" label="Account" active={isAccount} />
           {me?.flags?.isAdmin ? (
-            <NavPill href="/admin/tickets/verification" label="Admin Queue" active={current.startsWith("/admin/tickets/verification")} />
+            <NavPill
+              href="/admin/tickets/verification"
+              label={
+                adminQueueCount != null
+                  ? `Admin Queue${adminQueueCount > 0 ? ` (${adminQueueCount})` : ""}`
+                  : "Admin Queue"
+              }
+              active={current.startsWith("/admin/tickets/verification")}
+            />
           ) : null}
 
           {meLoaded ? (
