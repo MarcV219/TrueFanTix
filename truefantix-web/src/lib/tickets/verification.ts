@@ -9,6 +9,8 @@ type TicketForVerification = {
   venue: string;
   date: string;
   status: string;
+  barcodeHash: string | null;
+  verificationEvidence: string | null;
 };
 
 type VerificationDecision = {
@@ -59,6 +61,22 @@ export function scoreTicket(ticket: TicketForVerification): VerificationDecision
     reasons.push("Face value lower than listing price");
   }
 
+  if (ticket.barcodeHash) {
+    score += 10;
+  } else {
+    reasons.push("No barcode evidence provided");
+  }
+
+  try {
+    const evidence = ticket.verificationEvidence ? JSON.parse(ticket.verificationEvidence) : null;
+    const providerConfirmed = !!evidence?.providerConfirmed;
+    if (providerConfirmed) {
+      score += 15;
+    }
+  } catch {
+    // ignore malformed evidence
+  }
+
   // Decision thresholds
   let verificationStatus: TicketVerificationStatus;
   if (score >= 85) verificationStatus = TicketVerificationStatus.VERIFIED;
@@ -87,6 +105,8 @@ export async function autoVerifyTicketById(prisma: PrismaClient, ticketId: strin
       date: true,
       status: true,
       verificationStatus: true,
+      barcodeHash: true,
+      verificationEvidence: true,
     },
   });
 

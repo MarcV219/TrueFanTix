@@ -1,10 +1,12 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { TicketStatus, TicketVerificationStatus } from "@prisma/client";
 import { requireSellerApproved } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
+import { verifyWithProvider } from "@/lib/tickets/provider";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -25,6 +27,10 @@ type CreateTicketBody = {
 
   // Optional event linking (future use)
   eventId?: string | null;
+
+  // Optional barcode evidence for anti-duplicate and legitimacy checks
+  barcodeData?: string | null;
+  barcodeType?: string | null;
 };
 
 function badRequest(message: string) {
@@ -122,7 +128,11 @@ export async function GET(req: Request) {
         verificationScore: (t as any).verificationScore ?? null,
         verificationReason: (t as any).verificationReason ?? null,
         verificationProvider: (t as any).verificationProvider ?? null,
+        verificationEvidence: (t as any).verificationEvidence ?? null,
         verifiedAt: (t as any).verifiedAt ?? null,
+
+        barcodeType: (t as any).barcodeType ?? null,
+        barcodeLast4: (t as any).barcodeLast4 ?? null,
 
         event:
           includeEvent && eventAny
@@ -245,6 +255,20 @@ export async function POST(req: Request) {
   // Optional: event linking
   const eventId = (body.eventId ?? null)?.toString().trim() || null;
 
+  // Optional: barcode payload evidence (raw data is not persisted)
+  const barcodeDataRaw = (body.barcodeData ?? "").toString().trim();
+  const barcodeType = (body.barcodeType ?? "").toString().trim() || null;
+
+  let barcodeHash: string | null = null;
+  let barcodeLast4: string | null = null;
+  if (barcodeDataRaw) {
+    if (barcodeDataRaw.length < 8) return badRequest("Barcode data is too short.");
+    if (barcodeDataRaw.length > 8192) return badRequest("Barcode data is too long.");
+
+    barcodeHash = createHash("sha256").update(barcodeDataRaw).digest("hex");
+    barcodeLast4 = barcodeDataRaw.slice(-4);
+  }
+
   // ✅ Prevent impersonation: the sellerId must come from the logged-in user
   const sellerId = gate.user.sellerId;
   if (!sellerId) {
@@ -256,6 +280,37 @@ export async function POST(req: Request) {
   }
 
   try {
+    if (barcodeHash) {
+      const duplicate = await prisma.ticket.findFirst({
+        where: {
+          barcodeHash,
+          status: { in: [TicketStatus.AVAILABLE, TicketStatus.SOLD] },
+          verificationStatus: { in: [TicketVerificationStatus.PENDING, TicketVerificationStatus.VERIFIED, TicketVerificationStatus.NEEDS_REVIEW] },
+          ...(eventId ? { eventId } : {}),
+        },
+        select: { id: true },
+      });
+
+      if (duplicate) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "DUPLICATE_BARCODE",
+            message: "This barcode appears to already be listed or used. Please contact support if this is incorrect.",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    const providerCheck = await verifyWithProvider({
+      eventId,
+      venue,
+      date,
+      barcodeHash,
+      barcodeType,
+    });
+
     const created = await prisma.ticket.create({
       data: {
         title,
@@ -266,6 +321,15 @@ export async function POST(req: Request) {
         date,
         status: TicketStatus.AVAILABLE,
         verificationStatus: TicketVerificationStatus.PENDING,
+        verificationEvidence: JSON.stringify({
+          barcodeProvided: !!barcodeHash,
+          provider: providerCheck.provider,
+          providerConfirmed: providerCheck.confirmed,
+          providerReason: providerCheck.reason,
+        }),
+        barcodeHash,
+        barcodeType,
+        barcodeLast4,
         sellerId,
         ...(eventId ? { eventId } : {}),
       },
@@ -296,7 +360,10 @@ export async function POST(req: Request) {
           verificationScore: (verified as any)?.verificationScore ?? (created as any).verificationScore ?? null,
           verificationReason: (verified as any)?.verificationReason ?? (created as any).verificationReason ?? null,
           verificationProvider: (verified as any)?.verificationProvider ?? (created as any).verificationProvider ?? null,
+          verificationEvidence: (created as any).verificationEvidence ?? null,
           verifiedAt: (verified as any)?.verifiedAt ?? (created as any).verifiedAt ?? null,
+          barcodeType: (created as any).barcodeType ?? null,
+          barcodeLast4: (created as any).barcodeLast4 ?? null,
           event: created.event
             ? {
                 id: created.event.id,

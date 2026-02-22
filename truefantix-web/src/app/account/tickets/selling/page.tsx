@@ -12,6 +12,8 @@ type CreateTicketBody = {
   venue: string;
   date: string; // keep string for now (matches schema)
   eventId?: string | null;
+  barcodeData?: string | null;
+  barcodeType?: string | null;
 };
 
 type TicketRow = {
@@ -342,6 +344,8 @@ function Body({ me }: { me: MeUser }) {
   const [price, setPrice] = React.useState("");
   const [faceValue, setFaceValue] = React.useState("");
   const [image, setImage] = React.useState("");
+  const [barcodeData, setBarcodeData] = React.useState("");
+  const [barcodeType, setBarcodeType] = React.useState("");
 
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -390,6 +394,8 @@ function Body({ me }: { me: MeUser }) {
       image: img,
       priceCents,
       faceValueCents: faceValueCents ?? null,
+      barcodeData: barcodeData.trim() || null,
+      barcodeType: barcodeType.trim() || null,
     };
 
     setBusy(true);
@@ -417,6 +423,8 @@ function Body({ me }: { me: MeUser }) {
       setPrice("");
       setFaceValue("");
       setImage("");
+      setBarcodeData("");
+      setBarcodeType("");
 
       // ✅ Refresh listings after create
       setRefreshKey((k) => k + 1);
@@ -679,6 +687,32 @@ function Body({ me }: { me: MeUser }) {
               style={inputStyle(fImage)}
               onFocus={() => setFImage(true)}
               onBlur={() => setFImage(false)}
+            />
+          </label>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontWeight: 900 }}>Barcode payload (optional)</span>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Paste decoded barcode/token text from your ticket proof for stronger authenticity checks.
+            </div>
+            <textarea
+              value={barcodeData}
+              onChange={(e) => setBarcodeData(e.target.value)}
+              disabled={busy}
+              placeholder="Paste barcode/QR payload"
+              rows={3}
+              style={{ ...inputStyle(false), resize: "vertical" }}
+            />
+          </label>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontWeight: 900 }}>Barcode type (optional)</span>
+            <input
+              value={barcodeType}
+              onChange={(e) => setBarcodeType(e.target.value)}
+              disabled={busy}
+              placeholder="e.g., QR, PDF417, AZTEC"
+              style={inputStyle(false)}
             />
           </label>
 

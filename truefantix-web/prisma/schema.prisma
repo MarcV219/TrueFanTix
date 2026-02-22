@@ -300,7 +300,12 @@ model Ticket {
   verificationScore    Int?
   verificationReason   String?
   verificationProvider String?
+  verificationEvidence String?
   verifiedAt           DateTime?
+
+  barcodeHash   String?
+  barcodeType   String?
+  barcodeLast4  String?
 
   viewCount    Int       @default(0)
   lastViewedAt DateTime?
@@ -321,6 +326,7 @@ model Ticket {
 
   @@index([sellerId, status, createdAt])
   @@index([eventId])
+  @@index([barcodeHash])
 }
 
 model Order {

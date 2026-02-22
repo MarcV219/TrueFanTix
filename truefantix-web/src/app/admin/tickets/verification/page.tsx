@@ -16,7 +16,10 @@ type QueueTicket = {
   verificationScore: number | null;
   verificationReason: string | null;
   verificationProvider: string | null;
+  verificationEvidence: string | null;
   verifiedAt: string | null;
+  barcodeType: string | null;
+  barcodeLast4: string | null;
   createdAt: string;
   seller?: { id: string; name: string; rating: number; reviews: number };
 };
@@ -130,6 +133,9 @@ export default function TicketVerificationAdminPage() {
               </div>
               <div style={{ fontSize: 12, opacity: 0.78 }}>
                 Auto: {t.verificationStatus}{typeof t.verificationScore === "number" ? ` (${t.verificationScore})` : ""} • {t.verificationProvider || "—"}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.78 }}>
+                Barcode: {t.barcodeType || "—"}{t.barcodeLast4 ? ` • ****${t.barcodeLast4}` : ""}
               </div>
               {t.verificationReason ? <div style={{ fontSize: 12, opacity: 0.78 }}>Reason: {t.verificationReason}</div> : null}
             </div>
