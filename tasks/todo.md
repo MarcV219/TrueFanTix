@@ -38,3 +38,8 @@ Implement: (A) 9PM daily unfinished-asks sweep + dashboard update, (B) public-do
 - Verified both scripts:
   - `npx -y tsx scripts/escrow-lifecycle.integration.ts` ✅
   - `npx -y tsx scripts/stripe-webhook-replay-drill.ts` ✅
+- Added npm orchestration:
+  - `npm run verify:escrow` ✅
+  - `npm run drill:webhook` ✅
+- Added ticket custody escrow investigation + implementation blueprint:
+  - `docs/ESCROW_TICKET_TRANSFER_PLAN.md`

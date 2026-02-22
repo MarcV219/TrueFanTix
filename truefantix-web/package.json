@@ -14,7 +14,9 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:escrow": "npx -y tsx scripts/escrow-lifecycle.integration.ts && npx -y tsx scripts/stripe-webhook-replay-drill.ts",
+    "drill:webhook": "npx -y tsx scripts/stripe-webhook-replay-drill.ts"
   },
   "dependencies": {
     "@prisma/client": "^7.2.0",
