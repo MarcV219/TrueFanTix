@@ -63,6 +63,25 @@ type SalesResponse = {
   message?: string;
 };
 
+type PayoutItem = {
+  id: string;
+  status: string;
+  amount: number;
+  fee: number;
+  net: number;
+  provider: string | null;
+  providerRef: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PayoutsResponse = {
+  ok: boolean;
+  payouts?: PayoutItem[];
+  error?: string;
+  message?: string;
+};
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 860, margin: "40px auto", padding: 16 }}>
@@ -265,6 +284,52 @@ function SalesTable({ sales }: { sales: SaleItem[] }) {
   );
 }
 
+function PayoutsTable({ payouts }: { payouts: PayoutItem[] }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "white",
+        overflowX: "auto",
+      }}
+    >
+      <div style={{ fontWeight: 950, fontSize: 18, marginBottom: 10 }}>Payout history</div>
+      {payouts.length === 0 ? (
+        <div style={{ opacity: 0.8 }}>No payouts yet.</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
+              <th style={{ padding: "8px 6px" }}>When</th>
+              <th style={{ padding: "8px 6px" }}>Status</th>
+              <th style={{ padding: "8px 6px" }}>Amount</th>
+              <th style={{ padding: "8px 6px" }}>Fee</th>
+              <th style={{ padding: "8px 6px" }}>Net</th>
+              <th style={{ padding: "8px 6px" }}>Provider</th>
+              <th style={{ padding: "8px 6px" }}>Reference</th>
+            </tr>
+          </thead>
+          <tbody>
+            {payouts.map((p) => (
+              <tr key={p.id} style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
+                <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{new Date(p.createdAt).toLocaleString()}</td>
+                <td style={{ padding: "8px 6px" }}>{p.status}</td>
+                <td style={{ padding: "8px 6px" }}>${Number(p.amount ?? 0).toFixed(2)}</td>
+                <td style={{ padding: "8px 6px" }}>${Number(p.fee ?? 0).toFixed(2)}</td>
+                <td style={{ padding: "8px 6px", fontWeight: 700 }}>${Number(p.net ?? 0).toFixed(2)}</td>
+                <td style={{ padding: "8px 6px" }}>{p.provider ?? "—"}</td>
+                <td style={{ padding: "8px 6px", fontFamily: "monospace", fontSize: 12 }}>{p.providerRef ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function ComingSoon({ label }: { label: string }) {
   return (
     <div
@@ -288,6 +353,7 @@ function Body() {
   const [transactions, setTransactions] = React.useState<AccessTokenTxn[]>([]);
   const [purchases, setPurchases] = React.useState<PurchaseItem[]>([]);
   const [sales, setSales] = React.useState<SaleItem[]>([]);
+  const [payouts, setPayouts] = React.useState<PayoutItem[]>([]);
   const [tab, setTab] = React.useState<TxnTab>("all");
 
   React.useEffect(() => {
@@ -298,15 +364,17 @@ function Body() {
         setLoading(true);
         setError(null);
 
-        const [tokenRes, purchasesRes, salesRes] = await Promise.all([
+        const [tokenRes, purchasesRes, salesRes, payoutsRes] = await Promise.all([
           fetch("/api/account/access-tokens", { cache: "no-store" }),
           fetch("/api/account/tickets/bought", { cache: "no-store" }),
           fetch("/api/account/transactions/sales", { cache: "no-store" }),
+          fetch("/api/account/transactions/payouts", { cache: "no-store" }),
         ]);
 
         const tokenData = (await tokenRes.json()) as AccessTokenResponse;
         const purchasesData = (await purchasesRes.json()) as PurchasesResponse;
         const salesData = (await salesRes.json()) as SalesResponse;
+        const payoutsData = (await payoutsRes.json()) as PayoutsResponse;
 
         if (!alive) return;
 
@@ -325,10 +393,16 @@ function Body() {
           return;
         }
 
+        if (!payoutsRes.ok || !payoutsData?.ok) {
+          setError(payoutsData?.message || payoutsData?.error || "Failed to load payouts.");
+          return;
+        }
+
         setBalance(Number(tokenData.accessTokenBalance ?? 0));
         setTransactions(Array.isArray(tokenData.transactions) ? tokenData.transactions : []);
         setPurchases(Array.isArray(purchasesData.tickets) ? purchasesData.tickets : []);
         setSales(Array.isArray(salesData.sales) ? salesData.sales : []);
+        setPayouts(Array.isArray(payoutsData.payouts) ? payoutsData.payouts : []);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || "Failed to load transaction history.");
@@ -396,7 +470,7 @@ function Body() {
           <AccessTokenTable transactions={transactions} />
           <PurchasesTable purchases={purchases} />
           <SalesTable sales={sales} />
-          <ComingSoon label="Payouts" />
+          <PayoutsTable payouts={payouts} />
           <ComingSoon label="Refunds" />
         </>
       )}
@@ -404,7 +478,7 @@ function Body() {
       {tab === "accessTokens" && <AccessTokenTable transactions={transactions} />}
       {tab === "purchases" && <PurchasesTable purchases={purchases} />}
       {tab === "sales" && <SalesTable sales={sales} />}
-      {tab === "payouts" && <ComingSoon label="Payouts" />}
+      {tab === "payouts" && <PayoutsTable payouts={payouts} />}
       {tab === "refunds" && <ComingSoon label="Refunds" />}
     </div>
   );
