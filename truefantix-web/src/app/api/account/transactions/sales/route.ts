@@ -44,8 +44,8 @@ export async function GET(req: Request) {
         venue: item.ticket?.venue ?? "",
         date: item.ticket?.date ?? "",
         amount: item.priceCents / 100,
-        adminFee: item.adminFeeCents / 100,
-        total: (item.priceCents + item.adminFeeCents) / 100,
+        adminFee: order.adminFeeCents / 100,
+        total: (item.priceCents + order.adminFeeCents) / 100,
       }))
     );
 

@@ -188,8 +188,6 @@ export default function SellerPage() {
 
   const { seller, summary, recent } = dash;
 
-  const accessTokenTxns = recent.accessTokens ?? [];
-
   if (!seller || !summary || !recent) {
     return (
       <div className="min-h-screen bg-gray-100 p-6">
@@ -200,6 +198,8 @@ export default function SellerPage() {
       </div>
     );
   }
+
+  const accessTokenTxns = recent.accessTokens ?? [];
 
   const filteredTickets = includeSold
     ? recent.tickets

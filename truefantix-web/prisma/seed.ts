@@ -427,13 +427,13 @@ async function main() {
           priceCents: t.priceCents,
           faceValueCents: t.faceValueCents,
           image: t.image,
-          venue: createdEvents[t.eventIdx].venue,
+          venue: createdEvents[t.eventIdx]?.venue ?? "",
           row: t.row,
           seat: t.seat,
-          date: createdEvents[t.eventIdx].date,
+          date: createdEvents[t.eventIdx]?.date ?? "",
           status: TicketStatus.AVAILABLE,
           sellerId: seller.id,
-          eventId: createdEvents[t.eventIdx].id,
+          eventId: createdEvents[t.eventIdx]?.id ?? null,
         },
       });
     } catch (e) {

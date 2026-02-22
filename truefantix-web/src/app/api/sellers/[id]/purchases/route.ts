@@ -38,7 +38,7 @@ export async function GET(req: Request, ctx: Ctx) {
       orderBy: { createdAt: "desc" },
       take: 20,
       include: {
-        ticket: { include: { event: true } },
+        items: { include: { ticket: { include: { event: true } } } },
         seller: { select: { id: true, name: true } },
       },
     });

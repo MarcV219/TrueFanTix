@@ -54,7 +54,7 @@ export async function GET(req: Request) {
     const limit = clamp(Number(url.searchParams.get("limit") ?? 20), 1, 50);
     const cursor = url.searchParams.get("cursor");
 
-    const where = { visibility: ForumVisibility.VISIBLE as const };
+    const where = { visibility: ForumVisibility.VISIBLE };
 
     const threads = await prisma.forumThread.findMany({
       where,

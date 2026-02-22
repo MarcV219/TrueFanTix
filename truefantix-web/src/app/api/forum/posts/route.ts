@@ -65,7 +65,7 @@ async function resolveEffectiveParentId(args: {
       };
     }
 
-    const post = await prisma.forumPost.findFirst({
+    const post: { id: string; parentId: string | null } | null = await prisma.forumPost.findFirst({
       where: {
         id: currentId,
         threadId,

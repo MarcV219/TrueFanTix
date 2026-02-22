@@ -101,7 +101,7 @@ export async function GET(req: Request) {
       },
     });
 
-    return new Response(qrBuffer, {
+    return new Response(qrBuffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "private, max-age=60",

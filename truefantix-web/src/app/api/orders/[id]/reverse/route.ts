@@ -56,11 +56,15 @@ export async function POST(req: Request, ctx: Ctx) {
     const result = await prisma.$transaction(async (tx) => {
       const order = await tx.order.findUnique({
         where: { id: orderId },
-        include: { ticket: { include: { event: true } } },
+        include: { items: { include: { ticket: { include: { event: true } } } } },
       });
 
       if (!order) {
         return { ok: false as const, status: 404 as const, body: { ok: false, error: "Order not found" } };
+      }
+
+      if (!order.items.length) {
+        return { ok: false as const, status: 400 as const, body: { ok: false, error: "Order has no items" } };
       }
 
       if (order.status === OrderStatus.CANCELLED) {
@@ -71,7 +75,8 @@ export async function POST(req: Request, ctx: Ctx) {
         };
       }
 
-      const soldOutEvent = order.ticket?.event?.selloutStatus === "SOLD_OUT";
+      const primaryItem = order.items[0];
+      const soldOutEvent = primaryItem?.ticket?.event?.selloutStatus === "SOLD_OUT";
 
       // Reverse access tokens ONLY for SOLD_OUT purchases
       if (soldOutEvent) {
@@ -92,7 +97,7 @@ export async function POST(req: Request, ctx: Ctx) {
             note: `${note} (buyer access token restored)`,
             referenceType: "Order",
             referenceId: order.id,
-            ticketId: order.ticketId,
+            ticketId: primaryItem?.ticketId ?? null,
             orderId: order.id,
           },
         });
@@ -114,7 +119,7 @@ export async function POST(req: Request, ctx: Ctx) {
             note: `${note} (seller access token removed)`,
             referenceType: "Order",
             referenceId: order.id,
-            ticketId: order.ticketId,
+            ticketId: primaryItem?.ticketId ?? null,
             orderId: order.id,
           },
         });
@@ -128,7 +133,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
       // Put ticket back to AVAILABLE (simple rollback)
       await tx.ticket.update({
-        where: { id: order.ticketId },
+        where: { id: primaryItem?.ticketId ?? "" },
         data: { status: TicketStatus.AVAILABLE, soldAt: null },
       });
 

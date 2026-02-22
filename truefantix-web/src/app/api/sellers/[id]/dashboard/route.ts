@@ -76,13 +76,16 @@ export async function GET(req: Request, ctx: Ctx) {
           take: 10,
           select: {
             id: true,
-            ticketId: true,
             buyerSellerId: true,
             amountCents: true,
             adminFeeCents: true,
             totalCents: true,
             status: true,
             createdAt: true,
+            items: {
+              take: 1,
+              select: { ticketId: true },
+            },
           },
         }),
         prisma.creditTransaction.findMany({
@@ -162,7 +165,7 @@ export async function GET(req: Request, ctx: Ctx) {
 
         orders: recentOrders.map((o) => ({
           id: o.id,
-          ticketId: o.ticketId,
+          ticketId: o.items?.[0]?.ticketId ?? null,
 
           buyer: anonymizeBuyer(o.buyerSellerId),
 

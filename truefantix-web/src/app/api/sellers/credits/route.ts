@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { CreditTxSource, CreditTxType } from "@prisma/client";
 
 // Legacy endpoint kept for compatibility; semantics are access tokens.
 export async function POST(req: Request) {
@@ -20,7 +21,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Access tokens are integer units (1 token per eligible ticket event).
     const intAmount = Math.trunc(amount);
     if (intAmount === 0) {
       return NextResponse.json({ error: "amount cannot be 0" }, { status: 400 });
@@ -31,33 +31,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Seller not found" }, { status: 404 });
     }
 
-    // 1) Record the transaction
-    await prisma.creditTransaction.create({
-      data: {
-        sellerId,
-        amount: intAmount,
-        reason,
-        ticketId,
-      },
-    });
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextBalance = (seller.creditBalanceCredits ?? 0) + intAmount;
 
-    // 2) Recalculate seller balance from the ledger
-    const agg = await prisma.creditTransaction.aggregate({
-      where: { sellerId },
-      _sum: { amount: true },
-    });
+      await tx.creditTransaction.create({
+        data: {
+          sellerId,
+          type: intAmount > 0 ? CreditTxType.ADJUSTMENT : CreditTxType.REVERSAL,
+          source: CreditTxSource.UNKNOWN,
+          amountCredits: intAmount,
+          balanceAfterCredits: nextBalance,
+          note: reason,
+          ticketId,
+        },
+      });
 
-    const newBalance = agg._sum.amount ?? 0;
-
-    // 3) Store the balance for fast reads
-    const updated = await prisma.seller.update({
-      where: { id: sellerId },
-      data: { creditBalance: newBalance },
+      return tx.seller.update({
+        where: { id: sellerId },
+        data: { creditBalanceCredits: nextBalance },
+      });
     });
 
     return NextResponse.json({
       ok: true,
-      accessTokenBalance: updated.creditBalance,
+      accessTokenBalance: updated.creditBalanceCredits,
     });
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });

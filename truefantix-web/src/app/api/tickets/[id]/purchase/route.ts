@@ -193,11 +193,13 @@ export async function POST(req: Request, ctx: Ctx) {
       const adminFeeCents = Math.round((ticket.priceCents * ADMIN_FEE_BPS) / BPS_DENOMINATOR);
       const totalCents = ticket.priceCents + adminFeeCents;
 
-      // Because Order.ticketId is UNIQUE, a ticket can only ever have one Order row.
-      // If an order exists and is CANCELLED, we reuse it (set back to PENDING).
-      const existingOrderForTicket = await tx.order.findUnique({
+      // Find an existing order for this ticket via OrderItem.
+      const existingOrderItem = await tx.orderItem.findFirst({
         where: { ticketId: ticket.id },
+        include: { order: true },
+        orderBy: { createdAt: "desc" },
       });
+      const existingOrderForTicket = existingOrderItem?.order ?? null;
 
       // Decide which orderId we will use for reservation
       let orderIdToUse: string;
@@ -255,7 +257,6 @@ export async function POST(req: Request, ctx: Ctx) {
           ? await tx.order.create({
               data: {
                 id: orderIdToUse,
-                ticketId: ticket.id,
                 sellerId: ticket.sellerId,
                 buyerSellerId,
                 amountCents: ticket.priceCents,
@@ -263,6 +264,13 @@ export async function POST(req: Request, ctx: Ctx) {
                 totalCents,
                 status: OrderStatus.PENDING,
                 idempotencyKey,
+                items: {
+                  create: {
+                    ticketId: ticket.id,
+                    priceCents: ticket.priceCents,
+                    faceValueCents: ticket.faceValueCents,
+                  },
+                },
               },
             })
           : await tx.order.update({
