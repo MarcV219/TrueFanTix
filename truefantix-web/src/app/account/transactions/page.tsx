@@ -24,6 +24,24 @@ type AccessTokenResponse = {
 
 type TxnTab = "all" | "accessTokens" | "purchases" | "sales" | "payouts" | "refunds";
 
+type PurchaseItem = {
+  id: string;
+  title: string;
+  venue: string;
+  date: string;
+  price: number;
+  status: string;
+  orderId: string;
+  orderDate: string;
+};
+
+type PurchasesResponse = {
+  ok: boolean;
+  tickets?: PurchaseItem[];
+  error?: string;
+  message?: string;
+};
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 860, margin: "40px auto", padding: 16 }}>
@@ -132,6 +150,52 @@ function AccessTokenTable({ transactions }: { transactions: AccessTokenTxn[] }) 
   );
 }
 
+function PurchasesTable({ purchases }: { purchases: PurchaseItem[] }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "white",
+        overflowX: "auto",
+      }}
+    >
+      <div style={{ fontWeight: 950, fontSize: 18, marginBottom: 10 }}>Purchase history</div>
+      {purchases.length === 0 ? (
+        <div style={{ opacity: 0.8 }}>No purchases yet.</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
+              <th style={{ padding: "8px 6px" }}>When</th>
+              <th style={{ padding: "8px 6px" }}>Ticket</th>
+              <th style={{ padding: "8px 6px" }}>Venue</th>
+              <th style={{ padding: "8px 6px" }}>Event Date</th>
+              <th style={{ padding: "8px 6px" }}>Price</th>
+              <th style={{ padding: "8px 6px" }}>Status</th>
+              <th style={{ padding: "8px 6px" }}>Order</th>
+            </tr>
+          </thead>
+          <tbody>
+            {purchases.map((p) => (
+              <tr key={`${p.orderId}-${p.id}`} style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
+                <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{new Date(p.orderDate).toLocaleString()}</td>
+                <td style={{ padding: "8px 6px", fontWeight: 700 }}>{p.title}</td>
+                <td style={{ padding: "8px 6px" }}>{p.venue}</td>
+                <td style={{ padding: "8px 6px" }}>{p.date}</td>
+                <td style={{ padding: "8px 6px" }}>${Number(p.price ?? 0).toFixed(2)}</td>
+                <td style={{ padding: "8px 6px" }}>{p.status}</td>
+                <td style={{ padding: "8px 6px", fontFamily: "monospace", fontSize: 12 }}>{p.orderId}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function ComingSoon({ label }: { label: string }) {
   return (
     <div
@@ -153,6 +217,7 @@ function Body() {
   const [error, setError] = React.useState<string | null>(null);
   const [balance, setBalance] = React.useState(0);
   const [transactions, setTransactions] = React.useState<AccessTokenTxn[]>([]);
+  const [purchases, setPurchases] = React.useState<PurchaseItem[]>([]);
   const [tab, setTab] = React.useState<TxnTab>("all");
 
   React.useEffect(() => {
@@ -163,18 +228,29 @@ function Body() {
         setLoading(true);
         setError(null);
 
-        const res = await fetch("/api/account/access-tokens", { cache: "no-store" });
-        const data = (await res.json()) as AccessTokenResponse;
+        const [tokenRes, purchasesRes] = await Promise.all([
+          fetch("/api/account/access-tokens", { cache: "no-store" }),
+          fetch("/api/account/tickets/bought", { cache: "no-store" }),
+        ]);
+
+        const tokenData = (await tokenRes.json()) as AccessTokenResponse;
+        const purchasesData = (await purchasesRes.json()) as PurchasesResponse;
 
         if (!alive) return;
 
-        if (!res.ok || !data?.ok) {
-          setError(data?.message || data?.error || "Failed to load transaction history.");
+        if (!tokenRes.ok || !tokenData?.ok) {
+          setError(tokenData?.message || tokenData?.error || "Failed to load transaction history.");
           return;
         }
 
-        setBalance(Number(data.accessTokenBalance ?? 0));
-        setTransactions(Array.isArray(data.transactions) ? data.transactions : []);
+        if (!purchasesRes.ok || !purchasesData?.ok) {
+          setError(purchasesData?.message || purchasesData?.error || "Failed to load purchases.");
+          return;
+        }
+
+        setBalance(Number(tokenData.accessTokenBalance ?? 0));
+        setTransactions(Array.isArray(tokenData.transactions) ? tokenData.transactions : []);
+        setPurchases(Array.isArray(purchasesData.tickets) ? purchasesData.tickets : []);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || "Failed to load transaction history.");
@@ -240,7 +316,7 @@ function Body() {
       {tab === "all" && (
         <>
           <AccessTokenTable transactions={transactions} />
-          <ComingSoon label="Purchases" />
+          <PurchasesTable purchases={purchases} />
           <ComingSoon label="Sales" />
           <ComingSoon label="Payouts" />
           <ComingSoon label="Refunds" />
@@ -248,7 +324,7 @@ function Body() {
       )}
 
       {tab === "accessTokens" && <AccessTokenTable transactions={transactions} />}
-      {tab === "purchases" && <ComingSoon label="Purchases" />}
+      {tab === "purchases" && <PurchasesTable purchases={purchases} />}
       {tab === "sales" && <ComingSoon label="Sales" />}
       {tab === "payouts" && <ComingSoon label="Payouts" />}
       {tab === "refunds" && <ComingSoon label="Refunds" />}
