@@ -12,12 +12,12 @@ type DashboardResponse = {
     rating: number;
     reviews: number;
     badges: string[];
-    creditBalanceCredits: number;
+    accessTokenBalance: number;
     createdAt: string;
     updatedAt: string;
   };
   summary?: {
-    creditBalanceCredits: number;
+    accessTokenBalance: number;
     lifetimeSalesCents: number;
     lifetimeSales: number;
     lifetimeOrders: number;
@@ -29,7 +29,7 @@ type DashboardResponse = {
   recent?: {
     tickets: Array<any>;
     orders: Array<any>;
-    credits: Array<any>;
+    accessTokens: Array<any>;
     payouts: Array<any>;
   };
   error?: string;
@@ -188,6 +188,17 @@ export default function SellerPage() {
 
   const { seller, summary, recent } = dash;
 
+  // Back-compat: API may still return credit* keys while UI now says access tokens
+  const summaryWithTokens = {
+    ...summary,
+    accessTokenBalance:
+      (summary as any).accessTokenBalance ??
+      (summary as any).creditBalanceCredits ??
+      0,
+  } as any;
+
+  const accessTokenTxns = (recent as any)?.accessTokens ?? (recent as any)?.credits ?? [];
+
   if (!seller || !summary || !recent) {
     return (
       <div className="min-h-screen bg-gray-100 p-6">
@@ -229,13 +240,13 @@ export default function SellerPage() {
               <div className="text-gray-400 text-xs mt-2">id: {seller.id}</div>
             </div>
 
-            {/* Credits (units) */}
+            {/* Access tokens (units) */}
             <div className="text-right">
-              <div className="text-gray-500 text-sm">Credits</div>
+              <div className="text-gray-500 text-sm">Access Tokens</div>
               <div className="text-3xl font-bold text-green-600">
-                {summary.creditBalanceCredits}
+                {summaryWithTokens.accessTokenBalance}
               </div>
-              <div className="text-gray-500 text-xs">ticket credits (not dollars)</div>
+              <div className="text-gray-500 text-xs">access tokens (not dollars)</div>
             </div>
           </div>
         </div>
@@ -311,6 +322,50 @@ export default function SellerPage() {
                   <tr>
                     <td className="py-4 text-gray-600" colSpan={5}>
                       No tickets to display.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Access token transactions */}
+        <div className="bg-white rounded-xl shadow p-6">
+          <h2 className="text-xl font-bold text-blue-600 mb-4">Access token transactions</h2>
+          <div className="overflow-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500 border-b">
+                  <th className="py-2 pr-3">When</th>
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">Source</th>
+                  <th className="py-2 pr-3">Amount</th>
+                  <th className="py-2 pr-3">Balance After</th>
+                  <th className="py-2 pr-3">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accessTokenTxns.map((t: any) => (
+                  <tr key={t.id} className="border-b last:border-b-0">
+                    <td className="py-2 pr-3">{new Date(t.createdAt).toLocaleString()}</td>
+                    <td className="py-2 pr-3">
+                      <span className="text-xs px-2 py-1 rounded font-semibold bg-gray-100 text-gray-800">
+                        {t.type}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3">{t.source ?? "—"}</td>
+                    <td className={`py-2 pr-3 font-semibold ${Number(t.amountCredits ?? 0) >= 0 ? "text-green-700" : "text-red-700"}`}>
+                      {Number(t.amountCredits ?? 0) >= 0 ? "+" : ""}{Number(t.amountCredits ?? 0)}
+                    </td>
+                    <td className="py-2 pr-3">{t.balanceAfterCredits ?? "—"}</td>
+                    <td className="py-2 pr-3">{t.note ?? "—"}</td>
+                  </tr>
+                ))}
+                {accessTokenTxns.length === 0 && (
+                  <tr>
+                    <td className="py-4 text-gray-600" colSpan={6}>
+                      No access token transactions yet.
                     </td>
                   </tr>
                 )}
