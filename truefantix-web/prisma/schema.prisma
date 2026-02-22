@@ -63,6 +63,13 @@ enum EventSelloutStatus {
   SOLD_OUT
 }
 
+enum TicketVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  NEEDS_REVIEW
+}
+
 /**
  * Account-level RBAC.
  * Most people are USER. ADMIN is for back-office moderation/disputes/etc.
@@ -288,6 +295,12 @@ model Ticket {
 
   soldAt      DateTime?
   withdrawnAt DateTime?
+
+  verificationStatus   TicketVerificationStatus @default(PENDING)
+  verificationScore    Int?
+  verificationReason   String?
+  verificationProvider String?
+  verifiedAt           DateTime?
 
   viewCount    Int       @default(0)
   lastViewedAt DateTime?

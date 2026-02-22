@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketStatus } from "@prisma/client";
+import { TicketStatus, TicketVerificationStatus } from "@prisma/client";
 import { requireSellerApproved } from "@/lib/auth/guards";
 
 function safeInt(v: unknown, fallback = 0) {
@@ -38,6 +38,7 @@ export async function GET(req: Request) {
     // Optional filters
     const status = url.searchParams.get("status"); // AVAILABLE|SOLD|WITHDRAWN
     const sellerId = url.searchParams.get("sellerId") || undefined;
+    const verificationStatus = url.searchParams.get("verificationStatus"); // PENDING|VERIFIED|REJECTED|NEEDS_REVIEW
 
     // Optional: allow skipping event join if ever needed
     const includeEvent = url.searchParams.get("includeEvent") !== "0";
@@ -53,6 +54,19 @@ export async function GET(req: Request) {
       where.status = status as TicketStatus;
     } else {
       where.status = { in: [TicketStatus.AVAILABLE, TicketStatus.SOLD] };
+    }
+
+    // Marketplace safety: public listing returns only VERIFIED tickets by default.
+    // Seller-specific views can see all verification states unless explicitly filtered.
+    if (
+      verificationStatus === "PENDING" ||
+      verificationStatus === "VERIFIED" ||
+      verificationStatus === "REJECTED" ||
+      verificationStatus === "NEEDS_REVIEW"
+    ) {
+      where.verificationStatus = verificationStatus as TicketVerificationStatus;
+    } else if (!sellerId) {
+      where.verificationStatus = TicketVerificationStatus.VERIFIED;
     }
 
     const tickets = await prisma.ticket.findMany({
@@ -103,6 +117,12 @@ export async function GET(req: Request) {
         soldAt: (t as any).soldAt ?? null,
         withdrawnAt: (t as any).withdrawnAt ?? null,
 
+        verificationStatus: (t as any).verificationStatus ?? "PENDING",
+        verificationScore: (t as any).verificationScore ?? null,
+        verificationReason: (t as any).verificationReason ?? null,
+        verificationProvider: (t as any).verificationProvider ?? null,
+        verifiedAt: (t as any).verifiedAt ?? null,
+
         event:
           includeEvent && eventAny
             ? {
@@ -151,7 +171,7 @@ export async function GET(req: Request) {
         purchaseFormat:
           "/api/tickets/<TICKET_ID>/purchase?buyerSellerId=<BUYER_SELLER_ID> + header Idempotency-Key: <uuid>",
         note: "buyerSellerId is REQUIRED for all purchases. Idempotency-Key is REQUIRED to prevent double-charges.",
-        filters: "Optional: ?status=AVAILABLE|SOLD|WITHDRAWN&sellerId=<id>&take=50&cursor=<ticketId>",
+        filters: "Optional: ?status=AVAILABLE|SOLD|WITHDRAWN&verificationStatus=PENDING|VERIFIED|REJECTED|NEEDS_REVIEW&sellerId=<id>&take=50&cursor=<ticketId>",
         includeEvent: "Optional: ?includeEvent=0 to skip joining event data",
       },
       take,
@@ -244,6 +264,7 @@ export async function POST(req: Request) {
         venue,
         date,
         status: TicketStatus.AVAILABLE,
+        verificationStatus: TicketVerificationStatus.PENDING,
         sellerId,
         ...(eventId ? { eventId } : {}),
       },
@@ -268,6 +289,11 @@ export async function POST(req: Request) {
           venue: created.venue,
           date: created.date,
           status: created.status,
+          verificationStatus: (created as any).verificationStatus ?? "PENDING",
+          verificationScore: (created as any).verificationScore ?? null,
+          verificationReason: (created as any).verificationReason ?? null,
+          verificationProvider: (created as any).verificationProvider ?? null,
+          verifiedAt: (created as any).verifiedAt ?? null,
           event: created.event
             ? {
                 id: created.event.id,
