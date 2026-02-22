@@ -159,7 +159,7 @@ export async function POST(req: Request) {
           ok: true,
           order: updatedOrder,
           ticketsUpdated: sold.count,
-          next: "Finalize -> set Order.COMPLETED (credits/payout eligibility only at COMPLETED)",
+          next: "Finalize -> set Order.COMPLETED (access tokens/payout eligibility only at COMPLETED)",
         },
       };
     });

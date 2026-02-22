@@ -40,7 +40,7 @@ function Body() {
     >
       <div style={{ fontWeight: 950, fontSize: 18 }}>Coming next</div>
       <div style={{ marginTop: 8, opacity: 0.85 }}>
-        We’ll show purchases, sales, payouts, refunds, and credits with filter/search and receipts.
+        We’ll show purchases, sales, payouts, refunds, and access tokens with filter/search and receipts.
       </div>
     </div>
   );

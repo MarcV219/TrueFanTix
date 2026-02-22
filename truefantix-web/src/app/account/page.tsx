@@ -538,7 +538,7 @@ function AccountHub({ me }: { me: MeUser }) {
             />
             <ToolLink
               label="Transaction history"
-              hint="See purchases, sales, payouts, refunds, and credits."
+              hint="See purchases, sales, payouts, refunds, and access tokens."
               href="/account/transactions"
             />
           </div>

@@ -73,7 +73,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
       const soldOutEvent = order.ticket?.event?.selloutStatus === "SOLD_OUT";
 
-      // Reverse credits ONLY for SOLD_OUT purchases
+      // Reverse access tokens ONLY for SOLD_OUT purchases
       if (soldOutEvent) {
         // Buyer gets +1 back
         const buyer = await tx.seller.update({
@@ -89,7 +89,7 @@ export async function POST(req: Request, ctx: Ctx) {
             source: "REFUND",
             amountCredits: 1,
             balanceAfterCredits: buyer.creditBalanceCredits,
-            note: `${note} (buyer credit restored)`,
+            note: `${note} (buyer access token restored)`,
             referenceType: "Order",
             referenceId: order.id,
             ticketId: order.ticketId,
@@ -111,7 +111,7 @@ export async function POST(req: Request, ctx: Ctx) {
             source: "REFUND",
             amountCredits: -1,
             balanceAfterCredits: seller.creditBalanceCredits,
-            note: `${note} (seller credit removed)`,
+            note: `${note} (seller access token removed)`,
             referenceType: "Order",
             referenceId: order.id,
             ticketId: order.ticketId,

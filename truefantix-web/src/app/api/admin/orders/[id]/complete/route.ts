@@ -160,7 +160,7 @@ export async function POST(req: Request) {
         };
       }
 
-      // Sold-out items => credits apply per sold-out ticket
+      // Sold-out items => access tokens apply per sold-out ticket
       const soldOutItems = order.items.filter(
         (i) => i.ticket?.event?.selloutStatus === "SOLD_OUT"
       );
@@ -228,7 +228,7 @@ export async function POST(req: Request) {
           (ticketId) => !existingBuyerTicketIds.has(ticketId)
         );
 
-        // Buyer must have enough credits for missing spends
+        // Buyer must have enough access tokens for missing spends
         const buyerStartBal = buyer.creditBalanceCredits ?? 0;
         const buyerMaxRequired = candidateBuyerCreates.length * spendPerTicket;
 
@@ -238,7 +238,7 @@ export async function POST(req: Request) {
             status: 409 as const,
             body: {
               ok: false,
-              error: "Cannot complete: buyer has insufficient credits for sold-out items",
+              error: "Cannot complete: buyer has insufficient access tokens for sold-out items",
               debug: {
                 buyerCredits: buyerStartBal,
                 required: buyerMaxRequired,

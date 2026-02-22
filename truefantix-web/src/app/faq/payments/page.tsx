@@ -38,7 +38,7 @@ export default function PaymentsFAQPage() {
               How do buyers pay?
             </h2>
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
-              Buyers pay securely via credit or debit card through Stripe&apos;s secure payment system.
+              Buyers pay securely by card through Stripe&apos;s secure payment system.
             </p>
           </div>
 

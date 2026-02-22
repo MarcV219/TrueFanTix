@@ -186,7 +186,7 @@ export async function POST(req: Request, ctx: Ctx) {
         return {
           ok: false as const,
           status: 400 as const,
-          body: { ok: false, error: "Insufficient credits to reserve sold-out event ticket" },
+          body: { ok: false, error: "Insufficient access tokens to reserve sold-out event ticket" },
         };
       }
 

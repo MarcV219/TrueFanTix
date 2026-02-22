@@ -151,7 +151,7 @@ export async function POST(req: Request) {
         };
       }
 
-      // Sold-out credit requirement: 1 credit per SOLD_OUT ticket
+      // Sold-out access token requirement: 1 access token per SOLD_OUT ticket
       const soldOutCount = tickets.filter((t) => t.event?.selloutStatus === "SOLD_OUT").length;
       const requiredCredits = soldOutCount * CREDIT_COST_PER_SOLDOUT_PURCHASE;
 
@@ -161,7 +161,7 @@ export async function POST(req: Request) {
           status: 400 as const,
           body: {
             ok: false,
-            error: "Insufficient credits to reserve sold-out event tickets",
+            error: "Insufficient access tokens to reserve sold-out event tickets",
             debug: { buyerCredits: buyer.creditBalanceCredits ?? 0, requiredCredits, soldOutCount },
           },
         };
