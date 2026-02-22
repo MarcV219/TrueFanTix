@@ -188,16 +188,7 @@ export default function SellerPage() {
 
   const { seller, summary, recent } = dash;
 
-  // Back-compat: API may still return credit* keys while UI now says access tokens
-  const summaryWithTokens = {
-    ...summary,
-    accessTokenBalance:
-      (summary as any).accessTokenBalance ??
-      (summary as any).creditBalanceCredits ??
-      0,
-  } as any;
-
-  const accessTokenTxns = (recent as any)?.accessTokens ?? (recent as any)?.credits ?? [];
+  const accessTokenTxns = recent.accessTokens ?? [];
 
   if (!seller || !summary || !recent) {
     return (
@@ -244,7 +235,7 @@ export default function SellerPage() {
             <div className="text-right">
               <div className="text-gray-500 text-sm">Access Tokens</div>
               <div className="text-3xl font-bold text-green-600">
-                {summaryWithTokens.accessTokenBalance}
+                {summary.accessTokenBalance}
               </div>
               <div className="text-gray-500 text-xs">access tokens (not dollars)</div>
             </div>

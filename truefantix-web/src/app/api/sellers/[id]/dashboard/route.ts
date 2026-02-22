@@ -109,9 +109,9 @@ export async function GET(req: Request, ctx: Ctx) {
     const lifetimeOrders = seller.metrics?.lifetimeOrders ?? 0;
     const lifetimeTicketsSold = seller.metrics?.lifetimeTicketsSold ?? 0;
 
-    const creditBalanceCredits = seller.creditBalanceCredits ?? 0;
+    const accessTokenBalance = seller.creditBalanceCredits ?? 0;
 
-    const soldOutCreditsEarned = earnedSoldOutAgg._sum.amountCredits ?? 0;
+    const soldOutAccessTokensEarned = earnedSoldOutAgg._sum.amountCredits ?? 0;
 
     return NextResponse.json({
       ok: true,
@@ -122,17 +122,17 @@ export async function GET(req: Request, ctx: Ctx) {
         reviews: seller.reviews,
         badges: seller.badges.map((b) => b.name),
 
-        creditBalanceCredits,
+        accessTokenBalance,
 
         createdAt: seller.createdAt,
         updatedAt: seller.updatedAt,
       },
 
       summary: {
-        creditBalanceCredits,
+        accessTokenBalance,
 
-        // Credit detail for UI reinforcement
-        soldOutCreditsEarned,
+        // Access token detail for UI reinforcement
+        soldOutAccessTokensEarned,
 
         lifetimeSalesCents,
         lifetimeSales: centsToDollars(lifetimeSalesCents),
@@ -140,7 +140,7 @@ export async function GET(req: Request, ctx: Ctx) {
         lifetimeOrders,
         lifetimeTicketsSold,
 
-        ticketsActive: availableCount,
+        ticketsAvailable: availableCount,
         ticketsWithdrawn: withdrawnCount,
         ticketsSold: soldCount,
         ticketsTotal: availableCount + soldCount + withdrawnCount,
@@ -177,7 +177,7 @@ export async function GET(req: Request, ctx: Ctx) {
           createdAt: o.createdAt,
         })),
 
-        credits: recentCredits.map((ct) => ({
+        accessTokens: recentCredits.map((ct) => ({
           id: ct.id,
           type: ct.type,
           source: (ct as any).source ?? null,
