@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TicketStatus, TicketVerificationStatus } from "@prisma/client";
 import { requireSellerApproved } from "@/lib/auth/guards";
+import { autoVerifyTicketById } from "@/lib/tickets/verification";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -274,6 +275,8 @@ export async function POST(req: Request) {
       },
     });
 
+    const verified = await autoVerifyTicketById(prisma, created.id);
+
     return NextResponse.json(
       {
         ok: true,
@@ -289,11 +292,11 @@ export async function POST(req: Request) {
           venue: created.venue,
           date: created.date,
           status: created.status,
-          verificationStatus: (created as any).verificationStatus ?? "PENDING",
-          verificationScore: (created as any).verificationScore ?? null,
-          verificationReason: (created as any).verificationReason ?? null,
-          verificationProvider: (created as any).verificationProvider ?? null,
-          verifiedAt: (created as any).verifiedAt ?? null,
+          verificationStatus: (verified as any)?.verificationStatus ?? (created as any).verificationStatus ?? "PENDING",
+          verificationScore: (verified as any)?.verificationScore ?? (created as any).verificationScore ?? null,
+          verificationReason: (verified as any)?.verificationReason ?? (created as any).verificationReason ?? null,
+          verificationProvider: (verified as any)?.verificationProvider ?? (created as any).verificationProvider ?? null,
+          verifiedAt: (verified as any)?.verifiedAt ?? (created as any).verifiedAt ?? null,
           event: created.event
             ? {
                 id: created.event.id,
