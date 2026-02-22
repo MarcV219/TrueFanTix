@@ -6,9 +6,19 @@ import { TicketVerificationStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
 
+function hasInternalCronAuth(req: Request) {
+  const configured = process.env.TICKET_VERIFY_CRON_KEY?.trim();
+  if (!configured) return false;
+  const provided = req.headers.get("x-ticket-verify-key")?.trim();
+  return !!provided && provided === configured;
+}
+
 export async function POST(req: Request) {
-  const gate = await requireAdmin(req);
-  if (!gate.ok) return gate.res;
+  const internalCron = hasInternalCronAuth(req);
+  if (!internalCron) {
+    const gate = await requireAdmin(req);
+    if (!gate.ok) return gate.res;
+  }
 
   let body: any = {};
   try {
@@ -35,6 +45,7 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     ok: true,
+    triggeredBy: internalCron ? "cron-key" : "admin-session",
     requested: take,
     processedCount: processed.length,
     processed,

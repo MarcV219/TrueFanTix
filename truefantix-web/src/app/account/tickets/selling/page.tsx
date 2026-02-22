@@ -23,6 +23,9 @@ type TicketRow = {
   venue: string;
   date: string;
   status: string;
+  verificationStatus?: "PENDING" | "VERIFIED" | "REJECTED" | "NEEDS_REVIEW" | string;
+  verificationScore?: number | null;
+  verificationReason?: string | null;
 };
 
 async function fetchJson(path: string, init?: RequestInit) {
@@ -168,22 +171,53 @@ function ListingRow({ t }: { t: TicketRow }) {
         </div>
       </div>
 
-      <div
-        style={{
-          justifySelf: "end",
-          display: "inline-flex",
-          padding: "6px 10px",
-          borderRadius: 999,
-          border:
-            t.status === "AVAILABLE"
-              ? "1px solid rgba(34,197,94,0.35)"
-              : "1px solid rgba(148,163,184,0.55)",
-          background: t.status === "AVAILABLE" ? "rgba(240,253,244,1)" : "rgba(248,250,252,1)",
-          fontWeight: 950,
-          fontSize: 12,
-        }}
-      >
-        {t.status}
+      <div style={{ justifySelf: "end", display: "grid", gap: 6, justifyItems: "end" }}>
+        <div
+          style={{
+            display: "inline-flex",
+            padding: "6px 10px",
+            borderRadius: 999,
+            border:
+              t.status === "AVAILABLE"
+                ? "1px solid rgba(34,197,94,0.35)"
+                : "1px solid rgba(148,163,184,0.55)",
+            background: t.status === "AVAILABLE" ? "rgba(240,253,244,1)" : "rgba(248,250,252,1)",
+            fontWeight: 950,
+            fontSize: 12,
+          }}
+        >
+          {t.status}
+        </div>
+
+        <div
+          style={{
+            display: "inline-flex",
+            padding: "6px 10px",
+            borderRadius: 999,
+            border:
+              t.verificationStatus === "VERIFIED"
+                ? "1px solid rgba(34,197,94,0.35)"
+                : t.verificationStatus === "REJECTED"
+                ? "1px solid rgba(239,68,68,0.4)"
+                : t.verificationStatus === "NEEDS_REVIEW"
+                ? "1px solid rgba(245,158,11,0.45)"
+                : "1px solid rgba(148,163,184,0.55)",
+            background:
+              t.verificationStatus === "VERIFIED"
+                ? "rgba(240,253,244,1)"
+                : t.verificationStatus === "REJECTED"
+                ? "rgba(254,242,242,1)"
+                : t.verificationStatus === "NEEDS_REVIEW"
+                ? "rgba(255,251,235,1)"
+                : "rgba(248,250,252,1)",
+            fontWeight: 900,
+            fontSize: 12,
+          }}
+          title={t.verificationReason ?? undefined}
+        >
+          Verify: {t.verificationStatus ?? "PENDING"}
+          {typeof t.verificationScore === "number" ? ` (${t.verificationScore})` : ""}
+        </div>
       </div>
     </div>
   );
@@ -496,7 +530,7 @@ function Body({ me }: { me: MeUser }) {
       {/* ✅ NEW: Active listings */}
       <Card
         title="My active listings"
-        description="These are your current tickets (pulled from GET /api/tickets?sellerId=...)."
+        description="These are your current tickets (pulled from GET /api/tickets?sellerId=...). Verification states: PENDING, VERIFIED, NEEDS_REVIEW, REJECTED. Public marketplace only shows VERIFIED."
       >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
           <button
