@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+// Legacy endpoint kept for compatibility; semantics are access tokens.
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Credits are integer (1 credit per ticket sold, etc.)
+    // Access tokens are integer units (1 token per eligible ticket event).
     const intAmount = Math.trunc(amount);
     if (intAmount === 0) {
       return NextResponse.json({ error: "amount cannot be 0" }, { status: 400 });
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      creditBalance: updated.creditBalance,
+      accessTokenBalance: updated.creditBalance,
     });
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });

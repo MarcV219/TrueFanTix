@@ -14,7 +14,7 @@ function normalizeId(value: unknown) {
 }
 
 function parseSellerIdFromUrl(req: Request): string {
-  // /api/sellers/<id>/credits
+  // /api/sellers/<id>/access-tokens (legacy path: /credits)
   const pathname = new URL(req.url).pathname;
   const parts = pathname.split("/").filter(Boolean);
   const sellersIndex = parts.indexOf("sellers");
@@ -94,12 +94,12 @@ export async function GET(req: Request, ctx: Ctx) {
       sellerId,
       take,
       nextCursor,
-      credits: page,
+      accessTokens: page,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
-      { ok: false, error: "Credits fetch failed", details: message },
+      { ok: false, error: "Access token fetch failed", details: message },
       { status: 500 }
     );
   }

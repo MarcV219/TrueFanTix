@@ -3,10 +3,6 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-function centsToDollars(cents: number) {
-  return Number((cents / 100).toFixed(2));
-}
-
 export async function GET() {
   const sellers = await prisma.seller.findMany({
     orderBy: { name: "asc" },
@@ -18,8 +14,7 @@ export async function GET() {
     name: s.name,
     rating: s.rating,
     reviews: s.reviews,
-    creditBalanceCents: s.creditBalanceCents,
-    creditBalance: centsToDollars(s.creditBalanceCents), // back-compat display
+    accessTokenBalance: s.creditBalanceCredits,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     badges: s.badges.map((b) => b.name),
@@ -62,7 +57,7 @@ export async function POST(req: Request) {
     const seller = await prisma.seller.create({
       data: {
         name,
-        creditBalanceCents: 0,
+        creditBalanceCredits: 0,
         ...(rating == null ? {} : { rating }),
         ...(reviews == null ? {} : { reviews }),
         badges: badges.length
@@ -78,8 +73,7 @@ export async function POST(req: Request) {
         name: seller.name,
         rating: seller.rating,
         reviews: seller.reviews,
-        creditBalanceCents: seller.creditBalanceCents,
-        creditBalance: centsToDollars(seller.creditBalanceCents),
+        accessTokenBalance: seller.creditBalanceCredits,
         createdAt: seller.createdAt,
         updatedAt: seller.updatedAt,
         badges: seller.badges.map((b) => b.name),
