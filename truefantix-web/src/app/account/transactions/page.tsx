@@ -22,6 +22,8 @@ type AccessTokenResponse = {
   message?: string;
 };
 
+type TxnTab = "all" | "accessTokens" | "purchases" | "sales" | "payouts" | "refunds";
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 860, margin: "40px auto", padding: 16 }}>
@@ -46,11 +48,112 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
+function TabButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "8px 12px",
+        borderRadius: 999,
+        border: active ? "1px solid rgba(37, 99, 235, 0.45)" : "1px solid rgba(0,0,0,0.1)",
+        background: active ? "rgba(239, 246, 255, 1)" : "white",
+        color: active ? "rgba(30, 64, 175, 1)" : "rgba(15, 23, 42, 1)",
+        fontWeight: 800,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function AccessTokenTable({ transactions }: { transactions: AccessTokenTxn[] }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "white",
+        overflowX: "auto",
+      }}
+    >
+      <div style={{ fontWeight: 950, fontSize: 18, marginBottom: 10 }}>Access token transaction history</div>
+
+      {transactions.length === 0 ? (
+        <div style={{ opacity: 0.8 }}>No access token transactions yet.</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
+              <th style={{ padding: "8px 6px" }}>When</th>
+              <th style={{ padding: "8px 6px" }}>Type</th>
+              <th style={{ padding: "8px 6px" }}>Source</th>
+              <th style={{ padding: "8px 6px" }}>Amount</th>
+              <th style={{ padding: "8px 6px" }}>Balance After</th>
+              <th style={{ padding: "8px 6px" }}>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {transactions.map((t) => (
+              <tr key={t.id} style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
+                <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                  {new Date(t.createdAt).toLocaleString()}
+                </td>
+                <td style={{ padding: "8px 6px" }}>{t.type}</td>
+                <td style={{ padding: "8px 6px" }}>{t.source || "—"}</td>
+                <td
+                  style={{
+                    padding: "8px 6px",
+                    fontWeight: 900,
+                    color: t.amountCredits >= 0 ? "rgba(22,101,52,1)" : "rgba(153,27,27,1)",
+                  }}
+                >
+                  {t.amountCredits >= 0 ? "+" : ""}
+                  {t.amountCredits}
+                </td>
+                <td style={{ padding: "8px 6px" }}>{t.balanceAfterCredits ?? "—"}</td>
+                <td style={{ padding: "8px 6px" }}>{t.note || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function ComingSoon({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "white",
+      }}
+    >
+      <div style={{ fontWeight: 900 }}>{label}</div>
+      <div style={{ marginTop: 6, opacity: 0.8 }}>Coming next — this tab will be populated soon.</div>
+    </div>
+  );
+}
+
 function Body() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [balance, setBalance] = React.useState(0);
   const [transactions, setTransactions] = React.useState<AccessTokenTxn[]>([]);
+  const [tab, setTab] = React.useState<TxnTab>("all");
 
   React.useEffect(() => {
     let alive = true;
@@ -125,57 +228,30 @@ function Body() {
         <div style={{ fontSize: 30, fontWeight: 950, color: "rgba(22,101,52,1)" }}>{balance}</div>
       </div>
 
-      <div
-        style={{
-          padding: 14,
-          borderRadius: 12,
-          border: "1px solid rgba(0,0,0,0.10)",
-          background: "white",
-          overflowX: "auto",
-        }}
-      >
-        <div style={{ fontWeight: 950, fontSize: 18, marginBottom: 10 }}>Access token transaction history</div>
-
-        {transactions.length === 0 ? (
-          <div style={{ opacity: 0.8 }}>No access token transactions yet.</div>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
-                <th style={{ padding: "8px 6px" }}>When</th>
-                <th style={{ padding: "8px 6px" }}>Type</th>
-                <th style={{ padding: "8px 6px" }}>Source</th>
-                <th style={{ padding: "8px 6px" }}>Amount</th>
-                <th style={{ padding: "8px 6px" }}>Balance After</th>
-                <th style={{ padding: "8px 6px" }}>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transactions.map((t) => (
-                <tr key={t.id} style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
-                  <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
-                    {new Date(t.createdAt).toLocaleString()}
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>{t.type}</td>
-                  <td style={{ padding: "8px 6px" }}>{t.source || "—"}</td>
-                  <td
-                    style={{
-                      padding: "8px 6px",
-                      fontWeight: 900,
-                      color: t.amountCredits >= 0 ? "rgba(22,101,52,1)" : "rgba(153,27,27,1)",
-                    }}
-                  >
-                    {t.amountCredits >= 0 ? "+" : ""}
-                    {t.amountCredits}
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>{t.balanceAfterCredits ?? "—"}</td>
-                  <td style={{ padding: "8px 6px" }}>{t.note || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <TabButton active={tab === "all"} label="All" onClick={() => setTab("all")} />
+        <TabButton active={tab === "accessTokens"} label="Access Tokens" onClick={() => setTab("accessTokens")} />
+        <TabButton active={tab === "purchases"} label="Purchases" onClick={() => setTab("purchases")} />
+        <TabButton active={tab === "sales"} label="Sales" onClick={() => setTab("sales")} />
+        <TabButton active={tab === "payouts"} label="Payouts" onClick={() => setTab("payouts")} />
+        <TabButton active={tab === "refunds"} label="Refunds" onClick={() => setTab("refunds")} />
       </div>
+
+      {tab === "all" && (
+        <>
+          <AccessTokenTable transactions={transactions} />
+          <ComingSoon label="Purchases" />
+          <ComingSoon label="Sales" />
+          <ComingSoon label="Payouts" />
+          <ComingSoon label="Refunds" />
+        </>
+      )}
+
+      {tab === "accessTokens" && <AccessTokenTable transactions={transactions} />}
+      {tab === "purchases" && <ComingSoon label="Purchases" />}
+      {tab === "sales" && <ComingSoon label="Sales" />}
+      {tab === "payouts" && <ComingSoon label="Payouts" />}
+      {tab === "refunds" && <ComingSoon label="Refunds" />}
     </div>
   );
 }
