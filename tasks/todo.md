@@ -23,6 +23,9 @@ Implement: (A) 9PM daily unfinished-asks sweep + dashboard update, (B) public-do
 
 ## Progress Log
 - Started implementation.
+- Phase 2 ticket custody escrow implemented in code (schema + routes).
+- Added migration SQL file for TicketEscrow model.
+- Prisma migrate apply is currently blocked by existing local drift in older migration history; typecheck still passes.
 
 ## Review / Results
 - Added daily 9:00 PM cron: `Daily Ask Review + Completion Sweep` (America/Toronto).

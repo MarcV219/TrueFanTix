@@ -70,6 +70,15 @@ enum TicketVerificationStatus {
   NEEDS_REVIEW
 }
 
+enum TicketEscrowState {
+  NONE
+  DEPOSIT_PENDING
+  IN_ESCROW
+  RELEASED_TO_BUYER
+  RELEASED_BACK_TO_SELLER
+  FAILED
+}
+
 /**
  * Account-level RBAC.
  * Most people are USER. ADMIN is for back-office moderation/disputes/etc.
@@ -319,6 +328,8 @@ model Ticket {
   // A ticket can appear in many OrderItems over time (retries/history)
   orderItems OrderItem[]
 
+  escrow TicketEscrow?
+
   creditTransactions CreditTransaction[]
 
   // Community comments (optional)
@@ -352,6 +363,7 @@ model Order {
   items   OrderItem[]
   payment Payment?
 
+  ticketEscrows TicketEscrow[]
   creditTransactions CreditTransaction[]
 
   @@index([sellerId, createdAt])
@@ -444,6 +456,31 @@ model Payout {
 
   @@index([sellerId, createdAt])
   @@index([status, createdAt])
+}
+
+model TicketEscrow {
+  id       String @id @default(cuid())
+
+  ticketId String @unique
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  orderId String?
+  order   Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  state         TicketEscrowState @default(NONE)
+  provider      String?
+  providerRef   String?
+  releasedTo    String?
+  failureReason String?
+
+  depositedAt DateTime?
+  releasedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([state, updatedAt])
+  @@index([orderId])
 }
 
 model Payment {
