@@ -230,6 +230,9 @@ export default function AppHeader() {
           <NavPill href="/tickets" label="Tickets" active={isTickets} />
           <NavPill href="/forum" label="Forum" active={isForum} />
           <NavPill href="/account" label="Account" active={isAccount} />
+          {me?.flags?.isAdmin ? (
+            <NavPill href="/admin/tickets/verification" label="Admin Queue" active={current.startsWith("/admin/tickets/verification")} />
+          ) : null}
 
           {meLoaded ? (
             isLoggedIn ? (

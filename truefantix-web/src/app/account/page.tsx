@@ -581,6 +581,13 @@ function AccountHub({ me }: { me: MeUser }) {
               hint="See purchases, sales, payouts, refunds, and access tokens."
               href="/account/transactions"
             />
+            {me?.flags?.isAdmin ? (
+              <ToolLink
+                label="Admin ticket verification queue"
+                hint="Review pending/flagged ticket authenticity and approve or reject listings."
+                href="/admin/tickets/verification"
+              />
+            ) : null}
           </div>
         </Card>
 
