@@ -1,4 +1,4 @@
-import { TicketStatus, EventSelloutStatus } from '@prisma/client';
+import { EventSelloutStatus } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import { prisma } from '../src/lib/prisma';
 
@@ -431,7 +431,7 @@ async function main() {
           row: t.row,
           seat: t.seat,
           date: createdEvents[t.eventIdx]?.date ?? "",
-          status: TicketStatus.AVAILABLE,
+          status: 'AVAILABLE',
           sellerId: seller.id,
           eventId: createdEvents[t.eventIdx]?.id ?? null,
         },
