@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ForumVisibility } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
 type LockBody = {
@@ -69,7 +68,7 @@ export async function POST(req: Request) {
       select: { id: true, visibility: true },
     });
 
-    if (!existing || existing.visibility === ForumVisibility.DELETED) {
+    if (!existing || existing.visibility === "DELETED") {
       return NextResponse.json({ ok: false, error: "NOT_FOUND" }, { status: 404 });
     }
 
