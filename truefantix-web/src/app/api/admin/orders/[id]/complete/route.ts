@@ -57,7 +57,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: any) => {
       // Load order + items + tickets + event sellout
       const order = await tx.order.findUnique({
         where: { id: orderId },
@@ -110,8 +110,8 @@ export async function POST(req: Request) {
 
       // Validate all tickets are SOLD (delivery step should have done this)
       const notSold = order.items
-        .filter((i) => i.ticket?.status !== "SOLD")
-        .map((i) => ({ ticketId: i.ticketId, status: i.ticket?.status ?? null }));
+        .filter((i: any) => i.ticket?.status !== "SOLD")
+        .map((i: any) => ({ ticketId: i.ticketId, status: i.ticket?.status ?? null }));
 
       if (notSold.length) {
         return {
@@ -165,9 +165,9 @@ export async function POST(req: Request) {
 
       // Sold-out items => access tokens apply per sold-out ticket
       const soldOutItems = order.items.filter(
-        (i) => i.ticket?.event?.selloutStatus === "SOLD_OUT"
+        (i: any) => i.ticket?.event?.selloutStatus === "SOLD_OUT"
       );
-      const soldOutTicketIds = uniqStrings(soldOutItems.map((i) => i.ticketId));
+      const soldOutTicketIds = uniqStrings(soldOutItems.map((i: any) => i.ticketId));
       const soldOutCount = soldOutTicketIds.length;
 
       let creditsSpentByBuyer = 0;
@@ -225,7 +225,7 @@ export async function POST(req: Request) {
         });
 
         const existingBuyerTicketIds = new Set(
-          existingBuyerSpend.map((t) => t.ticketId).filter(Boolean) as string[]
+          existingBuyerSpend.map((t: any) => t.ticketId).filter(Boolean) as string[]
         );
         const candidateBuyerCreates = soldOutTicketIds.filter(
           (ticketId) => !existingBuyerTicketIds.has(ticketId)
@@ -296,7 +296,7 @@ export async function POST(req: Request) {
         });
 
         const existingSellerTicketIds = new Set(
-          existingSellerEarn.map((t) => t.ticketId).filter(Boolean) as string[]
+          existingSellerEarn.map((t: any) => t.ticketId).filter(Boolean) as string[]
         );
         const candidateSellerCreates = soldOutTicketIds.filter(
           (ticketId) => !existingSellerTicketIds.has(ticketId)
