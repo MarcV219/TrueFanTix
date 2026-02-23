@@ -38,7 +38,7 @@ export async function GET(req: Request) {
       ok: true,
       status: where.verificationStatus,
       take,
-      tickets: tickets.map((t) => ({
+      tickets: tickets.map((t: any) => ({
         id: t.id,
         title: t.title,
         image: t.image,
