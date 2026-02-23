@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { OrderStatus, Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
 const CREDIT_AWARD_PER_SOLDOUT_SALE = 1; // seller earns per sold-out ticket
@@ -32,8 +31,8 @@ function uniqStrings(values: string[]) {
 }
 
 async function createCreditTxnIdempotent(
-  tx: Prisma.TransactionClient,
-  data: Prisma.CreditTransactionCreateInput
+  tx: any,
+  data: any
 ) {
   try {
     await tx.creditTransaction.create({ data });
@@ -77,7 +76,7 @@ export async function POST(req: Request) {
       }
 
       // Idempotent replay shortcut
-      if (order.status === OrderStatus.COMPLETED) {
+      if (order.status === "COMPLETED") {
         return {
           ok: true as const,
           status: 200 as const,
@@ -85,7 +84,7 @@ export async function POST(req: Request) {
         };
       }
 
-      if (order.status !== OrderStatus.DELIVERED) {
+      if (order.status !== "DELIVERED") {
         return {
           ok: false as const,
           status: 409 as const,
@@ -134,8 +133,8 @@ export async function POST(req: Request) {
        * This also prevents double-increment of sellerMetrics under concurrent completes.
        */
       const gate = await tx.order.updateMany({
-        where: { id: orderId, status: OrderStatus.DELIVERED },
-        data: { status: OrderStatus.COMPLETED },
+        where: { id: orderId, status: "DELIVERED" },
+        data: { status: "COMPLETED" },
       });
 
       if (gate.count === 0) {
@@ -145,7 +144,7 @@ export async function POST(req: Request) {
           include: { items: true, payment: true },
         });
 
-        if (fresh?.status === OrderStatus.COMPLETED) {
+        if (fresh?.status === "COMPLETED") {
           return {
             ok: true as const,
             status: 200 as const,
