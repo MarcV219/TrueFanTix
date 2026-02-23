@@ -74,7 +74,7 @@ export async function POST(req: Request) {
 
     results.push({
       orderId: order.id,
-      ticketIds: order.items.map((i) => i.ticketId),
+      ticketIds: order.items.map((i: any) => i.ticketId),
     });
   }
 
