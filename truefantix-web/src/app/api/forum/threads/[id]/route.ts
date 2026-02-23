@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ForumVisibility } from "@prisma/client";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 
 function normalizeId(value: unknown) {
@@ -87,7 +86,7 @@ export async function GET(req: Request) {
     const threadBase = await prisma.forumThread.findFirst({
       where: {
         id: threadId,
-        visibility: ForumVisibility.VISIBLE,
+        visibility: "VISIBLE",
       },
       select: {
         id: true,
@@ -120,7 +119,7 @@ export async function GET(req: Request) {
     const visiblePostCount = await prisma.forumPost.count({
       where: {
         threadId,
-        visibility: ForumVisibility.VISIBLE,
+        visibility: "VISIBLE",
       },
     });
 
@@ -136,8 +135,8 @@ export async function GET(req: Request) {
       where: {
         threadId,
         visibility: viewerIsModerator
-          ? { in: [ForumVisibility.VISIBLE, ForumVisibility.HIDDEN] }
-          : { in: [ForumVisibility.VISIBLE, ForumVisibility.HIDDEN] },
+          ? { in: ["VISIBLE", "HIDDEN"] }
+          : { in: ["VISIBLE", "HIDDEN"] },
       },
       orderBy: { createdAt: "desc" },
       take: limit + 1,
@@ -172,7 +171,7 @@ export async function GET(req: Request) {
       viewerIsModerator
         ? postsRaw
         : postsRaw.map((p) => {
-            if (p.visibility === ForumVisibility.HIDDEN) {
+            if (p.visibility === "HIDDEN") {
               return {
                 ...p,
                 body: "", // do not leak content
