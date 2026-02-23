@@ -683,3 +683,17 @@ model VerificationCode {
   @@index([expiresAt])
   @@index([kind])
 }
+
+/**
+ * Landing-page waitlist for launch notifications.
+ */
+model EarlyAccessLead {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  email  String @unique
+  source String @default("homepage")
+
+  @@index([createdAt])
+}

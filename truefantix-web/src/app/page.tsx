@@ -355,7 +355,7 @@ export default function Page() {
           <p className={`text-lg mb-6 ${BRAND.subtle}`}>Buy and sell tickets at or below face value. Secure, fair, and fan-first.</p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
             <Link href="/tickets" className={BRAND.btnPrimary}>Browse Tickets</Link>
-            <a href="#early-access" className={BRAND.btnOutline}>Get Early Access</a>
+            <a href="#early-access" className={BRAND.btnOutline}>Join the Early Access List</a>
           </div>
 
           <div id="early-access" className="mt-10 max-w-xl mx-auto">
