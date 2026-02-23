@@ -56,7 +56,7 @@ export async function GET() {
 
     // 2) DB lookup
     console.log(`[ME ${rid}] prisma.user.findUnique`);
-    const user = await withTimeout(
+    const user: any = await withTimeout(
       "prisma.user.findUnique",
       3500,
       prisma.user.findUnique({
