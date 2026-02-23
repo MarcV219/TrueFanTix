@@ -1,4 +1,3 @@
-import { EventSelloutStatus } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import { prisma } from '../src/lib/prisma';
 
@@ -49,73 +48,73 @@ async function main() {
   // Create diverse events
   const events = [
     // Concerts
-    { title: "Taylor Swift - The Eras Tour", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-03-15", type: "concert", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Drake - It's All A Blur Tour", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-05-20", type: "concert", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Ed Sheeran Mathematics Tour", venue: "Budweiser Stage, Toronto, ON, Canada", date: "2026-04-10", type: "concert", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "The Weeknd - After Hours Tour", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-07-08", type: "concert", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Adele - Weekend with Adele", venue: "Massey Hall, Toronto, ON, Canada", date: "2026-06-15", type: "concert", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Beyoncé Renaissance World Tour", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-08-20", type: "concert", selloutStatus: EventSelloutStatus.SOLD_OUT },
+    { title: "Taylor Swift - The Eras Tour", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-03-15", type: "concert", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Drake - It's All A Blur Tour", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-05-20", type: "concert", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Ed Sheeran Mathematics Tour", venue: "Budweiser Stage, Toronto, ON, Canada", date: "2026-04-10", type: "concert", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "The Weeknd - After Hours Tour", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-07-08", type: "concert", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Adele - Weekend with Adele", venue: "Massey Hall, Toronto, ON, Canada", date: "2026-06-15", type: "concert", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Beyoncé Renaissance World Tour", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-08-20", type: "concert", selloutStatus: 'SOLD_OUT' as any },
     
     // Sports - Basketball
-    { title: "Toronto Raptors vs Lakers", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-02-25", type: "basketball", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Toronto Raptors vs Warriors", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-03-10", type: "basketball", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Toronto Raptors vs Celtics", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-04-05", type: "basketball", selloutStatus: EventSelloutStatus.SOLD_OUT },
+    { title: "Toronto Raptors vs Lakers", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-02-25", type: "basketball", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Toronto Raptors vs Warriors", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-03-10", type: "basketball", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Toronto Raptors vs Celtics", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-04-05", type: "basketball", selloutStatus: 'SOLD_OUT' as any },
     
     // Sports - Hockey
-    { title: "Toronto Maple Leafs vs Bruins", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-03-05", type: "hockey", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Toronto Maple Leafs vs Canadiens", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-03-25", type: "hockey", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Toronto Maple Leafs vs Rangers", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-04-12", type: "hockey", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
+    { title: "Toronto Maple Leafs vs Bruins", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-03-05", type: "hockey", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Toronto Maple Leafs vs Canadiens", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-03-25", type: "hockey", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Toronto Maple Leafs vs Rangers", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-04-12", type: "hockey", selloutStatus: 'NOT_SOLD_OUT' as any },
     
     // Sports - Baseball
-    { title: "Blue Jays vs Yankees", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-06-15", type: "baseball", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Blue Jays vs Red Sox", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-07-22", type: "baseball", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Blue Jays vs Dodgers", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-08-10", type: "baseball", selloutStatus: EventSelloutStatus.SOLD_OUT },
+    { title: "Blue Jays vs Yankees", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-06-15", type: "baseball", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Blue Jays vs Red Sox", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-07-22", type: "baseball", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Blue Jays vs Dodgers", venue: "Rogers Centre, Toronto, ON, Canada", date: "2026-08-10", type: "baseball", selloutStatus: 'SOLD_OUT' as any },
     
     // Sports - Football
-    { title: "Toronto Argonauts vs Blue Bombers", venue: "BMO Field, Toronto, ON, Canada", date: "2026-09-15", type: "football", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Toronto Argonauts vs Roughriders", venue: "BMO Field, Toronto, ON, Canada", date: "2026-10-05", type: "football", selloutStatus: EventSelloutStatus.SOLD_OUT },
+    { title: "Toronto Argonauts vs Blue Bombers", venue: "BMO Field, Toronto, ON, Canada", date: "2026-09-15", type: "football", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Toronto Argonauts vs Roughriders", venue: "BMO Field, Toronto, ON, Canada", date: "2026-10-05", type: "football", selloutStatus: 'SOLD_OUT' as any },
     
     // Sports - Soccer
-    { title: "Toronto FC vs Inter Miami", venue: "BMO Field, Toronto, ON, Canada", date: "2026-05-15", type: "soccer", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Toronto FC vs LA Galaxy", venue: "BMO Field, Toronto, ON, Canada", date: "2026-07-20", type: "soccer", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
+    { title: "Toronto FC vs Inter Miami", venue: "BMO Field, Toronto, ON, Canada", date: "2026-05-15", type: "soccer", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Toronto FC vs LA Galaxy", venue: "BMO Field, Toronto, ON, Canada", date: "2026-07-20", type: "soccer", selloutStatus: 'NOT_SOLD_OUT' as any },
     
     // Theatre
-    { title: "Hamilton", venue: "Princess of Wales Theatre, Toronto, ON, Canada", date: "2026-03-01", type: "theatre", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "The Lion King", venue: "Princess of Wales Theatre, Toronto, ON, Canada", date: "2026-04-20", type: "theatre", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Wicked", venue: "Ed Mirvish Theatre, Toronto, ON, Canada", date: "2026-05-15", type: "theatre", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Mamma Mia!", venue: "Royal Alexandra Theatre, Toronto, ON, Canada", date: "2026-06-10", type: "theatre", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
+    { title: "Hamilton", venue: "Princess of Wales Theatre, Toronto, ON, Canada", date: "2026-03-01", type: "theatre", selloutStatus: 'SOLD_OUT' as any },
+    { title: "The Lion King", venue: "Princess of Wales Theatre, Toronto, ON, Canada", date: "2026-04-20", type: "theatre", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Wicked", venue: "Ed Mirvish Theatre, Toronto, ON, Canada", date: "2026-05-15", type: "theatre", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Mamma Mia!", venue: "Royal Alexandra Theatre, Toronto, ON, Canada", date: "2026-06-10", type: "theatre", selloutStatus: 'NOT_SOLD_OUT' as any },
     
     // Comedy
-    { title: "Dave Chappelle Live", venue: "Massey Hall, Toronto, ON, Canada", date: "2026-04-15", type: "comedy", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Kevin Hart Reality Check", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-05-25", type: "comedy", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "John Mulaney Stand-Up", venue: "Sony Centre, Toronto, ON, Canada", date: "2026-06-20", type: "comedy", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Ali Wong Comedy Night", venue: "Queen Elizabeth Theatre, Toronto, ON, Canada", date: "2026-07-10", type: "comedy", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Jim Gaffigan Quality Time", venue: "Massey Hall, Toronto, ON, Canada", date: "2026-08-05", type: "comedy", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
+    { title: "Dave Chappelle Live", venue: "Massey Hall, Toronto, ON, Canada", date: "2026-04-15", type: "comedy", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Kevin Hart Reality Check", venue: "Scotiabank Arena, Toronto, ON, Canada", date: "2026-05-25", type: "comedy", selloutStatus: 'SOLD_OUT' as any },
+    { title: "John Mulaney Stand-Up", venue: "Sony Centre, Toronto, ON, Canada", date: "2026-06-20", type: "comedy", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Ali Wong Comedy Night", venue: "Queen Elizabeth Theatre, Toronto, ON, Canada", date: "2026-07-10", type: "comedy", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Jim Gaffigan Quality Time", venue: "Massey Hall, Toronto, ON, Canada", date: "2026-08-05", type: "comedy", selloutStatus: 'NOT_SOLD_OUT' as any },
     
     // Opera
-    { title: "La Bohème - Canadian Opera Company", venue: "Four Seasons Centre, Toronto, ON, Canada", date: "2026-04-25", type: "opera", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "The Magic Flute - COC", venue: "Four Seasons Centre, Toronto, ON, Canada", date: "2026-05-30", type: "opera", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Carmen - Canadian Opera Company", venue: "Four Seasons Centre, Toronto, ON, Canada", date: "2026-10-15", type: "opera", selloutStatus: EventSelloutStatus.SOLD_OUT },
+    { title: "La Bohème - Canadian Opera Company", venue: "Four Seasons Centre, Toronto, ON, Canada", date: "2026-04-25", type: "opera", selloutStatus: 'SOLD_OUT' as any },
+    { title: "The Magic Flute - COC", venue: "Four Seasons Centre, Toronto, ON, Canada", date: "2026-05-30", type: "opera", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Carmen - Canadian Opera Company", venue: "Four Seasons Centre, Toronto, ON, Canada", date: "2026-10-15", type: "opera", selloutStatus: 'SOLD_OUT' as any },
     
     // Festival
-    { title: "Toronto International Film Festival", venue: "Multiple Venues, Toronto, ON, Canada", date: "2026-09-10", type: "festival", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Canadian Music Week", venue: "Various Venues, Toronto, ON, Canada", date: "2026-05-05", type: "festival", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Toronto Jazz Festival", venue: "Nathan Phillips Square, Toronto, ON, Canada", date: "2026-06-25", type: "festival", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
+    { title: "Toronto International Film Festival", venue: "Multiple Venues, Toronto, ON, Canada", date: "2026-09-10", type: "festival", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Canadian Music Week", venue: "Various Venues, Toronto, ON, Canada", date: "2026-05-05", type: "festival", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Toronto Jazz Festival", venue: "Nathan Phillips Square, Toronto, ON, Canada", date: "2026-06-25", type: "festival", selloutStatus: 'NOT_SOLD_OUT' as any },
     
     // Conference
-    { title: "Collision Conference 2026", venue: "Enercare Centre, Toronto, ON, Canada", date: "2026-06-20", type: "conference", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Toronto Tech Summit", venue: "Metro Toronto Convention Centre, Toronto, ON, Canada", date: "2026-04-15", type: "conference", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Design Thinkers Conference", venue: "Sony Centre, Toronto, ON, Canada", date: "2026-05-12", type: "conference", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
+    { title: "Collision Conference 2026", venue: "Enercare Centre, Toronto, ON, Canada", date: "2026-06-20", type: "conference", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Toronto Tech Summit", venue: "Metro Toronto Convention Centre, Toronto, ON, Canada", date: "2026-04-15", type: "conference", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Design Thinkers Conference", venue: "Sony Centre, Toronto, ON, Canada", date: "2026-05-12", type: "conference", selloutStatus: 'NOT_SOLD_OUT' as any },
     
     // Gala
-    { title: "Toronto Symphony Orchestra Gala", venue: "Roy Thomson Hall, Toronto, ON, Canada", date: "2026-09-20", type: "gala", selloutStatus: EventSelloutStatus.SOLD_OUT },
-    { title: "Canadian Cancer Society Gala", venue: "Fairmont Royal York, Toronto, ON, Canada", date: "2026-10-25", type: "gala", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "SickKids Hospital Foundation Gala", venue: "Metro Toronto Convention Centre, Toronto, ON, Canada", date: "2026-11-15", type: "gala", selloutStatus: EventSelloutStatus.SOLD_OUT },
+    { title: "Toronto Symphony Orchestra Gala", venue: "Roy Thomson Hall, Toronto, ON, Canada", date: "2026-09-20", type: "gala", selloutStatus: 'SOLD_OUT' as any },
+    { title: "Canadian Cancer Society Gala", venue: "Fairmont Royal York, Toronto, ON, Canada", date: "2026-10-25", type: "gala", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "SickKids Hospital Foundation Gala", venue: "Metro Toronto Convention Centre, Toronto, ON, Canada", date: "2026-11-15", type: "gala", selloutStatus: 'SOLD_OUT' as any },
     
     // Workshop
-    { title: "Creative Writing Workshop", venue: "Toronto Public Library, Toronto, ON, Canada", date: "2026-03-20", type: "workshop", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Photography Masterclass", venue: "George Brown College, Toronto, ON, Canada", date: "2026-04-10", type: "workshop", selloutStatus: EventSelloutStatus.NOT_SOLD_OUT },
-    { title: "Entrepreneurship Bootcamp", venue: "MaRS Discovery District, Toronto, ON, Canada", date: "2026-05-15", type: "workshop", selloutStatus: EventSelloutStatus.SOLD_OUT },
+    { title: "Creative Writing Workshop", venue: "Toronto Public Library, Toronto, ON, Canada", date: "2026-03-20", type: "workshop", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Photography Masterclass", venue: "George Brown College, Toronto, ON, Canada", date: "2026-04-10", type: "workshop", selloutStatus: 'NOT_SOLD_OUT' as any },
+    { title: "Entrepreneurship Bootcamp", venue: "MaRS Discovery District, Toronto, ON, Canada", date: "2026-05-15", type: "workshop", selloutStatus: 'SOLD_OUT' as any },
   ];
 
   const createdEvents = [];
