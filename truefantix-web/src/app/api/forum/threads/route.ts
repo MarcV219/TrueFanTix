@@ -2,12 +2,13 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ForumTopicType, ForumVisibility } from "@prisma/client";
 import { requireVerifiedUser } from "@/lib/auth/guards";
+
+type ForumTopicTypeValue = "ARTIST" | "TEAM" | "SHOW" | "OTHER";
 
 type CreateThreadBody = {
   title?: string;
-  topicType?: ForumTopicType | string;
+  topicType?: ForumTopicTypeValue | string;
   topic?: string | null;
   body?: string; // first post
 };
@@ -19,16 +20,16 @@ function badRequest(message: string) {
   );
 }
 
-function normalizeTopicType(v: unknown): ForumTopicType {
+function normalizeTopicType(v: unknown): ForumTopicTypeValue {
   const s = String(v ?? "").trim().toUpperCase();
 
-  if (s === "ARTIST") return ForumTopicType.ARTIST;
-  if (s === "TEAM") return ForumTopicType.TEAM;
-  if (s === "SHOW") return ForumTopicType.SHOW;
-  if (s === "OTHER") return ForumTopicType.OTHER;
+  if (s === "ARTIST") return "ARTIST";
+  if (s === "TEAM") return "TEAM";
+  if (s === "SHOW") return "SHOW";
+  if (s === "OTHER") return "OTHER";
 
   // Default to OTHER (safe MVP default)
-  return ForumTopicType.OTHER;
+  return "OTHER";
 }
 
 function normalizeString(v: unknown) {
@@ -54,7 +55,7 @@ export async function GET(req: Request) {
     const limit = clamp(Number(url.searchParams.get("limit") ?? 20), 1, 50);
     const cursor = url.searchParams.get("cursor");
 
-    const where = { visibility: ForumVisibility.VISIBLE };
+    const where: any = { visibility: "VISIBLE" };
 
     const threads = await prisma.forumThread.findMany({
       where,
@@ -159,13 +160,13 @@ export async function POST(req: Request) {
     const topicType = normalizeTopicType(bodyJson.topicType);
     const topic = bodyJson.topic == null ? null : String(bodyJson.topic).trim() || null;
 
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx: any) => {
       const thread = await tx.forumThread.create({
         data: {
           title,
           topicType,
           topic,
-          visibility: ForumVisibility.VISIBLE,
+          visibility: "VISIBLE",
           authorUserId: user.id,
         },
         select: {
