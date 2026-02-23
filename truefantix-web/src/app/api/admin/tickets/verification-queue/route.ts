@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketVerificationStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
 export async function GET(req: Request) {
@@ -17,8 +16,8 @@ export async function GET(req: Request) {
     const where: any = {
       verificationStatus:
         status === "PENDING" || status === "NEEDS_REVIEW" || status === "REJECTED" || status === "VERIFIED"
-          ? (status as TicketVerificationStatus)
-          : TicketVerificationStatus.PENDING,
+          ? status
+          : "PENDING",
     };
 
     const tickets = await prisma.ticket.findMany({
