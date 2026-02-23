@@ -45,8 +45,8 @@ export async function GET(req: Request) {
     });
 
     // Flatten tickets from all orders
-    const tickets = orders.flatMap((order) =>
-      order.items.map((item) => ({
+    const tickets = orders.flatMap((order: any) =>
+      order.items.map((item: any) => ({
         id: item.ticket.id,
         title: item.ticket.title,
         venue: item.ticket.venue,
