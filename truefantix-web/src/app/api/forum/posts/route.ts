@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ForumVisibility } from "@prisma/client";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 
 type CreatePostBody = {
@@ -69,7 +68,7 @@ async function resolveEffectiveParentId(args: {
       where: {
         id: currentId,
         threadId,
-        visibility: ForumVisibility.VISIBLE,
+        visibility: "VISIBLE",
       },
       select: { id: true, parentId: true },
     });
@@ -146,7 +145,7 @@ export async function POST(req: Request) {
 
     // Validate thread
     const thread = await prisma.forumThread.findFirst({
-      where: { id: threadId, visibility: ForumVisibility.VISIBLE },
+      where: { id: threadId, visibility: "VISIBLE" },
       select: { id: true, isLocked: true },
     });
 
@@ -179,7 +178,7 @@ export async function POST(req: Request) {
         body,
         parentId: effectiveParentId,
         authorUserId: user.id,
-        visibility: ForumVisibility.VISIBLE,
+        visibility: "VISIBLE",
       },
       select: {
         id: true,
