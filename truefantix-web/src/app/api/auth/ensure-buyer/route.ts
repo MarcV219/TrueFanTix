@@ -18,7 +18,7 @@ export async function POST(req: Request) {
 
   // Create a "buyer wallet" Seller record and link it.
   // This does NOT approve selling.
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     // Re-check inside the transaction to avoid race conditions
     const fresh = await tx.user.findUnique({
       where: { id: gate.user.id },
