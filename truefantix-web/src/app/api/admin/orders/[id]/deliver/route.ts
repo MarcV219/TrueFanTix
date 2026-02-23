@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { OrderStatus, TicketStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
 function normalizeId(value: unknown) {
@@ -39,7 +38,7 @@ export async function POST(req: Request) {
 
     const now = new Date();
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: any) => {
       // Load order + items + tickets
       const order = await tx.order.findUnique({
         where: { id: orderId },
@@ -52,7 +51,7 @@ export async function POST(req: Request) {
         return { ok: false as const, status: 404 as const, body: { ok: false, error: "Order not found" } };
       }
 
-      if (order.status !== OrderStatus.PAID) {
+      if (order.status !== "PAID") {
         return {
           ok: false as const,
           status: 409 as const,
@@ -82,7 +81,7 @@ export async function POST(req: Request) {
         };
       }
 
-      const ticketIds = order.items.map((i) => i.ticketId);
+      const ticketIds: string[] = order.items.map((i: any) => i.ticketId);
 
       // Validate all tickets are still reserved by THIS order and not expired
       const tickets = await tx.ticket.findMany({
@@ -90,7 +89,7 @@ export async function POST(req: Request) {
         select: { id: true, status: true, reservedByOrderId: true, reservedUntil: true },
       });
 
-      const missing = ticketIds.filter((id) => !tickets.find((t) => t.id === id));
+      const missing = ticketIds.filter((id: string) => !tickets.find((t: any) => t.id === id));
       if (missing.length) {
         return {
           ok: false as const,
@@ -99,8 +98,8 @@ export async function POST(req: Request) {
         };
       }
 
-      const bad = tickets.filter((t) => {
-        if (t.status !== TicketStatus.RESERVED) return true;
+      const bad = tickets.filter((t: any) => {
+        if (t.status !== "RESERVED") return true;
         if (t.reservedByOrderId !== orderId) return true;
         if (t.reservedUntil && t.reservedUntil <= now) return true; // expired reservation
         return false;
@@ -122,12 +121,12 @@ export async function POST(req: Request) {
       const sold = await tx.ticket.updateMany({
         where: {
           id: { in: ticketIds },
-          status: TicketStatus.RESERVED,
+          status: "RESERVED",
           reservedByOrderId: orderId,
           OR: [{ reservedUntil: null }, { reservedUntil: { gt: now } }],
         },
         data: {
-          status: TicketStatus.SOLD,
+          status: "SOLD",
           soldAt: now,
           reservedByOrderId: null,
           reservedUntil: null,
@@ -149,7 +148,7 @@ export async function POST(req: Request) {
       // Move order to DELIVERED
       const updatedOrder = await tx.order.update({
         where: { id: orderId },
-        data: { status: OrderStatus.DELIVERED },
+        data: { status: "DELIVERED" },
         include: {
           items: true,
           payment: true,
