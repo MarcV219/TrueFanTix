@@ -170,7 +170,7 @@ export async function GET(req: Request) {
     const posts =
       viewerIsModerator
         ? postsRaw
-        : postsRaw.map((p) => {
+        : postsRaw.map((p: any) => {
             if (p.visibility === "HIDDEN") {
               return {
                 ...p,
