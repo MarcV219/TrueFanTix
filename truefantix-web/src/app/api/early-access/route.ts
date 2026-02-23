@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
 
 type Body = {
   email?: string;
@@ -21,6 +22,10 @@ function normalizeSource(v: unknown): string {
 
 export async function POST(req: Request) {
   try {
+    const ip = getClientIp(req);
+    const rl = checkRateLimit({ key: `early-access:${ip}`, limit: 10, windowMs: 10 * 60 * 1000 });
+    if (!rl.ok) return rateLimitError(rl.retryAfterSec);
+
     const body = (await req.json().catch(() => null)) as Body | null;
     if (!body) {
       return NextResponse.json(
