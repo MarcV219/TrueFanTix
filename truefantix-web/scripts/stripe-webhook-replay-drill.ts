@@ -2,7 +2,7 @@ import { prisma } from "../src/lib/prisma";
 import { deriveEscrowState } from "../src/lib/escrow";
 
 async function applySucceededWebhookLikeUpdate(orderId: string, providerRef: string, totalCents: number) {
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: any) => {
     await tx.payment.upsert({
       where: { orderId },
       create: {
