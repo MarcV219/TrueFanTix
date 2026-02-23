@@ -217,7 +217,7 @@ export async function POST(req: Request) {
     }
 
     // Ensure Verified badge for seller
-    if (!(seedSeller.badges ?? []).some((b) => b.name === "Verified")) {
+    if (!(seedSeller.badges ?? []).some((b: any) => b.name === "Verified")) {
       await prisma.sellerBadge.create({
         data: { sellerId: seedSeller.id, name: "Verified" },
       });
