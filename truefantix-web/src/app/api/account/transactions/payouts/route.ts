@@ -37,7 +37,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      payouts: payouts.map((p) => ({
+      payouts: payouts.map((p: any) => ({
         ...p,
         amount: p.amountCents / 100,
         fee: p.feeCents / 100,
