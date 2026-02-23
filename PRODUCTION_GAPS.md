@@ -72,16 +72,23 @@
 - Consider HMAC with secret key instead of plain SHA256
 
 ### 9. 📈 MONITORING & ALERTING
-**Status:** 🔴 Open  
+**Status:** 🟡 Partially Fixed  
 **Issue:** No production monitoring for:
 - Failed payments
 - Escrow release failures
 - Database connection issues
 - High error rates
-**Action Required:**
-- Add structured logging (JSON)
-- Set up error tracking (Sentry/similar)
-- Add business metrics dashboard
+**Fix Applied:**
+- Added health endpoint: `GET /api/health` (DB connectivity + status)
+- Added admin ops metrics endpoint: `GET /api/admin/ops/metrics`
+  - 24h order status rollups
+  - failed email count
+  - pending payout count
+  - tickets currently in escrow
+**Remaining:**
+- Structured JSON logging pipeline
+- External error tracking (Sentry/Datadog/etc.)
+- Alert thresholds + on-call notification routing
 
 ### 10. 🧪 TEST COVERAGE GAPS
 **Status:** 🔴 Open  

@@ -15,6 +15,7 @@ Reconcile Prisma drift, apply escrow migration, test functionality (incl. HTTP),
 - [x] Gap #2 completed
 - [x] Gap #3 completed
 - [x] Gap #4 completed (rate limiting hardening)
+- [x] Gap #5 completed (monitoring foundations: health + admin metrics endpoints)
 - [x] Final unresolved-blockers report sent
 
 ## Plan
