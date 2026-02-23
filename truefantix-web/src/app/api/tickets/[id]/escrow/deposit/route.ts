@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketStatus, TicketEscrowState } from "@prisma/client";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
@@ -31,7 +30,7 @@ export async function POST(req: Request, ctx: Ctx) {
   const isAdmin = gate.user.role === "ADMIN";
   if (!isSeller && !isAdmin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-  if (ticket.status !== TicketStatus.AVAILABLE) {
+  if (ticket.status !== "AVAILABLE") {
     return NextResponse.json({ ok: false, error: "Ticket must be AVAILABLE for escrow deposit" }, { status: 409 });
   }
 

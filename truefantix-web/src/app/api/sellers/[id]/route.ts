@@ -51,7 +51,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       ...seller,
-      badges: seller.badges.map((b) => b.name),
+      badges: seller.badges.map((b: any) => b.name),
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

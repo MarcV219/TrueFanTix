@@ -9,7 +9,7 @@ export async function GET() {
     include: { badges: true },
   });
 
-  const normalized = sellers.map((s) => ({
+  const normalized = sellers.map((s: any) => ({
     id: s.id,
     name: s.name,
     rating: s.rating,
@@ -17,7 +17,7 @@ export async function GET() {
     accessTokenBalance: s.creditBalanceCredits,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
-    badges: s.badges.map((b) => b.name),
+    badges: s.badges.map((b: any) => b.name),
   }));
 
   return NextResponse.json(normalized);
@@ -76,7 +76,7 @@ export async function POST(req: Request) {
         accessTokenBalance: seller.creditBalanceCredits,
         createdAt: seller.createdAt,
         updatedAt: seller.updatedAt,
-        badges: seller.badges.map((b) => b.name),
+        badges: seller.badges.map((b: any) => b.name),
       },
       { status: 201 }
     );

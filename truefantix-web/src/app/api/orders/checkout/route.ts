@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { Prisma, TicketStatus, OrderStatus } from "@prisma/client";
 
 const ADMIN_FEE_BPS = 875;
 const BPS_DENOMINATOR = 10_000;
@@ -98,7 +97,7 @@ export async function POST(req: Request) {
     const now = new Date();
     const reservedUntil = new Date(now.getTime() + RESERVATION_MINUTES * 60_000);
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: any) => {
       // Buyer must exist (buyer is a Seller record in your current model)
       const buyer = await tx.seller.findUnique({
         where: { id: buyerSellerId },
@@ -115,8 +114,8 @@ export async function POST(req: Request) {
       });
 
       if (tickets.length !== ticketIds.length) {
-        const found = new Set(tickets.map((t) => t.id));
-        const missing = ticketIds.filter((id) => !found.has(id));
+        const found = new Set(tickets.map((t: any) => t.id));
+        const missing = ticketIds.filter((id: any) => !found.has(id));
         return {
           ok: false as const,
           status: 404 as const,
@@ -134,7 +133,7 @@ export async function POST(req: Request) {
 
       // MVP rule: all tickets must be from the same seller
       const sellerId = tickets[0].sellerId;
-      if (tickets.some((t) => t.sellerId !== sellerId)) {
+      if (tickets.some((t: any) => t.sellerId !== sellerId)) {
         return {
           ok: false as const,
           status: 400 as const,
@@ -152,7 +151,7 @@ export async function POST(req: Request) {
       }
 
       // Sold-out access token requirement: 1 access token per SOLD_OUT ticket
-      const soldOutCount = tickets.filter((t) => t.event?.selloutStatus === "SOLD_OUT").length;
+      const soldOutCount = tickets.filter((t: any) => t.event?.selloutStatus === "SOLD_OUT").length;
       const requiredCredits = soldOutCount * CREDIT_COST_PER_SOLDOUT_PURCHASE;
 
       if (requiredCredits > 0 && (buyer.creditBalanceCredits ?? 0) < requiredCredits) {
@@ -177,7 +176,7 @@ export async function POST(req: Request) {
         data: {
           sellerId,
           buyerSellerId,
-          status: OrderStatus.PENDING,
+          status: "PENDING",
           idempotencyKey,
           amountCents,
           adminFeeCents,
@@ -197,12 +196,12 @@ export async function POST(req: Request) {
             withdrawnAt: null,
             soldAt: null,
             OR: [
-              { status: TicketStatus.AVAILABLE },
-              { status: TicketStatus.RESERVED, reservedUntil: { not: null, lte: now } },
+              { status: "AVAILABLE" },
+              { status: "RESERVED", reservedUntil: { not: null, lte: now } },
             ],
           },
           data: {
-            status: TicketStatus.RESERVED,
+            status: "RESERVED",
             reservedByOrderId: order.id,
             reservedUntil,
           },
@@ -216,7 +215,7 @@ export async function POST(req: Request) {
 
       // Create OrderItems (snapshot pricing)
       await tx.orderItem.createMany({
-        data: tickets.map((t) => ({
+        data: tickets.map((t: any) => ({
           orderId: order.id,
           ticketId: t.id,
           priceCents: t.priceCents,
@@ -275,7 +274,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "One or more tickets not available", details: message }, { status: 409 });
     }
 
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+    if (err instanceof any && err.code === "P2002") {
       // If two requests race with the same idempotencyKey, return idempotency-ish response
       const bodyKey = (() => {
         try {

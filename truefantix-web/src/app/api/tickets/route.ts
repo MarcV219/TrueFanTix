@@ -3,7 +3,6 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
-import { TicketStatus, TicketVerificationStatus } from "@prisma/client";
 import { requireSellerApproved } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
 import { verifyWithProvider } from "@/lib/tickets/provider";
@@ -61,7 +60,7 @@ export async function GET(req: Request) {
     if (status === "AVAILABLE" || status === "SOLD" || status === "WITHDRAWN") {
       where.status = status as TicketStatus;
     } else {
-      where.status = { in: [TicketStatus.AVAILABLE, TicketStatus.SOLD] };
+      where.status = { in: ["AVAILABLE", "SOLD"] };
     }
 
     // Marketplace safety: public listing returns only VERIFIED tickets by default.
@@ -74,7 +73,7 @@ export async function GET(req: Request) {
     ) {
       where.verificationStatus = verificationStatus as TicketVerificationStatus;
     } else if (!sellerId) {
-      where.verificationStatus = TicketVerificationStatus.VERIFIED;
+      where.verificationStatus = "VERIFIED";
     }
 
     const tickets = await prisma.ticket.findMany({
@@ -97,7 +96,7 @@ export async function GET(req: Request) {
     const page = hasNext ? tickets.slice(0, take) : tickets;
     const nextCursor = hasNext ? page[page.length - 1]?.id ?? null : null;
 
-    const normalized = page.map((t) => {
+    const normalized = page.map((t: any) => {
       const priceCents = safeInt((t as any).priceCents);
       const faceValueCents =
         (t as any).faceValueCents == null ? null : safeInt((t as any).faceValueCents);
@@ -162,7 +161,7 @@ export async function GET(req: Request) {
 
               creditBalanceCredits: sellerCredits,
 
-              badges: t.seller.badges.map((b) => b.name),
+              badges: t.seller.badges.map((b: any) => b.name),
             }
           : null,
       };
@@ -188,7 +187,7 @@ export async function GET(req: Request) {
       },
       take,
       nextCursor,
-      tickets: normalized.map((t) => ({
+      tickets: normalized.map((t: any) => ({
         ...t,
         ticketId: t.id,
         purchaseUrlTemplate: `/api/tickets/${t.id}/purchase?buyerSellerId=<BUYER_SELLER_ID>`,
@@ -289,8 +288,8 @@ export async function POST(req: Request) {
       const duplicate = await prisma.ticket.findFirst({
         where: {
           barcodeHash,
-          status: { in: [TicketStatus.AVAILABLE, TicketStatus.SOLD] },
-          verificationStatus: { in: [TicketVerificationStatus.PENDING, TicketVerificationStatus.VERIFIED, TicketVerificationStatus.NEEDS_REVIEW] },
+          status: { in: ["AVAILABLE", "SOLD"] },
+          verificationStatus: { in: ["PENDING", "VERIFIED", "NEEDS_REVIEW"] },
           ...(eventId ? { eventId } : {}),
         },
         select: { id: true },
@@ -325,8 +324,8 @@ export async function POST(req: Request) {
         image,
         venue,
         date,
-        status: TicketStatus.AVAILABLE,
-        verificationStatus: TicketVerificationStatus.PENDING,
+        status: "AVAILABLE",
+        verificationStatus: "PENDING",
         verificationEvidence: JSON.stringify({
           barcodeProvided: !!barcodeHash,
           provider: providerCheck.provider,

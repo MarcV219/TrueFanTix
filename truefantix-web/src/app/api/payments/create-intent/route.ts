@@ -85,7 +85,7 @@ export async function POST(req: Request) {
 
     // Check reservation hasn't expired
     const now = new Date();
-    const tickets = order.items.map((item) => item.ticket);
+    const tickets = order.items.map((item: any) => item.ticket);
     for (const ticket of tickets) {
       if (ticket.status !== "RESERVED" || ticket.reservedByOrderId !== orderId) {
         return NextResponse.json(

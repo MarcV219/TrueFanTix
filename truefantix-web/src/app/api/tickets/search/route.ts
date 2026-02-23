@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketStatus } from "@prisma/client";
 
 export async function GET(req: Request) {
   try {
@@ -20,7 +19,7 @@ export async function GET(req: Request) {
 
     // Build where clause
     const where: any = {
-      status: TicketStatus.AVAILABLE,
+      status: "AVAILABLE",
     };
 
     // Text search on title and venue
@@ -98,7 +97,7 @@ export async function GET(req: Request) {
     const nextCursor = hasMore ? results[results.length - 1].id : null;
 
     // Transform results
-    const transformed = results.map((t) => ({
+    const transformed = results.map((t: any) => ({
       id: t.id,
       title: t.title,
       venue: t.venue,
@@ -113,7 +112,7 @@ export async function GET(req: Request) {
         name: t.seller.name,
         rating: t.seller.rating,
         reviews: t.seller.reviews,
-        badges: t.seller.badges.map((b) => b.name),
+        badges: t.seller.badges.map((b: any) => b.name),
       },
       event: t.event,
     }));

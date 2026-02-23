@@ -59,8 +59,7 @@ export async function GET(req: Request) {
     }
 
     // Verify user owns this ticket (as buyer)
-    const orderItem = ticket.orderItems.find(
-      (item) => item.order.buyerSellerId === gate.user.sellerId
+    const orderItem = ticket.orderItems.find((item: any) => item.order.buyerSellerId === gate.user.sellerId
     );
 
     if (!orderItem) {

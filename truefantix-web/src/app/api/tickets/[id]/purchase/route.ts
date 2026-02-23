@@ -3,7 +3,6 @@ export const runtime = "nodejs";
 import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { Prisma, TicketStatus, OrderStatus } from "@prisma/client";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
 
@@ -150,7 +149,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const now = new Date();
     const reservedUntil = new Date(now.getTime() + RESERVATION_MINUTES * 60_000);
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: any) => {
       const buyer = await tx.seller.findUnique({
         where: { id: buyerSellerId },
         select: { id: true, creditBalanceCredits: true },
@@ -220,7 +219,7 @@ export async function POST(req: Request, ctx: Ctx) {
       if (!existingOrderForTicket) {
         orderIdToUse = crypto.randomUUID();
       } else {
-        if (existingOrderForTicket.status !== OrderStatus.CANCELLED) {
+        if (existingOrderForTicket.status !== "CANCELLED") {
           return {
             ok: false as const,
             status: 409 as const,
@@ -242,11 +241,11 @@ export async function POST(req: Request, ctx: Ctx) {
       const reserved = await tx.ticket.updateMany({
         where: {
           id: ticket.id,
-          status: TicketStatus.AVAILABLE,
+          status: "AVAILABLE",
           OR: [{ reservedUntil: null }, { reservedUntil: { lt: now } }],
         },
         data: {
-          status: TicketStatus.RESERVED,
+          status: "RESERVED",
           reservedByOrderId: orderIdToUse,
           reservedUntil,
         },
@@ -275,7 +274,7 @@ export async function POST(req: Request, ctx: Ctx) {
                 amountCents: ticket.priceCents,
                 adminFeeCents,
                 totalCents,
-                status: OrderStatus.PENDING,
+                status: "PENDING",
                 idempotencyKey,
                 items: {
                   create: {
@@ -293,7 +292,7 @@ export async function POST(req: Request, ctx: Ctx) {
                 amountCents: ticket.priceCents,
                 adminFeeCents,
                 totalCents,
-                status: OrderStatus.PENDING,
+                status: "PENDING",
                 idempotencyKey,
               },
             });
@@ -326,7 +325,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const message = err instanceof Error ? err.message : "Unknown error";
 
     // Better P2002 handling: try idempotency replay; otherwise return a clear 409.
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+    if (err instanceof any && err.code === "P2002") {
       const key = getIdempotencyKey(req);
       if (key) {
         const existing = await prisma.order.findUnique({ where: { idempotencyKey: key } });
@@ -357,7 +356,7 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
-    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err instanceof any) {
       return NextResponse.json(
         { ok: false, error: "Purchase failed (Prisma)", code: err.code, details: message },
         { status: 400 }

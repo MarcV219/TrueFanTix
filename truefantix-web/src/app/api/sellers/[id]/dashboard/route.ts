@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketStatus } from "@prisma/client";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
 
@@ -58,8 +57,8 @@ export async function GET(req: Request, ctx: Ctx) {
     }
 
     const [availableCount, soldCount, withdrawnCount] = await Promise.all([
-      prisma.ticket.count({ where: { sellerId, status: TicketStatus.AVAILABLE } }),
-      prisma.ticket.count({ where: { sellerId, status: TicketStatus.SOLD } }),
+      prisma.ticket.count({ where: { sellerId, status: "AVAILABLE" } }),
+      prisma.ticket.count({ where: { sellerId, status: "SOLD" } }),
       prisma.ticket.count({ where: { sellerId, status: TicketStatus.WITHDRAWN } }),
     ]);
 
@@ -123,7 +122,7 @@ export async function GET(req: Request, ctx: Ctx) {
         name: seller.name,
         rating: seller.rating,
         reviews: seller.reviews,
-        badges: seller.badges.map((b) => b.name),
+        badges: seller.badges.map((b: any) => b.name),
 
         accessTokenBalance,
 
@@ -150,7 +149,7 @@ export async function GET(req: Request, ctx: Ctx) {
       },
 
       recent: {
-        tickets: recentTickets.map((t) => ({
+        tickets: recentTickets.map((t: any) => ({
           id: t.id,
           title: t.title,
           status: t.status,
@@ -163,7 +162,7 @@ export async function GET(req: Request, ctx: Ctx) {
           withdrawnAt: (t as any).withdrawnAt ?? null,
         })),
 
-        orders: recentOrders.map((o) => ({
+        orders: recentOrders.map((o: any) => ({
           id: o.id,
           ticketId: o.items?.[0]?.ticketId ?? null,
 
@@ -180,7 +179,7 @@ export async function GET(req: Request, ctx: Ctx) {
           createdAt: o.createdAt,
         })),
 
-        accessTokens: recentCredits.map((ct) => ({
+        accessTokens: recentCredits.map((ct: any) => ({
           id: ct.id,
           type: ct.type,
           source: (ct as any).source ?? null,
@@ -192,7 +191,7 @@ export async function GET(req: Request, ctx: Ctx) {
           createdAt: ct.createdAt,
         })),
 
-        payouts: recentPayouts.map((p) => ({
+        payouts: recentPayouts.map((p: any) => ({
           id: p.id,
           status: p.status,
           amountCents: p.amountCents,

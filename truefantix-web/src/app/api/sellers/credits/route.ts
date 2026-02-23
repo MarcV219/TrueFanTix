@@ -31,7 +31,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Seller not found" }, { status: 404 });
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx: any) => {
       const nextBalance = (seller.creditBalanceCredits ?? 0) + intAmount;
 
       await tx.creditTransaction.create({

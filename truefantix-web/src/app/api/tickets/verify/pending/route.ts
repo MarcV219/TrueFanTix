@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketVerificationStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
 
@@ -30,7 +29,7 @@ export async function POST(req: Request) {
   const take = Math.min(Math.max(Number(body?.take ?? 25), 1), 200);
 
   const pending = await prisma.ticket.findMany({
-    where: { verificationStatus: TicketVerificationStatus.PENDING },
+    where: { verificationStatus: "PENDING" },
     orderBy: { createdAt: "asc" },
     take,
     select: { id: true },

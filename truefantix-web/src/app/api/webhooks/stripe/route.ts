@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { OrderStatus, PaymentStatus } from "@prisma/client";
 import { sendEmail, generatePurchaseConfirmationEmail, generateSaleNotificationEmail } from "@/lib/email";
 
 async function getStripe() {
@@ -78,7 +77,7 @@ export async function POST(req: Request) {
         }
 
         // Update order and payment status
-        const updatedOrder = await prisma.$transaction(async (tx) => {
+        const updatedOrder = await prisma.$transaction(async (tx: any) => {
           // Create or update payment record
           await tx.payment.upsert({
             where: { orderId },
@@ -86,12 +85,12 @@ export async function POST(req: Request) {
               orderId,
               amountCents: paymentIntent.amount,
               currency: paymentIntent.currency.toUpperCase(),
-              status: PaymentStatus.SUCCEEDED,
+              status: "SUCCEEDED",
               provider: "STRIPE",
               providerRef: paymentIntent.id,
             },
             update: {
-              status: PaymentStatus.SUCCEEDED,
+              status: "SUCCEEDED",
               providerRef: paymentIntent.id,
             },
           });
@@ -100,7 +99,7 @@ export async function POST(req: Request) {
           // Keep delivery finalization separate (admin deliver route).
           const order = await tx.order.update({
             where: { id: orderId },
-            data: { status: OrderStatus.PAID },
+            data: { status: "PAID" },
             include: {
               items: {
                 include: {

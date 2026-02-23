@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketVerificationStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };

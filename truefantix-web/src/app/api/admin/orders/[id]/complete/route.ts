@@ -227,8 +227,7 @@ export async function POST(req: Request) {
         const existingBuyerTicketIds = new Set(
           existingBuyerSpend.map((t: any) => t.ticketId).filter(Boolean) as string[]
         );
-        const candidateBuyerCreates = soldOutTicketIds.filter(
-          (ticketId) => !existingBuyerTicketIds.has(ticketId)
+        const candidateBuyerCreates = soldOutTicketIds.filter((ticketId: any) => !existingBuyerTicketIds.has(ticketId)
         );
 
         // Buyer must have enough access tokens for missing spends
@@ -298,8 +297,7 @@ export async function POST(req: Request) {
         const existingSellerTicketIds = new Set(
           existingSellerEarn.map((t: any) => t.ticketId).filter(Boolean) as string[]
         );
-        const candidateSellerCreates = soldOutTicketIds.filter(
-          (ticketId) => !existingSellerTicketIds.has(ticketId)
+        const candidateSellerCreates = soldOutTicketIds.filter((ticketId: any) => !existingSellerTicketIds.has(ticketId)
         );
 
         let sellerBal = seller.creditBalanceCredits ?? 0;

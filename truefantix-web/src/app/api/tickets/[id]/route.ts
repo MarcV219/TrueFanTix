@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketStatus } from "@prisma/client";
 
 function normalizeId(value: unknown) {
   try {
@@ -51,7 +50,7 @@ export async function GET(req: Request) {
       ticket: {
         ...ticket,
         seller: ticket.seller
-          ? { ...ticket.seller, badges: ticket.seller.badges.map((b) => b.name) }
+          ? { ...ticket.seller, badges: ticket.seller.badges.map((b: any) => b.name) }
           : null,
       },
     });
@@ -130,7 +129,7 @@ export async function DELETE(req: Request) {
     }
 
     // Guardrails
-    if (ticket.status === TicketStatus.SOLD) {
+    if (ticket.status === "SOLD") {
       return NextResponse.json(
         { ok: false, error: "Cannot withdraw a SOLD ticket" },
         { status: 400 }
@@ -139,7 +138,7 @@ export async function DELETE(req: Request) {
 
     // Block withdraw during an active reservation window
     const isActivelyReserved =
-      ticket.status === TicketStatus.RESERVED &&
+      ticket.status === "RESERVED" &&
       ticket.reservedUntil != null &&
       ticket.reservedUntil > now;
 
@@ -158,7 +157,7 @@ export async function DELETE(req: Request) {
     }
 
     // Only AVAILABLE or (RESERVED but expired) can be withdrawn
-    if (ticket.status !== TicketStatus.AVAILABLE && ticket.status !== TicketStatus.RESERVED) {
+    if (ticket.status !== "AVAILABLE" && ticket.status !== "RESERVED") {
       return NextResponse.json(
         {
           ok: false,
@@ -177,9 +176,9 @@ export async function DELETE(req: Request) {
         id: ticketId,
         sellerId,
         OR: [
-          { status: TicketStatus.AVAILABLE },
+          { status: "AVAILABLE" },
           {
-            status: TicketStatus.RESERVED,
+            status: "RESERVED",
             OR: [{ reservedUntil: null }, { reservedUntil: { lte: now } }],
           },
         ],
