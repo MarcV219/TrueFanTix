@@ -3,7 +3,6 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
-import { Prisma } from "@prisma/client";
 
 function csvEscape(value: string): string {
   const s = value ?? "";
@@ -25,16 +24,16 @@ export async function GET(req: Request) {
     const fromDate = fromRaw ? new Date(`${fromRaw}T00:00:00.000Z`) : null;
     const toDate = toRaw ? new Date(`${toRaw}T23:59:59.999Z`) : null;
 
-    const where: Prisma.EarlyAccessLeadWhereInput = {};
+    const where: any = {};
 
     if (source) where.source = source;
 
     if (fromDate && !Number.isNaN(fromDate.getTime())) {
-      where.createdAt = { ...(where.createdAt as Prisma.DateTimeFilter | undefined), gte: fromDate };
+      where.createdAt = { ...(where.createdAt as any), gte: fromDate };
     }
 
     if (toDate && !Number.isNaN(toDate.getTime())) {
-      where.createdAt = { ...(where.createdAt as Prisma.DateTimeFilter | undefined), lte: toDate };
+      where.createdAt = { ...(where.createdAt as any), lte: toDate };
     }
 
     const leads = await prisma.earlyAccessLead.findMany({
