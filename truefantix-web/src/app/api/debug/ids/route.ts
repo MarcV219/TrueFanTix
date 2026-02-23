@@ -89,7 +89,7 @@ export async function GET(req: Request) {
         lookupComment: "/api/debug/ids?commentId=<COMMENT_ID>",
       },
 
-      tickets: tickets.map((t) => ({
+      tickets: tickets.map((t: any) => ({
         ticketId: t.id,
         title: t.title,
         status: t.status,
@@ -102,13 +102,13 @@ export async function GET(req: Request) {
         purchaseUrlFull: `${baseUrl}/api/tickets/${t.id}/purchase`,
       })),
 
-      sellers: sellers.map((s) => ({
+      sellers: sellers.map((s: any) => ({
         sellerId: s.id,
         sellerName: s.name,
         creditBalanceCredits: s.creditBalanceCredits,
       })),
 
-      recentComments: recentComments.map((c) => ({
+      recentComments: recentComments.map((c: any) => ({
         id: c.id,
         parentId: c.parentId,
         ticketId: c.ticketId,
