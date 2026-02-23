@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { OrderStatus, TicketEscrowState } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
@@ -30,7 +29,7 @@ export async function POST(req: Request, ctx: Ctx) {
   });
   if (!order) return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
 
-  if (order.status !== OrderStatus.PAID && order.status !== OrderStatus.DELIVERED && order.status !== OrderStatus.COMPLETED) {
+  if (order.status !== "PAID" && order.status !== "DELIVERED" && order.status !== "COMPLETED") {
     return NextResponse.json({ ok: false, error: "Order is not in deliverable state" }, { status: 409 });
   }
 
@@ -43,13 +42,13 @@ export async function POST(req: Request, ctx: Ctx) {
       create: {
         ticketId: item.ticketId,
         orderId: order.id,
-        state: TicketEscrowState.RELEASED_TO_BUYER,
+        state: "RELEASED_TO_BUYER",
         releasedAt: now,
         releasedTo: "BUYER",
       },
       update: {
         orderId: order.id,
-        state: TicketEscrowState.RELEASED_TO_BUYER,
+        state: "RELEASED_TO_BUYER",
         releasedAt: now,
         releasedTo: "BUYER",
         failureReason: null,
