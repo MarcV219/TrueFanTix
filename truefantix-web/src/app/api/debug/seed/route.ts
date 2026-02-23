@@ -118,7 +118,7 @@ export async function POST(req: Request) {
         where: { name: { in: [...SEED_SELLER_NAMES] } },
         select: { id: true },
       });
-      const seedSellerIds = seedSellers.map((s) => s.id);
+      const seedSellerIds = seedSellers.map((s: any) => s.id);
 
       // 2) FK-safe deletion order (broad cleanup)
       // NOTE: We keep USERS (protected ones) and avoid wiping ALL sellers.
@@ -351,7 +351,7 @@ export async function POST(req: Request) {
             sellerId: sellerOut.id,
             name: sellerOut.name,
             creditBalanceCredits: sellerOut.creditBalanceCredits,
-            badges: sellerOut.badges.map((b) => b.name),
+            badges: sellerOut.badges.map((b: any) => b.name),
           }
         : null,
       buyer: buyerOut
@@ -359,10 +359,10 @@ export async function POST(req: Request) {
             buyerSellerId: buyerOut.id,
             name: buyerOut.name,
             creditBalanceCredits: buyerOut.creditBalanceCredits,
-            badges: buyerOut.badges.map((b) => b.name),
+            badges: buyerOut.badges.map((b: any) => b.name),
           }
         : null,
-      createdTickets: createdTickets.map((t) => ({
+      createdTickets: createdTickets.map((t: any) => ({
         ticketId: t.id,
         title: t.title,
         status: t.status,
