@@ -63,7 +63,7 @@ export async function GET(req: Request) {
     ]);
 
     const refunds = [
-      ...buyerRefundOrders.map((o) => ({
+      ...buyerRefundOrders.map((o: any) => ({
         id: `buyer-${o.id}`,
         kind: "ORDER_REFUND_BUYER",
         orderId: o.id,
@@ -73,7 +73,7 @@ export async function GET(req: Request) {
         note: o.items[0]?.ticket?.title ? `Refunded purchase: ${o.items[0].ticket.title}` : "Refunded purchase",
         createdAt: o.createdAt.toISOString(),
       })),
-      ...sellerRefundOrders.map((o) => ({
+      ...sellerRefundOrders.map((o: any) => ({
         id: `seller-${o.id}`,
         kind: "ORDER_REFUND_SELLER",
         orderId: o.id,
@@ -83,7 +83,7 @@ export async function GET(req: Request) {
         note: o.items[0]?.ticket?.title ? `Refunded sale: ${o.items[0].ticket.title}` : "Refunded sale",
         createdAt: o.createdAt.toISOString(),
       })),
-      ...refundTxns.map((t) => ({
+      ...refundTxns.map((t: any) => ({
         id: `token-${t.id}`,
         kind: "ACCESS_TOKEN_REFUND",
         orderId: t.orderId,
@@ -94,7 +94,7 @@ export async function GET(req: Request) {
         createdAt: t.createdAt.toISOString(),
       })),
     ]
-      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+      .sort((a: any, b: any) => +new Date(b.createdAt) - +new Date(a.createdAt))
       .slice(0, 200);
 
     return NextResponse.json({ ok: true, refunds }, { status: 200 });
