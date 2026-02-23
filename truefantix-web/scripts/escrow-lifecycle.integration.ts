@@ -1,5 +1,4 @@
 import { prisma } from "../src/lib/prisma";
-import { OrderStatus, PaymentStatus, TicketStatus, TicketVerificationStatus } from "@prisma/client";
 import { deriveEscrowState } from "../src/lib/escrow";
 
 async function main() {
@@ -17,10 +16,10 @@ async function main() {
       image: "/default.jpg",
       venue: "Test Venue",
       date: "2026-03-01",
-      status: TicketStatus.RESERVED,
+      status: 'RESERVED' as any,
       reservedByOrderId: `order-${runTag}`,
       reservedUntil: new Date(Date.now() + 15 * 60_000),
-      verificationStatus: TicketVerificationStatus.VERIFIED,
+      verificationStatus: 'VERIFIED' as any,
       sellerId: seller.id,
       eventId: event.id,
     },
@@ -31,7 +30,7 @@ async function main() {
       id: `order-${runTag}`,
       sellerId: seller.id,
       buyerSellerId: buyer.id,
-      status: OrderStatus.PAID,
+      status: 'PAID' as any,
       amountCents: 10000,
       adminFeeCents: 875,
       totalCents: 10875,
@@ -42,7 +41,7 @@ async function main() {
         create: {
           amountCents: 10875,
           currency: "CAD",
-          status: PaymentStatus.SUCCEEDED,
+          status: 'SUCCEEDED' as any,
           provider: "STRIPE",
           providerRef: `pi_${runTag}`,
         },
@@ -57,9 +56,9 @@ async function main() {
   // Simulate delivery transition (normally done by admin deliver route)
   await prisma.ticket.update({
     where: { id: ticket.id },
-    data: { status: TicketStatus.SOLD, soldAt: new Date(), reservedByOrderId: null, reservedUntil: null },
+    data: { status: 'SOLD' as any, soldAt: new Date(), reservedByOrderId: null, reservedUntil: null },
   });
-  await prisma.order.update({ where: { id: order.id }, data: { status: OrderStatus.DELIVERED } });
+  await prisma.order.update({ where: { id: order.id }, data: { status: 'DELIVERED' as any } });
 
   const afterDeliver = await prisma.order.findUnique({ where: { id: order.id }, include: { payment: true } });
   if (!afterDeliver) throw new Error("Order missing after deliver");
@@ -67,7 +66,7 @@ async function main() {
   if (stateDelivered !== "RELEASE_READY") throw new Error(`Expected RELEASE_READY, got ${stateDelivered}`);
 
   // Simulate completion + escrow release payout creation (normally done by admin complete route)
-  await prisma.order.update({ where: { id: order.id }, data: { status: OrderStatus.COMPLETED } });
+  await prisma.order.update({ where: { id: order.id }, data: { status: 'COMPLETED' as any } });
   await prisma.payout.create({
     data: {
       sellerId: seller.id,
