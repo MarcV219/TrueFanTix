@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   const results: { orderId: string; ticketIds: string[] }[] = [];
 
   for (const order of expiredOrders) {
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       // Release tickets back to available
       for (const item of order.items) {
         await tx.ticket.update({
