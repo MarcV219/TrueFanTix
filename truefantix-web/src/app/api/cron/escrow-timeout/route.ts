@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { OrderStatus, TicketStatus, PaymentStatus } from "@prisma/client";
 import { hasInternalCronAuth } from "@/lib/auth/guards";
 
 const ESCROW_TIMEOUT_MINUTES = 60; // 1 hour for MVP
@@ -18,9 +17,9 @@ export async function POST(req: Request) {
 
   const expiredOrders = await prisma.order.findMany({
     where: {
-      status: OrderStatus.PAID,
+      status: "PAID",
       createdAt: { lt: cutoff },
-      payment: { status: PaymentStatus.SUCCEEDED },
+      payment: { status: "SUCCEEDED" },
     },
     include: {
       items: { select: { ticketId: true } },
@@ -37,7 +36,7 @@ export async function POST(req: Request) {
         await tx.ticket.update({
           where: { id: item.ticketId },
           data: {
-            status: TicketStatus.AVAILABLE,
+            status: "AVAILABLE",
             reservedByOrderId: null,
             reservedUntil: null,
           },
@@ -66,7 +65,7 @@ export async function POST(req: Request) {
       // Mark order as cancelled
       await tx.order.update({
         where: { id: order.id },
-        data: { status: OrderStatus.CANCELLED },
+        data: { status: "CANCELLED" },
       });
 
       // Note: In production, you'd also trigger a Stripe refund here
