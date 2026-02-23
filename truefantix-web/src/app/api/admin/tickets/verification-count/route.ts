@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketVerificationStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
 export async function GET(req: Request) {
@@ -11,9 +10,9 @@ export async function GET(req: Request) {
 
   try {
     const [pending, needsReview, rejected] = await Promise.all([
-      prisma.ticket.count({ where: { verificationStatus: TicketVerificationStatus.PENDING } }),
-      prisma.ticket.count({ where: { verificationStatus: TicketVerificationStatus.NEEDS_REVIEW } }),
-      prisma.ticket.count({ where: { verificationStatus: TicketVerificationStatus.REJECTED } }),
+      prisma.ticket.count({ where: { verificationStatus: "PENDING" } }),
+      prisma.ticket.count({ where: { verificationStatus: "NEEDS_REVIEW" } }),
+      prisma.ticket.count({ where: { verificationStatus: "REJECTED" } }),
     ]);
 
     return NextResponse.json({
