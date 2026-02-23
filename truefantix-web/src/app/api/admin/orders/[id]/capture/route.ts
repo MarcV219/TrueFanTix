@@ -38,8 +38,8 @@ export async function POST(req: Request) {
 
     const now = new Date();
 
-    const result = await prisma.$transaction(async (tx) => {
-      const order = await tx.order.findUnique({
+    const result = await prisma.$transaction(async (tx: any) => {
+      const order: any = await tx.order.findUnique({
         where: { id: orderId },
         include: { items: { select: { id: true, ticketId: true } } },
       });
@@ -61,14 +61,14 @@ export async function POST(req: Request) {
       }
 
       // Validate all tickets are still reserved by this order and not expired
-      const ticketIds = order.items.map((i) => i.ticketId);
+      const ticketIds: string[] = order.items.map((i: any) => i.ticketId);
 
-      const tickets = await tx.ticket.findMany({
+      const tickets: any[] = await tx.ticket.findMany({
         where: { id: { in: ticketIds } },
         select: { id: true, status: true, reservedByOrderId: true, reservedUntil: true, sellerId: true },
       });
 
-      const byId = new Map(tickets.map((t) => [t.id, t]));
+      const byId = new Map<string, any>(tickets.map((t: any) => [t.id, t]));
 
       for (const tid of ticketIds) {
         const t = byId.get(tid);
