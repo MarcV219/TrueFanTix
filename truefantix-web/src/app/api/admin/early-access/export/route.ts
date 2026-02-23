@@ -67,7 +67,7 @@ export async function GET(req: Request) {
     }
 
     const header = ["email", "source", "createdAt", "updatedAt"].join(",");
-    const rows = leads.map((l) =>
+    const rows = leads.map((l: any) =>
       [
         csvEscape(l.email),
         csvEscape(l.source),
