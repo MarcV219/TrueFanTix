@@ -64,8 +64,8 @@ export async function GET(req: Request) {
       sellerId: order.sellerId,
       buyerSellerId: order.buyerSellerId,
       itemCount: order.items.length,
-      ticketIds: order.items.map((i) => i.ticketId),
-      tickets: order.items.map((i) => ({
+      ticketIds: order.items.map((i: any) => i.ticketId),
+      tickets: order.items.map((i: any) => ({
         ticketId: i.ticketId,
         status: i.ticket?.status ?? null,
         reservedByOrderId: i.ticket?.reservedByOrderId ?? null,
