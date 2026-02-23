@@ -58,6 +58,15 @@ export async function POST(req: Request) {
   const event = verification.event;
 
   try {
+    // Idempotency: check if we've already processed this event
+    const existingEvent = await prisma.eventDelivery.findUnique({
+      where: { eventId: event.id },
+    });
+    if (existingEvent) {
+      console.log(`[STRIPE WEBHOOK] Event ${event.id} already processed - skipping`);
+      return NextResponse.json({ ok: true, replay: true }, { status: 200 });
+    }
+
     switch (event.type) {
       case "payment_intent.succeeded": {
         const paymentIntent = event.data.object;
@@ -114,53 +123,112 @@ export async function POST(req: Request) {
           return order;
         });
 
-        // Send confirmation email to buyer
+        // Send confirmation email to buyer (idempotent)
         if (updatedOrder.buyerSeller?.user) {
           const buyer = updatedOrder.buyerSeller.user;
-          const tickets = updatedOrder.items.map(item => ({
-            title: item.ticket?.title || "Ticket",
-            venue: item.ticket?.venue || "",
-            date: item.ticket?.date || "",
-          }));
-          const total = (updatedOrder.totalCents / 100).toFixed(2);
-
-          const emailContent = generatePurchaseConfirmationEmail(
-            updatedOrder.id,
-            buyer.firstName,
-            tickets,
-            total
-          );
-
-          await sendEmail({
-            to: buyer.email,
-            subject: emailContent.subject,
-            text: emailContent.text,
-            html: emailContent.html,
+          const existingBuyerEmail = await prisma.emailDelivery.findUnique({
+            where: {
+              orderId_emailType_recipient: {
+                orderId: updatedOrder.id,
+                emailType: "PURCHASE_CONFIRMATION",
+                recipient: buyer.email,
+              },
+            },
           });
+
+          if (!existingBuyerEmail) {
+            const tickets = updatedOrder.items.map(item => ({
+              title: item.ticket?.title || "Ticket",
+              venue: item.ticket?.venue || "",
+              date: item.ticket?.date || "",
+            }));
+            const total = (updatedOrder.totalCents / 100).toFixed(2);
+
+            const emailContent = generatePurchaseConfirmationEmail(
+              updatedOrder.id,
+              buyer.firstName,
+              tickets,
+              total
+            );
+
+            const emailResult = await sendEmail({
+              to: buyer.email,
+              subject: emailContent.subject,
+              text: emailContent.text,
+              html: emailContent.html,
+            });
+
+            await prisma.emailDelivery.create({
+              data: {
+                orderId: updatedOrder.id,
+                emailType: "PURCHASE_CONFIRMATION",
+                recipient: buyer.email,
+                provider: process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE",
+                status: emailResult.ok ? "SENT" : "FAILED",
+                error: emailResult.error ?? null,
+              },
+            });
+          } else {
+            console.log(`[STRIPE WEBHOOK] Buyer email already sent for order ${orderId}`);
+          }
         }
 
-        // Send notification email to seller
+        // Send notification email to seller (idempotent)
         if (updatedOrder.seller?.user && updatedOrder.items.length > 0) {
           const seller = updatedOrder.seller.user;
-          const firstTicket = updatedOrder.items[0].ticket;
-          const amount = (updatedOrder.amountCents / 100).toFixed(2);
-
-          const emailContent = generateSaleNotificationEmail(
-            updatedOrder.id,
-            seller.firstName,
-            firstTicket?.title || "Ticket",
-            amount
-          );
-
-          await sendEmail({
-            to: seller.email,
-            subject: emailContent.subject,
-            text: emailContent.text,
-            html: emailContent.html,
+          const existingSellerEmail = await prisma.emailDelivery.findUnique({
+            where: {
+              orderId_emailType_recipient: {
+                orderId: updatedOrder.id,
+                emailType: "SALE_NOTIFICATION",
+                recipient: seller.email,
+              },
+            },
           });
+
+          if (!existingSellerEmail) {
+            const firstTicket = updatedOrder.items[0].ticket;
+            const amount = (updatedOrder.amountCents / 100).toFixed(2);
+
+            const emailContent = generateSaleNotificationEmail(
+              updatedOrder.id,
+              seller.firstName,
+              firstTicket?.title || "Ticket",
+              amount
+            );
+
+            const emailResult = await sendEmail({
+              to: seller.email,
+              subject: emailContent.subject,
+              text: emailContent.text,
+              html: emailContent.html,
+            });
+
+            await prisma.emailDelivery.create({
+              data: {
+                orderId: updatedOrder.id,
+                emailType: "SALE_NOTIFICATION",
+                recipient: seller.email,
+                provider: process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE",
+                status: emailResult.ok ? "SENT" : "FAILED",
+                error: emailResult.error ?? null,
+              },
+            });
+          } else {
+            console.log(`[STRIPE WEBHOOK] Seller email already sent for order ${orderId}`);
+          }
         }
 
         console.log(`[STRIPE WEBHOOK] Payment succeeded for order ${orderId}`);
+
+        // Record event delivery for idempotency
+        await prisma.eventDelivery.create({
+          data: {
+            eventId: event.id,
+            eventType: event.type,
+            orderId,
+          },
+        });
         break;
       }
 
@@ -191,6 +259,15 @@ export async function POST(req: Request) {
         });
 
         console.log(`[STRIPE WEBHOOK] Payment failed for order ${orderId}`);
+
+        // Record event delivery for idempotency
+        await prisma.eventDelivery.create({
+          data: {
+            eventId: event.id,
+            eventType: event.type,
+            orderId,
+          },
+        });
         break;
       }
 
@@ -216,9 +293,4 @@ export async function POST(req: Request) {
   }
 }
 
-// Disable body parsing for raw body access
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+// App Router note: request body is read via req.text(); no pages-style `config` export needed.

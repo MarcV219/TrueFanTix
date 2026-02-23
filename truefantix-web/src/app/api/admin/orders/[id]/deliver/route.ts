@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { OrderStatus, TicketStatus } from "@prisma/client";
+import { requireAdmin } from "@/lib/auth/guards";
 
 function normalizeId(value: unknown) {
   try {
@@ -24,6 +25,9 @@ function parseOrderIdFromUrl(req: Request): string {
 }
 
 export async function POST(req: Request) {
+  const gate = await requireAdmin(req);
+  if (!gate.ok) return gate.res;
+
   try {
     const orderId = parseOrderIdFromUrl(req);
     if (!orderId) {

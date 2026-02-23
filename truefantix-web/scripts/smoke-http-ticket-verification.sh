@@ -3,16 +3,22 @@ set -euo pipefail
 
 BASE_URL="${TFT_BASE_URL:-http://localhost:3010}"
 DB_PATH="${TFT_DB_PATH:-/home/marc/.openclaw/workspace/truefantix-web/prisma/dev.db}"
-SESSION_TOKEN="${TFT_SESSION_TOKEN:-}"
+ADMIN_SESSION_TOKEN="${TFT_ADMIN_SESSION_TOKEN:-}"
+SELLER_SESSION_TOKEN="${TFT_SELLER_SESSION_TOKEN:-}"
 
-if [[ -z "$SESSION_TOKEN" ]]; then
-  echo "ERROR: TFT_SESSION_TOKEN is required"
+if [[ -z "$ADMIN_SESSION_TOKEN" ]]; then
+  echo "ERROR: TFT_ADMIN_SESSION_TOKEN is required"
+  exit 1
+fi
+
+if [[ -z "$SELLER_SESSION_TOKEN" ]]; then
+  echo "ERROR: TFT_SELLER_SESSION_TOKEN is required"
   exit 1
 fi
 
 echo "[1/5] Admin verification count"
 curl -fsS "$BASE_URL/api/admin/tickets/verification-count" \
-  -H "Cookie: tft_session=$SESSION_TOKEN" | jq '{ok,counts}'
+  -H "Cookie: tft_session=$ADMIN_SESSION_TOKEN" | jq '{ok,counts}'
 
 TS=$(date +%s)
 BAR="SMOKE-BAR-$TS"
@@ -27,7 +33,7 @@ BODY=$(jq -n \
 echo "[2/5] Create ticket with barcode evidence"
 RESP=$(curl -fsS -X POST "$BASE_URL/api/tickets" \
   -H 'Content-Type: application/json' \
-  -H "Cookie: tft_session=$SESSION_TOKEN" \
+  -H "Cookie: tft_session=$SELLER_SESSION_TOKEN" \
   -d "$BODY")
 
 echo "$RESP" | jq '{ok,ticket:(.ticket // .data?.ticket // .ticket?.ticket)}'
@@ -42,7 +48,7 @@ fi
 echo "[3/5] Duplicate barcode must fail with 409"
 HTTP_CODE=$(curl -sS -o /tmp/tft-smoke-dup.json -w "%{http_code}" -X POST "$BASE_URL/api/tickets" \
   -H 'Content-Type: application/json' \
-  -H "Cookie: tft_session=$SESSION_TOKEN" \
+  -H "Cookie: tft_session=$SELLER_SESSION_TOKEN" \
   -d "$BODY")
 
 echo "duplicate_status=$HTTP_CODE"
@@ -55,7 +61,7 @@ fi
 
 echo "[4/5] Queue lookup should include created ticket"
 curl -fsS "$BASE_URL/api/admin/tickets/verification-queue?status=VERIFIED&take=100" \
-  -H "Cookie: tft_session=$SESSION_TOKEN" | \
+  -H "Cookie: tft_session=$ADMIN_SESSION_TOKEN" | \
   jq --arg id "$TICKET_ID" '{ok,found:([.tickets[]|select(.id==$id)]|length),sample:([.tickets[]|select(.id==$id)][0]|{id,verificationStatus,verificationScore,barcodeType,barcodeLast4})}'
 
 echo "[5/5] Cleanup test ticket"

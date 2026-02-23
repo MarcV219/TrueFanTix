@@ -72,3 +72,10 @@ export async function requireAdmin(req: Request) {
 
   return { ok: true as const, user: base.user };
 }
+
+export function hasInternalCronAuth(req: Request): boolean {
+  const configured = process.env.CRON_SECRET?.trim();
+  if (!configured) return false;
+  const provided = req.headers.get("x-cron-secret")?.trim();
+  return !!provided && provided === configured;
+}

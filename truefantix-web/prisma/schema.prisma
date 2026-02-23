@@ -483,6 +483,32 @@ model TicketEscrow {
   @@index([orderId])
 }
 
+model EventDelivery {
+  id        String   @id @default(cuid())
+  eventId   String   @unique // Stripe event id (e.g., evt_xxx)
+  eventType String
+  processedAt DateTime @default(now())
+  orderId   String?
+
+  @@index([eventId])
+  @@index([orderId])
+}
+
+model EmailDelivery {
+  id        String   @id @default(cuid())
+  orderId   String
+  emailType String   // PURCHASE_CONFIRMATION, SALE_NOTIFICATION
+  recipient String
+  sentAt    DateTime @default(now())
+  provider  String   // SENDGRID, CONSOLE
+  status    String   // SENT, FAILED
+  error     String?
+
+  @@unique([orderId, emailType, recipient])
+  @@index([orderId])
+  @@index([status])
+}
+
 model Payment {
   id      String @id @default(cuid())
   orderId String @unique
