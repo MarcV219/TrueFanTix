@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { TicketEscrowState, TicketStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
@@ -34,7 +33,7 @@ export async function POST(req: Request, ctx: Ctx) {
     await prisma.ticket.update({
       where: { id: item.ticketId },
       data: {
-        status: TicketStatus.AVAILABLE,
+        status: "AVAILABLE",
         reservedByOrderId: null,
         reservedUntil: null,
       },
@@ -45,13 +44,13 @@ export async function POST(req: Request, ctx: Ctx) {
       create: {
         ticketId: item.ticketId,
         orderId: order.id,
-        state: TicketEscrowState.RELEASED_BACK_TO_SELLER,
+        state: "RELEASED_BACK_TO_SELLER",
         releasedAt: now,
         releasedTo: "SELLER",
       },
       update: {
         orderId: order.id,
-        state: TicketEscrowState.RELEASED_BACK_TO_SELLER,
+        state: "RELEASED_BACK_TO_SELLER",
         releasedAt: now,
         releasedTo: "SELLER",
       },
