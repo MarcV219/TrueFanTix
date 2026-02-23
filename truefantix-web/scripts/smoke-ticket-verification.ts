@@ -1,4 +1,3 @@
-import { TicketStatus, TicketVerificationStatus } from '@prisma/client';
 import { createHash } from 'crypto';
 import { autoVerifyTicketById } from '../src/lib/tickets/verification';
 import { prisma } from '../src/lib/prisma';
@@ -26,8 +25,8 @@ async function main(){
       image: 'https://example.com/ticket.jpg',
       venue: 'Test Venue',
       date: '2026-12-31 8:00 PM',
-      status: TicketStatus.AVAILABLE,
-      verificationStatus: TicketVerificationStatus.PENDING,
+      status: 'AVAILABLE' as any,
+      verificationStatus: 'PENDING' as any,
       barcodeHash,
       barcodeType: 'QR',
       barcodeLast4: '1234',
@@ -39,12 +38,12 @@ async function main(){
   const duplicate = await prisma.ticket.findFirst({
     where: {
       barcodeHash,
-      status: { in: [TicketStatus.AVAILABLE, TicketStatus.SOLD] },
+      status: { in: ['AVAILABLE' as any, 'SOLD' as any] },
       verificationStatus: {
         in: [
-          TicketVerificationStatus.PENDING,
-          TicketVerificationStatus.VERIFIED,
-          TicketVerificationStatus.NEEDS_REVIEW,
+          'PENDING' as any,
+          'VERIFIED' as any,
+          'NEEDS_REVIEW' as any,
         ],
       },
       eventId: event.id,

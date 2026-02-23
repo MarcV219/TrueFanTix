@@ -1,5 +1,4 @@
 import { prisma } from "../src/lib/prisma";
-import { OrderStatus, PaymentStatus } from "@prisma/client";
 import { deriveEscrowState } from "../src/lib/escrow";
 
 async function applySucceededWebhookLikeUpdate(orderId: string, providerRef: string, totalCents: number) {
@@ -10,19 +9,19 @@ async function applySucceededWebhookLikeUpdate(orderId: string, providerRef: str
         orderId,
         amountCents: totalCents,
         currency: "CAD",
-        status: PaymentStatus.SUCCEEDED,
+        status: 'SUCCEEDED' as any,
         provider: "STRIPE",
         providerRef,
       },
       update: {
-        status: PaymentStatus.SUCCEEDED,
+        status: 'SUCCEEDED' as any,
         providerRef,
       },
     });
 
     await tx.order.update({
       where: { id: orderId },
-      data: { status: OrderStatus.PAID },
+      data: { status: 'PAID' as any },
     });
   });
 }
@@ -36,7 +35,7 @@ async function main() {
     data: {
       sellerId: seller.id,
       buyerSellerId: buyer.id,
-      status: OrderStatus.PENDING,
+      status: 'PENDING' as any,
       amountCents: 5000,
       adminFeeCents: 438,
       totalCents: 5438,
