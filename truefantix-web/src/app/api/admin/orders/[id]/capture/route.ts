@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { OrderStatus, PaymentStatus, TicketStatus } from "@prisma/client";
 
 function normalizeId(value: unknown) {
   try {
@@ -49,7 +48,7 @@ export async function POST(req: Request) {
         return { ok: false as const, status: 404 as const, body: { ok: false, error: "Order not found" } };
       }
 
-      if (order.status !== OrderStatus.PENDING) {
+      if (order.status !== 'PENDING') {
         return {
           ok: false as const,
           status: 400 as const,
@@ -76,7 +75,7 @@ export async function POST(req: Request) {
         if (!t) {
           return { ok: false as const, status: 400 as const, body: { ok: false, error: `Missing ticket: ${tid}` } };
         }
-        if (t.status !== TicketStatus.RESERVED) {
+        if (t.status !== 'RESERVED') {
           return {
             ok: false as const,
             status: 409 as const,
@@ -107,13 +106,13 @@ export async function POST(req: Request) {
           orderId,
           amountCents: order.totalCents,
           currency: "CAD",
-          status: PaymentStatus.SUCCEEDED,
+          status: 'SUCCEEDED',
           provider: "MANUAL",
           providerRef: `manual_${orderId}`,
         },
         update: {
           amountCents: order.totalCents,
-          status: PaymentStatus.SUCCEEDED,
+          status: 'SUCCEEDED',
           provider: "MANUAL",
           providerRef: `manual_${orderId}`,
         },
@@ -121,7 +120,7 @@ export async function POST(req: Request) {
 
       const updatedOrder = await tx.order.update({
         where: { id: orderId },
-        data: { status: OrderStatus.PAID },
+        data: { status: 'PAID' },
         include: { items: true, payment: true },
       });
 
