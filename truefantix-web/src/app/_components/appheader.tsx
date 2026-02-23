@@ -265,15 +265,22 @@ export default function AppHeader() {
           <NavPill href="/forum" label="Forum" active={isForum} />
           <NavPill href="/account" label="Account" active={isAccount} />
           {me?.flags?.isAdmin ? (
-            <NavPill
-              href="/admin/tickets/verification"
-              label={
-                adminQueueCount != null
-                  ? `Admin Queue${adminQueueCount > 0 ? ` (${adminQueueCount})` : ""}`
-                  : "Admin Queue"
-              }
-              active={current.startsWith("/admin/tickets/verification")}
-            />
+            <>
+              <NavPill
+                href="/admin/tickets/verification"
+                label={
+                  adminQueueCount != null
+                    ? `Admin Queue${adminQueueCount > 0 ? ` (${adminQueueCount})` : ""}`
+                    : "Admin Queue"
+                }
+                active={current.startsWith("/admin/tickets/verification")}
+              />
+              <NavPill
+                href="/admin/early-access"
+                label="Waitlist"
+                active={current.startsWith("/admin/early-access")}
+              />
+            </>
           ) : null}
 
           {meLoaded ? (
