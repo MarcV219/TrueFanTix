@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma, TicketStatus, OrderStatus } from "@prisma/client";
 import { requireVerifiedUser } from "@/lib/auth/guards";
+import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
 
 const ADMIN_FEE_BPS = 875; // 8.75%
 const BPS_DENOMINATOR = 10_000;
@@ -56,6 +57,10 @@ function getIdempotencyKey(req: Request): string {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
+  const ip = getClientIp(req);
+  const rl = checkRateLimit({ key: `tickets:purchase:${ip}`, limit: 30, windowMs: 60_000 });
+  if (!rl.ok) return rateLimitError(rl.retryAfterSec);
+
   // ✅ Step 3 enforcement: must be logged in + verified + not banned
   const gate = await requireVerifiedUser(req);
   if (!gate.ok) return gate.res;

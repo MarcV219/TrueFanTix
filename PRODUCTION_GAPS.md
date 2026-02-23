@@ -52,12 +52,17 @@
 - Requires `CRON_SECRET` env var for internal cron auth.
 
 ### 7. 📊 RATE LIMITING & ABUSE PROTECTION
-**Status:** 🔴 Open  
+**Status:** 🟡 Partially Fixed  
 **Issue:** No API rate limiting on public endpoints (ticket creation, purchase attempts).  
-**Action Required:**
-- Implement per-IP rate limiting on sensitive endpoints
-- Add CAPTCHA for high-frequency actions
-- Monitor for abuse patterns
+**Fix Applied:**
+- Added per-IP in-memory rate limiting utility (`src/lib/rate-limit.ts`)
+- Enforced on:
+  - `POST /api/tickets` (20/min)
+  - `POST /api/tickets/[id]/purchase` (30/min)
+  - `POST /api/payments/create-intent` (20/min)
+**Remaining:**
+- Distributed/store-backed limiter (Redis) for multi-instance production
+- Optional CAPTCHA + abuse heuristics
 
 ### 8. 🛡️ BARCODE HASH SECURITY
 **Status:** 🔴 Open  

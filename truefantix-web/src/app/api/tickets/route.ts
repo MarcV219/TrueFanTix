@@ -7,6 +7,7 @@ import { TicketStatus, TicketVerificationStatus } from "@prisma/client";
 import { requireSellerApproved } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
 import { verifyWithProvider } from "@/lib/tickets/provider";
+import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -204,6 +205,10 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const ip = getClientIp(req);
+  const rl = checkRateLimit({ key: `tickets:create:${ip}`, limit: 20, windowMs: 60_000 });
+  if (!rl.ok) return rateLimitError(rl.retryAfterSec);
+
   // ✅ Seller-approved gate (logged in + verified + not banned + canSell + seller.status APPROVED)
   const gate = await requireSellerApproved(req);
   if (!gate.ok) return gate.res;
