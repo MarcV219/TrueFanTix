@@ -2,11 +2,12 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ForumVisibility } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 
+type Visibility = "VISIBLE" | "HIDDEN" | "DELETED";
+
 type VisibilityBody = {
-  visibility?: ForumVisibility | string;
+  visibility?: Visibility | string;
   reason?: string | null;
 };
 
@@ -36,11 +37,11 @@ function badRequest(message: string) {
   );
 }
 
-function normalizeVisibility(v: unknown): ForumVisibility | null {
+function normalizeVisibility(v: unknown): Visibility | null {
   const s = String(v ?? "").trim().toUpperCase();
-  if (s === "VISIBLE") return ForumVisibility.VISIBLE;
-  if (s === "HIDDEN") return ForumVisibility.HIDDEN;
-  if (s === "DELETED") return ForumVisibility.DELETED;
+  if (s === "VISIBLE") return "VISIBLE";
+  if (s === "HIDDEN") return "HIDDEN";
+  if (s === "DELETED") return "DELETED";
   return null;
 }
 
@@ -82,8 +83,8 @@ export async function POST(req: Request) {
 
     // One-way delete rule
     if (
-      existing.visibility === ForumVisibility.DELETED &&
-      nextVisibility !== ForumVisibility.DELETED
+      existing.visibility === "DELETED" &&
+      nextVisibility !== "DELETED"
     ) {
       return NextResponse.json(
         { ok: false, error: "FORBIDDEN", message: "Deleted posts cannot be restored." },
@@ -96,7 +97,7 @@ export async function POST(req: Request) {
       data: {
         visibility: nextVisibility,
         visibilityReason:
-          nextVisibility === ForumVisibility.VISIBLE ? null : (reason ?? "Updated by admin."),
+          nextVisibility === "VISIBLE" ? null : (reason ?? "Updated by admin."),
       },
       select: {
         id: true,
