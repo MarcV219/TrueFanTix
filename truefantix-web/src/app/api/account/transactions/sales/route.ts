@@ -33,8 +33,8 @@ export async function GET(req: Request) {
       orderBy: { createdAt: "desc" },
     });
 
-    const sales = orders.flatMap((order) =>
-      order.items.map((item) => ({
+    const sales = orders.flatMap((order: any) =>
+      order.items.map((item: any) => ({
         id: item.id,
         orderId: order.id,
         orderStatus: order.status,
