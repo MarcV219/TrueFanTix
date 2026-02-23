@@ -61,7 +61,7 @@ export async function GET(req: Request) {
           source: source || null,
           from: fromRaw || null,
           to: toRaw || null,
-          availableSources: sources.map((s) => s.source),
+          availableSources: sources.map((s: any) => s.source),
         },
       });
     }
