@@ -97,7 +97,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   const imageToShow = dynamicImage.startsWith("http") ? dynamicImage : getPlaceholderImage(eventTypeInfo.type);
 
   // Parse venue for location info
-  const venueParts = ticket.venue.split(",").map(p => p.trim());
+  const venueParts = ticket.venue.split(",").map((p: string) => p.trim());
   const city = venueParts[1] || "Toronto";
   const province = "ON";
   const country = "Canada";
