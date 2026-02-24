@@ -96,6 +96,7 @@ CREATE TABLE "Seller" (
     "stripePayoutsEnabled" BOOLEAN NOT NULL DEFAULT false,
     "payoutHold" BOOLEAN NOT NULL DEFAULT false,
     "payoutHoldReason" TEXT,
+    "defaultTransferMethod" TEXT,
 
     CONSTRAINT "Seller_pkey" PRIMARY KEY ("id")
 );
@@ -137,15 +138,17 @@ CREATE TABLE "Ticket" (
     "reservedByOrderId" TEXT,
     "soldAt" TIMESTAMP(3),
     "withdrawnAt" TIMESTAMP(3),
+    "primaryVendor" TEXT,
+    "transferMethod" TEXT,
+    "barcodeHash" TEXT,
+    "barcodeText" TEXT,
+    "verificationImage" TEXT,
     "verificationStatus" "TicketVerificationStatus" NOT NULL DEFAULT 'PENDING',
     "verificationScore" INTEGER,
     "verificationReason" TEXT,
     "verificationProvider" TEXT,
     "verificationEvidence" TEXT,
     "verifiedAt" TIMESTAMP(3),
-    "barcodeHash" TEXT,
-    "barcodeType" TEXT,
-    "barcodeLast4" TEXT,
     "viewCount" INTEGER NOT NULL DEFAULT 0,
     "lastViewedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -166,6 +169,13 @@ CREATE TABLE "Order" (
     "adminFeeCents" INTEGER NOT NULL,
     "totalCents" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "transferProofType" TEXT,
+    "transferProofData" TEXT,
+    "transferVerificationStatus" TEXT,
+    "transferVerificationReason" TEXT,
+    "buyerConfirmationStatus" TEXT DEFAULT 'PENDING',
+    "buyerConfirmationAt" TIMESTAMP(3),
+    "disputeWindowEndsAt" TIMESTAMP(3),
 
     CONSTRAINT "Order_pkey" PRIMARY KEY ("id")
 );
