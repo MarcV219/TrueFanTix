@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type RegisterResponse = { ok: true; next?: string } | { error?: string; message?: string };
@@ -48,7 +48,7 @@ function computeIsVerified(user: MeUser | null) {
   return !!user.emailVerifiedAt && !!user.phoneVerifiedAt;
 }
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
   const sp = useSearchParams();
 
@@ -493,5 +493,13 @@ export default function RegisterPage() {
         </a>
       </div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<div style={{ maxWidth: 440, margin: "40px auto", padding: 16 }}><h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Create account</h1><p style={{ marginTop: 0, opacity: 0.8 }}>Loading…</p></div>}>
+      <RegisterForm />
+    </Suspense>
   );
 }
