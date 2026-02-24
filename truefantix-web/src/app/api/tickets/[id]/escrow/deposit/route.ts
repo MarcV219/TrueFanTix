@@ -48,13 +48,13 @@ export async function POST(req: Request, ctx: Ctx) {
     where: { ticketId },
     create: {
       ticketId,
-      state: TicketEscrowState.IN_ESCROW,
+      state: "IN_ESCROW",
       provider,
       providerRef,
       depositedAt: new Date(),
     },
     update: {
-      state: TicketEscrowState.IN_ESCROW,
+      state: "IN_ESCROW",
       provider,
       providerRef,
       failureReason: null,

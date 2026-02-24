@@ -59,7 +59,7 @@ export async function GET(req: Request, ctx: Ctx) {
     const [availableCount, soldCount, withdrawnCount] = await Promise.all([
       prisma.ticket.count({ where: { sellerId, status: "AVAILABLE" } }),
       prisma.ticket.count({ where: { sellerId, status: "SOLD" } }),
-      prisma.ticket.count({ where: { sellerId, status: TicketStatus.WITHDRAWN } }),
+      prisma.ticket.count({ where: { sellerId, status: "WITHDRAWN" } }),
     ]);
 
     const [recentTickets, recentOrders, recentCredits, recentPayouts, earnedSoldOutAgg] =

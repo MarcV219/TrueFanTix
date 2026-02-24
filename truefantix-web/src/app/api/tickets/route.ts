@@ -58,7 +58,7 @@ export async function GET(req: Request) {
 
     // Default behavior: exclude withdrawn tickets unless explicitly requested
     if (status === "AVAILABLE" || status === "SOLD" || status === "WITHDRAWN") {
-      where.status = status as TicketStatus;
+      where.status = status as "AVAILABLE" | "SOLD" | "WITHDRAWN";
     } else {
       where.status = { in: ["AVAILABLE", "SOLD"] };
     }
@@ -71,7 +71,7 @@ export async function GET(req: Request) {
       verificationStatus === "REJECTED" ||
       verificationStatus === "NEEDS_REVIEW"
     ) {
-      where.verificationStatus = verificationStatus as TicketVerificationStatus;
+      where.verificationStatus = verificationStatus as "PENDING" | "VERIFIED" | "REJECTED" | "NEEDS_REVIEW";
     } else if (!sellerId) {
       where.verificationStatus = "VERIFIED";
     }

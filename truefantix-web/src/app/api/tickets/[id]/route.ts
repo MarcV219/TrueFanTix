@@ -184,7 +184,7 @@ export async function DELETE(req: Request) {
         ],
       },
       data: {
-        status: TicketStatus.WITHDRAWN,
+        status: "WITHDRAWN",
         withdrawnAt: new Date(),
         reservedUntil: null,
         reservedByOrderId: null,

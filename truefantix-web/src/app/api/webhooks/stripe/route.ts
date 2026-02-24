@@ -136,7 +136,7 @@ export async function POST(req: Request) {
           });
 
           if (!existingBuyerEmail) {
-            const tickets = updatedOrder.items.map(item => ({
+            const tickets = updatedOrder.items.map((item: { ticket?: { title?: string; venue?: string; date?: string } }) => ({
               title: item.ticket?.title || "Ticket",
               venue: item.ticket?.venue || "",
               date: item.ticket?.date || "",
@@ -247,12 +247,12 @@ export async function POST(req: Request) {
             orderId,
             amountCents: paymentIntent.amount,
             currency: paymentIntent.currency.toUpperCase(),
-            status: PaymentStatus.FAILED,
+            status: "FAILED",
             provider: "STRIPE",
             providerRef: paymentIntent.id,
           },
           update: {
-            status: PaymentStatus.FAILED,
+            status: "FAILED",
             providerRef: paymentIntent.id,
           },
         });

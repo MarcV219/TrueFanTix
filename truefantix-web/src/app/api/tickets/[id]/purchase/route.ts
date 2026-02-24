@@ -325,7 +325,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const message = err instanceof Error ? err.message : "Unknown error";
 
     // Better P2002 handling: try idempotency replay; otherwise return a clear 409.
-    if (err instanceof any && err.code === "P2002") {
+    if (err && typeof err === "object" && "code" in err && (err as any).code === "P2002") {
       const key = getIdempotencyKey(req);
       if (key) {
         const existing = await prisma.order.findUnique({ where: { idempotencyKey: key } });
@@ -356,9 +356,9 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
-    if (err instanceof any) {
+    if (err && typeof err === "object" && "code" in err) {
       return NextResponse.json(
-        { ok: false, error: "Purchase failed (Prisma)", code: err.code, details: message },
+        { ok: false, error: "Purchase failed (Prisma)", code: (err as any).code, details: message },
         { status: 400 }
       );
     }

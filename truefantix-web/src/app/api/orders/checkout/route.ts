@@ -167,7 +167,7 @@ export async function POST(req: Request) {
       }
 
       // Compute totals for the entire order
-      const amountCents = tickets.reduce((sum, t) => sum + t.priceCents, 0);
+      const amountCents = tickets.reduce((sum: number, t: { priceCents: number }) => sum + t.priceCents, 0);
       const adminFeeCents = Math.round((amountCents * ADMIN_FEE_BPS) / BPS_DENOMINATOR);
       const totalCents = amountCents + adminFeeCents;
 
@@ -274,7 +274,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "One or more tickets not available", details: message }, { status: 409 });
     }
 
-    if (err instanceof any && err.code === "P2002") {
+    if (err && typeof err === "object" && "code" in err && (err as any).code === "P2002") {
       // If two requests race with the same idempotencyKey, return idempotency-ish response
       const bodyKey = (() => {
         try {

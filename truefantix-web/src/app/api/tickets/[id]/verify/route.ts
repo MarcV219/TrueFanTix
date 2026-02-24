@@ -34,9 +34,14 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const statusRaw = String(body?.verificationStatus ?? "").trim().toUpperCase();
-  const verificationStatus =
+  const verificationStatus:
+    | "PENDING"
+    | "VERIFIED"
+    | "REJECTED"
+    | "NEEDS_REVIEW"
+    | null =
     statusRaw === "VERIFIED" || statusRaw === "REJECTED" || statusRaw === "NEEDS_REVIEW" || statusRaw === "PENDING"
-      ? (statusRaw as TicketVerificationStatus)
+      ? (statusRaw as "PENDING" | "VERIFIED" | "REJECTED" | "NEEDS_REVIEW")
       : null;
 
   if (!verificationStatus) {
