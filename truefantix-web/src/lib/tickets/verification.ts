@@ -120,7 +120,7 @@ export async function autoVerifyTicketById(prisma: PrismaClient, ticketId: strin
   return prisma.ticket.update({
     where: { id: ticketId },
     data: {
-      verificationStatus: decision.verificationStatus,
+      verificationStatus: decision.verificationStatus as any,
       verificationScore: decision.verificationScore,
       verificationReason: decision.verificationReason,
       verificationProvider: decision.verificationProvider,
