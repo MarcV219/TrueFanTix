@@ -1,3 +1,4 @@
+// Test comment to force schema detection
 generator client {
   provider = "prisma-client-js"
 }
@@ -191,6 +192,10 @@ model User {
   // Verification codes
   verificationCodes VerificationCode[]
 
+  // Notification system relations
+  notificationPreferences NotificationPreference[]
+  notifications           Notification[]
+
   @@index([role])
   @@index([createdAt])
   @@index([country, region, city])
@@ -250,6 +255,9 @@ model Seller {
   metrics  SellerMetrics?
   user     User?
 
+  // Optional: Seller's preferred/common ticket transfer method.
+  defaultTransferMethod String?
+
   @@index([createdAt])
   @@index([status])
 }
@@ -305,16 +313,19 @@ model Ticket {
   soldAt      DateTime?
   withdrawnAt DateTime?
 
+  // 2.a.i: Details for Image Analysis & Barcode Handling
+  primaryVendor      String? // e.g., "Ticketmaster", "AXS", "StubHub"
+  transferMethod     String? // e.g., "Ticketmaster Transfer", "PDF Upload", "Screenshot"
+  barcodeHash        String?  // SHA256 hash of the barcode/QR code image/data for fraud detection.
+  barcodeText        String?  // Extracted text/number from barcode/QR code for cross-referencing.
+  verificationImage  String?  // URL/path to the image provided for barcode/QR code verification.
+
   verificationStatus   TicketVerificationStatus @default(PENDING)
   verificationScore    Int?
   verificationReason   String?
   verificationProvider String?
   verificationEvidence String?
   verifiedAt           DateTime?
-
-  barcodeHash   String?
-  barcodeType   String?
-  barcodeLast4  String?
 
   viewCount    Int       @default(0)
   lastViewedAt DateTime?
@@ -356,6 +367,21 @@ model Order {
   totalCents    Int
 
   createdAt DateTime @default(now())
+
+  // 4.b: Seller-Provided Proof of Transfer
+  transferProofType String? // e.g., "Screenshot", "Transfer ID", "Email Confirmation"
+  transferProofData String? // URL to screenshot, or the transfer ID text/JSON.
+
+  // 5.a: Automated Post-Transfer Verification Result (TFT's check)
+  transferVerificationStatus String? // e.g., "PENDING", "MATCHED", "MISMATCHED", "MANUAL_REVIEW"
+  transferVerificationReason String? // Details from automated check
+
+  // 5.b: Buyer's Confirmation of Receipt
+  buyerConfirmationStatus String?  @default("PENDING") // e.g., "PENDING", "CONFIRMED", "DISPUTED"
+  buyerConfirmationAt     DateTime?
+
+  // 5.c: Dispute Window
+  disputeWindowEndsAt DateTime?
 
   seller      Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
   buyerSeller Seller @relation("BuyerOrders", fields: [buyerSellerId], references: [id], onDelete: Cascade)
@@ -696,4 +722,49 @@ model EarlyAccessLead {
   source String @default("homepage")
 
   @@index([createdAt])
+}
+
+// Add this model to your schema.prisma
+
+model NotificationPreference {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // What kind of notification is this? (e.g., "ARTIST", "TEAM", "VENUE", "CITY", "EVENT_TYPE")
+  type      String
+  // The value to match (e.g., "Taylor Swift", "Toronto Maple Leafs", "Scotiabank Arena", "Toronto", "Concert")
+  value     String
+  // Status: ACTIVE, PAUSED, DELETED
+  status    String @default("ACTIVE")
+
+  // Unique constraint to prevent duplicate preferences for the same user/type/value
+  @@unique([userId, type, value])
+  @@index([type, value, status])
+  @@index([userId, status])
+}
+
+// Add this model to your schema.prisma
+
+model Notification {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Type of notification (e.g., "NEW_EVENT", "TICKET_PRICE_DROP")
+  type      String
+  // Content of the notification (e.g., "New Taylor Swift concert tickets posted!")
+  message   String
+  // Optional link to the relevant event/ticket
+  link      String?
+  // Has the user seen this notification?
+  isRead    Boolean  @default(false)
+
+  @@index([userId, createdAt])
+  @@index([isRead])
 }
