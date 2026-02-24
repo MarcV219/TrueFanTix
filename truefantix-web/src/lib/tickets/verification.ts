@@ -1,4 +1,4 @@
-import { PrismaClient, TicketVerificationStatus } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 
 type TicketForVerification = {
   id: string;
@@ -14,7 +14,7 @@ type TicketForVerification = {
 };
 
 type VerificationDecision = {
-  verificationStatus: TicketVerificationStatus;
+  verificationStatus: string;
   verificationScore: number;
   verificationReason: string;
   verificationProvider: string;
@@ -78,10 +78,10 @@ export function scoreTicket(ticket: TicketForVerification): VerificationDecision
   }
 
   // Decision thresholds
-  let verificationStatus: TicketVerificationStatus;
-  if (score >= 85) verificationStatus = TicketVerificationStatus.VERIFIED;
-  else if (score >= 60) verificationStatus = TicketVerificationStatus.NEEDS_REVIEW;
-  else verificationStatus = TicketVerificationStatus.REJECTED;
+  let verificationStatus: string;
+  if (score >= 85) verificationStatus = "VERIFIED";
+  else if (score >= 60) verificationStatus = "NEEDS_REVIEW";
+  else verificationStatus = "REJECTED";
 
   return {
     verificationStatus,
@@ -113,7 +113,7 @@ export async function autoVerifyTicketById(prisma: PrismaClient, ticketId: strin
   if (!ticket) return null;
 
   // Only auto-process pending tickets.
-  if (ticket.verificationStatus !== TicketVerificationStatus.PENDING) return ticket;
+  if (ticket.verificationStatus !== "PENDING") return ticket;
 
   const decision = scoreTicket(ticket);
 
