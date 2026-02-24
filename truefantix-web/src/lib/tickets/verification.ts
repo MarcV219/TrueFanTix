@@ -88,7 +88,7 @@ export function scoreTicket(ticket: TicketForVerification): VerificationDecision
     verificationScore: score,
     verificationReason: reasons.length ? reasons.join("; ") : "Auto verification checks passed",
     verificationProvider: "auto-rules-v1",
-    verifiedAt: verificationStatus === TicketVerificationStatus.VERIFIED ? new Date() : null,
+    verifiedAt: verificationStatus === "VERIFIED" ? new Date() : null,
   };
 }
 
