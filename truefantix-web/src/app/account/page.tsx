@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AccountGate, { MeUser } from "@/app/account/_components/accountgate";
@@ -728,7 +728,7 @@ function AccountHub({ me }: { me: MeUser }) {
   );
 }
 
-export default function AccountPage() {
+function AccountContent() {
   return (
     <AccountGate
       nextPath="/account"
@@ -759,5 +759,13 @@ export default function AccountPage() {
     >
       {(me) => <AccountHub me={me} />}
     </AccountGate>
+  );
+}
+
+export default function AccountPage() {
+  return (
+    <Suspense fallback={<div style={{ maxWidth: 800, margin: "40px auto", padding: 16 }}><p>Loading account...</p></div>}>
+      <AccountContent />
+    </Suspense>
   );
 }

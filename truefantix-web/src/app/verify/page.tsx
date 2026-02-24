@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type MeUser = {
@@ -31,7 +31,7 @@ function isSafeNext(n: string | null) {
   return !!n && n.startsWith("/") && !n.startsWith("//");
 }
 
-export default function VerifyPage() {
+function VerifyForm() {
   const router = useRouter();
   const sp = useSearchParams();
 
@@ -366,7 +366,7 @@ export default function VerifyPage() {
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.75 }}>
-              Dev mode: the code prints in your terminal (later we’ll email it for real).
+              Dev mode: the code prints in your terminal (later we'll email it for real).
             </div>
           </div>
         ) : null}
@@ -414,15 +414,23 @@ export default function VerifyPage() {
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.75 }}>
-              Dev mode: the code prints in your terminal (later we’ll SMS it for real).
+              Dev mode: the code prints in your terminal (later we'll SMS it for real).
             </div>
           </div>
         ) : null}
       </div>
 
       <div style={{ marginTop: 18, fontSize: 13, opacity: 0.8 }}>
-        When both are verified, you’ll be redirected automatically.
+        When both are verified, you'll be redirected automatically.
       </div>
     </div>
+  );
+}
+
+export default function VerifyPage() {
+  return (
+    <Suspense fallback={<div style={{ maxWidth: 440, margin: "40px auto", padding: 16 }}><h1 style={{ fontSize: 28, fontWeight: 700 }}>Verify</h1><p>Loading...</p></div>}>
+      <VerifyForm />
+    </Suspense>
   );
 }
