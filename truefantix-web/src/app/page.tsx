@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Image from "next/image";
 
 export default function ComingSoonPage() {
   const [email, setEmail] = useState("");
@@ -39,10 +40,15 @@ export default function ComingSoonPage() {
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-950 dark:to-slate-900 flex flex-col items-center justify-center px-4 sm:px-6 py-12">
       <div className="max-w-2xl w-full text-center">
         {/* Prominent Logo */}
-        <div className="mb-16">
-          <h1 className="text-6xl sm:text-7xl lg:text-8xl font-extrabold tracking-tight bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
-            TrueFanTix
-          </h1>
+        <div className="mb-12 flex justify-center">
+          <Image
+            src="/brand/truefantix-lockup.jpeg"
+            alt="TrueFanTix"
+            width={400}
+            height={120}
+            className="w-auto h-auto max-w-[300px] sm:max-w-[400px]"
+            priority
+          />
         </div>
 
         {/* Tagline */}
