@@ -31,6 +31,12 @@ type CreateTicketBody = {
   // Optional barcode evidence for anti-duplicate and legitimacy checks
   barcodeData?: string | null;
   barcodeType?: string | null;
+
+  // New fields for escrow and verification
+  primaryVendor?: string | null;
+  transferMethod?: string | null;
+  barcodeText?: string | null; // Extracted text from barcode image
+  verificationImage?: string | null; // URL/path to verification image
 };
 
 function badRequest(message: string) {
@@ -224,6 +230,12 @@ export async function POST(req: Request) {
   const venue = (body.venue ?? "").trim();
   const date = (body.date ?? "").trim();
 
+  // New fields from process flow
+  const primaryVendor = (body.primaryVendor ?? "").trim() || null;
+  const transferMethod = (body.transferMethod ?? "").trim() || null;
+  const barcodeText = (body.barcodeText ?? "").trim() || null;
+  const verificationImage = (body.verificationImage ?? "").trim() || null;
+
   // We store cents. Keep validation simple + safe.
   const priceCentsRaw = body.priceCents;
   const faceValueCentsRaw = body.faceValueCents;
@@ -255,6 +267,11 @@ export async function POST(req: Request) {
 
   if (!date) return badRequest("Date is required.");
   if (date.length > 100) return badRequest("Date must be 100 characters or less.");
+
+  if (primaryVendor && primaryVendor.length > 80) return badRequest("Primary vendor must be 80 characters or less.");
+  if (transferMethod && transferMethod.length > 80) return badRequest("Transfer method must be 80 characters or less.");
+  if (barcodeText && barcodeText.length > 255) return badRequest("Barcode text must be 255 characters or less.");
+  if (verificationImage && verificationImage.length > 2048) return badRequest("Verification image URL is too long.");
 
   // Optional: event linking
   const eventId = (body.eventId ?? null)?.toString().trim() || null;
@@ -324,6 +341,10 @@ export async function POST(req: Request) {
         image,
         venue,
         date,
+        primaryVendor,
+        transferMethod,
+        barcodeText,
+        verificationImage,
         status: "AVAILABLE",
         verificationStatus: "PENDING",
         verificationEvidence: JSON.stringify({
