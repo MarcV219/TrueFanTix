@@ -36,20 +36,17 @@ export default function ComingSoonPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-950 dark:to-slate-900 flex flex-col items-center justify-center px-4 sm:px-6">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-950 dark:to-slate-900 flex flex-col items-center justify-center px-4 sm:px-6 py-12">
       <div className="max-w-2xl w-full text-center">
-        {/* Logo */}
-        <div className="mb-12">
-          <span className="text-6xl sm:text-7xl lg:text-8xl font-extrabold tracking-tight bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
+        {/* Prominent Logo */}
+        <div className="mb-16">
+          <h1 className="text-6xl sm:text-7xl lg:text-8xl font-extrabold tracking-tight bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
             TrueFanTix
-          </span>
+          </h1>
         </div>
 
-        <h1 className="text-4xl sm:text-5xl font-bold text-slate-900 dark:text-white mb-4">
-          Welcome to TrueFanTix
-        </h1>
-
-        <p className="text-xl sm:text-2xl text-slate-600 dark:text-slate-300 mb-2">
+        {/* Tagline */}
+        <p className="text-xl sm:text-2xl text-slate-600 dark:text-slate-300 mb-3">
           Tickets to live events at or below face value.
         </p>
 
@@ -60,7 +57,7 @@ export default function ComingSoonPage() {
         {/* Early Access Form */}
         {!submitted ? (
           <div className="max-w-md mx-auto bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 border border-slate-200 dark:border-slate-700">
-            <h2 className="text-2xl font-bold mb-2 text-slate-900 dark:text-white">
+            <h2 className="text-2xl font-bold mb-3 text-slate-900 dark:text-white">
               Join the Early Access List
             </h2>
             <p className="text-slate-600 dark:text-slate-400 mb-6">
@@ -102,6 +99,7 @@ export default function ComingSoonPage() {
           </div>
         )}
 
+        {/* Copyright */}
         <p className="mt-16 text-slate-400 dark:text-slate-600 text-sm">
           © 2026 TrueFanTix. All rights reserved.
         </p>
