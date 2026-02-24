@@ -229,7 +229,7 @@ export default function TicketsPage() {
   }
 
   const filteredTickets = React.useMemo(() => {
-    return tickets.filter((ticket) => {
+    return tickets.filter((ticket: any) => {
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
         const searchable = `${ticket.title} ${ticket.venue} ${ticket.city} ${ticket.eventTypeLabel}`.toLowerCase();

@@ -159,7 +159,7 @@ async function fetchForumThreadsPreview(): Promise<ForumThreadPreview[]> {
       ? payload.items
       : [];
 
-    return raw.map((t) => ({
+    return raw.map((t: any) => ({
       id: t.id,
       title: t.title,
       topicType: t.topicType,
@@ -229,8 +229,8 @@ export default function Page() {
         }
 
         const normalized: TicketCard[] = rawTickets
-          .filter((t) => t.status === "AVAILABLE")
-          .map((t) => {
+          .filter((t: any) => t.status === "AVAILABLE")
+          .map((t: any) => {
             const seller = t.seller;
             const eventTypeInfo = getEventType(t.title);
             const isSoldOut = t.event?.selloutStatus === "SOLD_OUT";

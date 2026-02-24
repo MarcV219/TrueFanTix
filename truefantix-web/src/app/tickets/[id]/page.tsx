@@ -30,7 +30,7 @@ async function getTicket(id: string) {
     seller: ticket.seller ? {
       ...ticket.seller,
       id: String(ticket.seller.id),
-      badges: ticket.seller.badges.map(b => ({
+      badges: ticket.seller.badges.map((b: any) => ({
         ...b,
         id: String(b.id),
         sellerId: String(b.sellerId)
