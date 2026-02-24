@@ -41,14 +41,16 @@ export default function ComingSoonPage() {
       <div className="max-w-2xl w-full text-center">
         {/* Prominent Logo */}
         <div className="mb-12 flex justify-center">
-          <Image
-            src="/brand/truefantix-lockup.jpeg"
-            alt="TrueFanTix"
-            width={600}
-            height={180}
-            className="w-auto h-auto max-w-[400px] sm:max-w-[500px] lg:max-w-[600px] bg-slate-50 dark:bg-slate-950 rounded-lg"
-            priority
-          />
+          <div className="bg-white rounded-2xl shadow-xl p-6 sm:p-8">
+            <Image
+              src="/brand/truefantix-lockup.jpeg"
+              alt="TrueFanTix"
+              width={600}
+              height={180}
+              className="w-auto h-auto max-w-[350px] sm:max-w-[450px] lg:max-w-[550px]"
+              priority
+            />
+          </div>
         </div>
 
         {/* Tagline */}
