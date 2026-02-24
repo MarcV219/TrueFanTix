@@ -17,8 +17,8 @@
     "typecheck": "tsc --noEmit",
     "verify:escrow": "npx -y tsx scripts/escrow-lifecycle.integration.ts && npx -y tsx scripts/stripe-webhook-replay-drill.ts",
     "drill:webhook": "npx -y tsx scripts/stripe-webhook-replay-drill.ts",
-    "prisma:generate:env": "node -r dotenv/config npx prisma generate",
-    "prisma:migrate-dev:env": "node -r dotenv/config npx prisma migrate dev"
+    "prisma:generate:env": "dotenv -e .env.local -- npx prisma generate",
+    "prisma:migrate-dev:env": "dotenv -e .env.local -- npx prisma migrate dev"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.1",
