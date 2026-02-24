@@ -44,9 +44,9 @@ export default function ComingSoonPage() {
           <Image
             src="/brand/truefantix-lockup.jpeg"
             alt="TrueFanTix"
-            width={400}
-            height={120}
-            className="w-auto h-auto max-w-[300px] sm:max-w-[400px]"
+            width={600}
+            height={180}
+            className="w-auto h-auto max-w-[400px] sm:max-w-[500px] lg:max-w-[600px] bg-slate-50 dark:bg-slate-950 rounded-lg"
             priority
           />
         </div>
