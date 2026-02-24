@@ -14,6 +14,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow cron endpoints
+  if (pathname.startsWith("/api/cron/")) {
+    return NextResponse.next();
+  }
+
   // Allow static assets
   if (
     pathname.startsWith("/_next/") ||

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   // url is no longer allowed in Prisma 7 schema files (you provide it via prisma.config.ts / env at runtime)
 }
 
