@@ -2,8 +2,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { CreditTxSource, CreditTxType } from "@prisma/client";
-
 // Legacy endpoint kept for compatibility; semantics are access tokens.
 export async function POST(req: Request) {
   try {
@@ -37,8 +35,8 @@ export async function POST(req: Request) {
       await tx.creditTransaction.create({
         data: {
           sellerId,
-          type: intAmount > 0 ? CreditTxType.ADJUSTMENT : CreditTxType.REVERSAL,
-          source: CreditTxSource.UNKNOWN,
+          type: intAmount > 0 ? "ADJUSTMENT" : "REVERSAL",
+          source: "UNKNOWN",
           amountCredits: intAmount,
           balanceAfterCredits: nextBalance,
           note: reason,
