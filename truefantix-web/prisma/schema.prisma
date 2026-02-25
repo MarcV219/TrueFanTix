@@ -427,6 +427,12 @@ model Order {
   ticketEscrows TicketEscrow[]
   creditTransactions CreditTransaction[]
 
+  // Conversation for this order
+  conversation Conversation?
+
+  // Reviews for this order
+  reviews Review[]
+
   @@index([sellerId, createdAt])
   @@index([buyerSellerId, createdAt])
   @@index([status, createdAt])
@@ -965,7 +971,7 @@ model Review {
   sellerId   String
   seller     Seller  @relation(fields: [sellerId], references: [id], onDelete: Cascade)
   reviewerId String
-  reviewer   User    @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewer   User    @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Cascade)
 
   rating  Int     // 1-5 stars
   title   String?
