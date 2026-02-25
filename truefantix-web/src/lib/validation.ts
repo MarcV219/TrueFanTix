@@ -95,7 +95,7 @@ export function sanitizeInput<T>(data: T, schema: z.ZodSchema<T>): { success: tr
   
   return {
     success: false,
-    errors: result.error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+    errors: result.error.issues.map(e => `${e.path.join('.')}: ${e.message}`),
   };
 }
 
