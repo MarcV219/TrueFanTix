@@ -11,6 +11,11 @@ export type NotificationType =
   | "VERIFICATION_NEEDED" // Ticket needs verification
   | "PAYOUT_PROCESSED"    // Payout completed
   | "DISPUTE_OPENED"      // Dispute opened on order
+  | "NEW_MESSAGE"         // New message received
+  | "WAITLIST_JOINED"     // Joined waitlist for event
+  | "WAITLIST_AVAILABLE"  // Tickets available on waitlist
+  | "REFERRAL_SIGNUP"     // New referral signup
+  | "REFERRAL_COMPLETED"  // Referral completed purchase
   | "SYSTEM";             // General system notifications
 
 interface CreateNotificationParams {
