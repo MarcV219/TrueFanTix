@@ -354,8 +354,6 @@ export async function POST(req: Request) {
           providerReason: providerCheck.reason,
         }),
         barcodeHash,
-        barcodeType,
-        barcodeLast4,
         sellerId,
         ...(eventId ? { eventId } : {}),
       },
