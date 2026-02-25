@@ -211,6 +211,11 @@ model User {
   // Waitlist entries
   waitlistEntries         WaitlistEntry[]
 
+  // Conversations
+  conversationParticipants ConversationParticipant[]
+  messages                 Message[]
+  reviewsWritten          Review[] @relation("ReviewAuthor")
+
   @@index([role])
   @@index([createdAt])
   @@index([country, region, city])
@@ -269,6 +274,9 @@ model Seller {
   payouts  Payout[]
   metrics  SellerMetrics?
   user     User?
+
+  // Reviews received
+  reviewsReceived Review[]
 
   // Optional: Seller's preferred/common ticket transfer method.
   defaultTransferMethod String?
@@ -871,6 +879,96 @@ model WaitlistEntry {
   @@unique([userId, eventId, status])
   @@index([eventId, status])
   @@index([userId, status])
+  @@index([status, createdAt])
+}
+
+// Conversations for messaging
+model Conversation {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Optional link to order
+  orderId   String?  @unique
+  order     Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  // Participants
+  participants ConversationParticipant[]
+
+  // Messages
+  messages  Message[]
+
+  @@index([updatedAt])
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  joinedAt DateTime @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  createdAt      DateTime     @default(now())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  content   String
+  readAt    DateTime?
+  deletedAt DateTime?
+
+  attachments MessageAttachment[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId, createdAt])
+}
+
+model MessageAttachment {
+  id        String  @id @default(cuid())
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  type String // image, document, etc.
+  url  String
+  name String?
+
+  @@index([messageId])
+}
+
+// Reviews and ratings
+model Review {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orderId    String  @unique
+  order      Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sellerId   String
+  seller     Seller  @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  reviewerId String
+  reviewer   User    @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  rating  Int     // 1-5 stars
+  title   String?
+  content String
+
+  // Optional detailed ratings
+  aspects Json? // { communication: 5, accuracy: 4, delivery: 5 }
+
+  status String @default("APPROVED") // PENDING, APPROVED, REJECTED
+
+  @@index([sellerId, status, createdAt])
+  @@index([reviewerId, createdAt])
   @@index([status, createdAt])
 }
 
