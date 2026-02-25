@@ -196,6 +196,9 @@ model User {
   notificationPreferences NotificationPreference[]
   notifications           Notification[]
 
+  // Audit logging
+  auditLogs               AuditLog[]
+
   @@index([role])
   @@index([createdAt])
   @@index([country, region, city])
@@ -767,4 +770,33 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([isRead])
+}
+
+// Audit logging for security and compliance
+model AuditLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  // Who performed the action
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // What action was performed
+  action    String   // e.g., "USER_LOGIN", "TICKET_CREATE", "ORDER_CANCEL"
+
+  // What was the target
+  targetType String? // e.g., "Ticket", "Order", "User"
+  targetId   String? // ID of the affected resource
+
+  // Additional context
+  metadata   String? // JSON string with additional details
+
+  // Request context
+  ipAddress  String?
+  userAgent  String?
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+  @@index([createdAt])
 }
