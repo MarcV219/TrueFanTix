@@ -125,7 +125,7 @@ export async function POST(req: Request) {
         alert: {
           ...alert,
           targetPrice: alert.targetPriceCents ? alert.targetPriceCents / 100 : null,
-          originalPrice: alert.originalPriceCents / 100,
+          originalPrice: alert.originalPriceCents ? alert.originalPriceCents / 100 : null,
         },
         message: `Alert created for "${ticket.title}". We'll notify you when the price drops.`,
       }, { status: 201 });
