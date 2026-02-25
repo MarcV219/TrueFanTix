@@ -73,6 +73,27 @@ export async function requireAdmin(req: Request) {
   return { ok: true as const, user: base.user };
 }
 
+export async function requireUser() {
+  const userId = await getUserIdFromSessionCookie();
+  if (!userId) {
+    return { ok: false as const, res: jsonError(401, "NOT_AUTHENTICATED", "Please log in.") };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+  });
+
+  if (!user) {
+    return { ok: false as const, res: jsonError(401, "NOT_AUTHENTICATED", "Please log in.") };
+  }
+
+  if (user.isBanned) {
+    return { ok: false as const, res: jsonError(403, "BANNED", "This account is restricted.") };
+  }
+
+  return { ok: true as const, user };
+}
+
 export function hasInternalCronAuth(req: Request): boolean {
   const configured = process.env.CRON_SECRET?.trim();
   if (!configured) return false;
