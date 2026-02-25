@@ -1,129 +1,248 @@
-export const runtime = "nodejs";
-
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
-import { sendEmail, generatePasswordResetEmail } from "@/lib/email";
+import { createHash } from "crypto";
+import { sendEmail } from "@/lib/email";
+import bcrypt from "bcryptjs";
 
-function jsonError(status: number, error: string, message: string) {
-  return NextResponse.json({ ok: false, error, message }, { status });
+const RESET_SECRET = process.env.PASSWORD_RESET_SECRET || "your-reset-secret";
+const SALT_ROUNDS = 12;
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(RESET_SECRET + token).digest("hex");
 }
 
-function getResetSecret() {
-  const secret = process.env.VERIFICATION_SECRET;
-  if (!secret || secret.length < 32) {
-    throw new Error("VERIFICATION_SECRET is missing or too short. Set in .env (min 32 chars).");
-  }
-  return secret;
+function generateResetToken(): string {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
-function sha256(input: string) {
-  return crypto.createHash("sha256").update(input).digest("hex");
-}
-
-function generateToken() {
-  return crypto.randomBytes(32).toString("hex");
-}
-
-const TOKEN_TTL_MINUTES = 30;
-const MAX_REQUESTS_PER_HOUR = 3;
-
+// POST /api/auth/forgot-password
+// Request password reset
 export async function POST(req: Request) {
   try {
-    let body: { email?: string };
-    try {
-      body = (await req.json()) as { email?: string };
-    } catch {
-      return jsonError(400, "VALIDATION_ERROR", "Invalid JSON body.");
-    }
+    const body = (await req.json().catch(() => null)) as {
+      email?: string;
+    } | null;
 
-    const email = (body.email ?? "").trim().toLowerCase();
-    if (!email) {
-      return jsonError(400, "VALIDATION_ERROR", "Email is required.");
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return jsonError(400, "VALIDATION_ERROR", "Enter a valid email address.");
+    if (!body?.email) {
+      return NextResponse.json(
+        { ok: false, error: "VALIDATION_ERROR", message: "Email required." },
+        { status: 400 }
+      );
     }
 
     // Find user
     const user = await prisma.user.findUnique({
-      where: { email },
-      select: { id: true, email: true, firstName: true, lastName: true },
+      where: { email: body.email },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+      },
     });
 
-    // Don't reveal if email exists (security)
+    // Always return success to prevent email enumeration
     if (!user) {
       return NextResponse.json(
-        { ok: true, message: "If an account exists, a reset email has been sent." },
+        { ok: true, message: "If an account exists with this email, you will receive a password reset link." },
         { status: 200 }
       );
     }
 
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    // Generate reset token
+    const token = generateResetToken();
+    const tokenHash = hashToken(token);
 
-    // Rate limiting
-    const requestsLastHour = await prisma.verificationCode.count({
-      where: {
-        userId: user.id,
-        kind: "EMAIL",
-        createdAt: { gte: oneHourAgo },
-        destination: { startsWith: "reset:" },
-      },
-    });
+    // Get request context
+    const ipAddress = req.headers.get("x-forwarded-for") || "unknown";
+    const userAgent = req.headers.get("user-agent") || "unknown";
 
-    if (requestsLastHour >= MAX_REQUESTS_PER_HOUR) {
-      return jsonError(
-        429,
-        "RATE_LIMITED",
-        "Too many reset requests. Please wait before trying again."
-      );
-    }
-
-    // Generate token
-    const token = generateToken();
-    const secret = getResetSecret();
-    const tokenHash = sha256(secret + token);
-    const expiresAt = new Date(now.getTime() + TOKEN_TTL_MINUTES * 60 * 1000);
-
-    // Store hashed token
-    await prisma.verificationCode.create({
+    // Save token (expires in 1 hour)
+    await prisma.passwordResetToken.create({
       data: {
         userId: user.id,
-        kind: "EMAIL",
-        destination: `reset:${user.email}`,
-        codeHash: tokenHash,
-        expiresAt,
-        usedAt: null,
-        attemptCount: 0,
-        sendCount: 1,
-        lastSentAt: now,
+        tokenHash,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+        ipAddress,
+        userAgent,
       },
     });
 
     // Send reset email
-    const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/reset-password?token=${token}&email=${encodeURIComponent(user.email)}`;
-    const emailContent = generatePasswordResetEmail(resetUrl, user.firstName);
+    const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/reset-password?token=${token}&userId=${user.id}`;
+
     const emailResult = await sendEmail({
       to: user.email,
-      subject: emailContent.subject,
-      text: emailContent.text,
-      html: emailContent.html,
+      subject: "Password Reset - TrueFantix",
+      text: `Hi ${user.firstName},\n\nYou requested a password reset. Click this link to reset your password: ${resetUrl}\n\nThis link expires in 1 hour.\n\nIf you didn't request this, you can ignore this email.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Password Reset Request</h2>
+          <p>Hi ${user.firstName},</p>
+          <p>You requested a password reset. Click the button below to reset your password:</p>
+          <a href="${resetUrl}" style="display: inline-block; background-color: #2196F3; color: white; padding: 14px 20px; margin: 20px 0; text-decoration: none; border-radius: 4px;">Reset Password</a>
+          <p>Or copy and paste this link into your browser:</p>
+          <p><a href="${resetUrl}">${resetUrl}</a></p>
+          <p>This link expires in 1 hour.</p>
+          <p>If you didn't request this, you can ignore this email.</p>
+        </div>
+      `,
     });
+
+    if (!emailResult.ok) {
+      console.error("Failed to send password reset email:", emailResult.error);
+      return NextResponse.json(
+        { ok: false, error: "EMAIL_FAILED", message: "Failed to send reset email." },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(
+      { ok: true, message: "If an account exists with this email, you will receive a password reset link." },
+      { status: 200 }
+    );
+
+  } catch (err) {
+    console.error("POST /api/auth/forgot-password failed:", err);
+    return NextResponse.json(
+      { ok: false, error: "SERVER_ERROR", message: "Could not process request." },
+      { status: 500 }
+    );
+  }
+}
+
+// GET /api/auth/forgot-password?token=xxx&userId=yyy
+// Validate reset token
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const token = searchParams.get("token");
+    const userId = searchParams.get("userId");
+
+    if (!token || !userId) {
+      return NextResponse.json(
+        { ok: false, error: "MISSING_PARAMS", message: "Token and userId required." },
+        { status: 400 }
+      );
+    }
+
+    const tokenHash = hashToken(token);
+
+    // Find valid token
+    const resetToken = await prisma.passwordResetToken.findFirst({
+      where: {
+        userId,
+        tokenHash,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+          },
+        },
+      },
+    });
+
+    if (!resetToken) {
+      return NextResponse.json(
+        { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json(
       {
         ok: true,
-        message: "If an account exists, a reset email has been sent.",
-        dev: !process.env.SENDGRID_API_KEY,
-        resetUrl: emailResult.ok ? undefined : resetUrl, // Only show URL in dev mode if email failed
+        user: {
+          id: resetToken.user.id,
+          email: resetToken.user.email,
+          firstName: resetToken.user.firstName,
+        },
       },
       { status: 200 }
     );
 
-  } catch (err: any) {
-    console.error("POST /api/auth/forgot-password error:", err);
-    return jsonError(500, "SERVER_ERROR", "An unexpected error occurred.");
+  } catch (err) {
+    console.error("GET /api/auth/forgot-password failed:", err);
+    return NextResponse.json(
+      { ok: false, error: "SERVER_ERROR", message: "Could not validate token." },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH /api/auth/forgot-password
+// Reset password with token
+export async function PATCH(req: Request) {
+  try {
+    const body = (await req.json().catch(() => null)) as {
+      token?: string;
+      userId?: string;
+      newPassword?: string;
+    } | null;
+
+    if (!body?.token || !body?.userId || !body?.newPassword) {
+      return NextResponse.json(
+        { ok: false, error: "VALIDATION_ERROR", message: "Token, userId, and newPassword required." },
+        { status: 400 }
+      );
+    }
+
+    // Validate password strength
+    if (body.newPassword.length < 8) {
+      return NextResponse.json(
+        { ok: false, error: "WEAK_PASSWORD", message: "Password must be at least 8 characters." },
+        { status: 400 }
+      );
+    }
+
+    const tokenHash = hashToken(body.token);
+
+    // Find valid token
+    const resetToken = await prisma.passwordResetToken.findFirst({
+      where: {
+        userId: body.userId,
+        tokenHash,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (!resetToken) {
+      return NextResponse.json(
+        { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
+        { status: 400 }
+      );
+    }
+
+    // Hash new password
+    const passwordHash = await bcrypt.hash(body.newPassword, SALT_ROUNDS);
+
+    // Update password and mark token as used
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: body.userId },
+        data: { passwordHash },
+      }),
+      prisma.passwordResetToken.update({
+        where: { id: resetToken.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    return NextResponse.json(
+      { ok: true, message: "Password reset successfully. Please log in with your new password." },
+      { status: 200 }
+    );
+
+  } catch (err) {
+    console.error("PATCH /api/auth/forgot-password failed:", err);
+    return NextResponse.json(
+      { ok: false, error: "SERVER_ERROR", message: "Could not reset password." },
+      { status: 500 }
+    );
   }
 }

@@ -135,8 +135,14 @@ model User {
 
   // Auth / login
   email           String   @unique
-  passwordHash    String
-  emailVerifiedAt DateTime?
+  passwordHash        String
+  emailVerifiedAt     DateTime?
+  emailVerificationToken String? @unique // For email verification links
+
+  // For password reset flow
+  passwordResetTokenHash String? @unique
+
+
 
   // Identity (basic)
   firstName    String
@@ -198,6 +204,9 @@ model User {
 
   // Audit logging
   auditLogs               AuditLog[]
+
+  // Password reset tokens
+  passwordResetTokens     PasswordResetToken[]
 
   @@index([role])
   @@index([createdAt])
@@ -829,4 +838,30 @@ model PriceAlert {
   @@index([userId, status])
   @@index([ticketId, status])
   @@index([status, createdAt])
+}
+
+// Password reset tokens
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Hashed token (sha256)
+  tokenHash String
+
+  // Expiration
+  expiresAt DateTime
+
+  // Usage tracking
+  usedAt    DateTime?
+
+  // Rate limiting
+  ipAddress String?
+  userAgent String?
+
+  @@index([tokenHash])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
