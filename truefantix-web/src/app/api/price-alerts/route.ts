@@ -244,7 +244,7 @@ export async function checkPriceAlerts() {
         const currentPrice = alert.ticket.priceCents;
         
         // Price dropped
-        if (currentPrice < alert.originalPriceCents) {
+        if (alert.originalPriceCents && currentPrice < alert.originalPriceCents) {
           if (!alert.targetPriceCents || currentPrice <= alert.targetPriceCents) {
             shouldTrigger = true;
             const dropPercent = Math.round(((alert.originalPriceCents - currentPrice) / alert.originalPriceCents) * 100);
