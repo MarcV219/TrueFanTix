@@ -60,7 +60,7 @@ async function main(){
       verificationScore: true,
       verificationReason: true,
       barcodeText: true,
-      barcodeLast4: true,
+      barcodeHash: true,
     },
   });
 
