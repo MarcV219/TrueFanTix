@@ -165,20 +165,20 @@ export async function POST(req: Request) {
           );
         }
 
-        // Get user IDs from seller IDs
+        // Get user IDs from seller IDs (User model has sellerId field)
         const [sellerUser, buyerUser] = await Promise.all([
-          prisma.seller.findUnique({ where: { id: order.sellerId }, select: { userId: true } }),
-          prisma.seller.findUnique({ where: { id: order.buyerSellerId }, select: { userId: true } }),
+          prisma.user.findFirst({ where: { sellerId: order.sellerId }, select: { id: true } }),
+          prisma.user.findFirst({ where: { sellerId: order.buyerSellerId }, select: { id: true } }),
         ]);
 
-        if (!sellerUser?.userId || !buyerUser?.userId) {
+        if (!sellerUser?.id || !buyerUser?.id) {
           return NextResponse.json(
             { ok: false, error: "INVALID_ORDER" },
             { status: 400 }
           );
         }
 
-        const participantIds = [sellerUser.userId, buyerUser.userId];
+        const participantIds = [sellerUser.id, buyerUser.id];
 
         // Check for existing conversation
         const existingConv = await prisma.conversation.findFirst({
