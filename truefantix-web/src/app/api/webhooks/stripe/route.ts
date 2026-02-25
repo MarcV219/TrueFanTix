@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sendEmail, generatePurchaseConfirmationEmail, generateSaleNotificationEmail } from "@/lib/email";
+import { notifyTicketSold, notifyPurchaseConfirmed } from "@/lib/notifications/service";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -216,6 +217,30 @@ export async function POST(req: Request) {
           } else {
             console.log(`[STRIPE WEBHOOK] Seller email already sent for order ${orderId}`);
           }
+        }
+
+        // Send in-app notifications (fire-and-forget, non-blocking)
+        try {
+          if (updatedOrder.buyerSeller?.user) {
+            const firstTicket = updatedOrder.items[0]?.ticket;
+            await notifyPurchaseConfirmed({
+              buyerUserId: updatedOrder.buyerSeller.user.id,
+              ticketTitle: firstTicket?.title || "Ticket",
+              orderId: updatedOrder.id,
+            });
+          }
+          if (updatedOrder.seller?.user && updatedOrder.items.length > 0) {
+            const firstTicket = updatedOrder.items[0].ticket;
+            await notifyTicketSold({
+              sellerUserId: updatedOrder.seller.user.id,
+              ticketTitle: firstTicket?.title || "Ticket",
+              orderId: updatedOrder.id,
+              amount: updatedOrder.amountCents,
+            });
+          }
+        } catch (notifyErr) {
+          // Log but don't fail the webhook if notifications fail
+          console.error("[STRIPE WEBHOOK] Failed to send notifications:", notifyErr);
         }
 
         console.log(`[STRIPE WEBHOOK] Payment succeeded for order ${orderId}`);
