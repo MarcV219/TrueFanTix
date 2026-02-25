@@ -39,6 +39,11 @@ export async function POST(req: Request) {
       );
     }
 
+    // Ensure user is authenticated
+    if (!gate.user) {
+      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
+    }
+
     // Find the order and verify the logged-in user is the seller
     const order = await prisma.order.findUnique({
       where: { id: orderId },
