@@ -1,54 +1,72 @@
-export const runtime = "nodejs";
-
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { sanitizeInput, schemas } from "@/lib/validation";
 
+// Full-text search with relevance scoring
 export async function GET(req: Request) {
   try {
-    const url = new URL(req.url);
-    const query = url.searchParams.get("q")?.trim() || "";
-    const minPrice = url.searchParams.get("minPrice");
-    const maxPrice = url.searchParams.get("maxPrice");
-    const city = url.searchParams.get("city")?.trim();
-    const venue = url.searchParams.get("venue")?.trim();
-    const dateFrom = url.searchParams.get("dateFrom");
-    const dateTo = url.searchParams.get("dateTo");
-    const sortBy = url.searchParams.get("sortBy") || "relevance";
-    const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
-    const cursor = url.searchParams.get("cursor");
+    const { searchParams } = new URL(req.url);
+    
+    const query = searchParams.get("q") || "";
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+    const sortBy = searchParams.get("sortBy") || "relevance";
+    
+    // Filters
+    const minPrice = searchParams.get("minPrice");
+    const maxPrice = searchParams.get("maxPrice");
+    const dateFrom = searchParams.get("dateFrom");
+    const dateTo = searchParams.get("dateTo");
+    const venue = searchParams.get("venue");
+    const status = searchParams.get("status") || "AVAILABLE";
+
+    if (!query && !minPrice && !maxPrice && !dateFrom && !dateTo && !venue) {
+      return NextResponse.json(
+        { ok: false, error: "MISSING_QUERY", message: "Please provide a search query or filters." },
+        { status: 400 }
+      );
+    }
+
+    const skip = (page - 1) * limit;
 
     // Build where clause
     const where: any = {
-      status: "AVAILABLE",
+      status: status as any,
+      withdrawnAt: null,
     };
 
-    // Text search on title and venue
+    // Full-text search on multiple fields
     if (query) {
       where.OR = [
         { title: { contains: query, mode: "insensitive" } },
         { venue: { contains: query, mode: "insensitive" } },
+        { event: { title: { contains: query, mode: "insensitive" } } },
+        { barcodeText: { contains: query, mode: "insensitive" } },
+        { primaryVendor: { contains: query, mode: "insensitive" } },
       ];
     }
 
-    // Price range
-    if (minPrice || maxPrice) {
-      where.priceCents = {};
-      if (minPrice) where.priceCents.gte = Math.round(parseFloat(minPrice) * 100);
-      if (maxPrice) where.priceCents.lte = Math.round(parseFloat(maxPrice) * 100);
+    // Price filters
+    if (minPrice) {
+      where.priceCents = { ...(where.priceCents || {}), gte: parseInt(minPrice) * 100 };
+    }
+    if (maxPrice) {
+      where.priceCents = { ...(where.priceCents || {}), lte: parseInt(maxPrice) * 100 };
     }
 
-    // City/Venue filters
+    // Date filters
+    if (dateFrom || dateTo) {
+      where.date = {};
+      if (dateFrom) where.date.gte = dateFrom;
+      if (dateTo) where.date.lte = dateTo;
+    }
+
+    // Venue filter
     if (venue) {
       where.venue = { contains: venue, mode: "insensitive" };
     }
 
-    // Date range filter (string comparison since date is stored as string)
-    if (dateFrom || dateTo) {
-      // This is a simple string comparison - works best with ISO dates
-      // For more complex date filtering, consider converting to DateTime in schema
-    }
-
-    // Determine sort order
+    // Determine order by
     let orderBy: any = {};
     switch (sortBy) {
       case "price_asc":
@@ -57,79 +75,188 @@ export async function GET(req: Request) {
       case "price_desc":
         orderBy = { priceCents: "desc" };
         break;
+      case "date_asc":
+        orderBy = { date: "asc" };
+        break;
+      case "date_desc":
+        orderBy = { date: "desc" };
+        break;
       case "newest":
         orderBy = { createdAt: "desc" };
         break;
       default:
-        // Default to newest for now (relevance requires full-text search)
-        orderBy = { createdAt: "desc" };
+        // For relevance, we'll use a combination of factors
+        orderBy = { viewCount: "desc" };
     }
 
-    // Execute query
-    const tickets = await prisma.ticket.findMany({
-      where,
-      take: limit + 1, // Get one extra to determine if there's a next page
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      orderBy,
-      include: {
-        seller: {
-          select: {
-            id: true,
-            name: true,
-            rating: true,
-            reviews: true,
-            badges: { select: { name: true } },
+    const [tickets, total] = await Promise.all([
+      prisma.ticket.findMany({
+        where,
+        orderBy,
+        skip,
+        take: limit,
+        include: {
+          event: {
+            select: {
+              id: true,
+              title: true,
+              venue: true,
+              date: true,
+            },
+          },
+          seller: {
+            select: {
+              id: true,
+              name: true,
+              rating: true,
+              reviews: true,
+            },
           },
         },
-        event: {
-          select: {
-            id: true,
-            title: true,
-            selloutStatus: true,
-          },
-        },
-      },
-    });
+      }),
+      prisma.ticket.count({ where }),
+    ]);
 
-    // Check if there's a next page
-    const hasMore = tickets.length > limit;
-    const results = hasMore ? tickets.slice(0, limit) : tickets;
-    const nextCursor = hasMore ? results[results.length - 1].id : null;
-
-    // Transform results
-    const transformed = results.map((t: any) => ({
-      id: t.id,
-      title: t.title,
-      venue: t.venue,
-      date: t.date,
-      price: t.priceCents / 100,
-      faceValue: t.faceValueCents ? t.faceValueCents / 100 : null,
-      image: t.image,
-      status: t.status,
-      createdAt: t.createdAt.toISOString(),
-      seller: {
-        id: t.seller.id,
-        name: t.seller.name,
-        rating: t.seller.rating,
-        reviews: t.seller.reviews,
-        badges: t.seller.badges.map((b: any) => b.name),
-      },
-      event: t.event,
+    // Calculate relevance scores if searching by query
+    let results = tickets.map(ticket => ({
+      ...ticket,
+      price: ticket.priceCents / 100,
+      faceValue: ticket.faceValueCents ? ticket.faceValueCents / 100 : null,
+      relevanceScore: query ? calculateRelevanceScore(ticket, query) : null,
     }));
+
+    // Sort by relevance if that's the sort criteria
+    if (sortBy === "relevance" && query) {
+      results = results.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+    }
 
     return NextResponse.json({
       ok: true,
-      tickets: transformed,
-      nextCursor,
-      hasMore,
-      totalCount: results.length, // Note: This is just the page count, not total DB count
+      results,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasMore: skip + limit < total,
+      },
+      facets: {
+        priceRange: await getPriceFacets(where),
+        venues: await getVenueFacets(where),
+        dateRange: await getDateFacets(where),
+      },
     }, { status: 200 });
 
-  } catch (err: any) {
-    console.error("GET /api/tickets/search error:", err);
+  } catch (err) {
+    console.error("Search error:", err);
     return NextResponse.json(
-      { ok: false, error: "SERVER_ERROR", message: "Failed to search tickets." },
+      { ok: false, error: "SEARCH_ERROR", message: "Could not perform search." },
       { status: 500 }
     );
   }
+}
+
+function calculateRelevanceScore(ticket: any, query: string): number {
+  const queryLower = query.toLowerCase();
+  let score = 0;
+
+  // Exact matches get highest scores
+  if (ticket.title?.toLowerCase() === queryLower) score += 100;
+  if (ticket.event?.title?.toLowerCase() === queryLower) score += 90;
+
+  // Partial matches
+  if (ticket.title?.toLowerCase().includes(queryLower)) score += 50;
+  if (ticket.event?.title?.toLowerCase().includes(queryLower)) score += 45;
+  if (ticket.venue?.toLowerCase().includes(queryLower)) score += 30;
+  if (ticket.primaryVendor?.toLowerCase().includes(queryLower)) score += 20;
+
+  // Boost verified tickets
+  if (ticket.verificationStatus === "VERIFIED") score += 25;
+
+  // Boost highly-rated sellers
+  if (ticket.seller?.rating > 4) score += 15;
+
+  // Boost tickets with images
+  if (ticket.verificationImage) score += 10;
+
+  // Penalize old listings slightly
+  const daysSinceCreated = Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+  score -= Math.min(daysSinceCreated * 0.5, 20); // Max penalty of 20
+
+  return Math.max(0, score);
+}
+
+async function getPriceFacets(where: any) {
+  const ranges = [
+    { label: "Under $50", min: 0, max: 4999 },
+    { label: "$50 - $100", min: 5000, max: 9999 },
+    { label: "$100 - $200", min: 10000, max: 19999 },
+    { label: "$200 - $500", min: 20000, max: 49999 },
+    { label: "$500+", min: 50000, max: null },
+  ];
+
+  const facets = await Promise.all(
+    ranges.map(async (range) => {
+      const count = await prisma.ticket.count({
+        where: {
+          ...where,
+          priceCents: {
+            gte: range.min,
+            ...(range.max && { lte: range.max }),
+          },
+        },
+      });
+      return { ...range, count };
+    })
+  );
+
+  return facets.filter(f => f.count > 0);
+}
+
+async function getVenueFacets(where: any) {
+  const venues = await prisma.ticket.groupBy({
+    by: ["venue"],
+    where: {
+      ...where,
+      venue: { not: null },
+    },
+    _count: { venue: true },
+    orderBy: { _count: { venue: "desc" } },
+    take: 10,
+  });
+
+  return venues.map(v => ({
+    venue: v.venue,
+    count: v._count.venue,
+  }));
+}
+
+async function getDateFacets(where: any) {
+  const now = new Date();
+  const today = now.toISOString().split("T")[0];
+  const thisWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const thisMonth = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+
+  const ranges = [
+    { label: "Today", from: today, to: today },
+    { label: "This Week", from: today, to: thisWeek },
+    { label: "This Month", from: today, to: thisMonth },
+  ];
+
+  const facets = await Promise.all(
+    ranges.map(async (range) => {
+      const count = await prisma.ticket.count({
+        where: {
+          ...where,
+          date: {
+            gte: range.from,
+            lte: range.to,
+          },
+        },
+      });
+      return { ...range, count };
+    })
+  );
+
+  return facets.filter(f => f.count > 0);
 }

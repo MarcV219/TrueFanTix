@@ -349,6 +349,9 @@ model Ticket {
   // Community comments (optional)
   comments CommunityComment[]
 
+  // Price alerts
+  priceAlerts PriceAlert[]
+
   @@index([sellerId, status, createdAt])
   @@index([eventId])
   @@index([barcodeHash])
@@ -799,4 +802,31 @@ model AuditLog {
   @@index([action, createdAt])
   @@index([targetType, targetId])
   @@index([createdAt])
+}
+
+// Price drop alerts
+model PriceAlert {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Either specific ticket OR event query
+  ticketId  String?
+  ticket    Ticket?  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  eventQuery String? // For general event searches
+
+  // Price tracking
+  targetPriceCents   Int?     // User's target price (null = any drop)
+  originalPriceCents Int?     // Price when alert created
+
+  // Alert status
+  status      String   @default("ACTIVE") // ACTIVE, TRIGGERED, DELETED
+  triggeredAt DateTime?
+
+  @@index([userId, status])
+  @@index([ticketId, status])
+  @@index([status, createdAt])
 }
