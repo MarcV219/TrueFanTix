@@ -216,6 +216,9 @@ model User {
   messages                 Message[]
   reviewsWritten          Review[] @relation("ReviewAuthor")
 
+  // Price alerts
+  priceAlerts             PriceAlert[]
+
   @@index([role])
   @@index([createdAt])
   @@index([country, region, city])
