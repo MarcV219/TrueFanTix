@@ -59,7 +59,7 @@ async function main(){
       verificationStatus: true,
       verificationScore: true,
       verificationReason: true,
-      barcodeType: true,
+      barcodeText: true,
       barcodeLast4: true,
     },
   });
