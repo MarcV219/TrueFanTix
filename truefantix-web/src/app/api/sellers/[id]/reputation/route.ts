@@ -6,10 +6,10 @@ import { calculateSellerReputation, calculateFraudRisk } from "@/lib/reputation"
 // Get seller's reputation score
 export async function GET(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const sellerId = params.id;
+    const { id: sellerId } = await params;
 
     // Check if seller exists
     const seller = await prisma.seller.findUnique({
@@ -56,10 +56,10 @@ export async function GET(
 // Check fraud risk for a potential transaction
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const sellerId = params.id;
+    const { id: sellerId } = await params;
     const body = (await req.json().catch(() => null)) as {
       buyerId?: string;
       ticketId?: string;
