@@ -41,7 +41,7 @@ export async function GET(req: Request) {
       ok: true,
       alerts: alerts.map(alert => ({
         ...alert,
-        targetPrice: alert.targetPriceCents / 100,
+        targetPrice: alert.targetPriceCents ? alert.targetPriceCents / 100 : null,
         currentPrice: alert.ticket?.priceCents ? alert.ticket.priceCents / 100 : null,
       })),
     }, { status: 200 });
