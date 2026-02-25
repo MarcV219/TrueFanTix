@@ -179,12 +179,12 @@ export async function POST(req: Request) {
     }
 
     // Verify user is the buyer
-    const buyerUser = await prisma.seller.findUnique({
-      where: { id: order.buyerSellerId },
-      select: { userId: true },
+    const buyerUser = await prisma.user.findFirst({
+      where: { sellerId: order.buyerSellerId },
+      select: { id: true },
     });
 
-    if (buyerUser?.userId !== gate.user.id) {
+    if (buyerUser?.id !== gate.user.id) {
       return NextResponse.json(
         { ok: false, error: "UNAUTHORIZED", message: "Only the buyer can review" },
         { status: 403 }
