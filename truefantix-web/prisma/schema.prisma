@@ -208,6 +208,9 @@ model User {
   // Password reset tokens
   passwordResetTokens     PasswordResetToken[]
 
+  // Waitlist entries
+  waitlistEntries         WaitlistEntry[]
+
   @@index([role])
   @@index([createdAt])
   @@index([country, region, city])
@@ -579,6 +582,9 @@ model Event {
 
   tickets Ticket[]
 
+  // Waitlist entries
+  waitlistEntries WaitlistEntry[]
+
   // Community comments (optional)
   comments CommunityComment[]
 
@@ -837,6 +843,34 @@ model PriceAlert {
 
   @@index([userId, status])
   @@index([ticketId, status])
+  @@index([status, createdAt])
+}
+
+// Waitlist for sold-out events
+model WaitlistEntry {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  // Preferences
+  maxPriceCents Int?   // Maximum price willing to pay
+  notes     String?    // Any specific requirements
+
+  // Status
+  status    String   @default("ACTIVE") // ACTIVE, FULFILLED, CANCELLED, EXPIRED
+
+  // Notification tracking
+  notifiedAt DateTime? // When user was notified tickets are available
+
+  @@unique([userId, eventId, status])
+  @@index([eventId, status])
+  @@index([userId, status])
   @@index([status, createdAt])
 }
 
