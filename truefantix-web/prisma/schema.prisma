@@ -142,7 +142,9 @@ model User {
   // For password reset flow
   passwordResetTokenHash String? @unique
 
-
+  // Referral program
+  referralCode          String? @unique
+  referralCreditsEarned Int     @default(0)
 
   // Identity (basic)
   firstName    String
@@ -218,6 +220,10 @@ model User {
 
   // Price alerts
   priceAlerts             PriceAlert[]
+
+  // Referrals
+  referralsGiven          Referral[] @relation("Referrer")
+  referralReceived        Referral?  @relation("Referred")
 
   @@index([role])
   @@index([createdAt])
@@ -999,4 +1005,27 @@ model PasswordResetToken {
   @@index([tokenHash])
   @@index([userId, createdAt])
   @@index([expiresAt])
+}
+
+// Referral program
+model Referral {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  referrerId String
+  referrer   User   @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+
+  referredId String  @unique
+  referred   User   @relation("Referred", fields: [referredId], references: [id], onDelete: Cascade)
+
+  code String // The referral code used
+
+  status String @default("PENDING") // PENDING, COMPLETED, CANCELLED
+  completedAt DateTime?
+
+  creditsAwarded Int @default(0)
+
+  @@index([referrerId, status])
+  @@index([referredId])
+  @@index([status, createdAt])
 }
