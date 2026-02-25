@@ -201,7 +201,7 @@ export async function calculateFraudRisk({
     where: { id: sellerId },
     include: {
       tickets: { where: { status: "SOLD" } },
-      orders: { where: { status: "DISPUTED" } },
+      orders: { where: { status: { in: ["CANCELLED", "REFUNDED"] } } },
     },
   });
 
