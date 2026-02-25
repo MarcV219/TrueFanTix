@@ -1,4 +1,4 @@
-import { prisma } from "./prisma";
+import { prisma } from "../prisma";
 
 export type NotificationType = 
   | "NEW_EVENT"           // New event matching user's preferences
