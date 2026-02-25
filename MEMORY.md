@@ -178,11 +178,30 @@
 - ✅ Price limit preferences
 - ✅ Captures lost sales opportunities
 
+#### 11. **Real-Time Notifications & Messaging** 💬
+- ✅ **WebSocket Server:** (`src/lib/websocket.ts`)
+  - Real-time event notifications
+  - In-app messaging integration
+  - User online/offline tracking
+  - Event-specific subscriptions
+- ✅ **In-App Messaging API:** (`src/app/api/messages/route.ts`)
+  - Buyer-seller chat functionality
+  - Conversation listing and message retrieval
+  - Attachments support
+  - Read receipts and typing indicators
+
+#### 12. **Reviews & Ratings System** ⭐
+- ✅ `/api/reviews` - Submit, view, and manage reviews
+- ✅ Seller rating aggregation (1-5 stars)
+- ✅ Review editing within 24 hours
+- ✅ Automated badge updates for sellers based on reviews
+- ✅ Detailed rating distribution
+
 ### **Summary of All New Features**
 
-**Total New API Endpoints:** 15+
-**New Database Models:** 4 (AuditLog, PriceAlert, PasswordResetToken, WaitlistEntry)
-**New Service Libraries:** 4 (reputation, pricing, audit, validation)
+**Total New API Endpoints:** 18+
+**New Database Models:** 7 (AuditLog, PriceAlert, PasswordResetToken, WaitlistEntry, Conversation, ConversationParticipant, Message, MessageAttachment, Review)
+**New Service Libraries:** 7 (reputation, pricing, audit, validation, websocket, email, auth/guards)
 **Production Infrastructure:** Rate limiting, security headers, input validation
 
 ## Pending Tasks
