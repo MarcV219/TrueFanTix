@@ -40,7 +40,7 @@ export async function calculateSellerReputation(sellerId: string): Promise<Reput
         },
       },
       orders: {
-        where: { status: { in: ["COMPLETED", "CANCELLED", "DISPUTED"] } },
+        where: { status: { in: ["COMPLETED", "CANCELLED"] } },
         select: {
           status: true,
           createdAt: true,
