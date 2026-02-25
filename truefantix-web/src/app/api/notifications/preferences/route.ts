@@ -15,6 +15,9 @@ function normalizeString(v: unknown): string | null {
 export async function GET(req: Request) {
   try {
     const gate = await requireUser();
+    if (!gate.user) {
+      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
+    }
 
     const preferences = await prisma.notificationPreference.findMany({
       where: { userId: gate.user.id },
@@ -43,6 +46,9 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const gate = await requireUser();
+    if (!gate.user) {
+      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
+    }
     const body = (await req.json().catch(() => null)) as {
       type?: string;
       value?: string;
@@ -82,6 +88,9 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const gate = await requireUser();
+    if (!gate.user) {
+      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
+    }
     const body = (await req.json().catch(() => null)) as {
       id?: string;
     } | null;
