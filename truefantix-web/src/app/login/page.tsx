@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { fetchJson } from "@/lib/api-fetch";
 
 type LoginResponse = { ok: true; next?: string } | { error?: string; message?: string };
 
@@ -14,18 +15,6 @@ type MeUser = {
 type MeResponse =
   | { ok: true; user: MeUser | null }
   | { ok: false; error: string; message?: string };
-
-async function fetchJson(path: string, init?: RequestInit) {
-  const res = await fetch(path, init);
-  const text = await res.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-  return { res, data, text };
-}
 
 function isSafeNext(n: string | null) {
   return !!n && n.startsWith("/") && !n.startsWith("//");

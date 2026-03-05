@@ -4,6 +4,7 @@ import React, { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AccountGate, { MeUser } from "@/app/account/_components/accountgate";
+import { apiFetch, fetchJson } from "@/lib/api-fetch";
 
 function Card({
   title,
@@ -87,18 +88,6 @@ function ToolLink({
       <Right />
     </Link>
   );
-}
-
-async function fetchJson(path: string, init?: RequestInit) {
-  const res = await fetch(path, init);
-  const text = await res.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-  return { res, data, text };
 }
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
@@ -318,7 +307,7 @@ function AccountHub({ me }: { me: MeUser }) {
 
       setDeleteOk("Account deleted. Logging you out…");
 
-      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(() => undefined);
+      await apiFetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(() => undefined);
       window.location.assign("/");
     } catch (e: any) {
       setDeleteError(e?.message ?? "Delete failed.");
