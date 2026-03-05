@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth/guards";
 
 function normalizeId(value: unknown) {
   try {
@@ -12,7 +13,6 @@ function normalizeId(value: unknown) {
 }
 
 function parseOrderIdFromUrl(req: Request): string {
-  // /api/admin/orders/<id>
   const pathname = new URL(req.url).pathname;
   const parts = pathname.split("/").filter(Boolean);
   const ordersIndex = parts.indexOf("orders");
@@ -24,6 +24,9 @@ function parseOrderIdFromUrl(req: Request): string {
 
 export async function GET(req: Request) {
   try {
+    const adminGate = await requireAdmin(req);
+    if (!adminGate.ok) return adminGate.res;
+
     const orderId = parseOrderIdFromUrl(req);
 
     if (!orderId) {
@@ -35,17 +38,48 @@ export async function GET(req: Request) {
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: {
-        seller: true,
-        buyerSeller: true,
-        payment: true,
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        sellerId: true,
+        buyerSellerId: true,
+        amountCents: true,
+        adminFeeCents: true,
+        totalCents: true,
+        payment: {
+          select: {
+            status: true,
+            provider: true,
+            providerRef: true,
+            amountCents: true,
+            currency: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
         items: {
           orderBy: { createdAt: "asc" },
-          include: {
+          select: {
+            id: true,
+            ticketId: true,
+            createdAt: true,
             ticket: {
-              include: {
-                event: true,
-                seller: true,
+              select: {
+                id: true,
+                status: true,
+                reservedByOrderId: true,
+                reservedUntil: true,
+                soldAt: true,
+                eventId: true,
+                event: {
+                  select: {
+                    id: true,
+                    title: true,
+                    date: true,
+                    selloutStatus: true,
+                  },
+                },
               },
             },
           },
@@ -57,30 +91,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    // Helpful summary so you don’t have to eyeball nested data
-    const summary = {
-      orderId: order.id,
-      status: order.status,
-      sellerId: order.sellerId,
-      buyerSellerId: order.buyerSellerId,
-      itemCount: order.items.length,
-      ticketIds: order.items.map((i: any) => i.ticketId),
-      tickets: order.items.map((i: any) => ({
-        ticketId: i.ticketId,
-        status: i.ticket?.status ?? null,
-        reservedByOrderId: i.ticket?.reservedByOrderId ?? null,
-        reservedUntil: i.ticket?.reservedUntil ?? null,
-        soldAt: i.ticket?.soldAt ?? null,
-        eventId: i.ticket?.eventId ?? null,
-        eventSelloutStatus: i.ticket?.event?.selloutStatus ?? null,
-      })),
-      paymentStatus: order.payment?.status ?? null,
-      amountCents: order.amountCents,
-      adminFeeCents: order.adminFeeCents,
-      totalCents: order.totalCents,
-    };
-
-    return NextResponse.json({ ok: true, order, summary });
+    return NextResponse.json({ ok: true, order });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
