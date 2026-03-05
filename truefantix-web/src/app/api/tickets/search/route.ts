@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sanitizeInput, schemas } from "@/lib/validation";
+import { applyRateLimit } from "@/lib/rate-limit";
 
 // Full-text search with relevance scoring
 export async function GET(req: Request) {
+  const rlResult = await applyRateLimit(req, "tickets:search");
+  if (!rlResult.ok) return rlResult.response;
+
   try {
     const { searchParams } = new URL(req.url);
     
