@@ -4,20 +4,22 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { schemas, validateRequest } from "@/lib/validation";
+import { applyRateLimit } from "@/lib/rate-limit";
+import { enforceOriginAndCsrf } from "@/lib/security/csrf";
 
 function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
 }
 
-function isStrongEnoughPassword(pw: string) {
-  if (pw.length < 10) return false;
-  const hasLetter = /[A-Za-z]/.test(pw);
-  const hasNumber = /[0-9]/.test(pw);
-  return hasLetter && hasNumber;
-}
-
 export async function POST(req: Request) {
   try {
+    const csrf = await enforceOriginAndCsrf(req);
+    if (!csrf.ok) return csrf.res;
+
+    const rlResult = await applyRateLimit(req, "account:security-password-change");
+    if (!rlResult.ok) return rlResult.response;
+
     const userId = await getUserIdFromSessionCookie();
     if (!userId) {
       return jsonError(401, "UNAUTHORIZED", "Please log in.");
@@ -31,30 +33,13 @@ export async function POST(req: Request) {
     if (!user) return jsonError(401, "UNAUTHORIZED", "Please log in.");
     if (user.isBanned) return jsonError(403, "BANNED", "This account is restricted.");
 
-    let body: { currentPassword?: string; newPassword?: string };
-    try {
-      body = (await req.json()) as { currentPassword?: string; newPassword?: string };
-    } catch {
-      return jsonError(400, "VALIDATION_ERROR", "Invalid JSON body.");
+    // Validate request body with Zod
+    const validation = await validateRequest(schemas.passwordChange)(req);
+    if (!validation.success) {
+      return validation.response;
     }
 
-    const { currentPassword, newPassword } = body;
-
-    if (!currentPassword) {
-      return jsonError(400, "VALIDATION_ERROR", "Current password is required.");
-    }
-
-    if (!newPassword) {
-      return jsonError(400, "VALIDATION_ERROR", "New password is required.");
-    }
-
-    if (!isStrongEnoughPassword(newPassword)) {
-      return jsonError(
-        400,
-        "VALIDATION_ERROR",
-        "New password must be at least 10 characters and include at least one letter and one number."
-      );
-    }
+    const { currentPassword, newPassword } = validation.data;
 
     // Verify current password
     const isCurrentValid = await bcrypt.compare(currentPassword, user.passwordHash);
@@ -65,10 +50,13 @@ export async function POST(req: Request) {
     // Hash and update new password
     const newPasswordHash = await bcrypt.hash(newPassword, 12);
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash: newPasswordHash },
-    });
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash: newPasswordHash },
+      }),
+      prisma.session.deleteMany({ where: { userId } }),
+    ]);
 
     return NextResponse.json(
       { ok: true, message: "Password changed successfully." },

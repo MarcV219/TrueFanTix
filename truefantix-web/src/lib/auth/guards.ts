@@ -4,15 +4,15 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { enforceOriginAndCsrf } from "@/lib/security/csrf";
 
 function jsonError(status: number, error: string, message?: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
 }
 
 export async function requireVerifiedUser(req: Request) {
-  // req is kept in the signature for consistency; session is read from cookies()
-  // in getUserIdFromSessionCookie().
-  void req;
+  const csrf = await enforceOriginAndCsrf(req);
+  if (!csrf.ok) return { ok: false as const, res: csrf.res };
 
   const userId = await getUserIdFromSessionCookie();
   if (!userId) {
@@ -73,7 +73,12 @@ export async function requireAdmin(req: Request) {
   return { ok: true as const, user: base.user };
 }
 
-export async function requireUser() {
+export async function requireUser(req?: Request) {
+  if (req) {
+    const csrf = await enforceOriginAndCsrf(req);
+    if (!csrf.ok) return { ok: false as const, res: csrf.res };
+  }
+
   const userId = await getUserIdFromSessionCookie();
   if (!userId) {
     return { ok: false as const, res: jsonError(401, "NOT_AUTHENTICATED", "Please log in.") };

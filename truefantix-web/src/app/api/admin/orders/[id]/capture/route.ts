@@ -2,6 +2,9 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth/guards";
+import { applyRateLimit } from "@/lib/rate-limit";
+import { auditLog, createAuditContext } from "@/lib/audit";
 
 function normalizeId(value: unknown) {
   try {
@@ -12,7 +15,6 @@ function normalizeId(value: unknown) {
 }
 
 function parseOrderIdFromUrl(req: Request): string {
-  // /api/admin/orders/<id>/capture
   const pathname = new URL(req.url).pathname;
   const parts = pathname.split("/").filter(Boolean);
   const ordersIndex = parts.indexOf("orders");
@@ -22,15 +24,23 @@ function parseOrderIdFromUrl(req: Request): string {
   return "";
 }
 
-/**
- * POST /api/admin/orders/<ORDER_ID>/capture
- * MVP manual capture:
- * - Validates reservation is still active for all items
- * - Creates/updates Payment(SUCCEEDED)
- * - Sets Order -> PAID
- */
 export async function POST(req: Request) {
   try {
+    const adminGate = await requireAdmin(req);
+    if (!adminGate.ok) {
+      await auditLog({
+        action: "ADMIN_ORDER_ACTION",
+        targetType: "Order",
+        targetId: parseOrderIdFromUrl(req) || undefined,
+        metadata: { operation: "CAPTURE", outcome: "DENY", status: adminGate.res.status },
+        ...createAuditContext(req),
+      });
+      return adminGate.res;
+    }
+
+    const rlResult = await applyRateLimit(req, "admin:order-capture");
+    if (!rlResult.ok) return rlResult.response;
+
     const orderId = parseOrderIdFromUrl(req);
     if (!orderId) {
       return NextResponse.json({ ok: false, error: "Missing order id" }, { status: 400 });
@@ -48,7 +58,7 @@ export async function POST(req: Request) {
         return { ok: false as const, status: 404 as const, body: { ok: false, error: "Order not found" } };
       }
 
-      if (order.status !== 'PENDING') {
+      if (order.status !== "PENDING") {
         return {
           ok: false as const,
           status: 400 as const,
@@ -60,12 +70,11 @@ export async function POST(req: Request) {
         return { ok: false as const, status: 400 as const, body: { ok: false, error: "Order has no items" } };
       }
 
-      // Validate all tickets are still reserved by this order and not expired
       const ticketIds: string[] = order.items.map((i: any) => i.ticketId);
 
       const tickets: any[] = await tx.ticket.findMany({
         where: { id: { in: ticketIds } },
-        select: { id: true, status: true, reservedByOrderId: true, reservedUntil: true, sellerId: true },
+        select: { id: true, status: true, reservedByOrderId: true, reservedUntil: true },
       });
 
       const byId = new Map<string, any>(tickets.map((t: any) => [t.id, t]));
@@ -75,7 +84,7 @@ export async function POST(req: Request) {
         if (!t) {
           return { ok: false as const, status: 400 as const, body: { ok: false, error: `Missing ticket: ${tid}` } };
         }
-        if (t.status !== 'RESERVED') {
+        if (t.status !== "RESERVED") {
           return {
             ok: false as const,
             status: 409 as const,
@@ -98,21 +107,19 @@ export async function POST(req: Request) {
         }
       }
 
-      // Create or update payment record as "captured"
-      // (provider/providerRef are placeholders for MVP)
       const payment = await tx.payment.upsert({
         where: { orderId },
         create: {
           orderId,
           amountCents: order.totalCents,
           currency: "CAD",
-          status: 'SUCCEEDED',
+          status: "SUCCEEDED",
           provider: "MANUAL",
           providerRef: `manual_${orderId}`,
         },
         update: {
           amountCents: order.totalCents,
-          status: 'SUCCEEDED',
+          status: "SUCCEEDED",
           provider: "MANUAL",
           providerRef: `manual_${orderId}`,
         },
@@ -120,7 +127,7 @@ export async function POST(req: Request) {
 
       const updatedOrder = await tx.order.update({
         where: { id: orderId },
-        data: { status: 'PAID' },
+        data: { status: "PAID" },
         include: { items: true, payment: true },
       });
 
@@ -131,7 +138,15 @@ export async function POST(req: Request) {
       };
     });
 
-    if (!result.ok) return NextResponse.json(result.body, { status: result.status });
+    await auditLog({
+      action: "ADMIN_ORDER_ACTION",
+      userId: adminGate.user.id,
+      targetType: "Order",
+      targetId: orderId,
+      metadata: { operation: "CAPTURE", outcome: result.ok ? "SUCCESS" : "FAIL", status: result.status },
+      ...createAuditContext(req),
+    });
+
     return NextResponse.json(result.body, { status: result.status });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

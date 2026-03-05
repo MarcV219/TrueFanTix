@@ -57,7 +57,7 @@ function getIdempotencyKey(req: Request): string {
 
 export async function POST(req: Request, ctx: Ctx) {
   const ip = getClientIp(req);
-  const rl = checkRateLimit({ key: `tickets:purchase:${ip}`, limit: 30, windowMs: 60_000 });
+  const rl = await checkRateLimit({ key: `tickets:purchase:${ip}`, limit: 30, windowMs: 60_000 });
   if (!rl.ok) return rateLimitError(rl.retryAfterSec);
 
   // ✅ Step 3 enforcement: must be logged in + verified + not banned

@@ -4,6 +4,10 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { createSessionForUser } from "@/lib/auth/session";
+import { schemas } from "@/lib/validation";
+import { auditLog, createAuditContext } from "@/lib/audit";
+import { applyRateLimit } from "@/lib/rate-limit";
+import { ensureCsrfCookie, csrfCookieName } from "@/lib/security/csrf";
 
 type LoginBody = {
   emailOrPhone?: string;
@@ -27,6 +31,9 @@ function normalizeEmail(email: string) {
 }
 
 export async function POST(req: Request) {
+  const rlResult = await applyRateLimit(req, "auth:login");
+  if (!rlResult.ok) return rlResult.response;
+
   let body: LoginBody;
   try {
     body = (await req.json()) as LoginBody;
@@ -34,11 +41,13 @@ export async function POST(req: Request) {
     return badRequest("Invalid JSON body.");
   }
 
-  const emailOrPhoneRaw = (body.emailOrPhone ?? "").trim();
-  const password = body.password ?? "";
+  const parsed = schemas.authLogin.safeParse(body);
+  if (!parsed.success) {
+    return badRequest(parsed.error.issues[0]?.message ?? "Invalid request body.");
+  }
 
-  if (!emailOrPhoneRaw) return badRequest("Email or phone is required.");
-  if (!password) return badRequest("Password is required.");
+  const emailOrPhoneRaw = parsed.data.emailOrPhone.trim();
+  const password = parsed.data.password;
 
   // Determine whether input looks like an email
   const looksLikeEmail = emailOrPhoneRaw.includes("@");
@@ -85,13 +94,25 @@ export async function POST(req: Request) {
 
   // Create session cookie
   await createSessionForUser(user.id);
+  const csrfToken = await ensureCsrfCookie();
 
   const isVerified = !!user.emailVerifiedAt && !!user.phoneVerifiedAt;
+
+  await auditLog({
+    action: "USER_LOGIN",
+    userId: user.id,
+    targetType: "User",
+    targetId: user.id,
+    metadata: { isVerified },
+    ...createAuditContext(req),
+  });
 
   return NextResponse.json(
     {
       ok: true,
       next: isVerified ? "/" : "/verify",
+      csrfToken,
+      csrfCookie: csrfCookieName(),
     },
     { status: 200 }
   );

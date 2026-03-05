@@ -107,6 +107,7 @@ export async function POST(req: Request) {
         where: { id: resetCode.id },
         data: { usedAt: new Date() },
       }),
+      prisma.session.deleteMany({ where: { userId: user.id } }),
     ]);
 
     return NextResponse.json(

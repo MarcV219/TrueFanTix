@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { deleteCurrentSession } from "@/lib/auth/session";
+import { enforceOriginAndCsrf } from "@/lib/security/csrf";
 
 const COOKIE_NAME = "tft_session";
 
@@ -11,7 +12,10 @@ const COOKIE_NAME = "tft_session";
  * - Explicitly clears the cookie on the RESPONSE (most reliable)
  * - Clears common path variants to handle attribute drift
  */
-export async function POST() {
+export async function POST(req: Request) {
+  const csrf = await enforceOriginAndCsrf(req);
+  if (!csrf.ok) return csrf.res;
+
   // Best-effort: delete DB session + (your helper may also try clearing cookie)
   await deleteCurrentSession();
 

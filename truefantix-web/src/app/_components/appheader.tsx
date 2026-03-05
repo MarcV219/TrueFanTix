@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useNavHistory } from "@/app/_components/navhistory";
+import { apiFetch, fetchJson } from "@/lib/api-fetch";
 
 type MeUser = {
   id: string;
@@ -25,18 +26,6 @@ type MeUser = {
 type MeResponse =
   | { ok: true; user: MeUser | null }
   | { ok: false; error: string; message?: string };
-
-async function fetchJson(path: string, init?: RequestInit) {
-  const res = await fetch(path, init);
-  const text = await res.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-  return { res, data, text };
-}
 
 function normalizePath(p: string | null) {
   if (!p) return null;
@@ -216,7 +205,7 @@ export default function AppHeader() {
     setLogoutBusy(true);
 
     try {
-      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(() => undefined);
+      await apiFetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(() => undefined);
     } finally {
       setMe(null);
       setMeLoaded(true);

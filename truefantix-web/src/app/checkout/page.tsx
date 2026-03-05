@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe, Stripe } from "@stripe/stripe-js";
 import { CheckoutForm } from "@/components/CheckoutForm";
+import { fetchJson } from "@/lib/api-fetch";
 
 let stripePromise: Promise<Stripe | null> | null = null;
 
@@ -19,18 +20,6 @@ function getStripePromise() {
     stripePromise = loadStripe(key);
   }
   return stripePromise;
-}
-
-async function fetchJson(path: string, init?: RequestInit) {
-  const res = await fetch(path, init);
-  const text = await res.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-  return { res, data, text };
 }
 
 function centsToDollars(cents: number) {

@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
-import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
+import { applyRateLimit, rateLimitError } from "@/lib/rate-limit";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -24,9 +24,8 @@ function normalizeId(value: unknown) {
 }
 
 export async function POST(req: Request) {
-  const ip = getClientIp(req);
-  const rl = checkRateLimit({ key: `payments:intent:${ip}`, limit: 20, windowMs: 60_000 });
-  if (!rl.ok) return rateLimitError(rl.retryAfterSec);
+  const rlResult = await applyRateLimit(req, "payments:create-intent");
+  if (!rlResult.ok) return rlResult.response;
 
   const gate = await requireVerifiedUser(req);
   if (!gate.ok) return gate.res;

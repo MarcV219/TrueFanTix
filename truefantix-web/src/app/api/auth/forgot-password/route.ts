@@ -3,12 +3,22 @@ import { prisma } from "@/lib/prisma";
 import { createHash } from "crypto";
 import { sendEmail } from "@/lib/email";
 import bcrypt from "bcryptjs";
+import { schemas } from "@/lib/validation";
+import { auditLog, createAuditContext } from "@/lib/audit";
+import { applyRateLimit } from "@/lib/rate-limit";
 
-const RESET_SECRET = process.env.PASSWORD_RESET_SECRET || "your-reset-secret";
 const SALT_ROUNDS = 12;
 
+function getResetSecret(): string {
+  const secret = process.env.PASSWORD_RESET_SECRET?.trim();
+  if (!secret || secret.length < 32 || secret === "your-reset-secret") {
+    throw new Error("PASSWORD_RESET_SECRET is missing or too weak. Set a strong secret (min 32 chars).");
+  }
+  return secret;
+}
+
 function hashToken(token: string): string {
-  return createHash("sha256").update(RESET_SECRET + token).digest("hex");
+  return createHash("sha256").update(getResetSecret() + token).digest("hex");
 }
 
 function generateResetToken(): string {
@@ -19,20 +29,24 @@ function generateResetToken(): string {
 // Request password reset
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as {
-      email?: string;
-    } | null;
+    const rlResult = await applyRateLimit(req, "auth:forgot-password-request");
+    if (!rlResult.ok) return rlResult.response;
 
-    if (!body?.email) {
+    const body = await req.json().catch(() => null);
+    const parsed = schemas.forgotPasswordRequest.safeParse(body);
+
+    if (!parsed.success) {
       return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Email required." },
+        { ok: false, error: "VALIDATION_ERROR", message: "Valid email required." },
         { status: 400 }
       );
     }
 
+    const email = parsed.data.email.toLowerCase();
+
     // Find user
     const user = await prisma.user.findUnique({
-      where: { email: body.email },
+      where: { email },
       select: {
         id: true,
         email: true,
@@ -95,6 +109,15 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
+
+    await auditLog({
+      action: "PASSWORD_RESET_REQUEST",
+      userId: user.id,
+      targetType: "User",
+      targetId: user.id,
+      metadata: { via: "email" },
+      ...createAuditContext(req),
+    });
 
     return NextResponse.json(
       { ok: true, message: "If an account exists with this email, you will receive a password reset link." },
@@ -178,33 +201,25 @@ export async function GET(req: Request) {
 // Reset password with token
 export async function PATCH(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as {
-      token?: string;
-      userId?: string;
-      newPassword?: string;
-    } | null;
+    const rlResult = await applyRateLimit(req, "auth:forgot-password-reset");
+    if (!rlResult.ok) return rlResult.response;
 
-    if (!body?.token || !body?.userId || !body?.newPassword) {
+    const body = await req.json().catch(() => null);
+    const parsed = schemas.forgotPasswordReset.safeParse(body);
+
+    if (!parsed.success) {
       return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Token, userId, and newPassword required." },
+        { ok: false, error: "VALIDATION_ERROR", message: "Token, valid userId, and newPassword required." },
         { status: 400 }
       );
     }
 
-    // Validate password strength
-    if (body.newPassword.length < 8) {
-      return NextResponse.json(
-        { ok: false, error: "WEAK_PASSWORD", message: "Password must be at least 8 characters." },
-        { status: 400 }
-      );
-    }
-
-    const tokenHash = hashToken(body.token);
+    const tokenHash = hashToken(parsed.data.token);
 
     // Find valid token
     const resetToken = await prisma.passwordResetToken.findFirst({
       where: {
-        userId: body.userId,
+        userId: parsed.data.userId,
         tokenHash,
         usedAt: null,
         expiresAt: { gt: new Date() },
@@ -219,19 +234,29 @@ export async function PATCH(req: Request) {
     }
 
     // Hash new password
-    const passwordHash = await bcrypt.hash(body.newPassword, SALT_ROUNDS);
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, SALT_ROUNDS);
 
     // Update password and mark token as used
     await prisma.$transaction([
       prisma.user.update({
-        where: { id: body.userId },
+        where: { id: parsed.data.userId },
         data: { passwordHash },
       }),
       prisma.passwordResetToken.update({
         where: { id: resetToken.id },
         data: { usedAt: new Date() },
       }),
+      prisma.session.deleteMany({ where: { userId: parsed.data.userId } }),
     ]);
+
+    await auditLog({
+      action: "PASSWORD_RESET_COMPLETE",
+      userId: parsed.data.userId,
+      targetType: "User",
+      targetId: parsed.data.userId,
+      metadata: { resetTokenId: resetToken.id },
+      ...createAuditContext(req),
+    });
 
     return NextResponse.json(
       { ok: true, message: "Password reset successfully. Please log in with your new password." },
