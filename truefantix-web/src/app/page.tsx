@@ -55,7 +55,7 @@ export default function ComingSoonPage() {
 
         {/* Tagline */}
         <p className="text-xl sm:text-2xl text-slate-600 dark:text-slate-300 mb-3">
-          Tickets to live events at or below face value.
+          Tickets to live events <span className="font-bold underline">at or below face value</span>.
         </p>
 
         <p className="text-2xl sm:text-3xl font-semibold text-slate-400 dark:text-slate-500 mb-16">
