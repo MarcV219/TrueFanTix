@@ -108,32 +108,32 @@ export default function ComingSoonPage() {
         )}
 
         {/* Social Links */}
-        <div className="mt-12 text-slate-500 dark:text-slate-400 text-sm">
-          <p className="mb-3">For more information, follow us on</p>
-          <div className="flex items-center justify-center gap-4">
+        <div className="mt-12 max-w-xl mx-auto rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/70 shadow-lg p-6 sm:p-7">
+          <p className="mb-5 text-lg sm:text-xl font-semibold text-slate-800 dark:text-slate-100">
+            For more information, follow us on
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
             <a
               href="https://www.facebook.com/TrueFanTix"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-slate-700 dark:hover:text-slate-200 transition"
+              className="px-4 py-2 rounded-full bg-blue-600 text-white font-semibold text-sm sm:text-base hover:bg-blue-700 transition shadow"
             >
               Facebook
             </a>
-            <span aria-hidden="true">•</span>
             <a
               href="https://x.com/truefantix"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-slate-700 dark:hover:text-slate-200 transition"
+              className="px-4 py-2 rounded-full bg-slate-900 text-white font-semibold text-sm sm:text-base hover:bg-slate-700 transition shadow"
             >
               X
             </a>
-            <span aria-hidden="true">•</span>
             <a
               href="https://www.instagram.com/truefantix/"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-slate-700 dark:hover:text-slate-200 transition"
+              className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-500 to-orange-500 text-white font-semibold text-sm sm:text-base hover:opacity-90 transition shadow"
             >
               Instagram
             </a>
