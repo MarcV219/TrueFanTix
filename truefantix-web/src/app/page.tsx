@@ -107,8 +107,41 @@ export default function ComingSoonPage() {
           </div>
         )}
 
+        {/* Social Links */}
+        <div className="mt-12 text-slate-500 dark:text-slate-400 text-sm">
+          <p className="mb-3">For more information, follow us on</p>
+          <div className="flex items-center justify-center gap-4">
+            <a
+              href="https://www.facebook.com/TrueFanTix"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-slate-700 dark:hover:text-slate-200 transition"
+            >
+              Facebook
+            </a>
+            <span aria-hidden="true">•</span>
+            <a
+              href="https://x.com/truefantix"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-slate-700 dark:hover:text-slate-200 transition"
+            >
+              X
+            </a>
+            <span aria-hidden="true">•</span>
+            <a
+              href="https://www.instagram.com/truefantix/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-slate-700 dark:hover:text-slate-200 transition"
+            >
+              Instagram
+            </a>
+          </div>
+        </div>
+
         {/* Copyright */}
-        <p className="mt-16 text-slate-400 dark:text-slate-600 text-sm">
+        <p className="mt-10 text-slate-400 dark:text-slate-600 text-sm">
           © 2026 TrueFanTix. All rights reserved.
         </p>
       </div>
