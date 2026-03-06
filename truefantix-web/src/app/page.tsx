@@ -117,25 +117,34 @@ export default function ComingSoonPage() {
               href="https://www.facebook.com/TrueFanTix"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-4 py-2 rounded-full bg-blue-600 text-white font-semibold text-sm sm:text-base hover:bg-blue-700 transition shadow"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-600 text-white font-semibold text-sm sm:text-base hover:bg-blue-700 transition shadow"
             >
-              Facebook
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 fill-current">
+                <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073c0 6.025 4.388 11.019 10.125 11.927v-8.437H7.078v-3.49h3.047V9.414c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953h-1.514c-1.492 0-1.956.93-1.956 1.885v2.255h3.328l-.532 3.49h-2.796V24C19.612 23.092 24 18.098 24 12.073z" />
+              </svg>
+              <span className="text-white">Facebook</span>
             </a>
             <a
               href="https://x.com/truefantix"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-4 py-2 rounded-full bg-slate-900 text-white font-semibold text-sm sm:text-base hover:bg-slate-700 transition shadow"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900 text-white font-semibold text-sm sm:text-base hover:bg-slate-700 transition shadow"
             >
-              X
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 fill-current">
+                <path d="M18.244 2H21l-6.01 6.87L22 22h-5.46l-4.276-5.593L7.39 22H4.632l6.43-7.35L2 2h5.6l3.865 5.11L18.244 2zm-.966 18.32h1.527L6.77 3.595H5.13L17.278 20.32z" />
+              </svg>
+              <span className="text-white">X</span>
             </a>
             <a
               href="https://www.instagram.com/truefantix/"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-500 to-orange-500 text-white font-semibold text-sm sm:text-base hover:opacity-90 transition shadow"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-pink-500 to-orange-500 text-white font-semibold text-sm sm:text-base hover:opacity-90 transition shadow"
             >
-              Instagram
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 fill-current">
+                <path d="M7.75 2h8.5A5.75 5.75 0 0 1 22 7.75v8.5A5.75 5.75 0 0 1 16.25 22h-8.5A5.75 5.75 0 0 1 2 16.25v-8.5A5.75 5.75 0 0 1 7.75 2zm0 1.75a4 4 0 0 0-4 4v8.5a4 4 0 0 0 4 4h8.5a4 4 0 0 0 4-4v-8.5a4 4 0 0 0-4-4h-8.5zm9.188 1.312a1.125 1.125 0 1 1 0 2.25 1.125 1.125 0 0 1 0-2.25zM12 7a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 1.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5z" />
+              </svg>
+              <span className="text-white">Instagram</span>
             </a>
           </div>
         </div>
