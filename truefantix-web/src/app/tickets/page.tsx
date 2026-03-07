@@ -199,6 +199,17 @@ export default function TicketsPage() {
       {/* Search and Filters */}
       <section className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 py-6">
         <div className="max-w-7xl mx-auto px-4">
+          <div className="mb-3 flex flex-wrap gap-4 text-sm">
+            <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <span className="text-red-600 text-lg font-bold leading-none">✕</span>
+              <span>Validation mismatch / invalid listing</span>
+            </div>
+            <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <span className="text-blue-500 text-lg font-bold leading-none">✕</span>
+              <span>Price unconfirmed (needs verification)</span>
+            </div>
+          </div>
+
           <div className="flex flex-col lg:flex-row gap-4">
             <input
               type="text"
