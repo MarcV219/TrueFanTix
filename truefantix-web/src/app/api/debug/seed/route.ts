@@ -297,6 +297,10 @@ export async function POST(req: Request) {
           priceCents: t.priceCents,
           faceValueCents: t.faceValueCents,
           status: "AVAILABLE",
+          // Important: public ticket listing defaults to returning VERIFIED tickets only.
+          // Seeded tickets should be immediately visible in the marketplace.
+          verificationStatus: "VERIFIED",
+          verifiedAt: new Date(),
           sellerId: seedSeller.id,
           eventId: t.eventId,
         },
@@ -323,6 +327,8 @@ export async function POST(req: Request) {
           priceCents: dollarsToCents(60),
           faceValueCents: dollarsToCents(60),
           status: "WITHDRAWN",
+          verificationStatus: "VERIFIED",
+          verifiedAt: new Date(),
           withdrawnAt: new Date(),
           sellerId: seedSeller.id,
           eventId: openEvent.id,
