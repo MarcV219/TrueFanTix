@@ -185,13 +185,29 @@ function isReliableUrl(url: string): boolean {
   return RELIABLE_DOMAINS.some(domain => lowerUrl.includes(domain));
 }
 
-async function getSpotifyArtistImage(artistUrl: string): Promise<string | null> {
+async function getDeezerArtistImage(name: string): Promise<string | null> {
   try {
-    const res = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(artistUrl)}`);
+    const url = `https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}`;
+    const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
-    const thumb = (data?.thumbnail_url || "").toString();
-    return thumb.startsWith("http") ? thumb : null;
+    const first = (data?.data || [])[0] || null;
+    const img = (first?.picture_xl || first?.picture_big || first?.picture || "").toString();
+    return img.startsWith("http") ? img : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getDeezerAlbumImage(query: string): Promise<string | null> {
+  try {
+    const url = `https://api.deezer.com/search/album?q=${encodeURIComponent(query)}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const first = (data?.data || [])[0] || null;
+    const img = (first?.cover_xl || first?.cover_big || first?.cover || "").toString();
+    return img.startsWith("http") ? img : null;
   } catch {
     return null;
   }
@@ -206,13 +222,17 @@ async function getReliableSeededImage(title: string, eventType: string): Promise
   if (lower.includes('blue jays')) return 'https://a.espncdn.com/i/teamlogos/mlb/500/tor.png';
   if (lower.includes('toronto fc') || lower.includes('tfc')) return 'https://a.espncdn.com/i/teamlogos/soccer/500/182.png';
 
-  // Artists/comedians: Spotify oEmbed thumbnails (no API key required)
-  if (lower.includes('taylor swift')) return await getSpotifyArtistImage('https://open.spotify.com/artist/06HL4z0CvFAxyc27GXpf02');
-  if (lower.includes('drake')) return await getSpotifyArtistImage('https://open.spotify.com/artist/3TVXtAsR1Inumwj472S9r4');
-  if (lower.includes('weeknd')) return await getSpotifyArtistImage('https://open.spotify.com/artist/1Xyo4u8uXC1ZmMpatF05PJ');
-  if (lower.includes('ed sheeran')) return await getSpotifyArtistImage('https://open.spotify.com/artist/6eUKZXaKkcviH0Ku9w2n3V');
-  if (lower.includes('dave chappelle')) return await getSpotifyArtistImage('https://open.spotify.com/artist/4OQSVy5Mir3w92EAfWYu9m');
-  if (lower.includes('john mulaney')) return await getSpotifyArtistImage('https://open.spotify.com/artist/5udMpSPM6n7fT4v5sM3hn1');
+  // Artists/comedians: Deezer artist images (no API key required)
+  if (lower.includes('taylor swift')) return await getDeezerArtistImage('Taylor Swift');
+  if (lower.includes('drake')) return await getDeezerArtistImage('Drake');
+  if (lower.includes('weeknd')) return await getDeezerArtistImage('The Weeknd');
+  if (lower.includes('ed sheeran')) return await getDeezerArtistImage('Ed Sheeran');
+  if (lower.includes('dave chappelle')) return await getDeezerArtistImage('Dave Chappelle');
+  if (lower.includes('john mulaney')) return await getDeezerArtistImage('John Mulaney');
+
+  // Theatre: use soundtrack/OBCR covers
+  if (lower.includes('hamilton')) return await getDeezerAlbumImage('Hamilton Original Broadway Cast');
+  if (lower.includes('lion king')) return await getDeezerAlbumImage('The Lion King Original Broadway Cast Recording');
 
   return null;
 }
