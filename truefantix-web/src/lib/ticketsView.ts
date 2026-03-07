@@ -14,6 +14,7 @@ export type ApiTicketLike = {
   status?: string;
   image?: string;
   sellerId?: string;
+  eventTypeOverride?: string | null;
   isAboveConfirmedFaceValue?: boolean;
   isValidationMismatch?: boolean;
   seller?: {
@@ -50,6 +51,7 @@ export type TicketCardView = {
   placeholderImage: string;
   dynamicImage?: string;
   isAboveConfirmedFaceValue: boolean;
+  isPastEvent: boolean;
   isValidationMismatch: boolean;
 };
 
@@ -88,7 +90,7 @@ export function getEventType(title: string): EventTypeInfo {
   if (lower.match(/raptors|basketball/)) return { type: "sports-basketball", label: "Sports: Basketball", placeholder: "/basketball-placeholder.jpg" };
   if (lower.match(/leafs|hockey/)) return { type: "sports-hockey", label: "Sports: Hockey", placeholder: "/hockey-placeholder.jpg" };
   if (lower.match(/blue jays|baseball/)) return { type: "sports-baseball", label: "Sports: Baseball", placeholder: "/sports-placeholder.jpg" };
-  if (lower.includes("football") && !lower.includes("hockey")) return { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" };
+  if (lower.match(/broncos|nfl|chiefs|packers|patriots|cowboys|steelers|raiders|49ers|seahawks|bills|dolphins|jets|giants|eagles|vikings|bengals|browns|ravens|chargers|rams|lions|falcons|panthers|saints|buccaneers|titans|colts|jaguars|texans|commanders|cardinals|bears/) || (lower.includes("football") && !lower.includes("hockey"))) return { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" };
   if (lower.includes("soccer")) return { type: "sports-soccer", label: "Sports: Soccer", placeholder: "/sports-placeholder.jpg" };
   if (lower.includes("lacrosse")) return { type: "sports-lacrosse", label: "Sports: Lacrosse", placeholder: "/sports-placeholder.jpg" };
   if (lower.match(/argos|argonauts/)) return { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" };
@@ -214,12 +216,40 @@ export function haversineKm(a: { lat: number; lon: number }, b: { lat: number; l
   return R * c;
 }
 
+function eventTypeFromType(type: string | null | undefined, fallbackTitle: string): EventTypeInfo {
+  const normalized = String(type || "").trim().toLowerCase();
+  if (!normalized) return getEventType(fallbackTitle);
+  const map: Record<string, EventTypeInfo> = {
+    "sports-basketball": { type: "sports-basketball", label: "Sports: Basketball", placeholder: "/basketball-placeholder.jpg" },
+    "sports-hockey": { type: "sports-hockey", label: "Sports: Hockey", placeholder: "/hockey-placeholder.jpg" },
+    "sports-baseball": { type: "sports-baseball", label: "Sports: Baseball", placeholder: "/sports-placeholder.jpg" },
+    "sports-football": { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" },
+    "sports-soccer": { type: "sports-soccer", label: "Sports: Soccer", placeholder: "/sports-placeholder.jpg" },
+    "sports-lacrosse": { type: "sports-lacrosse", label: "Sports: Lacrosse", placeholder: "/sports-placeholder.jpg" },
+    "sports-other": { type: "sports-other", label: "Sports: Other", placeholder: "/sports-placeholder.jpg" },
+    concert: { type: "concert", label: "Concert", placeholder: "/concert-placeholder.jpg" },
+    theatre: { type: "theatre", label: "Theatre", placeholder: "/theatre-placeholder.jpg" },
+    comedy: { type: "comedy", label: "Comedy", placeholder: "/comedy-placeholder.jpg" },
+    conference: { type: "conference", label: "Conference", placeholder: "/conference-placeholder.jpg" },
+    festival: { type: "festival", label: "Festival", placeholder: "/festival-placeholder.jpg" },
+    gala: { type: "gala", label: "Gala", placeholder: "/gala-placeholder.jpg" },
+    opera: { type: "opera", label: "Opera", placeholder: "/opera-placeholder.jpg" },
+    workshop: { type: "workshop", label: "Workshop", placeholder: "/workshop-placeholder.jpg" },
+    other: { type: "other", label: "Other", placeholder: "/default.jpg" },
+  };
+  return map[normalized] ?? getEventType(fallbackTitle);
+}
+
 export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
   const venueInfo = parseVenue(t.venue || "");
-  const eventTypeInfo = getEventType(t.title || "");
+  const eventTypeInfo = eventTypeFromType(t.eventTypeOverride ?? null, t.title || "");
   const isSoldOut = t.event?.selloutStatus === "SOLD_OUT";
   const price = Number(t.price ?? (typeof t.priceCents === 'number' ? t.priceCents / 100 : 0));
   const faceValue = t.faceValue ?? (typeof t.faceValueCents === 'number' ? t.faceValueCents / 100 : null);
+  const eventDate = new Date(t.date);
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const isPastEvent = !Number.isNaN(eventDate.getTime()) && eventDate < startOfToday;
 
   return {
     id: t.id,
@@ -244,7 +274,8 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
     isSoldOut,
     placeholderImage: eventTypeInfo.placeholder,
     isAboveConfirmedFaceValue: Boolean(t.isAboveConfirmedFaceValue),
-    isValidationMismatch: Boolean(t.isValidationMismatch),
+    isPastEvent,
+    isValidationMismatch: Boolean(t.isValidationMismatch) || isPastEvent,
   };
 }
 

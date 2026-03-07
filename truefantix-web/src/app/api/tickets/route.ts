@@ -40,6 +40,9 @@ type CreateTicketBody = {
   transferMethod?: string | null;
   barcodeText?: string | null; // Extracted text from barcode image
   verificationImage?: string | null; // URL/path to verification image
+
+  // Seller override for event type when auto-tagging is incorrect
+  eventTypeOverride?: string | null;
 };
 
 function badRequest(message: string) {
@@ -125,6 +128,7 @@ export async function GET(req: Request) {
       }
 
       const officialSync = parsedEvidence?.officialPricingSync ?? null;
+      const eventTypeOverride = typeof parsedEvidence?.manualEventType === "string" ? parsedEvidence.manualEventType : null;
       const confirmedFaceValueCents =
         typeof officialSync?.officialFaceValueCents === "number" ? officialSync.officialFaceValueCents : null;
       const isAboveConfirmedFaceValue =
@@ -140,6 +144,7 @@ export async function GET(req: Request) {
 
         price: centsToDollars(priceCents),
         faceValue: faceValueCents != null ? centsToDollars(faceValueCents) : null,
+        eventTypeOverride,
         isAboveConfirmedFaceValue,
         isValidationMismatch,
         confirmationLog: {
@@ -268,6 +273,7 @@ export async function POST(req: Request) {
   const transferMethod = (body.transferMethod ?? "").trim() || null;
   const barcodeText = (body.barcodeText ?? "").trim() || null;
   const verificationImage = (body.verificationImage ?? "").trim() || null;
+  const eventTypeOverride = (body.eventTypeOverride ?? "").trim().toLowerCase() || null;
 
   // We store cents. Keep validation simple + safe.
   const priceCentsRaw = body.priceCents;
@@ -306,6 +312,16 @@ export async function POST(req: Request) {
   if (transferMethod && transferMethod.length > 80) return badRequest("Transfer method must be 80 characters or less.");
   if (barcodeText && barcodeText.length > 255) return badRequest("Barcode text must be 255 characters or less.");
   if (verificationImage && verificationImage.length > 2048) return badRequest("Verification image URL is too long.");
+
+  if (eventTypeOverride) {
+    const allowed = new Set([
+      "concert", "theatre", "comedy", "conference", "festival", "gala", "opera", "workshop", "other",
+      "sports-basketball", "sports-hockey", "sports-baseball", "sports-football", "sports-soccer", "sports-lacrosse", "sports-other",
+    ]);
+    if (!allowed.has(eventTypeOverride)) {
+      return badRequest("Invalid eventTypeOverride.");
+    }
+  }
 
   // Optional: event linking
   const eventId = (body.eventId ?? null)?.toString().trim() || null;
@@ -368,7 +384,7 @@ export async function POST(req: Request) {
     });
 
     // Auto image pipeline: always attempt event-relevant fetch server-side.
-    const inferredEventType = getEventType(title).type;
+    const inferredEventType = eventTypeOverride ?? getEventType(title).type;
     let imageSource: "brave" | "client-fallback" | "placeholder" = "placeholder";
     let imageReason = "no-usable-auto-image";
 
@@ -411,6 +427,7 @@ export async function POST(req: Request) {
           provider: providerCheck.provider,
           providerConfirmed: providerCheck.confirmed,
           providerReason: providerCheck.reason,
+          manualEventType: eventTypeOverride,
         }),
         barcodeHash,
         sellerId,
