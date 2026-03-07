@@ -4,32 +4,9 @@ import React, { useState, useEffect } from "react";
 import Footer from "@/components/Footer";
 import TicketCard from "@/components/tickets/TicketCard";
 import { inferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
+import type { TicketCardView } from "@/lib/ticketsView";
 
-type Ticket = {
-  id: string;
-  title: string;
-  date: string;
-  venue: string;
-  city: string;
-  province: string;
-  country: string;
-  eventType: string;
-  eventTypeLabel: string;
-  price: number;
-  faceValue: number | null;
-  image: string;
-  placeholderImage: string;
-  sellerId: string;
-  row: string | null;
-  seat: string | null;
-  badges: string[];
-  rating: number;
-  reviews: number;
-  priceTag: string;
-  isSoldOut: boolean;
-  dynamicImage?: string;
-  isImageLoading?: boolean;
-};
+type Ticket = TicketCardView;
 
 export default function TicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
