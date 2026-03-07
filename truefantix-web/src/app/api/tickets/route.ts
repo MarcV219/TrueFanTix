@@ -9,6 +9,7 @@ import { verifyWithProvider } from "@/lib/tickets/provider";
 import { applyRateLimit, rateLimitError } from "@/lib/rate-limit";
 import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
+import { fetchOfficialSnapshot } from "@/lib/officialPricing";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -395,44 +396,126 @@ export async function POST(req: Request) {
       },
     });
 
+    // Immediate (on-create) official-market sync so tags/pricing are auto-corrected
+    // right when a listing is created (no scheduled wait required).
+    const official = await fetchOfficialSnapshot({
+      title,
+      date,
+      venue,
+      primaryVendor,
+    });
+
+    let linkedEventId = created.eventId;
+
+    if (typeof official.soldOut === "boolean") {
+      const selloutStatus = official.soldOut ? "SOLD_OUT" : "NOT_SOLD_OUT";
+
+      if (linkedEventId) {
+        await prisma.event.update({
+          where: { id: linkedEventId },
+          data: { selloutStatus },
+        });
+      } else {
+        const existingEvent = await prisma.event.findFirst({
+          where: { title, date },
+          select: { id: true },
+        });
+
+        if (existingEvent) {
+          linkedEventId = existingEvent.id;
+          await prisma.event.update({
+            where: { id: existingEvent.id },
+            data: { selloutStatus, venue },
+          });
+        } else {
+          const ev = await prisma.event.create({
+            data: { title, date, venue, selloutStatus },
+            select: { id: true },
+          });
+          linkedEventId = ev.id;
+        }
+      }
+    }
+
+    const syncedFaceValueCents = official.officialFaceValueCents ?? faceValueCents;
+    const syncedPriceCents =
+      official.officialFaceValueCents != null
+        ? Math.min(priceCentsRaw, official.officialFaceValueCents)
+        : priceCentsRaw;
+
+    let existingEvidence: any = {};
+    try {
+      existingEvidence = created.verificationEvidence ? JSON.parse(created.verificationEvidence as any) : {};
+    } catch {
+      existingEvidence = {};
+    }
+
+    await prisma.ticket.update({
+      where: { id: created.id },
+      data: {
+        priceCents: syncedPriceCents,
+        faceValueCents: syncedFaceValueCents,
+        ...(linkedEventId ? { eventId: linkedEventId } : {}),
+        verificationEvidence: JSON.stringify({
+          ...existingEvidence,
+          officialPricingSync: {
+            syncedAt: new Date().toISOString(),
+            vendor: official.vendor,
+            sourceUrl: official.sourceUrl,
+            found: official.found,
+            officialFaceValueCents: official.officialFaceValueCents,
+            soldOut: official.soldOut,
+            reason: official.reason ?? null,
+          },
+        }),
+      },
+    });
+
     const verified = await autoVerifyTicketById(prisma, created.id);
+
+    const finalTicket = await prisma.ticket.findUnique({
+      where: { id: created.id },
+      include: { event: true },
+    });
 
     return NextResponse.json(
       {
         ok: true,
         ticket: {
-          id: created.id,
-          title: created.title,
-          priceCents: created.priceCents,
-          faceValueCents: created.faceValueCents,
-          price: centsToDollars(created.priceCents),
+          id: finalTicket?.id ?? created.id,
+          title: finalTicket?.title ?? created.title,
+          priceCents: finalTicket?.priceCents ?? created.priceCents,
+          faceValueCents: finalTicket?.faceValueCents ?? created.faceValueCents,
+          price: centsToDollars(finalTicket?.priceCents ?? created.priceCents),
           faceValue:
-            created.faceValueCents != null ? centsToDollars(created.faceValueCents) : null,
-          image: created.image,
+            (finalTicket?.faceValueCents ?? created.faceValueCents) != null
+              ? centsToDollars((finalTicket?.faceValueCents ?? created.faceValueCents) as number)
+              : null,
+          image: finalTicket?.image ?? created.image,
           imageSource,
           imageReason,
-          venue: created.venue,
-          date: created.date,
-          status: created.status,
-          verificationStatus: (verified as any)?.verificationStatus ?? (created as any).verificationStatus ?? "PENDING",
-          verificationScore: (verified as any)?.verificationScore ?? (created as any).verificationScore ?? null,
-          verificationReason: (verified as any)?.verificationReason ?? (created as any).verificationReason ?? null,
-          verificationProvider: (verified as any)?.verificationProvider ?? (created as any).verificationProvider ?? null,
-          verificationEvidence: (created as any).verificationEvidence ?? null,
-          verifiedAt: (verified as any)?.verifiedAt ?? (created as any).verifiedAt ?? null,
-          barcodeType: (created as any).barcodeType ?? null,
-          barcodeLast4: (created as any).barcodeLast4 ?? null,
-          event: created.event
+          venue: finalTicket?.venue ?? created.venue,
+          date: finalTicket?.date ?? created.date,
+          status: finalTicket?.status ?? created.status,
+          verificationStatus: (verified as any)?.verificationStatus ?? (finalTicket as any)?.verificationStatus ?? "PENDING",
+          verificationScore: (verified as any)?.verificationScore ?? (finalTicket as any)?.verificationScore ?? null,
+          verificationReason: (verified as any)?.verificationReason ?? (finalTicket as any)?.verificationReason ?? null,
+          verificationProvider: (verified as any)?.verificationProvider ?? (finalTicket as any)?.verificationProvider ?? null,
+          verificationEvidence: (finalTicket as any)?.verificationEvidence ?? null,
+          verifiedAt: (verified as any)?.verifiedAt ?? (finalTicket as any)?.verifiedAt ?? null,
+          barcodeType: (finalTicket as any)?.barcodeType ?? null,
+          barcodeLast4: (finalTicket as any)?.barcodeLast4 ?? null,
+          event: finalTicket?.event
             ? {
-                id: created.event.id,
-                title: created.event.title,
-                venue: created.event.venue,
-                date: created.event.date,
-                selloutStatus: created.event.selloutStatus,
+                id: finalTicket.event.id,
+                title: finalTicket.event.title,
+                venue: finalTicket.event.venue,
+                date: finalTicket.event.date,
+                selloutStatus: finalTicket.event.selloutStatus,
               }
             : null,
-          sellerId: created.sellerId,
-          createdAt: created.createdAt,
+          sellerId: finalTicket?.sellerId ?? created.sellerId,
+          createdAt: finalTicket?.createdAt ?? created.createdAt,
         },
       },
       { status: 201 }
