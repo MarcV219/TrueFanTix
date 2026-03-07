@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+const SUPPORT_EMAIL = "support@truefantix.com";
+
 export default function Footer() {
   return (
     <footer className="bg-[var(--tft-navy-dark)] text-gray-100 mt-auto">
@@ -36,7 +38,7 @@ export default function Footer() {
             </li>
             <li>
               <Link href="/about/trust-and-safety" className="hover:text-white">
-                Trust & Safety
+                Trust &amp; Safety
               </Link>
             </li>
           </ul>
@@ -56,11 +58,6 @@ export default function Footer() {
               </Link>
             </li>
             <li>
-              <Link href="/faq/access-tokens" className="hover:text-white">
-                Access Tokens
-              </Link>
-            </li>
-            <li>
               <Link href="/faq/payments" className="hover:text-white">
                 Payments
               </Link>
@@ -74,29 +71,51 @@ export default function Footer() {
         </div>
 
         <div>
-          <h4 className="font-semibold text-white mb-3">Legal</h4>
+          <h4 className="font-semibold text-white mb-3">Contact</h4>
           <ul className="space-y-2 text-sm text-gray-300">
             <li>
-              <Link href="/terms" className="hover:text-white">
-                Terms of Service
-              </Link>
+              <a className="hover:text-white" href={`mailto:${SUPPORT_EMAIL}`}>
+                {SUPPORT_EMAIL}
+              </a>
             </li>
             <li>
-              <Link href="/privacy" className="hover:text-white">
-                Privacy Policy
-              </Link>
+              <a className="hover:text-white" href={`mailto:${SUPPORT_EMAIL}`}>
+                Email Us
+              </a>
             </li>
             <li>
-              <Link href="/pricing-policy" className="hover:text-white">
-                Pricing & Fee Policy
-              </Link>
-            </li>
-            <li>
-              <Link href="/community-guidelines" className="hover:text-white">
-                Community Guidelines
+              <Link href="/contact/report-issue" className="hover:text-white">
+                Report an Issue
               </Link>
             </li>
           </ul>
+
+          <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-300">
+            <a
+              className="hover:text-white"
+              href="https://x.com"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Twitter
+            </a>
+            <a
+              className="hover:text-white"
+              href="https://instagram.com"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Instagram
+            </a>
+            <a
+              className="hover:text-white"
+              href="https://facebook.com"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Facebook
+            </a>
+          </div>
         </div>
       </div>
 
@@ -104,17 +123,14 @@ export default function Footer() {
         <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col sm:flex-row justify-between items-center text-sm text-gray-300/80 gap-3">
           <span>© 2026 TrueFanTix. All rights reserved.</span>
           <div className="flex flex-wrap gap-4">
-            <Link href="/terms" className="hover:text-white">
-              Terms of Service
-            </Link>
             <Link href="/privacy" className="hover:text-white">
               Privacy Policy
             </Link>
-            <Link href="/pricing-policy" className="hover:text-white">
-              Pricing & Fees
+            <Link href="/terms" className="hover:text-white">
+              Terms of Service
             </Link>
-            <Link href="/community-guidelines" className="hover:text-white">
-              Community Guidelines
+            <Link href="/accessibility" className="hover:text-white">
+              Accessibility
             </Link>
           </div>
         </div>
