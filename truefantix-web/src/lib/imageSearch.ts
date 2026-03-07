@@ -185,6 +185,38 @@ function isReliableUrl(url: string): boolean {
   return RELIABLE_DOMAINS.some(domain => lowerUrl.includes(domain));
 }
 
+async function getSpotifyArtistImage(artistUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(artistUrl)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const thumb = (data?.thumbnail_url || "").toString();
+    return thumb.startsWith("http") ? thumb : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getReliableSeededImage(title: string, eventType: string): Promise<string | null> {
+  const lower = title.toLowerCase();
+
+  // Sports: official, embeddable team logos (ESPN CDN)
+  if (lower.includes('raptors')) return 'https://a.espncdn.com/i/teamlogos/nba/500/tor.png';
+  if (lower.includes('leafs')) return 'https://a.espncdn.com/i/teamlogos/nhl/500/tor.png';
+  if (lower.includes('blue jays')) return 'https://a.espncdn.com/i/teamlogos/mlb/500/tor.png';
+  if (lower.includes('toronto fc') || lower.includes('tfc')) return 'https://a.espncdn.com/i/teamlogos/soccer/500/182.png';
+
+  // Artists/comedians: Spotify oEmbed thumbnails (no API key required)
+  if (lower.includes('taylor swift')) return await getSpotifyArtistImage('https://open.spotify.com/artist/06HL4z0CvFAxyc27GXpf02');
+  if (lower.includes('drake')) return await getSpotifyArtistImage('https://open.spotify.com/artist/3TVXtAsR1Inumwj472S9r4');
+  if (lower.includes('weeknd')) return await getSpotifyArtistImage('https://open.spotify.com/artist/1Xyo4u8uXC1ZmMpatF05PJ');
+  if (lower.includes('ed sheeran')) return await getSpotifyArtistImage('https://open.spotify.com/artist/6eUKZXaKkcviH0Ku9w2n3V');
+  if (lower.includes('dave chappelle')) return await getSpotifyArtistImage('https://open.spotify.com/artist/4OQSVy5Mir3w92EAfWYu9m');
+  if (lower.includes('john mulaney')) return await getSpotifyArtistImage('https://open.spotify.com/artist/5udMpSPM6n7fT4v5sM3hn1');
+
+  return null;
+}
+
 /**
  * Search for images using Brave Search API
  */
@@ -256,23 +288,30 @@ export async function getTicketImage(
   eventType: string
 ): Promise<string> {
   const cacheKey = `${ticketTitle}-${eventType}`;
-  
+
   // Check cache
   if (imageCache.has(cacheKey)) {
     return imageCache.get(cacheKey)!;
   }
-  
-  // Search for image
+
+  // 1) Deterministic reliable sources for common artists/teams
+  const reliable = await getReliableSeededImage(ticketTitle, eventType);
+  if (reliable) {
+    imageCache.set(cacheKey, reliable);
+    return reliable;
+  }
+
+  // 2) Brave search fallback (automated for any other event)
   const query = getImageSearchQuery(ticketTitle, eventType);
   const imageUrls = await searchImages(query);
-  
+
   if (imageUrls.length > 0) {
     // Use first (highest scored) result and cache it
     imageCache.set(cacheKey, imageUrls[0]);
     return imageUrls[0];
   }
-  
-  // Fall back to placeholder
+
+  // 3) Placeholder fallback
   const placeholder = PLACEHOLDER_IMAGES[eventType] || '/default.jpg';
   imageCache.set(cacheKey, placeholder);
   return placeholder;

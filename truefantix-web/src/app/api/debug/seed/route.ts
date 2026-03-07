@@ -113,28 +113,9 @@ function safeSeedImagePath(candidate: unknown, fallbackCategoryOrTitle: string):
   return "/default.jpg";
 }
 
-function curatedSeedImageForTitle(title: string): string | null {
-  const t = title.toLowerCase();
-
-  // Deterministic internet images using seeded keyword queries.
-  // These are not placeholders and are stable per event key.
-  if (t.includes("taylor swift")) return "https://loremflickr.com/640/480/taylor,swift,concert?lock=101";
-  if (t.includes("drake")) return "https://loremflickr.com/640/480/drake,concert,stage?lock=102";
-  if (t.includes("the weeknd")) return "https://loremflickr.com/640/480/weeknd,concert,stage?lock=103";
-  if (t.includes("ed sheeran")) return "https://loremflickr.com/640/480/ed,sheeran,concert?lock=104";
-
-  if (t.includes("maple leafs")) return "https://loremflickr.com/640/480/hockey,toronto,arena?lock=201";
-  if (t.includes("raptors")) return "https://loremflickr.com/640/480/basketball,toronto,raptors?lock=202";
-  if (t.includes("blue jays")) return "https://loremflickr.com/640/480/baseball,toronto,blue,jays?lock=203";
-  if (t.includes("toronto fc")) return "https://loremflickr.com/640/480/soccer,toronto,stadium?lock=204";
-
-  if (t.includes("hamilton")) return "https://loremflickr.com/640/480/theatre,musical,stage?lock=301";
-  if (t.includes("lion king")) return "https://loremflickr.com/640/480/theatre,musical,lion,king?lock=302";
-  if (t.includes("dave chappelle")) return "https://loremflickr.com/640/480/comedy,standup,microphone?lock=303";
-  if (t.includes("john mulaney")) return "https://loremflickr.com/640/480/comedy,standup,stage?lock=304";
-  if (t.includes("tiff")) return "https://loremflickr.com/640/480/film,festival,red,carpet?lock=401";
-  if (t.includes("collision conference")) return "https://loremflickr.com/640/480/conference,technology,stage?lock=402";
-
+function curatedSeedImageForTitle(_title: string): string | null {
+  // Keep seeding fully automated via getTicketImage() logic in imageSearch.ts
+  // (deterministic team/artist sources + Brave fallback).
   return null;
 }
 
