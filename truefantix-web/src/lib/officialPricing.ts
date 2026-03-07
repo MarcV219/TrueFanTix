@@ -9,7 +9,7 @@ let _lastTicketmasterCallAt = 0;
 
 export type OfficialSnapshot = {
   found: boolean;
-  vendor: "ticketmaster" | "none";
+  vendor: "ticketmaster" | "primary-web" | "none";
   officialFaceValueCents: number | null;
   soldOut: boolean | null;
   sourceUrl: string | null;
@@ -66,6 +66,72 @@ function extractVsTeams(title: string): [string, string] | null {
   const m = title.match(/(.+?)\s+vs\s+(.+)/i);
   if (!m) return null;
   return [m[1].trim(), m[2].trim()];
+}
+
+function hostFromUrl(u: string): string {
+  try {
+    return new URL(u).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function trustedPrimaryDomain(u: string): boolean {
+  const h = hostFromUrl(u);
+  const allow = [
+    "ticketmaster.",
+    "livenation.",
+    "axs.",
+    "broadwaydirect.",
+    "telecharge.",
+    "seatgeek.com/mls", // team/venue official surfaces only
+    "mlb.com",
+    "nba.com",
+    "nfl.com",
+    "nhl.com",
+  ];
+  return allow.some((d) => h.includes(d));
+}
+
+async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSnapshot | null> {
+  const brave = process.env.BRAVE_API_KEY;
+  if (!brave) return null;
+
+  const q = `${normalizeTitle(ticket.title)} ${ticket.date} ${ticket.venue} official tickets`;
+  const sp = new URLSearchParams({ q, count: "10", country: "US", search_lang: "en" });
+  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${sp.toString()}`, {
+    headers: { Accept: "application/json", "X-Subscription-Token": brave },
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+
+  const data: any = await res.json();
+  const results: any[] = data?.web?.results ?? [];
+  const ymd = toYmd(ticket.date);
+  const city = venueCity(ticket.venue).toLowerCase();
+
+  for (const r of results) {
+    const url = String(r?.url || "");
+    if (!trustedPrimaryDomain(url)) continue;
+
+    const text = `${r?.title || ""} ${r?.description || ""} ${url}`;
+    const score = overlap(normalizeTitle(ticket.title), text);
+    const hasDate = !!(ymd && text.includes(ymd));
+    const hasCity = !city || text.toLowerCase().includes(city);
+
+    if (score >= 0.6 && hasDate && hasCity) {
+      return {
+        found: true,
+        vendor: "primary-web",
+        officialFaceValueCents: null,
+        soldOut: null,
+        sourceUrl: url,
+        reason: "confirmed-primary-web-fallback",
+      };
+    }
+  }
+
+  return null;
 }
 
 export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<OfficialSnapshot> {
@@ -134,6 +200,8 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
   const data: any = await res.json();
   const events: any[] = data?._embedded?.events ?? [];
   if (!events.length) {
+    const fb = await fallbackPrimaryWebConfirm(ticket);
+    if (fb) return fb;
     return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: "no-event-match" };
   }
 
@@ -167,18 +235,26 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
 
   const best = scored[0];
   if (!best) {
+    const fb = await fallbackPrimaryWebConfirm(ticket);
+    if (fb) return fb;
     return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: "no-city-match" };
   }
 
   if (!best.dateMatch) {
+    const fb = await fallbackPrimaryWebConfirm(ticket);
+    if (fb) return fb;
     return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "date-not-confirmed" };
   }
 
   if (best.textScore < 0.55) {
+    const fb = await fallbackPrimaryWebConfirm(ticket);
+    if (fb) return fb;
     return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "title-not-confirmed" };
   }
 
   if (!best.teamsMatch) {
+    const fb = await fallbackPrimaryWebConfirm(ticket);
+    if (fb) return fb;
     return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "teams-not-confirmed" };
   }
 
