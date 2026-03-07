@@ -5,6 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
 
+function normalizeBaseTitle(title: string) {
+  return (title || "").replace(/\s*\(Alt\s*\d+\)\s*$/i, "").trim();
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -24,17 +28,48 @@ export async function GET(req: Request) {
         const fetchedImage = await getTicketImage(t.title, eventType);
         const fetchedIsPlaceholder = fetchedImage.startsWith("/");
         const storedImage = t.image || "";
+        const storedIsPlaceholder = String(storedImage).startsWith("/");
 
-        const shouldUpdate =
+        let updateImage: string | null = null;
+        let rehydrateStrategy: "auto" | "sibling" | "none" = "none";
+
+        // Primary strategy: use fresh auto-image if non-placeholder
+        if (
           rehydrate &&
           !!fetchedImage &&
           !fetchedIsPlaceholder &&
-          (storedImage !== fetchedImage || storedImage.startsWith("/"));
+          (storedImage !== fetchedImage || storedIsPlaceholder)
+        ) {
+          updateImage = fetchedImage;
+          rehydrateStrategy = "auto";
+        }
+
+        // Secondary strategy: if auto returns placeholder, try sibling ticket with same base title.
+        if (rehydrate && !updateImage && storedIsPlaceholder && fetchedIsPlaceholder) {
+          const baseTitle = normalizeBaseTitle(t.title);
+          const sibling = await prisma.ticket.findFirst({
+            where: {
+              id: { not: t.id },
+              status: { in: ["AVAILABLE", "SOLD"] },
+              image: { notIn: [null, "", "/default.jpg", "/concert-placeholder.jpg", "/sports-placeholder.jpg", "/theatre-placeholder.jpg", "/comedy-placeholder.jpg", "/conference-placeholder.jpg", "/festival-placeholder.jpg", "/gala-placeholder.jpg", "/opera-placeholder.jpg", "/workshop-placeholder.jpg", "/basketball-placeholder.jpg", "/football-placeholder.jpg", "/hockey-placeholder.jpg"] },
+              title: { startsWith: baseTitle },
+            },
+            orderBy: { createdAt: "desc" },
+            select: { image: true },
+          });
+
+          if (sibling?.image) {
+            updateImage = sibling.image;
+            rehydrateStrategy = "sibling";
+          }
+        }
+
+        const shouldUpdate = !!updateImage;
 
         if (shouldUpdate) {
           await prisma.ticket.update({
             where: { id: t.id },
-            data: { image: fetchedImage },
+            data: { image: updateImage! },
           });
         }
 
@@ -46,7 +81,7 @@ export async function GET(req: Request) {
           venue: t.venue,
           date: t.date,
           storedImage,
-          storedIsPlaceholder: String(storedImage).startsWith("/"),
+          storedIsPlaceholder,
           fetchedImage,
           fetchedIsPlaceholder,
           fetchedImageSource: fetchedIsPlaceholder ? "placeholder" : "brave",
@@ -54,6 +89,8 @@ export async function GET(req: Request) {
             ? "no-usable-auto-image-placeholder"
             : "auto-image-selected",
           rehydrated: shouldUpdate,
+          rehydrateStrategy,
+          updatedImage: updateImage,
           eventSelloutStatus: t.event?.selloutStatus ?? null,
           createdAt: t.createdAt,
         };
