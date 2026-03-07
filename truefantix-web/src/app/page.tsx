@@ -158,6 +158,18 @@ const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
   losangeles: { lat: 34.0522, lon: -118.2437 },
 };
 
+function normalizeCityKey(city: string): string {
+  return (city || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function inferCoordsFromCity(city: string | null | undefined): { lat: number; lon: number } | null {
+  const key = normalizeCityKey(city || "");
+  return CITY_COORDS[key] ?? null;
+}
+
 function inferCityCoordsFromVenue(venue: string): { lat: number; lon: number } | null {
   const s = (venue || "").toLowerCase();
   if (s.includes("toronto")) return CITY_COORDS.toronto;
@@ -316,16 +328,40 @@ export default function Page() {
   }, []);
 
   React.useEffect(() => {
-    if (typeof window === "undefined" || !navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-      },
-      () => {
-        // Ignore denied/unavailable location and keep deterministic fallback sorting.
-      },
-      { enableHighAccuracy: false, timeout: 4000, maximumAge: 300000 }
-    );
+    let cancelled = false;
+
+    async function loadUserLocation() {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        const json: any = await res.json().catch(() => ({}));
+        const city = json?.user?.city as string | undefined;
+        const fromProfile = inferCoordsFromCity(city);
+        if (!cancelled && fromProfile) {
+          setUserCoords(fromProfile);
+          return;
+        }
+      } catch {
+        // ignore, fallback to browser geolocation below
+      }
+
+      // Fallback for guests / users without profile city mapping
+      if (typeof window !== 'undefined' && navigator.geolocation && !cancelled) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (!cancelled) setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+          },
+          () => {
+            // Ignore denied/unavailable location and keep deterministic fallback sorting.
+          },
+          { enableHighAccuracy: false, timeout: 4000, maximumAge: 300000 }
+        );
+      }
+    }
+
+    loadUserLocation();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const sortedTickets = React.useMemo(() => {
