@@ -130,12 +130,35 @@ const CITY_REGION: Record<string, { province: string; country: string }> = {
 
 export function parseVenue(venue: string): { city: string; province: string; country: string } {
   const parts = venue.split(",").map((p) => p.trim()).filter(Boolean);
-  const city = parts.length >= 2 ? parts[parts.length - 1] : "Toronto";
-  const key = city.toLowerCase();
-  const normalizedKey = normalizeCityKey(city);
+  const tail = parts.length >= 2 ? parts[parts.length - 1] : "Toronto";
+  const key = tail.toLowerCase();
+  const normalizedKey = normalizeCityKey(tail);
 
-  const region = CITY_REGION[key] ?? CITY_REGION[normalizedKey] ?? { province: "ON", country: "Canada" };
-  return { city, province: region.province, country: region.country };
+  const mapped = CITY_REGION[key] ?? CITY_REGION[normalizedKey];
+  if (mapped) {
+    return { city: tail, province: mapped.province, country: mapped.country };
+  }
+
+  // Handle tail formats like "Denver CO" / "Denver, CO" / "Toronto ON"
+  const m = tail.match(/^(.*?)[\s,]+([A-Z]{2})$/);
+  if (m) {
+    const city = m[1].trim() || tail;
+    const code = m[2].toUpperCase();
+
+    const usStates = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","IA","ID","IL","IN","KS","KY","LA","MA","MD","ME","MI","MN","MO","MS","MT","NC","ND","NE","NH","NJ","NM","NV","NY","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VA","VT","WA","WI","WV","WY","DC"]);
+    const caProvinces = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
+
+    if (usStates.has(code)) return { city, province: code, country: "USA" };
+    if (caProvinces.has(code)) return { city, province: code, country: "Canada" };
+  }
+
+  // Last-resort inference from full venue string before defaulting.
+  const v = (venue || "").toLowerCase();
+  if (v.includes(" usa") || v.includes(" united states") || v.includes(" denver") || v.includes(" york") || v.includes(" angeles") || v.includes(" chicago") || v.includes("seattle")) {
+    return { city: tail, province: "", country: "USA" };
+  }
+
+  return { city: tail, province: "ON", country: "Canada" };
 }
 
 const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
