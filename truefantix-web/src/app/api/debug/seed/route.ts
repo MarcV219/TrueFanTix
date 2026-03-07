@@ -375,8 +375,6 @@ export async function POST(req: Request) {
 
       if (existing) continue;
 
-      const eventId = t.eventId;
-
       // Prefer curated internet images for known artists/teams/shows, then Brave image search,
       // then placeholder fallback.
       const curated = curatedSeedImageForTitle(t.title);
@@ -398,7 +396,7 @@ export async function POST(req: Request) {
           verificationStatus: "VERIFIED",
           verifiedAt: new Date(),
           sellerId: seedSeller.id,
-          eventId,
+          // Note: omit eventId to avoid FK complexity during seed; tickets remain valid without event linkage.
         },
         select: { id: true, title: true, status: true, priceCents: true },
       });
