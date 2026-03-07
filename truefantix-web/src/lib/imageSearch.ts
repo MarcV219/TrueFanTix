@@ -186,6 +186,24 @@ function isReliableUrl(url: string): boolean {
 }
 
 
+function tokenizeForMatch(input: string): string[] {
+  return (input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter(t => !new Set(['the','and','or','for','with','vs','live','tour','event','tickets','ticket']).has(t));
+}
+
+function tokenOverlapScore(query: string, haystack: string): number {
+  const q = Array.from(new Set(tokenizeForMatch(query)));
+  const h = new Set(tokenizeForMatch(haystack));
+  if (!q.length) return 0;
+  let hits = 0;
+  for (const t of q) if (h.has(t)) hits += 1;
+  return hits / q.length;
+}
+
 /**
  * Search for images using Brave Search API
  */
@@ -220,24 +238,44 @@ async function searchImages(query: string): Promise<string[]> {
       .map((r: any) => {
         const url = r.properties?.url || r.thumbnail?.src || '';
         const lowerUrl = url.toLowerCase();
-        
+
         // Skip blocked domains
         if (isBlockedUrl(url)) return null;
-        
+
         // Skip paparazzi/gossip sites
         const skipDomains = ['perez', 'tmz', 'justjared', 'popsugar', 'gossip', 'paparazzi'];
         if (skipDomains.some(d => lowerUrl.includes(d))) return null;
-        
+
+        // Relevance guardrail: require query-token overlap with Brave metadata/url
+        const metaText = [
+          r.title,
+          r.description,
+          r.properties?.title,
+          r.meta_url?.hostname,
+          r.meta_url?.path,
+          url,
+        ]
+          .filter(Boolean)
+          .join(' ');
+
+        const overlap = tokenOverlapScore(query, metaText);
+
+        // If this looks unrelated, reject it early.
+        if (overlap < 0.2) return null;
+
         // Score the URL
         let score = 0;
         if (isReliableUrl(url)) score += 10;
         if (url.includes('wikipedia.org') || url.includes('wikimedia.org')) score += 5;
         if (url.includes('amazon.com') || url.includes('imdb.com')) score += 3;
-        
+
+        // Strongly prefer high-overlap results
+        score += Math.round(overlap * 20);
+
         // Prefer HTTPS
         if (url.startsWith('https://')) score += 1;
-        
-        return { url, score };
+
+        return { url, score, overlap };
       })
       .filter((item: any) => item !== null && item.url && item.url.startsWith('http'))
       .sort((a: any, b: any) => b.score - a.score);
