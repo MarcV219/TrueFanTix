@@ -407,7 +407,10 @@ export default function TicketsPage() {
                 >
                   <div className="relative">
                     <img
-                      src={`${ticket.dynamicImage || ticket.image || ticket.placeholderImage || DEFAULT_IMAGE}?v=2`}
+                      src={(() => {
+                        const raw = ticket.dynamicImage || ticket.image || ticket.placeholderImage || DEFAULT_IMAGE;
+                        return String(raw).startsWith("http") ? String(raw) : `${raw}?v=2`;
+                      })()}
                       alt={ticket.title}
                       className="w-full h-48 object-cover"
                       onError={(e) => { (e.target as HTMLImageElement).src = ticket.placeholderImage || DEFAULT_IMAGE; }}
