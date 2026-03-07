@@ -564,7 +564,7 @@ export async function POST(req: Request) {
           verifiedAt: new Date(),
           withdrawnAt: new Date(),
           sellerId: seedSeller.id,
-          eventId: openEvent.id,
+          eventId: "seed-event-01", // any stable seed event id is fine for withdrawn test ticket
         },
       });
     }
