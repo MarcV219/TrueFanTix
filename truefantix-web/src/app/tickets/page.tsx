@@ -85,26 +85,34 @@ export default function TicketsPage() {
 
   // Fetch dynamic images for tickets
   async function fetchImagesForTickets(ticketList: Ticket[]) {
-    // Use Promise.all to fetch all images in parallel
-    const imagePromises = ticketList.map(async (ticket) => {
-      try {
-        const res = await fetch(
-          `/api/tickets/image?title=${encodeURIComponent(ticket.title)}&eventType=${encodeURIComponent(ticket.eventType)}`
-        );
-        
-        if (res.ok) {
+    // Fetch one image per logical event key so identical events stay visually consistent.
+    const keyFor = (t: Ticket) => `${t.title}|||${t.date}|||${t.venue}|||${t.eventType}`;
+    const uniqueKeys = Array.from(new Set(ticketList.map(keyFor)));
+    const imageByKey = new Map<string, string>();
+
+    await Promise.all(
+      uniqueKeys.map(async (key) => {
+        const [title, _date, _venue, eventType] = key.split("|||");
+        try {
+          const res = await fetch(
+            `/api/tickets/image?title=${encodeURIComponent(title)}&eventType=${encodeURIComponent(eventType)}`
+          );
+          if (!res.ok) return;
           const data = await res.json();
           if (data.imageUrl && !data.isPlaceholder) {
-            return { ...ticket, dynamicImage: data.imageUrl };
+            imageByKey.set(key, data.imageUrl);
           }
+        } catch {
+          // Keep fallback image for this key.
         }
-      } catch (e) {
-        // Silently fail and use placeholder
-      }
-      return ticket;
+      })
+    );
+
+    const updatedTickets = ticketList.map((ticket) => {
+      const img = imageByKey.get(keyFor(ticket));
+      return img ? { ...ticket, dynamicImage: img } : ticket;
     });
-    
-    const updatedTickets = await Promise.all(imagePromises);
+
     setTickets(updatedTickets);
   }
 
