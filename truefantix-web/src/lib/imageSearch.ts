@@ -192,7 +192,7 @@ async function getReliableSeededImage(title: string, eventType: string): Promise
   if (lower.includes('raptors')) return 'https://a.espncdn.com/i/teamlogos/nba/500/tor.png';
   if (lower.includes('leafs')) return 'https://a.espncdn.com/i/teamlogos/nhl/500/tor.png';
   if (lower.includes('blue jays')) return 'https://a.espncdn.com/i/teamlogos/mlb/500/tor.png';
-  if (lower.includes('toronto fc') || lower.includes('tfc')) return 'https://a.espncdn.com/i/teamlogos/soccer/500/182.png';
+  if (lower.includes('toronto fc') || lower.includes('tfc')) return 'https://a.espncdn.com/i/teamlogos/soccer/500/7318.png';
 
   // Artists/comedians: deterministic Deezer images (no API key required)
   if (lower.includes('taylor swift')) return 'https://cdn-images.dzcdn.net/images/artist/e528e270424103b527f8a27ac625563b/1000x1000-000000-80-0-0.jpg';
