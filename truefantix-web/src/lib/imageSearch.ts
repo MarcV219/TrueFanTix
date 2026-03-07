@@ -185,29 +185,6 @@ function isReliableUrl(url: string): boolean {
   return RELIABLE_DOMAINS.some(domain => lowerUrl.includes(domain));
 }
 
-async function getReliableSeededImage(title: string, eventType: string): Promise<string | null> {
-  const lower = title.toLowerCase();
-
-  // Sports: official, embeddable team logos (ESPN CDN)
-  if (lower.includes('raptors')) return 'https://a.espncdn.com/i/teamlogos/nba/500/tor.png';
-  if (lower.includes('leafs')) return 'https://a.espncdn.com/i/teamlogos/nhl/500/tor.png';
-  if (lower.includes('blue jays')) return 'https://a.espncdn.com/i/teamlogos/mlb/500/tor.png';
-  if (lower.includes('toronto fc') || lower.includes('tfc')) return 'https://a.espncdn.com/i/teamlogos/soccer/500/7318.png';
-
-  // Artists/comedians: deterministic Deezer images (no API key required)
-  if (lower.includes('taylor swift')) return 'https://cdn-images.dzcdn.net/images/artist/e528e270424103b527f8a27ac625563b/1000x1000-000000-80-0-0.jpg';
-  if (lower.includes('drake')) return 'https://cdn-images.dzcdn.net/images/artist/5d2fa7f140a6bdc2c864c3465a61fc71/1000x1000-000000-80-0-0.jpg';
-  if (lower.includes('weeknd')) return 'https://cdn-images.dzcdn.net/images/artist/581693b4724a7fcfa754455101e13a44/1000x1000-000000-80-0-0.jpg';
-  if (lower.includes('ed sheeran')) return 'https://cdn-images.dzcdn.net/images/artist/d6bb84390641d8ae9118228d9544e53d/1000x1000-000000-80-0-0.jpg';
-  if (lower.includes('dave chappelle')) return 'https://cdn-images.dzcdn.net/images/artist/3932ba3d23169fd3055e5ad79f1834f1/1000x1000-000000-80-0-0.jpg';
-  if (lower.includes('john mulaney')) return 'https://cdn-images.dzcdn.net/images/artist/e12daf093e9d6fe08352a037b9c6e48a/1000x1000-000000-80-0-0.jpg';
-
-  // Theatre: deterministic soundtrack/show covers
-  if (lower.includes('hamilton')) return 'https://cdn-images.dzcdn.net/images/cover/5db136e4197854b3f0605a4d3d064bc5/1000x1000-000000-80-0-0.jpg';
-  if (lower.includes('lion king')) return 'https://cdn-images.dzcdn.net/images/cover/098e428c323c5bc385ac62192e7673aa/1000x1000-000000-80-0-0.jpg';
-
-  return null;
-}
 
 /**
  * Search for images using Brave Search API
@@ -286,14 +263,7 @@ export async function getTicketImage(
     return imageCache.get(cacheKey)!;
   }
 
-  // 1) Deterministic reliable sources for common artists/teams
-  const reliable = await getReliableSeededImage(ticketTitle, eventType);
-  if (reliable) {
-    imageCache.set(cacheKey, reliable);
-    return reliable;
-  }
-
-  // 2) Brave search fallback (automated for any other event)
+  // 1) Brave search (automated for all events)
   const query = getImageSearchQuery(ticketTitle, eventType);
   const imageUrls = await searchImages(query);
 
@@ -303,7 +273,7 @@ export async function getTicketImage(
     return imageUrls[0];
   }
 
-  // 3) Placeholder fallback
+  // 2) Placeholder fallback
   const placeholder = PLACEHOLDER_IMAGES[eventType] || '/default.jpg';
   imageCache.set(cacheKey, placeholder);
   return placeholder;
