@@ -133,6 +133,7 @@ export async function GET(req: Request) {
         typeof officialSync?.officialFaceValueCents === "number" ? officialSync.officialFaceValueCents : null;
       const isAboveConfirmedFaceValue =
         confirmedFaceValueCents != null ? priceCents > confirmedFaceValueCents : false;
+      const isPriceUnconfirmed = confirmedFaceValueCents == null;
       const isValidationMismatch = officialSync ? (!officialSync.found || !!officialSync.reason) : true;
 
       return {
@@ -146,6 +147,7 @@ export async function GET(req: Request) {
         faceValue: faceValueCents != null ? centsToDollars(faceValueCents) : null,
         eventTypeOverride,
         isAboveConfirmedFaceValue,
+        isPriceUnconfirmed,
         isValidationMismatch,
         confirmationLog: {
           title: { confirmed: !!officialSync?.found, source: officialSync?.sourceUrl ?? null, note: !!officialSync?.found ? "Matched via official provider event lookup" : "Not confirmed yet" },
