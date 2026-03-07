@@ -23,7 +23,7 @@ export default function TicketsPage() {
     async function fetchTickets() {
       try {
         setLoading(true);
-        const res = await fetch("/api/tickets?status=AVAILABLE&take=100", { cache: "no-store" });
+        const res = await fetch("/api/tickets?status=AVAILABLE&take=500", { cache: "no-store" });
         const json = await res.json();
         
         if (!res.ok) {

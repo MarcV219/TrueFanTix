@@ -62,7 +62,7 @@ export async function GET(req: Request) {
     // Optional: allow skipping event join if ever needed
     const includeEvent = url.searchParams.get("includeEvent") !== "0";
 
-    const take = Math.min(Math.max(Number(url.searchParams.get("take") || 50), 1), 100);
+    const take = Math.min(Math.max(Number(url.searchParams.get("take") || 50), 1), 500);
     const cursor = url.searchParams.get("cursor") || undefined;
 
     const where: any = {};
