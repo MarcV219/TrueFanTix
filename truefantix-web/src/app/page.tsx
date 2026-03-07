@@ -36,6 +36,9 @@ type TicketCard = {
   title: string;
   date: string;
   venue: string;
+  city: string;
+  province: string;
+  country: string;
   row: string | null;
   seat: string | null;
   price: number;
