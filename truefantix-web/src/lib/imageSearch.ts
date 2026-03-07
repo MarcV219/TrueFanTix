@@ -185,34 +185,6 @@ function isReliableUrl(url: string): boolean {
   return RELIABLE_DOMAINS.some(domain => lowerUrl.includes(domain));
 }
 
-async function getDeezerArtistImage(name: string): Promise<string | null> {
-  try {
-    const url = `https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const first = (data?.data || [])[0] || null;
-    const img = (first?.picture_xl || first?.picture_big || first?.picture || "").toString();
-    return img.startsWith("http") ? img : null;
-  } catch {
-    return null;
-  }
-}
-
-async function getDeezerAlbumImage(query: string): Promise<string | null> {
-  try {
-    const url = `https://api.deezer.com/search/album?q=${encodeURIComponent(query)}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const first = (data?.data || [])[0] || null;
-    const img = (first?.cover_xl || first?.cover_big || first?.cover || "").toString();
-    return img.startsWith("http") ? img : null;
-  } catch {
-    return null;
-  }
-}
-
 async function getReliableSeededImage(title: string, eventType: string): Promise<string | null> {
   const lower = title.toLowerCase();
 
@@ -222,17 +194,17 @@ async function getReliableSeededImage(title: string, eventType: string): Promise
   if (lower.includes('blue jays')) return 'https://a.espncdn.com/i/teamlogos/mlb/500/tor.png';
   if (lower.includes('toronto fc') || lower.includes('tfc')) return 'https://a.espncdn.com/i/teamlogos/soccer/500/182.png';
 
-  // Artists/comedians: Deezer artist images (no API key required)
-  if (lower.includes('taylor swift')) return await getDeezerArtistImage('Taylor Swift');
-  if (lower.includes('drake')) return await getDeezerArtistImage('Drake');
-  if (lower.includes('weeknd')) return await getDeezerArtistImage('The Weeknd');
-  if (lower.includes('ed sheeran')) return await getDeezerArtistImage('Ed Sheeran');
-  if (lower.includes('dave chappelle')) return await getDeezerArtistImage('Dave Chappelle');
-  if (lower.includes('john mulaney')) return await getDeezerArtistImage('John Mulaney');
+  // Artists/comedians: deterministic Deezer images (no API key required)
+  if (lower.includes('taylor swift')) return 'https://cdn-images.dzcdn.net/images/artist/e528e270424103b527f8a27ac625563b/1000x1000-000000-80-0-0.jpg';
+  if (lower.includes('drake')) return 'https://cdn-images.dzcdn.net/images/artist/5d2fa7f140a6bdc2c864c3465a61fc71/1000x1000-000000-80-0-0.jpg';
+  if (lower.includes('weeknd')) return 'https://cdn-images.dzcdn.net/images/artist/581693b4724a7fcfa754455101e13a44/1000x1000-000000-80-0-0.jpg';
+  if (lower.includes('ed sheeran')) return 'https://cdn-images.dzcdn.net/images/artist/d6bb84390641d8ae9118228d9544e53d/1000x1000-000000-80-0-0.jpg';
+  if (lower.includes('dave chappelle')) return 'https://cdn-images.dzcdn.net/images/artist/3932ba3d23169fd3055e5ad79f1834f1/1000x1000-000000-80-0-0.jpg';
+  if (lower.includes('john mulaney')) return 'https://cdn-images.dzcdn.net/images/artist/e12daf093e9d6fe08352a037b9c6e48a/1000x1000-000000-80-0-0.jpg';
 
-  // Theatre: use soundtrack/OBCR covers
-  if (lower.includes('hamilton')) return await getDeezerAlbumImage('Hamilton Original Broadway Cast');
-  if (lower.includes('lion king')) return await getDeezerAlbumImage('The Lion King Original Broadway Cast Recording');
+  // Theatre: deterministic soundtrack/show covers
+  if (lower.includes('hamilton')) return 'https://cdn-images.dzcdn.net/images/cover/5db136e4197854b3f0605a4d3d064bc5/1000x1000-000000-80-0-0.jpg';
+  if (lower.includes('lion king')) return 'https://cdn-images.dzcdn.net/images/cover/098e428c323c5bc385ac62192e7673aa/1000x1000-000000-80-0-0.jpg';
 
   return null;
 }
@@ -307,7 +279,7 @@ export async function getTicketImage(
   ticketTitle: string,
   eventType: string
 ): Promise<string> {
-  const cacheKey = `${ticketTitle}-${eventType}`;
+  const cacheKey = `v2-${ticketTitle}-${eventType}`;
 
   // Check cache
   if (imageCache.has(cacheKey)) {
