@@ -144,6 +144,49 @@ function topicTypeLabel(t: ForumThreadPreview["topicType"]) {
   return "Other";
 }
 
+const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
+  toronto: { lat: 43.6532, lon: -79.3832 },
+  montreal: { lat: 45.5017, lon: -73.5673 },
+  vancouver: { lat: 49.2827, lon: -123.1207 },
+  ottawa: { lat: 45.4215, lon: -75.6972 },
+  calgary: { lat: 51.0447, lon: -114.0719 },
+  edmonton: { lat: 53.5461, lon: -113.4938 },
+  newyork: { lat: 40.7128, lon: -74.006 },
+  boston: { lat: 42.3601, lon: -71.0589 },
+  miami: { lat: 25.7617, lon: -80.1918 },
+  chicago: { lat: 41.8781, lon: -87.6298 },
+  losangeles: { lat: 34.0522, lon: -118.2437 },
+};
+
+function inferCityCoordsFromVenue(venue: string): { lat: number; lon: number } | null {
+  const s = (venue || "").toLowerCase();
+  if (s.includes("toronto")) return CITY_COORDS.toronto;
+  if (s.includes("montréal") || s.includes("montreal")) return CITY_COORDS.montreal;
+  if (s.includes("vancouver")) return CITY_COORDS.vancouver;
+  if (s.includes("ottawa")) return CITY_COORDS.ottawa;
+  if (s.includes("calgary")) return CITY_COORDS.calgary;
+  if (s.includes("edmonton")) return CITY_COORDS.edmonton;
+  if (s.includes("new york")) return CITY_COORDS.newyork;
+  if (s.includes("boston")) return CITY_COORDS.boston;
+  if (s.includes("miami")) return CITY_COORDS.miami;
+  if (s.includes("chicago")) return CITY_COORDS.chicago;
+  if (s.includes("los angeles")) return CITY_COORDS.losangeles;
+  return null;
+}
+
+function haversineKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * (Math.PI / 180);
+  const dLon = (b.lon - a.lon) * (Math.PI / 180);
+  const lat1 = a.lat * (Math.PI / 180);
+  const lat2 = b.lat * (Math.PI / 180);
+  const x =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  return R * c;
+}
+
 async function fetchForumThreadsPreview(): Promise<ForumThreadPreview[]> {
   try {
     const res = await fetch("/api/forum/threads?take=6", { cache: "no-store" });
@@ -185,8 +228,8 @@ function ChevronRightIcon({ className }: { className?: string }) {
 
 export default function Page() {
   const [allTickets, setAllTickets] = React.useState<TicketCard[]>([]);
-  const [displayedTickets, setDisplayedTickets] = React.useState<TicketCard[]>([]);
   const [currentIndex, setCurrentIndex] = React.useState(0);
+  const [userCoords, setUserCoords] = React.useState<{ lat: number; lon: number } | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [forumLoading, setForumLoading] = React.useState(true);
@@ -238,12 +281,11 @@ export default function Page() {
 
         if (!alive) return;
         setAllTickets(normalized);
-        setDisplayedTickets(normalized.slice(0, TICKETS_PER_PAGE));
+        setCurrentIndex(0);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message ?? "Unknown error");
         setAllTickets([]);
-        setDisplayedTickets([]);
       } finally {
         if (alive) setLoading(false);
       }
@@ -273,22 +315,57 @@ export default function Page() {
     };
   }, []);
 
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      },
+      () => {
+        // Ignore denied/unavailable location and keep deterministic fallback sorting.
+      },
+      { enableHighAccuracy: false, timeout: 4000, maximumAge: 300000 }
+    );
+  }, []);
+
+  const sortedTickets = React.useMemo(() => {
+    const arr = [...allTickets];
+    arr.sort((a, b) => {
+      // Priority 1: nearest venue to user (if we have coordinates)
+      const da = userCoords && inferCityCoordsFromVenue(a.venue) ? haversineKm(userCoords, inferCityCoordsFromVenue(a.venue)!) : Number.POSITIVE_INFINITY;
+      const db = userCoords && inferCityCoordsFromVenue(b.venue) ? haversineKm(userCoords, inferCityCoordsFromVenue(b.venue)!) : Number.POSITIVE_INFINITY;
+      if (da !== db) return da - db;
+
+      // Priority 2: sold-out events first
+      if (a.isSoldOut !== b.isSoldOut) return a.isSoldOut ? -1 : 1;
+
+      // Priority 3: sooner event date first
+      const ta = Number.isNaN(Date.parse(a.date)) ? Number.POSITIVE_INFINITY : Date.parse(a.date);
+      const tb = Number.isNaN(Date.parse(b.date)) ? Number.POSITIVE_INFINITY : Date.parse(b.date);
+      return ta - tb;
+    });
+    return arr;
+  }, [allTickets, userCoords]);
+
+  const displayedTickets = React.useMemo(
+    () => sortedTickets.slice(currentIndex, currentIndex + TICKETS_PER_PAGE),
+    [sortedTickets, currentIndex, TICKETS_PER_PAGE]
+  );
+
   const handlePrev = () => {
     const newIndex = Math.max(0, currentIndex - TICKETS_PER_PAGE);
     setCurrentIndex(newIndex);
-    setDisplayedTickets(allTickets.slice(newIndex, newIndex + TICKETS_PER_PAGE));
   };
 
   const handleNext = () => {
-    const newIndex = Math.min(allTickets.length - TICKETS_PER_PAGE, currentIndex + TICKETS_PER_PAGE);
+    const newIndex = Math.min(sortedTickets.length - TICKETS_PER_PAGE, currentIndex + TICKETS_PER_PAGE);
     if (newIndex > currentIndex) {
       setCurrentIndex(newIndex);
-      setDisplayedTickets(allTickets.slice(newIndex, newIndex + TICKETS_PER_PAGE));
     }
   };
 
   const canGoPrev = currentIndex > 0;
-  const canGoNext = currentIndex + TICKETS_PER_PAGE < allTickets.length;
+  const canGoNext = currentIndex + TICKETS_PER_PAGE < sortedTickets.length;
 
   async function submitWaitlist(e: React.FormEvent) {
     e.preventDefault();
@@ -373,7 +450,16 @@ export default function Page() {
                 {displayedTickets.map((ticket) => (
                   <div key={ticket.id} className="bg-white/95 dark:bg-white/5 rounded-xl shadow-lg flex flex-col border border-[var(--border)]">
                     <div className="relative">
-                      <img src={`${ticket.dynamicImage || ticket.placeholderImage || DEFAULT_IMAGE}?v=2`} alt={ticket.title} className="rounded-t-xl object-cover w-full h-48" loading="lazy" />
+                      <img
+                        src={(() => {
+                          const raw = String(ticket.dynamicImage || ticket.image || ticket.placeholderImage || DEFAULT_IMAGE);
+                          if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+                          return `${raw}?v=2`;
+                        })()}
+                        alt={ticket.title}
+                        className="rounded-t-xl object-cover w-full h-48"
+                        loading="lazy"
+                      />
                       <span className="absolute top-2 right-2 px-2 py-1 text-xs font-semibold rounded bg-gray-800 text-white">{ticket.eventTypeLabel}</span>
                     </div>
                     <div className="p-5 flex flex-col flex-1">
