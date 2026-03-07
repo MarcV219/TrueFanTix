@@ -410,7 +410,7 @@ export default function TicketsPage() {
                       src={(() => {
                         const raw = String(ticket.dynamicImage || ticket.image || ticket.placeholderImage || DEFAULT_IMAGE);
                         if (raw.startsWith("http://") || raw.startsWith("https://")) {
-                          return raw;
+                          return `/api/image-proxy?url=${encodeURIComponent(raw)}`;
                         }
                         return `${raw}?v=2`;
                       })()}
