@@ -338,11 +338,12 @@ export async function POST(req: Request) {
 
     // Ensure seeded tickets are visible in public listings (which default to VERIFIED only).
     // Even if the DB has defaults/triggers, force the seed set to VERIFIED.
+    // Some environments have seen seeded tickets persist as PENDING (likely due to older rows,
+    // differing titles, or unexpected DB defaults). Force ALL Seed Seller tickets to VERIFIED.
     await prisma.ticket.updateMany({
       where: {
         sellerId: seedSeller.id,
-        title: { in: seedTickets.map((x) => x.title) },
-        status: "AVAILABLE",
+        status: { in: ["AVAILABLE", "WITHDRAWN", "SOLD"] },
       },
       data: { verificationStatus: "VERIFIED", verifiedAt: new Date() },
     });
