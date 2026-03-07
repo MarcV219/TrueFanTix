@@ -7,6 +7,8 @@ import { requireSellerApproved } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
 import { verifyWithProvider } from "@/lib/tickets/provider";
 import { applyRateLimit, rateLimitError } from "@/lib/rate-limit";
+import { getTicketImage } from "@/lib/imageSearch";
+import { getEventType } from "@/lib/ticketsView";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -230,7 +232,7 @@ export async function POST(req: Request) {
   }
 
   const title = (body.title ?? "").trim();
-  const image = (body.image ?? "").trim();
+  const requestedImage = (body.image ?? "").trim();
   const venue = (body.venue ?? "").trim();
   const date = (body.date ?? "").trim();
 
@@ -263,8 +265,9 @@ export async function POST(req: Request) {
     faceValueCents = faceValueCentsRaw;
   }
 
-  if (!image) return badRequest("Image URL is required.");
-  if (image.length > 2048) return badRequest("Image URL is too long.");
+  // Image is now auto-fetched server-side for consistency/relevance.
+  // Optional client-provided image can be used only as fallback if auto-fetch fails.
+  if (requestedImage.length > 2048) return badRequest("Image URL is too long.");
 
   if (!venue) return badRequest("Venue is required.");
   if (venue.length > 200) return badRequest("Venue must be 200 characters or less.");
@@ -337,12 +340,25 @@ export async function POST(req: Request) {
       barcodeType,
     });
 
+    // Auto image pipeline: always attempt event-relevant fetch server-side.
+    const inferredEventType = getEventType(title).type;
+    let resolvedImage = await getTicketImage(title, inferredEventType);
+
+    // Fallback to client-provided image only if auto-fetch failed to get non-placeholder.
+    if ((!resolvedImage || resolvedImage.startsWith("/")) && requestedImage) {
+      resolvedImage = requestedImage;
+    }
+
+    if (!resolvedImage) {
+      resolvedImage = "/default.jpg";
+    }
+
     const created = await prisma.ticket.create({
       data: {
         title,
         priceCents: priceCentsRaw,
         faceValueCents,
-        image,
+        image: resolvedImage,
         venue,
         date,
         primaryVendor,
