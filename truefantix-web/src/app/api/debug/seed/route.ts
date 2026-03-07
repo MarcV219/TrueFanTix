@@ -113,6 +113,32 @@ function safeSeedImagePath(candidate: unknown, fallbackCategoryOrTitle: string):
   return "/default.jpg";
 }
 
+function curatedSeedImageForTitle(title: string): string | null {
+  const t = title.toLowerCase();
+
+  // Music
+  if (t.includes("taylor swift")) return "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Taylor_Swift_The_Eras_Tour_Amsterdam_N1_%28cropped%29.jpg/800px-Taylor_Swift_The_Eras_Tour_Amsterdam_N1_%28cropped%29.jpg";
+  if (t.includes("drake")) return "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Drake_July_2016.jpg/800px-Drake_July_2016.jpg";
+  if (t.includes("the weeknd")) return "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/The_Weeknd_Cannes_2023.png/800px-The_Weeknd_Cannes_2023.png";
+  if (t.includes("ed sheeran")) return "https://upload.wikimedia.org/wikipedia/commons/thumb/4/45/Ed_Sheeran_2013.jpg/800px-Ed_Sheeran_2013.jpg";
+
+  // Teams / sports
+  if (t.includes("maple leafs")) return "https://upload.wikimedia.org/wikipedia/en/thumb/b/b6/Toronto_Maple_Leafs_logo.svg/512px-Toronto_Maple_Leafs_logo.svg.png";
+  if (t.includes("raptors")) return "https://upload.wikimedia.org/wikipedia/en/thumb/3/36/Toronto_Raptors_logo.svg/512px-Toronto_Raptors_logo.svg.png";
+  if (t.includes("blue jays")) return "https://upload.wikimedia.org/wikipedia/en/thumb/c/cd/Toronto_Blue_Jays_logo.svg/512px-Toronto_Blue_Jays_logo.svg.png";
+  if (t.includes("toronto fc")) return "https://upload.wikimedia.org/wikipedia/en/thumb/8/8a/Toronto_FC_logo.svg/512px-Toronto_FC_logo.svg.png";
+
+  // Stage / comedy / events
+  if (t.includes("hamilton")) return "https://upload.wikimedia.org/wikipedia/en/thumb/8/8f/Hamilton-poster.jpg/640px-Hamilton-poster.jpg";
+  if (t.includes("lion king")) return "https://upload.wikimedia.org/wikipedia/en/thumb/6/6e/The_Lion_King_Musical.jpg/640px-The_Lion_King_Musical.jpg";
+  if (t.includes("dave chappelle")) return "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Dave_Chappelle.jpg/800px-Dave_Chappelle.jpg";
+  if (t.includes("john mulaney")) return "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f3/John_Mulaney_2010.jpg/800px-John_Mulaney_2010.jpg";
+  if (t.includes("tiff")) return "https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/TIFF_Bell_Lightbox.jpg/800px-TIFF_Bell_Lightbox.jpg";
+  if (t.includes("collision conference")) return "https://images.squarespace-cdn.com/content/v1/60c20f137100ef0309f3a7ea/1706203416904-HN2MXKHE3WWHGEMC9RCI/Collision_Logo_Black.png";
+
+  return null;
+}
+
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url);
@@ -516,8 +542,10 @@ export async function POST(req: Request) {
 
       const eventId = eventIdByTitle.get(t.title) ?? null;
 
-      // Try to fetch a real web image. If Brave API key isn't configured, it will return a placeholder.
-      const imageUrl = await getTicketImage(t.title, t.eventType);
+      // Prefer curated internet images for known artists/teams/shows, then Brave image search,
+      // then placeholder fallback.
+      const curated = curatedSeedImageForTitle(t.title);
+      const imageUrl = curated ?? (await getTicketImage(t.title, t.eventType));
 
       const created = await prisma.ticket.create({
         data: {
