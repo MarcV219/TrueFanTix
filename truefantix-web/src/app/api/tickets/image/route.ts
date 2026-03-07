@@ -17,9 +17,17 @@ export async function GET(req: Request) {
     // Get image (searches web or returns placeholder)
     const imageUrl = await getTicketImage(title, eventType);
     
+    const isPlaceholder = imageUrl.startsWith("/");
+    const imageSource = isPlaceholder ? "placeholder" : "brave";
+    const imageReason = isPlaceholder
+      ? "no-usable-auto-image-placeholder"
+      : "auto-image-selected";
+
     return NextResponse.json({
       imageUrl,
-      isPlaceholder: imageUrl.startsWith("/"),
+      isPlaceholder,
+      imageSource,
+      imageReason,
     });
   } catch (error) {
     console.error("Image fetch error:", error);
