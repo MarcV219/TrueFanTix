@@ -22,6 +22,11 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
             (e.target as HTMLImageElement).src = ticket.placeholderImage || DEFAULT_IMAGE;
           }}
         />
+        {ticket.isAboveConfirmedFaceValue && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span className="text-red-600 text-8xl font-extrabold opacity-70 leading-none">✕</span>
+          </div>
+        )}
         <div className="absolute top-2 left-2 flex flex-col gap-1">
           {ticket.isSoldOut && (
             <span className="bg-amber-500 text-white px-2 py-1 text-xs font-semibold rounded">

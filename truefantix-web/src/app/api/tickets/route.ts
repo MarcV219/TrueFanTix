@@ -117,6 +117,19 @@ export async function GET(req: Request) {
 
       const eventAny: any = (t as any).event;
 
+      let parsedEvidence: any = {};
+      try {
+        parsedEvidence = (t as any).verificationEvidence ? JSON.parse((t as any).verificationEvidence) : {};
+      } catch {
+        parsedEvidence = {};
+      }
+
+      const officialSync = parsedEvidence?.officialPricingSync ?? null;
+      const confirmedFaceValueCents =
+        typeof officialSync?.officialFaceValueCents === "number" ? officialSync.officialFaceValueCents : null;
+      const isAboveConfirmedFaceValue =
+        confirmedFaceValueCents != null ? priceCents > confirmedFaceValueCents : false;
+
       return {
         id: t.id,
         title: t.title,
@@ -126,6 +139,17 @@ export async function GET(req: Request) {
 
         price: centsToDollars(priceCents),
         faceValue: faceValueCents != null ? centsToDollars(faceValueCents) : null,
+        isAboveConfirmedFaceValue,
+        confirmationLog: {
+          title: { confirmed: !!officialSync?.found, source: officialSync?.sourceUrl ?? null, note: !!officialSync?.found ? "Matched via official provider event lookup" : "Not confirmed yet" },
+          date: { confirmed: !!officialSync?.found, source: officialSync?.sourceUrl ?? null, note: !!officialSync?.found ? "Matched via official provider event lookup" : "Not confirmed yet" },
+          location: { confirmed: !!officialSync?.found, source: officialSync?.sourceUrl ?? null, note: !!officialSync?.found ? "Matched via official provider event lookup" : "Not confirmed yet" },
+          seat: { confirmed: false, source: null, note: "Primary-market public API does not reliably expose seat/row-level confirmation" },
+          price: { confirmed: confirmedFaceValueCents != null, source: officialSync?.sourceUrl ?? null, note: confirmedFaceValueCents != null ? "Confirmed against official primary-market event price range" : "No official face value confirmed" },
+          soldOut: { confirmed: typeof officialSync?.soldOut === "boolean", source: officialSync?.sourceUrl ?? null, note: typeof officialSync?.soldOut === "boolean" ? "Confirmed via official event status" : "No official sold-out status confirmed" },
+          provider: officialSync?.vendor ?? null,
+          syncedAt: officialSync?.syncedAt ?? null,
+        },
 
         image: t.image,
         venue: t.venue,
@@ -438,10 +462,7 @@ export async function POST(req: Request) {
     }
 
     const syncedFaceValueCents = official.officialFaceValueCents ?? faceValueCents;
-    const syncedPriceCents =
-      official.officialFaceValueCents != null
-        ? Math.min(priceCentsRaw, official.officialFaceValueCents)
-        : priceCentsRaw;
+    const syncedPriceCents = priceCentsRaw;
 
     let existingEvidence: any = {};
     try {

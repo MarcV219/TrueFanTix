@@ -12,6 +12,7 @@ export async function POST(req: Request) {
 
   const url = new URL(req.url);
   const take = Math.min(Math.max(Number(url.searchParams.get("take") || 100), 1), 500);
+  const enforceCap = url.searchParams.get("enforceCap") === "1";
 
   const tickets = await prisma.ticket.findMany({
     where: { status: { in: ["AVAILABLE", "SOLD"] } },
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
 
     if (snap.officialFaceValueCents != null) {
       nextFaceValue = snap.officialFaceValueCents;
-      if (nextPrice > snap.officialFaceValueCents) {
+      if (enforceCap && nextPrice > snap.officialFaceValueCents) {
         nextPrice = snap.officialFaceValueCents;
       }
     }
@@ -70,7 +71,9 @@ export async function POST(req: Request) {
               vendor: snap.vendor,
               sourceUrl: snap.sourceUrl,
               syncedAt: new Date().toISOString(),
+              found: snap.found,
               officialFaceValueCents: snap.officialFaceValueCents,
+              soldOut: snap.soldOut,
               reason: snap.reason ?? null,
             },
           }),
@@ -128,6 +131,7 @@ export async function POST(req: Request) {
     notes: [
       "Below Face Value tag is computed in UI as price < faceValue.",
       "Face Value tag is shown when price >= faceValue or event sold out.",
+      "By default this sync does NOT auto-cap ticket price; pass ?enforceCap=1 to clamp price to official face value.",
       "This sync uses official primary-market (Ticketmaster Discovery API) only; no reseller sources.",
       "Exact row/seat-level primary market pricing is not generally exposed via public API; sync uses best available event-level price ranges.",
     ],
