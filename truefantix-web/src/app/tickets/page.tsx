@@ -17,6 +17,8 @@ export default function TicketsPage() {
   const [eventType, setEventType] = useState("all");
   const [priceTagFilter, setPriceTagFilter] = useState("all");
   const [soldOutOnly, setSoldOutOnly] = useState(false);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
@@ -146,9 +148,26 @@ export default function TicketsPage() {
         return false;
       }
 
+      if (startDate || endDate) {
+        const td = new Date(ticket.date);
+        if (Number.isNaN(td.getTime())) return false;
+
+        if (startDate) {
+          const s = new Date(startDate);
+          s.setHours(0, 0, 0, 0);
+          if (td < s) return false;
+        }
+
+        if (endDate) {
+          const e = new Date(endDate);
+          e.setHours(23, 59, 59, 999);
+          if (td > e) return false;
+        }
+      }
+
       return true;
     });
-  }, [tickets, searchQuery, priceRange, eventType, priceTagFilter, soldOutOnly]);
+  }, [tickets, searchQuery, priceRange, eventType, priceTagFilter, soldOutOnly, startDate, endDate]);
 
   const sortedFilteredTickets = React.useMemo(
     () => sortTicketsByPriority(filteredTickets, userCoords),
@@ -161,6 +180,8 @@ export default function TicketsPage() {
     setEventType("all");
     setPriceTagFilter("all");
     setSoldOutOnly(false);
+    setStartDate("");
+    setEndDate("");
   };
 
   return (
@@ -234,7 +255,7 @@ export default function TicketsPage() {
             </select>
           </div>
 
-          <div className="flex flex-wrap gap-6 mt-4">
+          <div className="flex flex-wrap gap-6 mt-4 items-end">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -244,8 +265,29 @@ export default function TicketsPage() {
               />
               <span className="text-gray-700 dark:text-gray-300">⭐ Sold Out Events Only</span>
             </label>
+
+            <div className="flex items-end gap-3 flex-wrap">
+              <div>
+                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Start date</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">End date</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+            </div>
             
-            {(searchQuery || eventType !== "all" || priceRange !== "all" || priceTagFilter !== "all" || soldOutOnly) && (
+            {(searchQuery || eventType !== "all" || priceRange !== "all" || priceTagFilter !== "all" || soldOutOnly || startDate || endDate) && (
               <button
                 onClick={clearFilters}
                 className="text-blue-600 hover:underline"
