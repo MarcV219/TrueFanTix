@@ -35,6 +35,37 @@ function dateWindow(dateStr: string): { startISO: string; endISO: string } | nul
   return { startISO: start.toISOString(), endISO: end.toISOString() };
 }
 
+function toYmd(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function tokenize(s: string): string[] {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((t) => !new Set(["the", "and", "vs", "at", "live", "event", "tickets", "pass", "day", "weekend", "conference"]).has(t));
+}
+
+function overlap(a: string, b: string): number {
+  const aa = Array.from(new Set(tokenize(a)));
+  const bb = new Set(tokenize(b));
+  if (!aa.length) return 0;
+  let hits = 0;
+  for (const t of aa) if (bb.has(t)) hits += 1;
+  return hits / aa.length;
+}
+
+function extractVsTeams(title: string): [string, string] | null {
+  const m = title.match(/(.+?)\s+vs\s+(.+)/i);
+  if (!m) return null;
+  return [m[1].trim(), m[2].trim()];
+}
+
 export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<OfficialSnapshot> {
   const key = process.env.TICKETMASTER_API_KEY;
   if (!key) {
@@ -70,8 +101,52 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
     return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: "no-event-match" };
   }
 
-  // best-effort pick: first event sorted by date
-  const ev = events[0];
+  const targetYmd = toYmd(ticket.date);
+  const vsTeams = extractVsTeams(ticket.title);
+
+  // Strict match selection to avoid false confirmations.
+  const scored = events
+    .map((ev: any) => {
+      const evName = String(ev?.name || "");
+      const evYmd = toYmd(ev?.dates?.start?.dateTime || ev?.dates?.start?.localDate || null);
+      const dateMatch = !!targetYmd && !!evYmd && targetYmd === evYmd;
+      const textScore = overlap(normalizeTitle(ticket.title), evName);
+
+      let teamsMatch = true;
+      if (vsTeams) {
+        const [a, b] = vsTeams;
+        const l = evName.toLowerCase();
+        teamsMatch = overlap(a, evName) >= 0.5 && overlap(b, evName) >= 0.5 && l.includes(" vs ");
+      }
+
+      const cityOk = !city || String(ev?._embedded?.venues?.[0]?.city?.name || "").toLowerCase().includes(city.toLowerCase());
+
+      return { ev, dateMatch, textScore, teamsMatch, cityOk };
+    })
+    .filter((x: any) => x.cityOk)
+    .sort((a: any, b: any) => {
+      if (a.dateMatch !== b.dateMatch) return a.dateMatch ? -1 : 1;
+      return b.textScore - a.textScore;
+    });
+
+  const best = scored[0];
+  if (!best) {
+    return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: "no-city-match" };
+  }
+
+  if (!best.dateMatch) {
+    return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "date-not-confirmed" };
+  }
+
+  if (best.textScore < 0.55) {
+    return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "title-not-confirmed" };
+  }
+
+  if (!best.teamsMatch) {
+    return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "teams-not-confirmed" };
+  }
+
+  const ev = best.ev;
 
   const min = typeof ev?.priceRanges?.[0]?.min === "number" ? ev.priceRanges[0].min : null;
   const max = typeof ev?.priceRanges?.[0]?.max === "number" ? ev.priceRanges[0].max : null;
