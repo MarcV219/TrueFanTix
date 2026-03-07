@@ -336,6 +336,17 @@ export async function POST(req: Request) {
       });
     }
 
+    // Ensure seeded tickets are visible in public listings (which default to VERIFIED only).
+    // Even if the DB has defaults/triggers, force the seed set to VERIFIED.
+    await prisma.ticket.updateMany({
+      where: {
+        sellerId: seedSeller.id,
+        title: { in: seedTickets.map((x) => x.title) },
+        status: "AVAILABLE",
+      },
+      data: { verificationStatus: "VERIFIED", verifiedAt: new Date() },
+    });
+
     // Reload for response
     const sellerOut = await prisma.seller.findUnique({
       where: { id: seedSeller.id },
