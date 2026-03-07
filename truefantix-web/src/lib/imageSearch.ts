@@ -111,18 +111,19 @@ const RELIABLE_DOMAINS = [
  */
 function getImageSearchQuery(title: string, eventType: string): string {
   const lower = title.toLowerCase();
-  
+
   // Extract main artist/performer name from title
   // Remove common suffixes like "- Upper Level", "vs Lakers", etc.
   let mainName = title;
-  
-  // Remove ticket tier info
+
+  // Remove ticket tier/info suffixes
   mainName = mainName.replace(/\s*-\s*(Upper|Lower|Floor|VIP|Club|Mezzanine|Balcony|Orchestra).*/i, '');
   mainName = mainName.replace(/\s*-\s*\d+\s*(Level|Row|Seat).*/i, '');
+  mainName = mainName.replace(/\s*-\s*(Day\s*\d+|Day\s*Pass|Weekend\s*\d+|Weekend\s*Pass|Conference\s*Pass|Headliner|Headliner\s*Night|Evening\s*Show|Showcase).*/i, '');
   mainName = mainName.replace(/\s*vs\s+.*/i, '');
   // Remove synthetic seed suffixes like "(Alt 12)"
   mainName = mainName.replace(/\s*\(Alt\s*\d+\)\s*$/i, '');
-  
+
   // Specific artists - use simpler queries that work better
   if (lower.includes('taylor swift')) return 'Taylor Swift';
   if (lower.includes('drake')) return 'Drake musician';
@@ -130,32 +131,43 @@ function getImageSearchQuery(title: string, eventType: string): string {
   if (lower.includes('weeknd')) return 'The Weeknd';
   if (lower.includes('adele')) return 'Adele';
   if (lower.includes('beyoncé') || lower.includes('beyonce')) return 'Beyoncé';
-  
+
   // Sports teams
   if (lower.includes('raptors')) return 'Toronto Raptors';
   if (lower.includes('leafs')) return 'Toronto Maple Leafs';
   if (lower.includes('blue jays')) return 'Toronto Blue Jays';
   if (lower.includes('argonauts') || lower.includes('argos')) return 'Toronto Argonauts';
   if (lower.includes('tfc') || lower.includes('toronto fc')) return 'Toronto FC';
-  
+
   // Theatre shows
   if (lower.includes('hamilton')) return 'Hamilton musical';
   if (lower.includes('lion king')) return 'Lion King musical';
   if (lower.includes('wicked')) return 'Wicked musical';
   if (lower.includes('mamma mia')) return 'Mamma Mia musical';
-  
+
   // Comedy
   if (lower.includes('dave chappelle')) return 'Dave Chappelle';
   if (lower.includes('kevin hart')) return 'Kevin Hart';
   if (lower.includes('john mulaney')) return 'John Mulaney';
   if (lower.includes('ali wong')) return 'Ali Wong';
   if (lower.includes('jim gaffigan')) return 'Jim Gaffigan';
-  
+
+  // Festivals / conferences / workshops
+  if (lower.includes('lollapalooza')) return 'Lollapalooza festival';
+  if (lower.includes('osheaga')) return 'Osheaga festival';
+  if (lower.includes('austin city limits')) return 'Austin City Limits festival';
+  if (lower.includes('tiff') || lower.includes('toronto international film festival')) return 'Toronto International Film Festival';
+  if (lower.includes('montreal international jazz festival')) return 'Montreal International Jazz Festival';
+  if (lower.includes('calgary stampede')) return 'Calgary Stampede';
+  if (lower.includes('sxsw')) return 'SXSW conference';
+  if (lower.includes('ces 2026') || lower.includes('ces ')) return 'CES conference';
+  if (lower.includes('collision conference')) return 'Collision conference';
+
   // Opera
   if (lower.includes('la bohème') || lower.includes('boheme')) return 'La Bohème opera';
   if (lower.includes('magic flute')) return 'Magic Flute opera';
   if (lower.includes('carmen')) return 'Carmen opera';
-  
+
   // Generic based on event type
   if (eventType.includes('basketball')) return 'basketball';
   if (eventType.includes('hockey')) return 'hockey';
@@ -165,7 +177,7 @@ function getImageSearchQuery(title: string, eventType: string): string {
   if (eventType.includes('concert')) return 'concert';
   if (eventType.includes('theatre')) return 'theatre';
   if (eventType.includes('comedy')) return 'comedy';
-  
+
   return mainName.trim();
 }
 
@@ -214,7 +226,7 @@ async function searchImages(query: string): Promise<string[]> {
       console.log('No Brave API key configured, using placeholder');
       return [];
     }
-    
+
     const response = await fetch(
       `https://api.search.brave.com/res/v1/images/search?q=${encodeURIComponent(query)}&count=20`,
       {
@@ -224,15 +236,15 @@ async function searchImages(query: string): Promise<string[]> {
         },
       }
     );
-    
+
     if (!response.ok) {
       console.log('Brave image search failed:', response.status);
       return [];
     }
-    
+
     const data = await response.json();
     const results = data.results || [];
-    
+
     // Build scored candidates once; apply strict overlap first, then relaxed fallback.
     const candidates = results
       .map((r: any) => {
@@ -329,9 +341,9 @@ export function getPlaceholderImage(eventType: string): string {
  */
 export async function validateImageUrl(url: string): Promise<boolean> {
   if (!url || url.startsWith('/')) return true; // Local images always work
-  
+
   // Skip validation for known blocked domains
   if (isBlockedUrl(url)) return false;
-  
+
   return true;
 }
