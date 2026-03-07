@@ -196,6 +196,7 @@ export async function POST(req: Request) {
       priceDollars: number;
       row: string;
       seat: string;
+      eventId: string;
     };
 
     type SeedEvent = {
@@ -281,16 +282,15 @@ export async function POST(req: Request) {
         priceDollars: price,
         row,
         seat,
+        eventId: `seed-event-${String((idx % seedEvents.length) + 1).padStart(3, "0")}`,
       });
       idx += 1;
     }
 
     // Upsert one event per unique title/date/venue source
-    const eventIdByTitle = new Map<string, string>();
     for (let i = 0; i < seedEvents.length; i++) {
       const ev = seedEvents[i];
       const eventId = `seed-event-${String(i + 1).padStart(3, "0")}`;
-      eventIdByTitle.set(ev.title, eventId);
 
       await prisma.event.upsert({
         where: { id: eventId },
@@ -375,7 +375,7 @@ export async function POST(req: Request) {
 
       if (existing) continue;
 
-      const eventId = eventIdByTitle.get(t.title) ?? null;
+      const eventId = t.eventId;
 
       // Prefer curated internet images for known artists/teams/shows, then Brave image search,
       // then placeholder fallback.
