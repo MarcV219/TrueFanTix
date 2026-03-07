@@ -127,6 +127,8 @@ export async function GET(req: Request) {
         image: t.image,
         venue: t.venue,
         date: t.date,
+        row: (t as any).row ?? null,
+        seat: (t as any).seat ?? null,
         status: t.status,
 
         // Helpful timestamps (safe even if null)
