@@ -233,8 +233,8 @@ async function searchImages(query: string): Promise<string[]> {
     const data = await response.json();
     const results = data.results || [];
     
-    // Filter and score image URLs
-    const scored = results
+    // Build scored candidates once; apply strict overlap first, then relaxed fallback.
+    const candidates = results
       .map((r: any) => {
         const url = r.properties?.url || r.thumbnail?.src || '';
         const lowerUrl = url.toLowerCase();
@@ -246,7 +246,6 @@ async function searchImages(query: string): Promise<string[]> {
         const skipDomains = ['perez', 'tmz', 'justjared', 'popsugar', 'gossip', 'paparazzi'];
         if (skipDomains.some(d => lowerUrl.includes(d))) return null;
 
-        // Relevance guardrail: require query-token overlap with Brave metadata/url
         const metaText = [
           r.title,
           r.description,
@@ -260,27 +259,28 @@ async function searchImages(query: string): Promise<string[]> {
 
         const overlap = tokenOverlapScore(query, metaText);
 
-        // If this looks unrelated, reject it early.
-        if (overlap < 0.2) return null;
-
         // Score the URL
         let score = 0;
         if (isReliableUrl(url)) score += 10;
         if (url.includes('wikipedia.org') || url.includes('wikimedia.org')) score += 5;
         if (url.includes('amazon.com') || url.includes('imdb.com')) score += 3;
-
-        // Strongly prefer high-overlap results
         score += Math.round(overlap * 20);
-
-        // Prefer HTTPS
         if (url.startsWith('https://')) score += 1;
 
         return { url, score, overlap };
       })
-      .filter((item: any) => item !== null && item.url && item.url.startsWith('http'))
+      .filter((item: any) => item !== null && item.url && item.url.startsWith('http'));
+
+    const strict = candidates
+      .filter((item: any) => item.overlap >= 0.2)
       .sort((a: any, b: any) => b.score - a.score);
-    
-    return scored.map((item: any) => item.url);
+
+    if (strict.length > 0) return strict.map((item: any) => item.url);
+
+    // Relaxed fallback: if Brave has results but metadata overlap was too weak,
+    // still return best safe candidates to avoid excessive placeholder fallbacks.
+    const relaxed = candidates.sort((a: any, b: any) => b.score - a.score);
+    return relaxed.map((item: any) => item.url);
   } catch (error) {
     console.error('Image search error:', error);
     return [];
