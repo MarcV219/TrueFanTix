@@ -408,8 +408,11 @@ export default function TicketsPage() {
                   <div className="relative">
                     <img
                       src={(() => {
-                        const raw = ticket.dynamicImage || ticket.image || ticket.placeholderImage || DEFAULT_IMAGE;
-                        return String(raw).startsWith("http") ? String(raw) : `${raw}?v=2`;
+                        const raw = String(ticket.dynamicImage || ticket.image || ticket.placeholderImage || DEFAULT_IMAGE);
+                        if (raw.startsWith("http://") || raw.startsWith("https://")) {
+                          return `/api/image-proxy?url=${encodeURIComponent(raw)}`;
+                        }
+                        return `${raw}?v=2`;
                       })()}
                       alt={ticket.title}
                       className="w-full h-48 object-cover"
