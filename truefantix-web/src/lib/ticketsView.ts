@@ -103,17 +103,35 @@ export function getEventType(title: string): EventTypeInfo {
   return { type: "other", label: "Other", placeholder: "/default.jpg" };
 }
 
+const CITY_REGION: Record<string, { province: string; country: string }> = {
+  toronto: { province: "ON", country: "Canada" },
+  montréal: { province: "QC", country: "Canada" },
+  montreal: { province: "QC", country: "Canada" },
+  vancouver: { province: "BC", country: "Canada" },
+  ottawa: { province: "ON", country: "Canada" },
+  calgary: { province: "AB", country: "Canada" },
+  edmonton: { province: "AB", country: "Canada" },
+  newyork: { province: "NY", country: "USA" },
+  "new york": { province: "NY", country: "USA" },
+  chicago: { province: "IL", country: "USA" },
+  losangeles: { province: "CA", country: "USA" },
+  "los angeles": { province: "CA", country: "USA" },
+  seattle: { province: "WA", country: "USA" },
+  austin: { province: "TX", country: "USA" },
+  "las vegas": { province: "NV", country: "USA" },
+  miami: { province: "FL", country: "USA" },
+  boston: { province: "MA", country: "USA" },
+  "orchard park": { province: "NY", country: "USA" },
+};
+
 export function parseVenue(venue: string): { city: string; province: string; country: string } {
-  const parts = venue.split(",").map((p) => p.trim());
-  if (parts.length >= 2) {
-    const lastPart = parts[parts.length - 1];
-    const cityPart = parts[parts.length - 2];
-    if (lastPart === "Toronto") {
-      return { city: "Toronto", province: "ON", country: "Canada" };
-    }
-    return { city: cityPart || "Toronto", province: "ON", country: "Canada" };
-  }
-  return { city: "Toronto", province: "ON", country: "Canada" };
+  const parts = venue.split(",").map((p) => p.trim()).filter(Boolean);
+  const city = parts.length >= 2 ? parts[parts.length - 1] : "Toronto";
+  const key = city.toLowerCase();
+  const normalizedKey = normalizeCityKey(city);
+
+  const region = CITY_REGION[key] ?? CITY_REGION[normalizedKey] ?? { province: "ON", country: "Canada" };
+  return { city, province: region.province, country: region.country };
 }
 
 const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
