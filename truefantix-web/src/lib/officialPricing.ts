@@ -81,8 +81,21 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
   if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
   _lastTicketmasterCallAt = Date.now();
 
-  const query = normalizeTitle(ticket.title);
+  const normalizedTitle = normalizeTitle(ticket.title);
+  const query = normalizedTitle;
   const city = venueCity(ticket.venue);
+
+  // Never treat TBD-opponent games as confirmed event matches for testing.
+  if (/\b(vs|v)\s*tbd\b/i.test(normalizedTitle)) {
+    return {
+      found: false,
+      vendor: "ticketmaster",
+      officialFaceValueCents: null,
+      soldOut: null,
+      sourceUrl: null,
+      reason: "opponent-tbd-unconfirmed",
+    };
+  }
   // NOTE: Ticketmaster rejects some date param combinations with DIS1015.
   // Keep API query broad and enforce strict date matching locally below.
   const sp = new URLSearchParams({

@@ -52,34 +52,34 @@ export async function POST(req: Request) {
 
     const ticketChanged = nextFaceValue !== t.faceValueCents || nextPrice !== t.priceCents;
 
+    let existingEvidence: any = {};
+    try {
+      existingEvidence = t.verificationEvidence ? JSON.parse(t.verificationEvidence) : {};
+    } catch {
+      existingEvidence = {};
+    }
+
+    await prisma.ticket.update({
+      where: { id: t.id },
+      data: {
+        faceValueCents: nextFaceValue,
+        priceCents: nextPrice,
+        verificationEvidence: JSON.stringify({
+          ...existingEvidence,
+          officialPricingSync: {
+            vendor: snap.vendor,
+            sourceUrl: snap.sourceUrl,
+            syncedAt: new Date().toISOString(),
+            found: snap.found,
+            officialFaceValueCents: snap.officialFaceValueCents,
+            soldOut: snap.soldOut,
+            reason: snap.reason ?? null,
+          },
+        }),
+      },
+    });
+
     if (ticketChanged) {
-      let existingEvidence: any = {};
-      try {
-        existingEvidence = t.verificationEvidence ? JSON.parse(t.verificationEvidence) : {};
-      } catch {
-        existingEvidence = {};
-      }
-
-      await prisma.ticket.update({
-        where: { id: t.id },
-        data: {
-          faceValueCents: nextFaceValue,
-          priceCents: nextPrice,
-          verificationEvidence: JSON.stringify({
-            ...existingEvidence,
-            officialPricingSync: {
-              vendor: snap.vendor,
-              sourceUrl: snap.sourceUrl,
-              syncedAt: new Date().toISOString(),
-              found: snap.found,
-              officialFaceValueCents: snap.officialFaceValueCents,
-              soldOut: snap.soldOut,
-              reason: snap.reason ?? null,
-            },
-          }),
-        },
-      });
-
       if (nextFaceValue !== t.faceValueCents) updatedFaceValueCount += 1;
       if (nextPrice !== t.priceCents) updatedPriceCount += 1;
     }
