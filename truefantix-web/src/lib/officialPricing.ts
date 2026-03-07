@@ -92,7 +92,14 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
   const url = `https://app.ticketmaster.com/discovery/v2/events.json?${sp.toString()}`;
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
-    return { found: false, vendor: "none", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: `ticketmaster-http-${res.status}` };
+    let detail = "";
+    try {
+      const txt = await res.text();
+      detail = txt ? `:${txt.slice(0, 120).replace(/\s+/g, " ")}` : "";
+    } catch {
+      detail = "";
+    }
+    return { found: false, vendor: "none", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: `ticketmaster-http-${res.status}${detail}` };
   }
 
   const data: any = await res.json();
