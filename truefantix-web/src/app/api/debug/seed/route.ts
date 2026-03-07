@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getTicketImage } from "@/lib/imageSearch";
 
 function dollarsToCents(dollars: number) {
   return Math.round(dollars * 100);
@@ -98,6 +99,11 @@ function getPlaceholderImageForCategory(category: string): string {
 function safeSeedImagePath(candidate: unknown, fallbackCategoryOrTitle: string): string {
   const candidateStr = typeof candidate === "string" ? candidate.trim() : "";
 
+  // Allow external image URLs (preferred when Brave image search is configured).
+  if (candidateStr && (candidateStr.startsWith("https://") || candidateStr.startsWith("http://"))) {
+    return candidateStr;
+  }
+
   if (candidateStr && ALLOWED_PLACEHOLDER_IMAGES.has(candidateStr)) return candidateStr;
 
   const category = getCategoryFromTitle(fallbackCategoryOrTitle);
@@ -157,40 +163,291 @@ export async function POST(req: Request) {
         .catch(() => {});
     }
 
-    // Events (stable IDs)
-    const soldOutEvent = await prisma.event.upsert({
-      where: { id: "seed-soldout-event" },
-      create: {
-        id: "seed-soldout-event",
-        title: "Concert: The Seed Band (Sold Out)",
-        venue: "Seed Arena",
-        date: "Feb 20, 2026",
-        selloutStatus: "SOLD_OUT",
-      },
-      update: {
-        title: "Concert: The Seed Band (Sold Out)",
-        venue: "Seed Arena",
-        date: "Feb 20, 2026",
-        selloutStatus: "SOLD_OUT",
-      },
-    });
+    // ---
+    // Seed Events (40+ tickets; real-ish names; mixed types; mixed price points)
+    // ---
+    type SeedEventType =
+      | "concert"
+      | "comedy"
+      | "theatre"
+      | "festival"
+      | "conference"
+      | "sports-hockey"
+      | "sports-basketball"
+      | "sports-baseball"
+      | "sports-football"
+      | "sports-soccer"
+      | "sports-other";
 
-    const openEvent = await prisma.event.upsert({
-      where: { id: "seed-open-event" },
-      create: {
-        id: "seed-open-event",
-        title: "Sports: Seeds vs Rivals (Not Sold Out)",
-        venue: "Stadium Seed",
-        date: "Mar 2, 2026",
-        selloutStatus: "NOT_SOLD_OUT",
+    type SeedTicket = {
+      title: string;
+      date: string;
+      venue: string;
+      eventType: SeedEventType;
+      selloutStatus: "SOLD_OUT" | "NOT_SOLD_OUT";
+      faceValueDollars: number;
+      priceDollars: number;
+      row: string;
+      seat: string;
+    };
+
+    const seedTickets: SeedTicket[] = [
+      // Concerts
+      {
+        title: "Taylor Swift — The Eras Tour",
+        date: "Apr 18, 2026",
+        venue: "Rogers Centre (Toronto)",
+        eventType: "concert",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 299,
+        priceDollars: 299,
+        row: "A",
+        seat: "12",
       },
-      update: {
-        title: "Sports: Seeds vs Rivals (Not Sold Out)",
-        venue: "Stadium Seed",
-        date: "Mar 2, 2026",
-        selloutStatus: "NOT_SOLD_OUT",
+      {
+        title: "Drake — It's All a Blur Tour",
+        date: "May 5, 2026",
+        venue: "Scotiabank Arena (Toronto)",
+        eventType: "concert",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 220,
+        priceDollars: 179,
+        row: "104",
+        seat: "8",
       },
-    });
+      {
+        title: "The Weeknd — After Hours Til Dawn",
+        date: "Jun 2, 2026",
+        venue: "Rogers Centre (Toronto)",
+        eventType: "concert",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 185,
+        priceDollars: 185,
+        row: "B",
+        seat: "22",
+      },
+      {
+        title: "Ed Sheeran — Mathematics Tour",
+        date: "Jul 11, 2026",
+        venue: "Rogers Centre (Toronto)",
+        eventType: "concert",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 160,
+        priceDollars: 129,
+        row: "126",
+        seat: "14",
+      },
+
+      // Hockey
+      {
+        title: "Toronto Maple Leafs vs Montreal Canadiens",
+        date: "Mar 14, 2026",
+        venue: "Scotiabank Arena (Toronto)",
+        eventType: "sports-hockey",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 240,
+        priceDollars: 240,
+        row: "12",
+        seat: "5",
+      },
+      {
+        title: "Toronto Maple Leafs vs Boston Bruins",
+        date: "Mar 28, 2026",
+        venue: "Scotiabank Arena (Toronto)",
+        eventType: "sports-hockey",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 210,
+        priceDollars: 175,
+        row: "18",
+        seat: "11",
+      },
+
+      // Basketball
+      {
+        title: "Toronto Raptors vs Los Angeles Lakers",
+        date: "Feb 27, 2026",
+        venue: "Scotiabank Arena (Toronto)",
+        eventType: "sports-basketball",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 190,
+        priceDollars: 190,
+        row: "109",
+        seat: "7",
+      },
+      {
+        title: "Toronto Raptors vs New York Knicks",
+        date: "Mar 6, 2026",
+        venue: "Scotiabank Arena (Toronto)",
+        eventType: "sports-basketball",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 140,
+        priceDollars: 99,
+        row: "321",
+        seat: "3",
+      },
+
+      // Baseball
+      {
+        title: "Toronto Blue Jays vs New York Yankees",
+        date: "Apr 3, 2026",
+        venue: "Rogers Centre (Toronto)",
+        eventType: "sports-baseball",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 95,
+        priceDollars: 95,
+        row: "128",
+        seat: "9",
+      },
+      {
+        title: "Toronto Blue Jays vs Boston Red Sox",
+        date: "Apr 17, 2026",
+        venue: "Rogers Centre (Toronto)",
+        eventType: "sports-baseball",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 75,
+        priceDollars: 59,
+        row: "240",
+        seat: "16",
+      },
+
+      // Soccer
+      {
+        title: "Toronto FC vs CF Montréal",
+        date: "May 21, 2026",
+        venue: "BMO Field (Toronto)",
+        eventType: "sports-soccer",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 65,
+        priceDollars: 55,
+        row: "15",
+        seat: "18",
+      },
+      {
+        title: "Toronto FC vs Inter Miami",
+        date: "Jun 9, 2026",
+        venue: "BMO Field (Toronto)",
+        eventType: "sports-soccer",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 120,
+        priceDollars: 120,
+        row: "110",
+        seat: "6",
+      },
+
+      // Theatre
+      {
+        title: "Hamilton (Musical)",
+        date: "Mar 20, 2026",
+        venue: "Princess of Wales Theatre (Toronto)",
+        eventType: "theatre",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 180,
+        priceDollars: 180,
+        row: "C",
+        seat: "19",
+      },
+      {
+        title: "The Lion King (Musical)",
+        date: "Apr 9, 2026",
+        venue: "Ed Mirvish Theatre (Toronto)",
+        eventType: "theatre",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 155,
+        priceDollars: 129,
+        row: "F",
+        seat: "4",
+      },
+
+      // Comedy
+      {
+        title: "Dave Chappelle — Live",
+        date: "May 30, 2026",
+        venue: "Meridian Hall (Toronto)",
+        eventType: "comedy",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 150,
+        priceDollars: 150,
+        row: "D",
+        seat: "10",
+      },
+      {
+        title: "John Mulaney — Standup",
+        date: "Jun 14, 2026",
+        venue: "Massey Hall (Toronto)",
+        eventType: "comedy",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 120,
+        priceDollars: 89,
+        row: "E",
+        seat: "7",
+      },
+
+      // Festival / Conference
+      {
+        title: "Toronto International Film Festival (TIFF) — Gala",
+        date: "Sep 10, 2026",
+        venue: "TIFF Bell Lightbox (Toronto)",
+        eventType: "festival",
+        selloutStatus: "SOLD_OUT",
+        faceValueDollars: 95,
+        priceDollars: 95,
+        row: "GA",
+        seat: "GA",
+      },
+      {
+        title: "Collision Conference — Day Pass",
+        date: "Jun 22, 2026",
+        venue: "Enercare Centre (Toronto)",
+        eventType: "conference",
+        selloutStatus: "NOT_SOLD_OUT",
+        faceValueDollars: 399,
+        priceDollars: 249,
+        row: "GA",
+        seat: "GA",
+      },
+    ];
+
+    // Expand to ~40 by cloning patterns with slight variations.
+    // (Keeping deterministic output: same titles each time.)
+    while (seedTickets.length < 40) {
+      const n = seedTickets.length + 1;
+      const template = seedTickets[(n - 1) % 16];
+      seedTickets.push({
+        ...template,
+        title: `${template.title} (Alt ${n})`,
+        // small price variety
+        priceDollars: Math.max(25, template.priceDollars - (n % 4) * 10),
+        faceValueDollars: template.faceValueDollars,
+        row: template.row === "GA" ? "GA" : String((Number(template.row) || (n % 20) + 1)),
+        seat: template.seat === "GA" ? "GA" : String(((Number(template.seat) || 1) + (n % 12)) % 28 + 1),
+        selloutStatus: n % 3 === 0 ? "SOLD_OUT" : "NOT_SOLD_OUT",
+      });
+    }
+
+    // Upsert events for each ticket (stable seed IDs)
+    const eventIdByTitle = new Map<string, string>();
+    for (let i = 0; i < seedTickets.length; i++) {
+      const t = seedTickets[i];
+      const eventId = `seed-event-${String(i + 1).padStart(2, "0")}`;
+      eventIdByTitle.set(t.title, eventId);
+
+      await prisma.event.upsert({
+        where: { id: eventId },
+        create: {
+          id: eventId,
+          title: t.title,
+          venue: t.venue,
+          date: t.date,
+          selloutStatus: t.selloutStatus,
+        },
+        update: {
+          title: t.title,
+          venue: t.venue,
+          date: t.date,
+          selloutStatus: t.selloutStatus,
+        },
+      });
+    }
 
     // Seller who LISTS tickets
     let seedSeller = await prisma.seller.findFirst({
@@ -247,37 +504,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // Tickets to ensure exist (AVAILABLE)
-    const seedTickets = [
-      {
-        title: "Concert: The Seed Band",
-        date: "Feb 20, 2026",
-        venue: "Seed Arena",
-        priceCents: dollarsToCents(110),
-        faceValueCents: dollarsToCents(110),
-        image: "/concert-placeholder.jpg",
-        eventId: soldOutEvent.id,
-      },
-      {
-        title: "Sports: Seeds vs Rivals",
-        date: "Mar 2, 2026",
-        venue: "Stadium Seed",
-        priceCents: dollarsToCents(95),
-        faceValueCents: dollarsToCents(95),
-        image: "/sports-placeholder.jpg",
-        eventId: openEvent.id,
-      },
-      {
-        title: "Theatre: The Seed Play",
-        date: "Apr 10, 2026",
-        venue: "Downtown Theatre",
-        priceCents: dollarsToCents(70),
-        faceValueCents: dollarsToCents(70),
-        image: "/theatre-placeholder.jpg",
-        eventId: openEvent.id,
-      },
-    ];
-
     const createdTickets: Array<{ id: string; title: string; status: string; priceCents: number }> = [];
 
     for (const t of seedTickets) {
@@ -288,21 +514,28 @@ export async function POST(req: Request) {
 
       if (existing) continue;
 
+      const eventId = eventIdByTitle.get(t.title) ?? null;
+
+      // Try to fetch a real web image. If Brave API key isn't configured, it will return a placeholder.
+      const imageUrl = await getTicketImage(t.title, t.eventType);
+
       const created = await prisma.ticket.create({
         data: {
           title: t.title,
           date: t.date,
           venue: t.venue,
-          image: safeSeedImagePath(t.image, t.title),
-          priceCents: t.priceCents,
-          faceValueCents: t.faceValueCents,
+          row: t.row,
+          seat: t.seat,
+          image: safeSeedImagePath(imageUrl, t.title),
+          priceCents: dollarsToCents(t.priceDollars),
+          faceValueCents: dollarsToCents(t.faceValueDollars),
           status: "AVAILABLE",
           // Important: public ticket listing defaults to returning VERIFIED tickets only.
           // Seeded tickets should be immediately visible in the marketplace.
           verificationStatus: "VERIFIED",
           verifiedAt: new Date(),
           sellerId: seedSeller.id,
-          eventId: t.eventId,
+          eventId,
         },
         select: { id: true, title: true, status: true, priceCents: true },
       });
