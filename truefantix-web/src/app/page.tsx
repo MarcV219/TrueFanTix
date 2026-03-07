@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import Image from "next/image";
 import Footer from "@/components/Footer";
+import { inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
 
 type ApiTicket = {
   id: string;
@@ -266,30 +267,7 @@ export default function Page() {
 
         const normalized: TicketCard[] = rawTickets
           .filter((t) => t.status === "AVAILABLE")
-          .map((t) => {
-            const seller = t.seller;
-            const eventTypeInfo = getEventType(t.title);
-            const isSoldOut = t.event?.selloutStatus === "SOLD_OUT";
-            return {
-              id: t.id,
-              title: t.title,
-              date: t.date,
-              venue: t.venue,
-              row: t.row ?? null,
-              seat: t.seat ?? null,
-              price: Number(t.price ?? 0),
-              image: resolveTicketImageSrc(t.image),
-              sellerId: t.sellerId,
-              badges: seller?.badges ?? [],
-              rating: seller?.rating ?? 0,
-              reviews: seller?.reviews ?? 0,
-              priceTag: computePriceTag(Number(t.price ?? 0), t.faceValue ?? null, isSoldOut),
-              eventType: eventTypeInfo.type,
-              eventTypeLabel: eventTypeInfo.label,
-              isSoldOut,
-              placeholderImage: eventTypeInfo.placeholder,
-            };
-          });
+          .map((t) => mapApiTicketToCard(t) as unknown as TicketCard);
 
         if (!alive) return;
         setAllTickets(normalized);
@@ -335,7 +313,7 @@ export default function Page() {
         const res = await fetch('/api/auth/me', { cache: 'no-store' });
         const json: any = await res.json().catch(() => ({}));
         const city = json?.user?.city as string | undefined;
-        const fromProfile = inferCoordsFromCity(city);
+        const fromProfile = sharedInferCoordsFromCity(city);
         if (!cancelled && fromProfile) {
           setUserCoords(fromProfile);
           return;
@@ -364,24 +342,10 @@ export default function Page() {
     };
   }, []);
 
-  const sortedTickets = React.useMemo(() => {
-    const arr = [...allTickets];
-    arr.sort((a, b) => {
-      // Priority 1: nearest venue to user (if we have coordinates)
-      const da = userCoords && inferCityCoordsFromVenue(a.venue) ? haversineKm(userCoords, inferCityCoordsFromVenue(a.venue)!) : Number.POSITIVE_INFINITY;
-      const db = userCoords && inferCityCoordsFromVenue(b.venue) ? haversineKm(userCoords, inferCityCoordsFromVenue(b.venue)!) : Number.POSITIVE_INFINITY;
-      if (da !== db) return da - db;
-
-      // Priority 2: sold-out events first
-      if (a.isSoldOut !== b.isSoldOut) return a.isSoldOut ? -1 : 1;
-
-      // Priority 3: sooner event date first
-      const ta = Number.isNaN(Date.parse(a.date)) ? Number.POSITIVE_INFINITY : Date.parse(a.date);
-      const tb = Number.isNaN(Date.parse(b.date)) ? Number.POSITIVE_INFINITY : Date.parse(b.date);
-      return ta - tb;
-    });
-    return arr;
-  }, [allTickets, userCoords]);
+  const sortedTickets = React.useMemo(
+    () => sortTicketsByPriority(allTickets, userCoords),
+    [allTickets, userCoords]
+  );
 
   const displayedTickets = React.useMemo(
     () => sortedTickets.slice(currentIndex, currentIndex + TICKETS_PER_PAGE),

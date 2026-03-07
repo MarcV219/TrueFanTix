@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import Footer from "@/components/Footer";
+import { mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
 
 const DEFAULT_IMAGE = "/default.jpg";
 
@@ -198,36 +199,7 @@ export default function TicketsPage() {
 
         const rawTickets = json.tickets || json;
         
-        const normalized: Ticket[] = rawTickets.map((t: any) => {
-          const venueInfo = parseVenue(t.venue || "");
-          const eventTypeInfo = getEventType(t.title || "");
-          const resolvedImage = resolveTicketImageSrc(t.image);
-          const isSoldOut = t.event?.selloutStatus === "SOLD_OUT" || false;
-          
-          return {
-            id: t.id,
-            title: t.title,
-            date: t.date,
-            venue: t.venue,
-            city: venueInfo.city,
-            province: venueInfo.province,
-            country: venueInfo.country,
-            eventType: eventTypeInfo.type,
-            eventTypeLabel: eventTypeInfo.label,
-            price: Number(t.price ?? 0),
-            faceValue: t.faceValue ?? null,
-            image: resolvedImage,
-            placeholderImage: eventTypeInfo.placeholder,
-            sellerId: t.sellerId,
-            row: t.row || null,
-            seat: t.seat || null,
-            badges: t.seller?.badges ?? [],
-            rating: t.seller?.rating ?? 0,
-            reviews: t.seller?.reviews ?? 0,
-            priceTag: computePriceTag(Number(t.price ?? 0), t.faceValue ?? null, isSoldOut),
-            isSoldOut,
-          };
-        });
+        const normalized: Ticket[] = rawTickets.map((t: any) => mapApiTicketToCard(t) as Ticket);
 
         setTickets(normalized);
         
@@ -337,26 +309,10 @@ export default function TicketsPage() {
     });
   }, [tickets, searchQuery, priceRange, eventType, priceTagFilter, soldOutOnly]);
 
-  const sortedFilteredTickets = React.useMemo(() => {
-    const arr = [...filteredTickets];
-    arr.sort((a, b) => {
-      // Priority 1: nearest location to user
-      const aCoords = inferCoordsFromCity(a.city);
-      const bCoords = inferCoordsFromCity(b.city);
-      const da = userCoords && aCoords ? haversineKm(userCoords, aCoords) : Number.POSITIVE_INFINITY;
-      const db = userCoords && bCoords ? haversineKm(userCoords, bCoords) : Number.POSITIVE_INFINITY;
-      if (da !== db) return da - db;
-
-      // Priority 2: sold-out events first
-      if (a.isSoldOut !== b.isSoldOut) return a.isSoldOut ? -1 : 1;
-
-      // Priority 3: date of event (soonest first)
-      const ta = Number.isNaN(Date.parse(a.date)) ? Number.POSITIVE_INFINITY : Date.parse(a.date);
-      const tb = Number.isNaN(Date.parse(b.date)) ? Number.POSITIVE_INFINITY : Date.parse(b.date);
-      return ta - tb;
-    });
-    return arr;
-  }, [filteredTickets, userCoords]);
+  const sortedFilteredTickets = React.useMemo(
+    () => sortTicketsByPriority(filteredTickets, userCoords),
+    [filteredTickets, userCoords]
+  );
 
   const clearFilters = () => {
     setSearchQuery("");
