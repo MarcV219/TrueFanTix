@@ -240,16 +240,51 @@ function eventTypeFromType(type: string | null | undefined, fallbackTitle: strin
   return map[normalized] ?? getEventType(fallbackTitle);
 }
 
+function venueTimeZone(city: string, province: string, country: string): string {
+  const c = normalizeCityKey(city);
+  if (["losangeles", "seattle", "vancouver"].includes(c)) return "America/Los_Angeles";
+  if (["denver", "calgary", "edmonton"].includes(c) || province === "AB") return "America/Denver";
+  if (["chicago", "austin"].includes(c) || province === "IL" || province === "TX") return "America/Chicago";
+  if (["lasvegas"].includes(c) || province === "NV") return "America/Los_Angeles";
+  if (["newyork", "boston", "miami", "ottawa", "toronto", "montreal", "orchardpark"].includes(c)) return "America/Toronto";
+  if (country === "USA") return "America/New_York";
+  return "America/Toronto";
+}
+
+function nowYmdHour(timeZone: string): { ymd: string; hour: number } {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(new Date());
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "00";
+  return { ymd: `${get("year")}-${get("month")}-${get("day")}`, hour: Number(get("hour")) };
+}
+
+function normalizeEventYmd(date: string): string | null {
+  if (!date) return null;
+  const m = String(date).match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
 export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
   const venueInfo = parseVenue(t.venue || "");
   const eventTypeInfo = eventTypeFromType(t.eventTypeOverride ?? null, t.title || "");
   const isSoldOut = t.event?.selloutStatus === "SOLD_OUT";
   const price = Number(t.price ?? (typeof t.priceCents === 'number' ? t.priceCents / 100 : 0));
   const faceValue = t.faceValue ?? (typeof t.faceValueCents === 'number' ? t.faceValueCents / 100 : null);
-  const eventDate = new Date(t.date);
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const isPastEvent = !Number.isNaN(eventDate.getTime()) && eventDate < startOfToday;
+
+  const eventYmd = normalizeEventYmd(t.date);
+  const tz = venueTimeZone(venueInfo.city, venueInfo.province, venueInfo.country);
+  const nowLocal = nowYmdHour(tz);
+  const isPastEvent = !!eventYmd && (eventYmd < nowLocal.ymd || (eventYmd === nowLocal.ymd && nowLocal.hour >= 18));
 
   return {
     id: t.id,
