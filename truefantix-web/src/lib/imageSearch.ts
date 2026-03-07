@@ -120,6 +120,8 @@ function getImageSearchQuery(title: string, eventType: string): string {
   mainName = mainName.replace(/\s*-\s*(Upper|Lower|Floor|VIP|Club|Mezzanine|Balcony|Orchestra).*/i, '');
   mainName = mainName.replace(/\s*-\s*\d+\s*(Level|Row|Seat).*/i, '');
   mainName = mainName.replace(/\s*vs\s+.*/i, '');
+  // Remove synthetic seed suffixes like "(Alt 12)"
+  mainName = mainName.replace(/\s*\(Alt\s*\d+\)\s*$/i, '');
   
   // Specific artists - use simpler queries that work better
   if (lower.includes('taylor swift')) return 'Taylor Swift';

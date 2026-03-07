@@ -113,28 +113,9 @@ function safeSeedImagePath(candidate: unknown, fallbackCategoryOrTitle: string):
   return "/default.jpg";
 }
 
-function curatedSeedImageForTitle(title: string): string | null {
-  const t = title.toLowerCase();
-
-  // Use loremflickr keyword images (reliable hotlinking in this environment).
-  // These are internet-hosted event-matching photos, not local placeholders.
-  if (t.includes("taylor swift")) return "https://loremflickr.com/640/480/taylor,swift,concert";
-  if (t.includes("drake")) return "https://loremflickr.com/640/480/drake,concert,stage";
-  if (t.includes("the weeknd")) return "https://loremflickr.com/640/480/weeknd,concert,stage";
-  if (t.includes("ed sheeran")) return "https://loremflickr.com/640/480/ed,sheeran,concert";
-
-  if (t.includes("maple leafs")) return "https://loremflickr.com/640/480/hockey,toronto,arena";
-  if (t.includes("raptors")) return "https://loremflickr.com/640/480/basketball,toronto,raptors";
-  if (t.includes("blue jays")) return "https://loremflickr.com/640/480/baseball,toronto,stadium";
-  if (t.includes("toronto fc")) return "https://loremflickr.com/640/480/soccer,toronto,stadium";
-
-  if (t.includes("hamilton")) return "https://loremflickr.com/640/480/theatre,hamilton,musical";
-  if (t.includes("lion king")) return "https://loremflickr.com/640/480/theatre,musical,stage";
-  if (t.includes("dave chappelle")) return "https://loremflickr.com/640/480/comedy,standup,microphone";
-  if (t.includes("john mulaney")) return "https://loremflickr.com/640/480/comedy,standup,stage";
-  if (t.includes("tiff")) return "https://loremflickr.com/640/480/film,festival,red,carpet";
-  if (t.includes("collision conference")) return "https://loremflickr.com/640/480/conference,technology,stage";
-
+function curatedSeedImageForTitle(_title: string): string | null {
+  // Intentionally disabled: random keyword-image sources caused mismatched event photos.
+  // We now prefer Brave-based event-specific lookup via getTicketImage().
   return null;
 }
 
