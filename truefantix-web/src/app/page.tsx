@@ -4,7 +4,9 @@ import React from "react";
 import Link from "next/link";
 import Image from "next/image";
 import Footer from "@/components/Footer";
+import TicketCard from "@/components/tickets/TicketCard";
 import { inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
+import type { TicketCardView } from "@/lib/ticketsView";
 
 type ApiTicket = {
   id: string;
@@ -451,29 +453,7 @@ export default function Page() {
 
               <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 {displayedTickets.map((ticket) => (
-                  <div key={ticket.id} className="bg-white/95 dark:bg-white/5 rounded-xl shadow-lg flex flex-col border border-[var(--border)]">
-                    <div className="relative">
-                      <img
-                        src={(() => {
-                          const raw = String(ticket.dynamicImage || ticket.image || ticket.placeholderImage || DEFAULT_IMAGE);
-                          if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
-                          return `${raw}?v=2`;
-                        })()}
-                        alt={ticket.title}
-                        className="rounded-t-xl object-cover w-full h-48"
-                        loading="lazy"
-                      />
-                      <span className="absolute top-2 right-2 px-2 py-1 text-xs font-semibold rounded bg-gray-800 text-white">{ticket.eventTypeLabel}</span>
-                    </div>
-                    <div className="p-5 flex flex-col flex-1">
-                      <h4 className="font-bold text-lg text-[var(--foreground)]">{ticket.title}</h4>
-                      <p className={BRAND.subtle}>{ticket.date}</p>
-                      <p className={`${BRAND.subtle} mb-2`}>{ticket.venue}</p>
-                      {(ticket.row || ticket.seat) && <p className="text-sm font-medium text-[var(--tft-navy)] mb-2">{ticket.row && `Row ${ticket.row}`}{ticket.row && ticket.seat && " • "}{ticket.seat && `Seat ${ticket.seat}`}</p>}
-                      <p className="font-semibold text-[var(--tft-navy)] mb-4">${ticket.price.toFixed(2)}</p>
-                      <Link href={`/tickets/${ticket.id}`} className="mt-auto text-center button-primary py-2 rounded transition shadow-sm hover:shadow">View Ticket</Link>
-                    </div>
-                  </div>
+                  <TicketCard key={ticket.id} ticket={ticket as unknown as TicketCardView} />
                 ))}
               </div>
 
