@@ -178,6 +178,7 @@ export async function POST(req: Request) {
       | "theatre"
       | "festival"
       | "conference"
+      | "workshop"
       | "sports-hockey"
       | "sports-basketball"
       | "sports-baseball"
@@ -197,260 +198,114 @@ export async function POST(req: Request) {
       seat: string;
     };
 
-    const seedTickets: SeedTicket[] = [
-      // Concerts
-      {
-        title: "Taylor Swift — The Eras Tour",
-        date: "Apr 18, 2026",
-        venue: "Rogers Centre (Toronto)",
-        eventType: "concert",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 299,
-        priceDollars: 299,
-        row: "A",
-        seat: "12",
-      },
-      {
-        title: "Drake — It's All a Blur Tour",
-        date: "May 5, 2026",
-        venue: "Scotiabank Arena (Toronto)",
-        eventType: "concert",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 220,
-        priceDollars: 179,
-        row: "104",
-        seat: "8",
-      },
-      {
-        title: "The Weeknd — After Hours Til Dawn",
-        date: "Jun 2, 2026",
-        venue: "Rogers Centre (Toronto)",
-        eventType: "concert",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 185,
-        priceDollars: 185,
-        row: "B",
-        seat: "22",
-      },
-      {
-        title: "Ed Sheeran — Mathematics Tour",
-        date: "Jul 11, 2026",
-        venue: "Rogers Centre (Toronto)",
-        eventType: "concert",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 160,
-        priceDollars: 129,
-        row: "126",
-        seat: "14",
-      },
+    type SeedEvent = {
+      title: string;
+      date: string;
+      venue: string;
+      eventType: SeedEventType;
+      selloutStatus: "SOLD_OUT" | "NOT_SOLD_OUT";
+      faceValueDollars: number;
+    };
 
-      // Hockey
-      {
-        title: "Toronto Maple Leafs vs Montreal Canadiens",
-        date: "Mar 14, 2026",
-        venue: "Scotiabank Arena (Toronto)",
-        eventType: "sports-hockey",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 240,
-        priceDollars: 240,
-        row: "12",
-        seat: "5",
-      },
-      {
-        title: "Toronto Maple Leafs vs Boston Bruins",
-        date: "Mar 28, 2026",
-        venue: "Scotiabank Arena (Toronto)",
-        eventType: "sports-hockey",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 210,
-        priceDollars: 175,
-        row: "18",
-        seat: "11",
-      },
+    // Real-world events (US + Canada, 2026) used as seed sources.
+    const seedEvents: SeedEvent[] = [
+      // Sports (major leagues)
+      { title: "Toronto Maple Leafs vs Montreal Canadiens", date: "2026-01-24", venue: "Scotiabank Arena, Toronto", eventType: "sports-hockey", selloutStatus: "SOLD_OUT", faceValueDollars: 240 },
+      { title: "Toronto Maple Leafs vs Boston Bruins", date: "2026-03-21", venue: "Scotiabank Arena, Toronto", eventType: "sports-hockey", selloutStatus: "SOLD_OUT", faceValueDollars: 225 },
+      { title: "Toronto Raptors vs New York Knicks", date: "2026-03-06", venue: "Scotiabank Arena, Toronto", eventType: "sports-basketball", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 140 },
+      { title: "Toronto Raptors vs Los Angeles Lakers", date: "2026-02-27", venue: "Scotiabank Arena, Toronto", eventType: "sports-basketball", selloutStatus: "SOLD_OUT", faceValueDollars: 190 },
+      { title: "Toronto Blue Jays vs New York Yankees", date: "2026-04-03", venue: "Rogers Centre, Toronto", eventType: "sports-baseball", selloutStatus: "SOLD_OUT", faceValueDollars: 95 },
+      { title: "Toronto Blue Jays vs Boston Red Sox", date: "2026-04-17", venue: "Rogers Centre, Toronto", eventType: "sports-baseball", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 75 },
+      { title: "Toronto FC vs Inter Miami CF", date: "2026-06-14", venue: "BMO Field, Toronto", eventType: "sports-soccer", selloutStatus: "SOLD_OUT", faceValueDollars: 120 },
+      { title: "Toronto FC vs CF Montréal", date: "2026-05-23", venue: "BMO Field, Toronto", eventType: "sports-soccer", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 68 },
+      { title: "Buffalo Bills vs Miami Dolphins", date: "2026-10-18", venue: "Highmark Stadium, Orchard Park", eventType: "sports-football", selloutStatus: "SOLD_OUT", faceValueDollars: 210 },
+      { title: "Seattle Kraken vs Vancouver Canucks", date: "2026-02-12", venue: "Climate Pledge Arena, Seattle", eventType: "sports-hockey", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 145 },
+      { title: "Chicago Bulls vs Boston Celtics", date: "2026-01-30", venue: "United Center, Chicago", eventType: "sports-basketball", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 135 },
+      { title: "LA Dodgers vs San Diego Padres", date: "2026-07-10", venue: "Dodger Stadium, Los Angeles", eventType: "sports-baseball", selloutStatus: "SOLD_OUT", faceValueDollars: 110 },
 
-      // Basketball
-      {
-        title: "Toronto Raptors vs Los Angeles Lakers",
-        date: "Feb 27, 2026",
-        venue: "Scotiabank Arena (Toronto)",
-        eventType: "sports-basketball",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 190,
-        priceDollars: 190,
-        row: "109",
-        seat: "7",
-      },
-      {
-        title: "Toronto Raptors vs New York Knicks",
-        date: "Mar 6, 2026",
-        venue: "Scotiabank Arena (Toronto)",
-        eventType: "sports-basketball",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 140,
-        priceDollars: 99,
-        row: "321",
-        seat: "3",
-      },
-
-      // Baseball
-      {
-        title: "Toronto Blue Jays vs New York Yankees",
-        date: "Apr 3, 2026",
-        venue: "Rogers Centre (Toronto)",
-        eventType: "sports-baseball",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 95,
-        priceDollars: 95,
-        row: "128",
-        seat: "9",
-      },
-      {
-        title: "Toronto Blue Jays vs Boston Red Sox",
-        date: "Apr 17, 2026",
-        venue: "Rogers Centre (Toronto)",
-        eventType: "sports-baseball",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 75,
-        priceDollars: 59,
-        row: "240",
-        seat: "16",
-      },
-
-      // Soccer
-      {
-        title: "Toronto FC vs CF Montréal",
-        date: "May 21, 2026",
-        venue: "BMO Field (Toronto)",
-        eventType: "sports-soccer",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 65,
-        priceDollars: 55,
-        row: "15",
-        seat: "18",
-      },
-      {
-        title: "Toronto FC vs Inter Miami",
-        date: "Jun 9, 2026",
-        venue: "BMO Field (Toronto)",
-        eventType: "sports-soccer",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 120,
-        priceDollars: 120,
-        row: "110",
-        seat: "6",
-      },
-
-      // Theatre
-      {
-        title: "Hamilton (Musical)",
-        date: "Mar 20, 2026",
-        venue: "Princess of Wales Theatre (Toronto)",
-        eventType: "theatre",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 180,
-        priceDollars: 180,
-        row: "C",
-        seat: "19",
-      },
-      {
-        title: "The Lion King (Musical)",
-        date: "Apr 9, 2026",
-        venue: "Ed Mirvish Theatre (Toronto)",
-        eventType: "theatre",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 155,
-        priceDollars: 129,
-        row: "F",
-        seat: "4",
-      },
+      // Theatre / stage
+      { title: "Hamilton (Broadway)", date: "2026-03-20", venue: "Richard Rodgers Theatre, New York", eventType: "theatre", selloutStatus: "SOLD_OUT", faceValueDollars: 199 },
+      { title: "The Lion King (Broadway)", date: "2026-04-09", venue: "Minskoff Theatre, New York", eventType: "theatre", selloutStatus: "SOLD_OUT", faceValueDollars: 179 },
+      { title: "Wicked (Broadway)", date: "2026-05-15", venue: "Gershwin Theatre, New York", eventType: "theatre", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 169 },
+      { title: "Moulin Rouge! The Musical", date: "2026-06-06", venue: "Al Hirschfeld Theatre, New York", eventType: "theatre", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 165 },
 
       // Comedy
-      {
-        title: "Dave Chappelle — Live",
-        date: "May 30, 2026",
-        venue: "Meridian Hall (Toronto)",
-        eventType: "comedy",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 150,
-        priceDollars: 150,
-        row: "D",
-        seat: "10",
-      },
-      {
-        title: "John Mulaney — Standup",
-        date: "Jun 14, 2026",
-        venue: "Massey Hall (Toronto)",
-        eventType: "comedy",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 120,
-        priceDollars: 89,
-        row: "E",
-        seat: "7",
-      },
+      { title: "Just For Laughs Montreal Gala", date: "2026-07-24", venue: "Place des Arts, Montréal", eventType: "comedy", selloutStatus: "SOLD_OUT", faceValueDollars: 120 },
+      { title: "JFL Toronto Showcase", date: "2026-09-26", venue: "Meridian Hall, Toronto", eventType: "comedy", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 85 },
+      { title: "New York Comedy Festival Headliner Night", date: "2026-11-08", venue: "Beacon Theatre, New York", eventType: "comedy", selloutStatus: "SOLD_OUT", faceValueDollars: 110 },
+      { title: "Netflix Is A Joke Festival Showcase", date: "2026-05-10", venue: "Hollywood Palladium, Los Angeles", eventType: "comedy", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 95 },
 
-      // Festival / Conference
-      {
-        title: "Toronto International Film Festival (TIFF) — Gala",
-        date: "Sep 10, 2026",
-        venue: "TIFF Bell Lightbox (Toronto)",
-        eventType: "festival",
-        selloutStatus: "SOLD_OUT",
-        faceValueDollars: 95,
-        priceDollars: 95,
-        row: "GA",
-        seat: "GA",
-      },
-      {
-        title: "Collision Conference — Day Pass",
-        date: "Jun 22, 2026",
-        venue: "Enercare Centre (Toronto)",
-        eventType: "conference",
-        selloutStatus: "NOT_SOLD_OUT",
-        faceValueDollars: 399,
-        priceDollars: 249,
-        row: "GA",
-        seat: "GA",
-      },
+      // Concerts / music events
+      { title: "Osheaga Music and Arts Festival — Day 1", date: "2026-07-31", venue: "Parc Jean-Drapeau, Montréal", eventType: "festival", selloutStatus: "SOLD_OUT", faceValueDollars: 210 },
+      { title: "Lollapalooza Chicago — Day Pass", date: "2026-08-01", venue: "Grant Park, Chicago", eventType: "festival", selloutStatus: "SOLD_OUT", faceValueDollars: 225 },
+      { title: "Austin City Limits Music Festival — Weekend 1", date: "2026-10-02", venue: "Zilker Park, Austin", eventType: "festival", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 199 },
+      { title: "Calgary Stampede — Evening Show", date: "2026-07-10", venue: "Scotiabank Saddledome, Calgary", eventType: "festival", selloutStatus: "SOLD_OUT", faceValueDollars: 89 },
+      { title: "Toronto International Film Festival Gala", date: "2026-09-10", venue: "TIFF Bell Lightbox, Toronto", eventType: "festival", selloutStatus: "SOLD_OUT", faceValueDollars: 95 },
+      { title: "Montreal International Jazz Festival Headliner", date: "2026-06-30", venue: "Place des Festivals, Montréal", eventType: "festival", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 79 },
+
+      // Conferences / workshops
+      { title: "Collision Conference — Day Pass", date: "2026-06-22", venue: "Enercare Centre, Toronto", eventType: "conference", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 399 },
+      { title: "SXSW Conference + Festivals Badge", date: "2026-03-13", venue: "Austin Convention Center, Austin", eventType: "conference", selloutStatus: "SOLD_OUT", faceValueDollars: 995 },
+      { title: "CES 2026 — Conference Pass", date: "2026-01-07", venue: "Las Vegas Convention Center, Las Vegas", eventType: "conference", selloutStatus: "SOLD_OUT", faceValueDollars: 799 },
+      { title: "Toronto Data Workshop Summit", date: "2026-05-02", venue: "Metro Toronto Convention Centre, Toronto", eventType: "workshop", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 249 },
+      { title: "Vancouver Product Leadership Workshop", date: "2026-04-18", venue: "Vancouver Convention Centre, Vancouver", eventType: "workshop", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 220 },
+      { title: "Montreal AI Practitioner Workshop", date: "2026-09-19", venue: "Palais des congrès de Montréal, Montréal", eventType: "workshop", selloutStatus: "SOLD_OUT", faceValueDollars: 275 },
+      { title: "Calgary DevOps Hands-on Workshop", date: "2026-10-03", venue: "Calgary TELUS Convention Centre, Calgary", eventType: "workshop", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 199 },
+      { title: "Edmonton Startup Operations Workshop", date: "2026-11-14", venue: "Edmonton Convention Centre, Edmonton", eventType: "workshop", selloutStatus: "NOT_SOLD_OUT", faceValueDollars: 175 },
+      { title: "Ottawa Cybersecurity Workshop", date: "2026-02-21", venue: "Shaw Centre, Ottawa", eventType: "workshop", selloutStatus: "SOLD_OUT", faceValueDollars: 260 },
     ];
 
-    // Expand to ~40 by cloning patterns with slight variations.
-    // (Keeping deterministic output: same titles each time.)
-    while (seedTickets.length < 40) {
+    // Build 100 ticket listings from real events, varying only seat/row and price.
+    const seatRows = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "N", "P", "R", "S", "T"];
+    const seatNums = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14", "16", "18", "20", "22", "24"];
+
+    const seedTickets: SeedTicket[] = [];
+    let idx = 0;
+    while (seedTickets.length < 100) {
+      const ev = seedEvents[idx % seedEvents.length];
       const n = seedTickets.length + 1;
-      const template = seedTickets[(n - 1) % 16];
+      const row = seatRows[n % seatRows.length];
+      const seat = seatNums[(n * 3) % seatNums.length];
+      const offset = (n % 5) * 5;
+      const price = ev.selloutStatus === "SOLD_OUT"
+        ? Math.max(20, ev.faceValueDollars - (n % 2) * 0)
+        : Math.max(20, ev.faceValueDollars - offset);
+
       seedTickets.push({
-        ...template,
-        title: `${template.title} (Alt ${n})`,
-        // small price variety
-        priceDollars: Math.max(25, template.priceDollars - (n % 4) * 10),
-        faceValueDollars: template.faceValueDollars,
-        row: template.row === "GA" ? "GA" : String((Number(template.row) || (n % 20) + 1)),
-        seat: template.seat === "GA" ? "GA" : String(((Number(template.seat) || 1) + (n % 12)) % 28 + 1),
-        selloutStatus: n % 3 === 0 ? "SOLD_OUT" : "NOT_SOLD_OUT",
+        title: ev.title,
+        date: ev.date,
+        venue: ev.venue,
+        eventType: ev.eventType,
+        selloutStatus: ev.selloutStatus,
+        faceValueDollars: ev.faceValueDollars,
+        priceDollars: price,
+        row,
+        seat,
       });
+      idx += 1;
     }
 
-    // Upsert events for each ticket (stable seed IDs)
+    // Upsert one event per unique title/date/venue source
     const eventIdByTitle = new Map<string, string>();
-    for (let i = 0; i < seedTickets.length; i++) {
-      const t = seedTickets[i];
-      const eventId = `seed-event-${String(i + 1).padStart(2, "0")}`;
-      eventIdByTitle.set(t.title, eventId);
+    for (let i = 0; i < seedEvents.length; i++) {
+      const ev = seedEvents[i];
+      const eventId = `seed-event-${String(i + 1).padStart(3, "0")}`;
+      eventIdByTitle.set(ev.title, eventId);
 
       await prisma.event.upsert({
         where: { id: eventId },
         create: {
           id: eventId,
-          title: t.title,
-          venue: t.venue,
-          date: t.date,
-          selloutStatus: t.selloutStatus,
+          title: ev.title,
+          venue: ev.venue,
+          date: ev.date,
+          selloutStatus: ev.selloutStatus,
         },
         update: {
-          title: t.title,
-          venue: t.venue,
-          date: t.date,
-          selloutStatus: t.selloutStatus,
+          title: ev.title,
+          venue: ev.venue,
+          date: ev.date,
+          selloutStatus: ev.selloutStatus,
         },
       });
     }
@@ -514,7 +369,7 @@ export async function POST(req: Request) {
 
     for (const t of seedTickets) {
       const existing = await prisma.ticket.findFirst({
-        where: { title: t.title, sellerId: seedSeller.id },
+        where: { title: t.title, sellerId: seedSeller.id, row: t.row, seat: t.seat },
         select: { id: true, status: true },
       });
 
