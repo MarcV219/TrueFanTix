@@ -422,7 +422,7 @@ export default function TicketsPage() {
                     <div className="absolute top-2 left-2 flex flex-col gap-1">
                       {ticket.isSoldOut && (
                         <span className="bg-amber-500 text-white px-2 py-1 text-xs font-semibold rounded">
-                          ⭐ Sold Out
+                          ⭐ Sold Out Event
                         </span>
                       )}
                       <span className={`px-2 py-1 text-xs font-semibold rounded ${
