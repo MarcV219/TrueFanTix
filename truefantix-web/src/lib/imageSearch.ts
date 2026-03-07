@@ -45,6 +45,8 @@ const BLOCKED_DOMAINS = [
   'fbcdn.net',
   'instagram.com',
   'cdninstagram.com',
+  // Frequently returns hotlink/variant URLs that fail in-browser for tickets.
+  'static.wikia.nocookie.net',
 ];
 
 // Sites that generally work well for hotlinking
