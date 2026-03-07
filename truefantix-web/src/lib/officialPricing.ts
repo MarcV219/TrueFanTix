@@ -5,6 +5,8 @@ type TicketLike = {
   primaryVendor?: string | null;
 };
 
+let _lastTicketmasterCallAt = 0;
+
 export type OfficialSnapshot = {
   found: boolean;
   vendor: "ticketmaster" | "none";
@@ -71,6 +73,13 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
   if (!key) {
     return { found: false, vendor: "none", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: "missing-ticketmaster-key" };
   }
+
+  // Respect Ticketmaster default limit (5 req/s) by spacing calls to <=4 req/s.
+  const minGapMs = 260;
+  const now = Date.now();
+  const waitMs = Math.max(0, minGapMs - (now - _lastTicketmasterCallAt));
+  if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+  _lastTicketmasterCallAt = Date.now();
 
   const query = normalizeTitle(ticket.title);
   const city = venueCity(ticket.venue);
