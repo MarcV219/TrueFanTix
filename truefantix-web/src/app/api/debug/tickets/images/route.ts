@@ -51,7 +51,7 @@ export async function GET(req: Request) {
             where: {
               id: { not: t.id },
               status: { in: ["AVAILABLE", "SOLD"] },
-              image: { notIn: ["", "/default.jpg", "/concert-placeholder.jpg", "/sports-placeholder.jpg", "/theatre-placeholder.jpg", "/comedy-placeholder.jpg", "/conference-placeholder.jpg", "/festival-placeholder.jpg", "/gala-placeholder.jpg", "/opera-placeholder.jpg", "/workshop-placeholder.jpg", "/basketball-placeholder.jpg", "/football-placeholder.jpg", "/hockey-placeholder.jpg"], not: null },
+              image: { notIn: ["", "/default.jpg", "/concert-placeholder.jpg", "/sports-placeholder.jpg", "/theatre-placeholder.jpg", "/comedy-placeholder.jpg", "/conference-placeholder.jpg", "/festival-placeholder.jpg", "/gala-placeholder.jpg", "/opera-placeholder.jpg", "/workshop-placeholder.jpg", "/basketball-placeholder.jpg", "/football-placeholder.jpg", "/hockey-placeholder.jpg"] },
               title: { startsWith: baseTitle },
             },
             orderBy: { createdAt: "desc" },
