@@ -109,6 +109,45 @@ function getPlaceholderImage(title: string): string {
   return eventType.placeholder;
 }
 
+const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
+  toronto: { lat: 43.6532, lon: -79.3832 },
+  montreal: { lat: 45.5017, lon: -73.5673 },
+  vancouver: { lat: 49.2827, lon: -123.1207 },
+  ottawa: { lat: 45.4215, lon: -75.6972 },
+  calgary: { lat: 51.0447, lon: -114.0719 },
+  edmonton: { lat: 53.5461, lon: -113.4938 },
+  newyork: { lat: 40.7128, lon: -74.006 },
+  boston: { lat: 42.3601, lon: -71.0589 },
+  miami: { lat: 25.7617, lon: -80.1918 },
+  chicago: { lat: 41.8781, lon: -87.6298 },
+  losangeles: { lat: 34.0522, lon: -118.2437 },
+};
+
+function normalizeCityKey(city: string): string {
+  return (city || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function inferCoordsFromCity(city: string | null | undefined): { lat: number; lon: number } | null {
+  const key = normalizeCityKey(city || "");
+  return CITY_COORDS[key] ?? null;
+}
+
+function haversineKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * (Math.PI / 180);
+  const dLon = (b.lon - a.lon) * (Math.PI / 180);
+  const lat1 = a.lat * (Math.PI / 180);
+  const lat2 = b.lat * (Math.PI / 180);
+  const x =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  return R * c;
+}
+
 type Ticket = {
   id: string;
   title: string;
@@ -144,6 +183,7 @@ export default function TicketsPage() {
   const [eventType, setEventType] = useState("all");
   const [priceTagFilter, setPriceTagFilter] = useState("all");
   const [soldOutOnly, setSoldOutOnly] = useState(false);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
     async function fetchTickets() {
@@ -201,6 +241,41 @@ export default function TicketsPage() {
     }
 
     fetchTickets();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUserLocation() {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        const json: any = await res.json().catch(() => ({}));
+        const fromProfile = inferCoordsFromCity(json?.user?.city);
+        if (!cancelled && fromProfile) {
+          setUserCoords(fromProfile);
+          return;
+        }
+      } catch {
+        // ignore and fallback to browser geolocation
+      }
+
+      if (typeof window !== 'undefined' && navigator.geolocation && !cancelled) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (!cancelled) setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+          },
+          () => {
+            // keep null; sorting will fall back to sold-out/date
+          },
+          { enableHighAccuracy: false, timeout: 4000, maximumAge: 300000 }
+        );
+      }
+    }
+
+    loadUserLocation();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Fetch dynamic images for tickets
@@ -261,6 +336,27 @@ export default function TicketsPage() {
       return true;
     });
   }, [tickets, searchQuery, priceRange, eventType, priceTagFilter, soldOutOnly]);
+
+  const sortedFilteredTickets = React.useMemo(() => {
+    const arr = [...filteredTickets];
+    arr.sort((a, b) => {
+      // Priority 1: nearest location to user
+      const aCoords = inferCoordsFromCity(a.city);
+      const bCoords = inferCoordsFromCity(b.city);
+      const da = userCoords && aCoords ? haversineKm(userCoords, aCoords) : Number.POSITIVE_INFINITY;
+      const db = userCoords && bCoords ? haversineKm(userCoords, bCoords) : Number.POSITIVE_INFINITY;
+      if (da !== db) return da - db;
+
+      // Priority 2: sold-out events first
+      if (a.isSoldOut !== b.isSoldOut) return a.isSoldOut ? -1 : 1;
+
+      // Priority 3: date of event (soonest first)
+      const ta = Number.isNaN(Date.parse(a.date)) ? Number.POSITIVE_INFINITY : Date.parse(a.date);
+      const tb = Number.isNaN(Date.parse(b.date)) ? Number.POSITIVE_INFINITY : Date.parse(b.date);
+      return ta - tb;
+    });
+    return arr;
+  }, [filteredTickets, userCoords]);
 
   const clearFilters = () => {
     setSearchQuery("");
@@ -369,7 +465,7 @@ export default function TicketsPage() {
         <div className="max-w-7xl mx-auto">
           <div className="mb-6">
             <p className="text-gray-600 dark:text-gray-400">
-              {loading ? "Loading tickets..." : `${filteredTickets.length} ticket${filteredTickets.length !== 1 ? "s" : ""} found`}
+              {loading ? "Loading tickets..." : `${sortedFilteredTickets.length} ticket${sortedFilteredTickets.length !== 1 ? "s" : ""} found`}
             </p>
           </div>
 
@@ -389,7 +485,7 @@ export default function TicketsPage() {
             </div>
           )}
 
-          {!loading && !error && filteredTickets.length === 0 && (
+          {!loading && !error && sortedFilteredTickets.length === 0 && (
             <div className="text-center py-12">
               <p className="text-gray-600 text-lg">No tickets match your search.</p>
               <button onClick={clearFilters} className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg">
@@ -398,9 +494,9 @@ export default function TicketsPage() {
             </div>
           )}
 
-          {!loading && !error && filteredTickets.length > 0 && (
+          {!loading && !error && sortedFilteredTickets.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredTickets.map((ticket) => (
+              {sortedFilteredTickets.map((ticket) => (
                 <div
                   key={ticket.id}
                   className="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition flex flex-col border border-gray-200 dark:border-gray-700 overflow-hidden"
