@@ -15,6 +15,7 @@ export type ApiTicketLike = {
   image?: string;
   sellerId?: string;
   isAboveConfirmedFaceValue?: boolean;
+  isValidationMismatch?: boolean;
   seller?: {
     badges?: string[];
     rating?: number;
@@ -49,6 +50,7 @@ export type TicketCardView = {
   placeholderImage: string;
   dynamicImage?: string;
   isAboveConfirmedFaceValue: boolean;
+  isValidationMismatch: boolean;
 };
 
 const DEFAULT_IMAGE = "/default.jpg";
@@ -219,6 +221,7 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
     isSoldOut,
     placeholderImage: eventTypeInfo.placeholder,
     isAboveConfirmedFaceValue: Boolean(t.isAboveConfirmedFaceValue),
+    isValidationMismatch: Boolean(t.isValidationMismatch),
   };
 }
 

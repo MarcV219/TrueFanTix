@@ -86,7 +86,18 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
   if (city) sp.set("city", city);
 
   const url = `https://app.ticketmaster.com/discovery/v2/events.json?${sp.toString()}`;
-  const res = await fetch(url, { cache: "no-store" });
+
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch(url, { cache: "no-store" });
+    if (res.status !== 429) break;
+    await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+  }
+
+  if (!res) {
+    return { found: false, vendor: "none", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: "ticketmaster-no-response" };
+  }
+
   if (!res.ok) {
     let detail = "";
     try {
