@@ -74,20 +74,16 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
 
   const query = normalizeTitle(ticket.title);
   const city = venueCity(ticket.venue);
-  const window = dateWindow(ticket.date);
-
+  // NOTE: Ticketmaster rejects some date param combinations with DIS1015.
+  // Keep API query broad and enforce strict date matching locally below.
   const sp = new URLSearchParams({
     apikey: key,
     keyword: query,
-    size: "10",
+    size: "20",
     sort: "date,asc",
   });
 
   if (city) sp.set("city", city);
-  if (window) {
-    sp.set("startDateTime", window.startISO);
-    sp.set("endDateTime", window.endISO);
-  }
 
   const url = `https://app.ticketmaster.com/discovery/v2/events.json?${sp.toString()}`;
   const res = await fetch(url, { cache: "no-store" });
