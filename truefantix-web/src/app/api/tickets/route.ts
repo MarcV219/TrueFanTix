@@ -342,15 +342,27 @@ export async function POST(req: Request) {
 
     // Auto image pipeline: always attempt event-relevant fetch server-side.
     const inferredEventType = getEventType(title).type;
+    let imageSource: "brave" | "client-fallback" | "placeholder" = "placeholder";
+    let imageReason = "no-usable-auto-image";
+
     let resolvedImage = await getTicketImage(title, inferredEventType);
+
+    if (resolvedImage && !resolvedImage.startsWith("/")) {
+      imageSource = "brave";
+      imageReason = "auto-image-selected";
+    }
 
     // Fallback to client-provided image only if auto-fetch failed to get non-placeholder.
     if ((!resolvedImage || resolvedImage.startsWith("/")) && requestedImage) {
       resolvedImage = requestedImage;
+      imageSource = "client-fallback";
+      imageReason = "auto-returned-placeholder-used-client-image";
     }
 
     if (!resolvedImage) {
       resolvedImage = "/default.jpg";
+      imageSource = "placeholder";
+      imageReason = "empty-image-fallback-default";
     }
 
     const created = await prisma.ticket.create({
@@ -397,6 +409,8 @@ export async function POST(req: Request) {
           faceValue:
             created.faceValueCents != null ? centsToDollars(created.faceValueCents) : null,
           image: created.image,
+          imageSource,
+          imageReason,
           venue: created.venue,
           date: created.date,
           status: created.status,
