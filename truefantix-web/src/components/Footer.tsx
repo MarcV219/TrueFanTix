@@ -58,6 +58,11 @@ export default function Footer() {
               </Link>
             </li>
             <li>
+              <Link href="/faq/access-tokens" className="hover:text-white">
+                Access Tokens
+              </Link>
+            </li>
+            <li>
               <Link href="/faq/payments" className="hover:text-white">
                 Payments
               </Link>
