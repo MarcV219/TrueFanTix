@@ -3,6 +3,10 @@
 import React, { useState } from "react";
 import Image from "next/image";
 
+const FACEBOOK_WEB_URL = "https://m.facebook.com/TrueFanTix/";
+const FACEBOOK_ANDROID_INTENT_URL =
+  "intent://www.facebook.com/TrueFanTix#Intent;package=com.facebook.katana;scheme=https;end";
+
 export default function ComingSoonPage() {
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -114,7 +118,21 @@ export default function ComingSoonPage() {
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
             <a
-              href="https://m.facebook.com/TrueFanTix"
+              href={FACEBOOK_WEB_URL}
+              onClick={(e) => {
+                // Some Android browsers/in-app webviews refuse to open facebook.com links reliably.
+                // Try the native app first via an intent URL, then fall back to the web URL.
+                if (typeof window === "undefined") return;
+                const isAndroid = /Android/i.test(window.navigator.userAgent);
+                if (!isAndroid) return;
+
+                e.preventDefault();
+                window.location.href = FACEBOOK_ANDROID_INTENT_URL;
+                window.setTimeout(() => {
+                  // Fallback for devices without the Facebook app, or if the intent is blocked.
+                  window.location.href = FACEBOOK_WEB_URL;
+                }, 800);
+              }}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-600 text-white font-semibold text-sm sm:text-base hover:bg-blue-700 transition shadow"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 fill-current">
