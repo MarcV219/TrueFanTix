@@ -114,9 +114,7 @@ export default function ComingSoonPage() {
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
             <a
-              href="https://www.facebook.com/TrueFanTix"
-              target="_blank"
-              rel="noopener noreferrer"
+              href="https://m.facebook.com/TrueFanTix"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-600 text-white font-semibold text-sm sm:text-base hover:bg-blue-700 transition shadow"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 fill-current">
