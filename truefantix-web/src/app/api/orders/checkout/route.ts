@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { schemas, validateRequest } from "@/lib/validation";
 
 const ADMIN_FEE_BPS = 875;
 const BPS_DENOMINATOR = 10_000;
@@ -28,12 +29,6 @@ function getIdempotencyKey(req: Request, bodyKey?: string): string {
   return "";
 }
 
-type CheckoutBody = {
-  ticketIds: string[];
-  buyerSellerId: string;
-  idempotencyKey?: string;
-};
-
 class TicketNotAvailableError extends Error {
   ticketId: string;
   constructor(ticketId: string) {
@@ -45,29 +40,27 @@ class TicketNotAvailableError extends Error {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as CheckoutBody;
+    const validation = await validateRequest(schemas.orderCheckout)(req);
+    if (!validation.success) return validation.response;
 
-    const buyerSellerId = normalizeId(body?.buyerSellerId);
+    const buyerSellerId = normalizeId(validation.data.buyerSellerId);
 
     // IMPORTANT: de-dupe ticketIds to avoid duplicate OrderItems / confusing totals
-    const ticketIds = Array.isArray(body?.ticketIds)
-      ? Array.from(new Set(body.ticketIds.map(normalizeId).filter(Boolean)))
-      : [];
+    const ticketIds = Array.from(
+      new Set((validation.data.ticketIds ?? []).map(normalizeId).filter(Boolean))
+    );
 
-    const idempotencyKey = getIdempotencyKey(req, body?.idempotencyKey);
+    const idempotencyKey = getIdempotencyKey(req, validation.data.idempotencyKey);
 
-    if (!buyerSellerId) {
-      return NextResponse.json({ ok: false, error: "Missing buyerSellerId" }, { status: 400 });
-    }
-    if (!ticketIds.length) {
-      return NextResponse.json({ ok: false, error: "Missing ticketIds[]" }, { status: 400 });
-    }
-    if (ticketIds.length > 10) {
-      return NextResponse.json({ ok: false, error: "Too many tickets in one checkout (max 10)" }, { status: 400 });
-    }
+    // MVP rule: idempotency is REQUIRED for checkout (avoid double-charges / double-reservations)
     if (!idempotencyKey) {
       return NextResponse.json(
-        { ok: false, error: "Missing idempotency key (header Idempotency-Key or body.idempotencyKey)" },
+        {
+          ok: false,
+          error: "VALIDATION_ERROR",
+          message:
+            "Missing idempotency key (header Idempotency-Key or body.idempotencyKey)",
+        },
         { status: 400 }
       );
     }
@@ -104,7 +97,11 @@ export async function POST(req: Request) {
         select: { id: true, creditBalanceCredits: true },
       });
       if (!buyer) {
-        return { ok: false as const, status: 400 as const, body: { ok: false, error: "buyerSellerId not found" } };
+        return {
+          ok: false as const,
+          status: 400 as const,
+          body: { ok: false, error: "buyerSellerId not found" },
+        };
       }
 
       // Load all tickets + event
@@ -119,7 +116,11 @@ export async function POST(req: Request) {
         return {
           ok: false as const,
           status: 404 as const,
-          body: { ok: false, error: "One or more tickets not found", debug: { missing } },
+          body: {
+            ok: false,
+            error: "One or more tickets not found",
+            debug: { missing },
+          },
         };
       }
 
@@ -137,7 +138,11 @@ export async function POST(req: Request) {
         return {
           ok: false as const,
           status: 400 as const,
-          body: { ok: false, error: "All tickets in a single order must be from the same seller (MVP)" },
+          body: {
+            ok: false,
+            error:
+              "All tickets in a single order must be from the same seller (MVP)",
+          },
         };
       }
 
@@ -151,7 +156,9 @@ export async function POST(req: Request) {
       }
 
       // Sold-out access token requirement: 1 access token per SOLD_OUT ticket
-      const soldOutCount = tickets.filter((t: any) => t.event?.selloutStatus === "SOLD_OUT").length;
+      const soldOutCount = tickets.filter(
+        (t: any) => t.event?.selloutStatus === "SOLD_OUT"
+      ).length;
       const requiredCredits = soldOutCount * CREDIT_COST_PER_SOLDOUT_PURCHASE;
 
       if (requiredCredits > 0 && (buyer.creditBalanceCredits ?? 0) < requiredCredits) {
@@ -161,14 +168,23 @@ export async function POST(req: Request) {
           body: {
             ok: false,
             error: "Insufficient access tokens to reserve sold-out event tickets",
-            debug: { buyerCredits: buyer.creditBalanceCredits ?? 0, requiredCredits, soldOutCount },
+            debug: {
+              buyerCredits: buyer.creditBalanceCredits ?? 0,
+              requiredCredits,
+              soldOutCount,
+            },
           },
         };
       }
 
       // Compute totals for the entire order
-      const amountCents = tickets.reduce((sum: number, t: { priceCents: number }) => sum + t.priceCents, 0);
-      const adminFeeCents = Math.round((amountCents * ADMIN_FEE_BPS) / BPS_DENOMINATOR);
+      const amountCents = tickets.reduce(
+        (sum: number, t: { priceCents: number }) => sum + t.priceCents,
+        0
+      );
+      const adminFeeCents = Math.round(
+        (amountCents * ADMIN_FEE_BPS) / BPS_DENOMINATOR
+      );
       const totalCents = amountCents + adminFeeCents;
 
       // Create Order header first (we need its id for reservations)
@@ -251,10 +267,14 @@ export async function POST(req: Request) {
     });
 
     if ((result as any)?.ok === false) {
-      return NextResponse.json((result as any).body, { status: (result as any).status });
+      return NextResponse.json((result as any).body, {
+        status: (result as any).status,
+      });
     }
 
-    return NextResponse.json((result as any).body, { status: (result as any).status ?? 200 });
+    return NextResponse.json((result as any).body, {
+      status: (result as any).status ?? 200,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
 
@@ -271,7 +291,10 @@ export async function POST(req: Request) {
     }
 
     if (message.startsWith("Ticket not available:")) {
-      return NextResponse.json({ ok: false, error: "One or more tickets not available", details: message }, { status: 409 });
+      return NextResponse.json(
+        { ok: false, error: "One or more tickets not available", details: message },
+        { status: 409 }
+      );
     }
 
     if (err && typeof err === "object" && "code" in err && (err as any).code === "P2002") {
@@ -285,11 +308,19 @@ export async function POST(req: Request) {
       })();
 
       return NextResponse.json(
-        { ok: false, error: "Checkout already processed (idempotency)", details: message, debug: { idempotencyKey: bodyKey } },
+        {
+          ok: false,
+          error: "Checkout already processed (idempotency)",
+          details: message,
+          debug: { idempotencyKey: bodyKey },
+        },
         { status: 200 }
       );
     }
 
-    return NextResponse.json({ ok: false, error: "Checkout failed", details: message }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "Checkout failed", details: message },
+      { status: 500 }
+    );
   }
 }

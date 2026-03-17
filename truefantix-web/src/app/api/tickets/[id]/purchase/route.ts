@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
+import { schemas } from "@/lib/validation";
 
 const ADMIN_FEE_BPS = 875; // 8.75%
 const BPS_DENOMINATOR = 10_000;
@@ -77,8 +78,25 @@ export async function POST(req: Request, ctx: Ctx) {
     const url = new URL(req.url);
 
     // MVP: existing flow passes buyerSellerId; we must ensure it belongs to the logged-in user.
-    const buyerSellerId = normalizeId(url.searchParams.get("buyerSellerId"));
-    const idempotencyKey = getIdempotencyKey(req);
+    const qpParsed = schemas.ticketPurchaseQuery.safeParse({
+      buyerSellerId: url.searchParams.get("buyerSellerId"),
+      idempotencyKey: url.searchParams.get("idempotencyKey"),
+    });
+
+    if (!qpParsed.success) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "VALIDATION_ERROR",
+          message: "Invalid purchase parameters",
+          details: qpParsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`),
+        },
+        { status: 400 }
+      );
+    }
+
+    const buyerSellerId = normalizeId(qpParsed.data.buyerSellerId);
+    const idempotencyKey = getIdempotencyKey(req) || normalizeId(qpParsed.data.idempotencyKey);
 
     if (!ticketId) {
       return NextResponse.json(

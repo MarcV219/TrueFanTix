@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
+import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/notifications
 // List all notifications for the current user
@@ -78,17 +79,10 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const body = (await req.json().catch(() => null)) as {
-      ids?: string[];
-      markAll?: boolean;
-    } | null;
+    const validation = await validateRequest(schemas.notificationsPatchApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Invalid request body." },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     if (body.markAll) {
       // Mark all as read

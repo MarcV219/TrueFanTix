@@ -3,6 +3,7 @@ import { z } from "zod";
 // Common validation schemas
 export const schemas = {
   // Ticket schemas
+  // NOTE: This is a generic ticket schema used by some parts of the app.
   ticketCreate: z.object({
     title: z.string().min(3).max(200),
     priceCents: z.number().int().positive().max(10000000), // Max $100,000
@@ -18,6 +19,32 @@ export const schemas = {
     eventId: z.string().optional(),
   }),
 
+  // Used by POST /api/tickets (seller creates a listing)
+  ticketCreateApi: z.object({
+    title: z.string().trim().min(1).max(120),
+    priceCents: z.number().int().positive().max(10_000_000),
+    faceValueCents: z.number().int().nonnegative().optional().nullable(),
+
+    // Optional client-provided image (server will try to auto-fetch a relevant one first)
+    image: z.string().trim().url().max(2048).optional().nullable(),
+
+    venue: z.string().trim().min(1).max(200),
+    date: z.string().trim().min(1).max(100),
+
+    // Seller override for event type when auto-tagging is incorrect
+    eventTypeOverride: z.string().trim().max(80).optional().nullable(),
+
+    eventId: z.string().trim().cuid().optional().nullable(),
+
+    barcodeData: z.string().trim().min(8).max(8192).optional().nullable(),
+    barcodeType: z.string().trim().max(100).optional().nullable(),
+
+    primaryVendor: z.string().trim().max(80).optional().nullable(),
+    transferMethod: z.string().trim().max(80).optional().nullable(),
+    barcodeText: z.string().trim().max(255).optional().nullable(),
+    verificationImage: z.string().trim().url().max(2048).optional().nullable(),
+  }),
+
   // Order schemas
   orderCheckout: z.object({
     ticketIds: z.array(z.string().cuid()).min(1).max(10),
@@ -30,6 +57,11 @@ export const schemas = {
     orderId: z.string().cuid(),
     amount: z.number().positive(),
     currency: z.enum(["USD", "CAD", "EUR", "GBP"]).default("USD"),
+  }),
+
+  // Used by POST /api/payments/create-intent
+  paymentsCreateIntent: z.object({
+    orderId: z.string().trim().cuid(),
   }),
 
   // User schemas
@@ -82,6 +114,34 @@ export const schemas = {
     code: z.string().trim().regex(/^\d{6}$/),
   }),
 
+  // Used by POST /api/auth/verify-email
+  authVerifyEmailSend: z
+    .object({
+      email: z.string().trim().email().max(255).optional(),
+      userId: z.string().trim().cuid().optional(),
+    })
+    .refine((v) => !!v.email || !!v.userId, {
+      message: "Email or userId required.",
+      path: ["email"],
+    }),
+
+  // Used by GET /api/auth/verify-email
+  authVerifyEmailConfirm: z.object({
+    token: z.string().trim().min(10).max(256),
+    userId: z.string().trim().cuid(),
+  }),
+
+  // Used by POST /api/auth/reset-password
+  authResetPassword: z.object({
+    token: z.string().trim().min(16).max(256),
+    email: z.string().trim().email().max(255),
+    password: z
+      .string()
+      .min(10)
+      .max(100)
+      .regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, "Password must include at least one letter and one number"),
+  }),
+
   // Notification preference schemas
   notificationPreference: z.object({
     type: z.enum(["ARTIST", "TEAM", "VENUE", "CITY", "EVENT_TYPE", "PRICE_DROP"]),
@@ -104,10 +164,24 @@ export const schemas = {
   }),
 
   // Transfer proof schemas
+  // (Legacy/strict) expects proofData to be a URL
   transferProof: z.object({
     orderId: z.string().cuid(),
     transferProofType: z.enum(["Screenshot", "Transfer ID", "Email Confirmation", "Other"]),
     transferProofData: z.string().url().max(500),
+  }),
+
+  // Used by POST /api/orders/transfer-proof
+  // proofData can be a URL (screenshot) OR an ID-like string.
+  orderTransferProof: z.object({
+    orderId: z.string().trim().cuid(),
+    transferProofType: z.enum(["Screenshot", "Transfer ID", "Email Confirmation", "Other"]),
+    transferProofData: z.string().trim().min(1).max(2048),
+  }),
+
+  // Used by POST /api/orders/confirm-receipt
+  orderConfirmReceipt: z.object({
+    orderId: z.string().trim().cuid(),
   }),
 
   // Profile update schemas
@@ -123,6 +197,25 @@ export const schemas = {
     region: z.string().trim().min(1).max(50).optional(),
     postalCode: z.string().trim().min(1).max(20).optional(),
     country: z.string().trim().min(2).max(2).optional(),
+  }),
+
+  // Used by PATCH /api/account/profile (keeps existing API constraints)
+  accountProfileUpdate: z.object({
+    firstName: z.string().trim().min(1).max(100).optional(),
+    lastName: z.string().trim().min(1).max(100).optional(),
+    displayName: z.string().trim().max(100).optional().nullable(),
+    phone: z.string().trim().min(7).max(50).optional(),
+    streetAddress1: z.string().trim().min(1).max(200).optional(),
+    streetAddress2: z.string().trim().max(200).optional().nullable(),
+    city: z.string().trim().min(1).max(100).optional(),
+    region: z.string().trim().min(1).max(100).optional(),
+    postalCode: z.string().trim().min(1).max(20).optional(),
+    country: z.string().trim().min(1).max(100).optional(),
+  }),
+
+  // Used by POST /api/account/delete
+  accountDelete: z.object({
+    password: z.string().min(1).max(200),
   }),
 
   // Password change schema
@@ -144,11 +237,40 @@ export const schemas = {
     notes: z.string().trim().max(500).optional().nullable(),
   }),
 
+  // Used by POST /api/waitlist (maxPrice in dollars)
+  waitlistCreateApi: z.object({
+    eventId: z.string().trim().cuid(),
+    maxPrice: z.number().positive().max(100000).optional(),
+    notes: z.string().trim().max(500).optional().nullable(),
+  }),
+
+  // Used by DELETE /api/waitlist
+  waitlistDeleteQuery: z.object({
+    id: z.string().trim().cuid(),
+  }),
+
   // Price alert schema
   priceAlert: z.object({
     ticketId: z.string().cuid().optional(),
     eventQuery: z.string().trim().min(1).max(200).optional(),
     targetPriceCents: z.number().int().positive().optional(),
+  }),
+
+  // Used by POST /api/price-alerts (targetPrice in dollars)
+  priceAlertCreateApi: z
+    .object({
+      ticketId: z.string().trim().cuid().optional(),
+      eventQuery: z.string().trim().min(1).max(200).optional(),
+      targetPrice: z.number().positive().max(100000).optional(),
+    })
+    .refine((v) => !!v.ticketId || !!v.eventQuery, {
+      message: "Provide ticketId or eventQuery.",
+      path: ["ticketId"],
+    }),
+
+  // Used by DELETE /api/price-alerts
+  priceAlertDeleteQuery: z.object({
+    id: z.string().trim().cuid(),
   }),
 
   // Forum schemas
@@ -191,6 +313,25 @@ export const schemas = {
     score: z.number().int().min(0).max(100).optional(),
   }),
 
+  // Used by POST /api/tickets/[id]/verify (ticketId comes from route param)
+  adminTicketVerificationById: z.object({
+    status: z.enum(["PENDING", "VERIFIED", "REJECTED", "NEEDS_REVIEW"]),
+    reason: z.string().trim().max(500).optional().nullable(),
+    score: z.number().int().min(0).max(100).optional().nullable(),
+    provider: z.string().trim().max(80).optional().nullable(),
+  }),
+
+  // Used by POST /api/tickets/verify/pending
+  ticketVerifyPending: z.object({
+    take: z.number().int().min(1).max(200).optional().default(25),
+  }),
+
+  // Used by POST /api/tickets/[id]/escrow/deposit
+  ticketEscrowDeposit: z.object({
+    provider: z.string().trim().max(50).optional().default("MANUAL"),
+    providerRef: z.string().trim().max(200).optional().nullable(),
+  }),
+
   adminForumModeration: z.object({
     postId: z.string().cuid().optional(),
     threadId: z.string().cuid().optional(),
@@ -219,6 +360,12 @@ export const schemas = {
     idempotencyKey: z.string().min(10).max(100).optional(),
   }),
 
+  // Used by POST /api/tickets/[id]/purchase (query string)
+  ticketPurchaseQuery: z.object({
+    buyerSellerId: z.string().trim().cuid(),
+    idempotencyKey: z.string().trim().min(10).max(100).optional(),
+  }),
+
   // Escrow action schemas
   escrowDeposit: z.object({
     ticketId: z.string().cuid(),
@@ -245,6 +392,28 @@ export const schemas = {
     priceDropAlerts: z.boolean().optional(),
     eventReminders: z.boolean().optional(),
   }),
+
+  // Used by POST /api/notifications/preferences
+  notificationPreferenceCreateApi: z.object({
+    type: z.string().trim().min(1).max(80),
+    value: z.string().trim().min(1).max(80),
+  }),
+
+  // Used by DELETE /api/notifications/preferences
+  notificationPreferenceDeleteApi: z.object({
+    id: z.string().trim().cuid(),
+  }),
+
+  // Used by PATCH /api/notifications
+  notificationsPatchApi: z
+    .object({
+      ids: z.array(z.string().trim().cuid()).min(1).max(500).optional(),
+      markAll: z.boolean().optional(),
+    })
+    .refine((v) => v.markAll === true || (Array.isArray(v.ids) && v.ids.length > 0), {
+      message: "Provide 'ids' array or set 'markAll' to true.",
+      path: ["ids"],
+    }),
 };
 
 // Sanitization utilities

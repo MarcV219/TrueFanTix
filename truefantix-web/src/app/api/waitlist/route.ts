@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { createNotification } from "@/lib/notifications/service";
+import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/waitlist
 // Get user's waitlist entries
@@ -63,18 +64,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = (await req.json().catch(() => null)) as {
-      eventId?: string;
-      maxPrice?: number;
-      notes?: string;
-    } | null;
+    const validation = await validateRequest(schemas.waitlistCreateApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body?.eventId) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "eventId required." },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     // Check if event exists
     const event = await prisma.event.findUnique({
@@ -172,14 +165,18 @@ export async function DELETE(req: Request) {
     }
 
     const { searchParams } = new URL(req.url);
-    const entryId = searchParams.get("id");
+    const parsed = schemas.waitlistDeleteQuery.safeParse({
+      id: searchParams.get("id"),
+    });
 
-    if (!entryId) {
+    if (!parsed.success) {
       return NextResponse.json(
         { ok: false, error: "VALIDATION_ERROR", message: "Entry ID required." },
         { status: 400 }
       );
     }
+
+    const entryId = parsed.data.id;
 
     // Verify ownership
     const entry = await prisma.waitlistEntry.findFirst({

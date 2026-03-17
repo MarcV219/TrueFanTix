@@ -31,7 +31,8 @@ function isUniqueConstraintError(err: any): boolean {
 
 function getOrderIdFromEvent(event: any): string | undefined {
   if (event.type === "payment_intent.succeeded" || event.type === "payment_intent.payment_failed") {
-    return event.data?.object?.metadata?.orderId;
+    const raw = event.data?.object?.metadata?.orderId;
+    return typeof raw === "string" ? raw.trim() : undefined;
   }
   return undefined;
 }
@@ -90,7 +91,7 @@ export async function POST(req: Request) {
     switch (event.type) {
       case "payment_intent.succeeded": {
         const paymentIntent = event.data.object;
-        const orderId = paymentIntent.metadata?.orderId;
+        const orderId = typeof paymentIntent.metadata?.orderId === "string" ? paymentIntent.metadata.orderId.trim() : "";
 
         if (!orderId) {
           console.error("No orderId in payment intent metadata");
@@ -240,7 +241,7 @@ export async function POST(req: Request) {
 
       case "payment_intent.payment_failed": {
         const paymentIntent = event.data.object;
-        const orderId = paymentIntent.metadata?.orderId;
+        const orderId = typeof paymentIntent.metadata?.orderId === "string" ? paymentIntent.metadata.orderId.trim() : "";
 
         if (!orderId) {
           console.error("No orderId in payment intent metadata");

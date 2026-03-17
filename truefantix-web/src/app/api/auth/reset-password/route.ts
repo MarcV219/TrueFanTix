@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { schemas, validateRequest } from "@/lib/validation";
 
 function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
@@ -21,39 +22,14 @@ function sha256(input: string) {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
-function isStrongEnoughPassword(pw: string) {
-  if (pw.length < 10) return false;
-  const hasLetter = /[A-Za-z]/.test(pw);
-  const hasNumber = /[0-9]/.test(pw);
-  return hasLetter && hasNumber;
-}
-
 const MAX_ATTEMPTS = 5;
 
 export async function POST(req: Request) {
   try {
-    let body: { token?: string; email?: string; password?: string };
-    try {
-      body = (await req.json()) as { token?: string; email?: string; password?: string };
-    } catch {
-      return jsonError(400, "VALIDATION_ERROR", "Invalid JSON body.");
-    }
+    const validation = await validateRequest(schemas.authResetPassword)(req);
+    if (!validation.success) return validation.response;
 
-    const token = (body.token ?? "").trim();
-    const email = (body.email ?? "").trim().toLowerCase();
-    const password = body.password ?? "";
-
-    if (!token) return jsonError(400, "VALIDATION_ERROR", "Reset token is required.");
-    if (!email) return jsonError(400, "VALIDATION_ERROR", "Email is required.");
-    if (!password) return jsonError(400, "VALIDATION_ERROR", "Password is required.");
-
-    if (!isStrongEnoughPassword(password)) {
-      return jsonError(
-        400,
-        "VALIDATION_ERROR",
-        "Password must be at least 10 characters and include at least one letter and one number."
-      );
-    }
+    const { token, email, password } = validation.data;
 
     // Find the reset code
     const secret = getResetSecret();
@@ -62,7 +38,7 @@ export async function POST(req: Request) {
 
     const resetCode = await prisma.verificationCode.findFirst({
       where: {
-        destination: `reset:${email}`,
+        destination: `reset:${email.toLowerCase()}`,
         codeHash: tokenHash,
         usedAt: null,
         expiresAt: { gt: now },
@@ -90,7 +66,7 @@ export async function POST(req: Request) {
       select: { id: true, email: true },
     });
 
-    if (!user || user.email.toLowerCase() !== email) {
+    if (!user || user.email.toLowerCase() !== email.toLowerCase()) {
       return jsonError(400, "INVALID_TOKEN", "Reset link is invalid.");
     }
 
@@ -114,7 +90,6 @@ export async function POST(req: Request) {
       { ok: true, message: "Password has been reset successfully." },
       { status: 200 }
     );
-
   } catch (err: any) {
     console.error("POST /api/auth/reset-password error:", err);
     return jsonError(500, "SERVER_ERROR", "An unexpected error occurred.");

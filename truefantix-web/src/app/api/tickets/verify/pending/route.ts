@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
+import { schemas } from "@/lib/validation";
 
 function hasInternalCronAuth(req: Request) {
   const configured = process.env.TICKET_VERIFY_CRON_KEY?.trim();
@@ -19,6 +20,7 @@ export async function POST(req: Request) {
     if (!gate.ok) return gate.res;
   }
 
+  // Allow empty body; default take will apply.
   let body: any = {};
   try {
     body = await req.json();
@@ -26,7 +28,20 @@ export async function POST(req: Request) {
     body = {};
   }
 
-  const take = Math.min(Math.max(Number(body?.take ?? 25), 1), 200);
+  const parsed = schemas.ticketVerifyPending.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "VALIDATION_ERROR",
+        message: "Invalid request body",
+        details: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+      },
+      { status: 400 }
+    );
+  }
+
+  const take = parsed.data.take;
 
   const pending = await prisma.ticket.findMany({
     where: { verificationStatus: "PENDING" },

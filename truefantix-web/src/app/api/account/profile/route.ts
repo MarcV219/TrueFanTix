@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { schemas, validateRequest } from "@/lib/validation";
 
 function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
@@ -11,23 +12,6 @@ function jsonError(status: number, error: string, message: string) {
 function normalizePhone(phone: string) {
   return phone.trim();
 }
-
-function isEmailLike(email: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-type UpdateProfileBody = {
-  firstName?: string;
-  lastName?: string;
-  displayName?: string | null;
-  phone?: string;
-  streetAddress1?: string;
-  streetAddress2?: string | null;
-  city?: string;
-  region?: string;
-  postalCode?: string;
-  country?: string;
-};
 
 export async function PATCH(req: Request) {
   try {
@@ -44,54 +28,21 @@ export async function PATCH(req: Request) {
     if (!user) return jsonError(401, "UNAUTHORIZED", "Please log in.");
     if (user.isBanned) return jsonError(403, "BANNED", "This account is restricted.");
 
-    let body: UpdateProfileBody;
-    try {
-      body = (await req.json()) as UpdateProfileBody;
-    } catch {
-      return jsonError(400, "VALIDATION_ERROR", "Invalid JSON body.");
-    }
+    const validation = await validateRequest(schemas.accountProfileUpdate)(req);
+    if (!validation.success) return validation.response;
 
-    // Build update object with validation
-    const updateData: Partial<UpdateProfileBody> = {};
+    const body = validation.data;
 
-    // First name
-    if (body.firstName !== undefined) {
-      const firstName = body.firstName.trim();
-      if (!firstName) return jsonError(400, "VALIDATION_ERROR", "First name is required.");
-      if (firstName.length > 100) return jsonError(400, "VALIDATION_ERROR", "First name is too long.");
-      updateData.firstName = firstName;
-    }
+    const updateData: Record<string, any> = {};
 
-    // Last name
-    if (body.lastName !== undefined) {
-      const lastName = body.lastName.trim();
-      if (!lastName) return jsonError(400, "VALIDATION_ERROR", "Last name is required.");
-      if (lastName.length > 100) return jsonError(400, "VALIDATION_ERROR", "Last name is too long.");
-      updateData.lastName = lastName;
-    }
+    if (body.firstName !== undefined) updateData.firstName = body.firstName;
+    if (body.lastName !== undefined) updateData.lastName = body.lastName;
+    if (body.displayName !== undefined) updateData.displayName = body.displayName ?? null;
 
-    // Display name (optional, can be null/empty)
-    if (body.displayName !== undefined) {
-      const displayName = body.displayName?.trim() || null;
-      if (displayName && displayName.length > 100) {
-        return jsonError(400, "VALIDATION_ERROR", "Display name is too long.");
-      }
-      updateData.displayName = displayName;
-    }
-
-    // Phone (with uniqueness check)
     if (body.phone !== undefined) {
       const phone = normalizePhone(body.phone);
-      if (!phone) return jsonError(400, "VALIDATION_ERROR", "Phone number is required.");
-      if (phone.length < 7) return jsonError(400, "VALIDATION_ERROR", "Enter a valid phone number.");
-      if (phone.length > 50) return jsonError(400, "VALIDATION_ERROR", "Phone number is too long.");
-      
-      // Check uniqueness if changed
       if (phone !== user.phone) {
-        const existing = await prisma.user.findUnique({
-          where: { phone },
-          select: { id: true },
-        });
+        const existing = await prisma.user.findUnique({ where: { phone }, select: { id: true } });
         if (existing) {
           return jsonError(409, "PHONE_IN_USE", "That phone number is already in use.");
         }
@@ -99,56 +50,17 @@ export async function PATCH(req: Request) {
       updateData.phone = phone;
     }
 
-    // Address fields
-    if (body.streetAddress1 !== undefined) {
-      const addr = body.streetAddress1.trim();
-      if (!addr) return jsonError(400, "VALIDATION_ERROR", "Street address is required.");
-      if (addr.length > 200) return jsonError(400, "VALIDATION_ERROR", "Street address is too long.");
-      updateData.streetAddress1 = addr;
-    }
+    if (body.streetAddress1 !== undefined) updateData.streetAddress1 = body.streetAddress1;
+    if (body.streetAddress2 !== undefined) updateData.streetAddress2 = body.streetAddress2 ?? null;
+    if (body.city !== undefined) updateData.city = body.city;
+    if (body.region !== undefined) updateData.region = body.region;
+    if (body.postalCode !== undefined) updateData.postalCode = body.postalCode;
+    if (body.country !== undefined) updateData.country = body.country;
 
-    if (body.streetAddress2 !== undefined) {
-      const addr2 = body.streetAddress2?.trim() || null;
-      if (addr2 && addr2.length > 200) {
-        return jsonError(400, "VALIDATION_ERROR", "Street address 2 is too long.");
-      }
-      updateData.streetAddress2 = addr2;
-    }
-
-    if (body.city !== undefined) {
-      const city = body.city.trim();
-      if (!city) return jsonError(400, "VALIDATION_ERROR", "City is required.");
-      if (city.length > 100) return jsonError(400, "VALIDATION_ERROR", "City is too long.");
-      updateData.city = city;
-    }
-
-    if (body.region !== undefined) {
-      const region = body.region.trim();
-      if (!region) return jsonError(400, "VALIDATION_ERROR", "Province/State is required.");
-      if (region.length > 100) return jsonError(400, "VALIDATION_ERROR", "Province/State is too long.");
-      updateData.region = region;
-    }
-
-    if (body.postalCode !== undefined) {
-      const postal = body.postalCode.trim();
-      if (!postal) return jsonError(400, "VALIDATION_ERROR", "Postal/ZIP code is required.");
-      if (postal.length > 20) return jsonError(400, "VALIDATION_ERROR", "Postal/ZIP code is too long.");
-      updateData.postalCode = postal;
-    }
-
-    if (body.country !== undefined) {
-      const country = body.country.trim();
-      if (!country) return jsonError(400, "VALIDATION_ERROR", "Country is required.");
-      if (country.length > 100) return jsonError(400, "VALIDATION_ERROR", "Country is too long.");
-      updateData.country = country;
-    }
-
-    // Ensure there's something to update
     if (Object.keys(updateData).length === 0) {
       return jsonError(400, "VALIDATION_ERROR", "No fields provided to update.");
     }
 
-    // Perform update
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: updateData,
@@ -171,12 +83,14 @@ export async function PATCH(req: Request) {
       },
     });
 
-    return NextResponse.json({
-      ok: true,
-      user: updatedUser,
-      message: "Profile updated successfully.",
-    }, { status: 200 });
-
+    return NextResponse.json(
+      {
+        ok: true,
+        user: updatedUser,
+        message: "Profile updated successfully.",
+      },
+      { status: 200 }
+    );
   } catch (err: any) {
     console.error("PATCH /api/account/profile error:", err);
     return jsonError(500, "SERVER_ERROR", "An unexpected error occurred.");

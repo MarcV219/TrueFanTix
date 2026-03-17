@@ -7,6 +7,7 @@ import { requireSellerApproved } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
 import { verifyWithProvider } from "@/lib/tickets/provider";
 import { applyRateLimit, rateLimitError } from "@/lib/rate-limit";
+import { schemas, validateRequest } from "@/lib/validation";
 import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
 import { fetchOfficialSnapshot } from "@/lib/officialPricing";
@@ -258,62 +259,29 @@ export async function POST(req: Request) {
   const gate = await requireSellerApproved(req);
   if (!gate.ok) return gate.res;
 
-  let body: CreateTicketBody;
-  try {
-    body = (await req.json()) as CreateTicketBody;
-  } catch {
-    return badRequest("Invalid JSON body.");
-  }
+  const validation = await validateRequest(schemas.ticketCreateApi)(req);
+  if (!validation.success) return validation.response;
 
-  const title = (body.title ?? "").trim();
+  const body = validation.data;
+
+  const title = body.title;
   const requestedImage = (body.image ?? "").trim();
-  const venue = (body.venue ?? "").trim();
-  const date = (body.date ?? "").trim();
+  const venue = body.venue;
+  const date = body.date;
 
   // New fields from process flow
-  const primaryVendor = (body.primaryVendor ?? "").trim() || null;
-  const transferMethod = (body.transferMethod ?? "").trim() || null;
-  const barcodeText = (body.barcodeText ?? "").trim() || null;
-  const verificationImage = (body.verificationImage ?? "").trim() || null;
+  const primaryVendor = body.primaryVendor ?? null;
+  const transferMethod = body.transferMethod ?? null;
+  const barcodeText = body.barcodeText ?? null;
+  const verificationImage = body.verificationImage ?? null;
   const eventTypeOverride = (body.eventTypeOverride ?? "").trim().toLowerCase() || null;
 
-  // We store cents. Keep validation simple + safe.
+  // We store cents.
   const priceCentsRaw = body.priceCents;
-  const faceValueCentsRaw = body.faceValueCents;
-
-  if (!title) return badRequest("Title is required.");
-  if (title.length > 120) return badRequest("Title must be 120 characters or less.");
-
-  if (priceCentsRaw == null) return badRequest("Price is required.");
-  if (typeof priceCentsRaw !== "number" || !Number.isFinite(priceCentsRaw))
-    return badRequest("Price must be a number (in cents).");
-  if (!Number.isInteger(priceCentsRaw)) return badRequest("Price must be an integer (in cents).");
-  if (priceCentsRaw < 1) return badRequest("Price must be at least 1 cent.");
-
-  let faceValueCents: number | null = null;
-  if (faceValueCentsRaw != null) {
-    if (typeof faceValueCentsRaw !== "number" || !Number.isFinite(faceValueCentsRaw))
-      return badRequest("Face value must be a number (in cents).");
-    if (!Number.isInteger(faceValueCentsRaw))
-      return badRequest("Face value must be an integer (in cents).");
-    if (faceValueCentsRaw < 0) return badRequest("Face value cannot be negative.");
-    faceValueCents = faceValueCentsRaw;
-  }
+  const faceValueCents: number | null = body.faceValueCents ?? null;
 
   // Image is now auto-fetched server-side for consistency/relevance.
   // Optional client-provided image can be used only as fallback if auto-fetch fails.
-  if (requestedImage.length > 2048) return badRequest("Image URL is too long.");
-
-  if (!venue) return badRequest("Venue is required.");
-  if (venue.length > 200) return badRequest("Venue must be 200 characters or less.");
-
-  if (!date) return badRequest("Date is required.");
-  if (date.length > 100) return badRequest("Date must be 100 characters or less.");
-
-  if (primaryVendor && primaryVendor.length > 80) return badRequest("Primary vendor must be 80 characters or less.");
-  if (transferMethod && transferMethod.length > 80) return badRequest("Transfer method must be 80 characters or less.");
-  if (barcodeText && barcodeText.length > 255) return badRequest("Barcode text must be 255 characters or less.");
-  if (verificationImage && verificationImage.length > 2048) return badRequest("Verification image URL is too long.");
 
   if (eventTypeOverride) {
     const allowed = new Set([
@@ -326,7 +294,7 @@ export async function POST(req: Request) {
   }
 
   // Optional: event linking
-  const eventId = (body.eventId ?? null)?.toString().trim() || null;
+  const eventId = body.eventId ?? null;
 
   // Optional: barcode payload evidence (raw data is not persisted)
   const barcodeDataRaw = (body.barcodeData ?? "").toString().trim();
