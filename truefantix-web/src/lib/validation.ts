@@ -237,11 +237,40 @@ export const schemas = {
     notes: z.string().trim().max(500).optional().nullable(),
   }),
 
+  // Used by POST /api/waitlist (maxPrice in dollars)
+  waitlistCreateApi: z.object({
+    eventId: z.string().trim().cuid(),
+    maxPrice: z.number().positive().max(100000).optional(),
+    notes: z.string().trim().max(500).optional().nullable(),
+  }),
+
+  // Used by DELETE /api/waitlist
+  waitlistDeleteQuery: z.object({
+    id: z.string().trim().cuid(),
+  }),
+
   // Price alert schema
   priceAlert: z.object({
     ticketId: z.string().cuid().optional(),
     eventQuery: z.string().trim().min(1).max(200).optional(),
     targetPriceCents: z.number().int().positive().optional(),
+  }),
+
+  // Used by POST /api/price-alerts (targetPrice in dollars)
+  priceAlertCreateApi: z
+    .object({
+      ticketId: z.string().trim().cuid().optional(),
+      eventQuery: z.string().trim().min(1).max(200).optional(),
+      targetPrice: z.number().positive().max(100000).optional(),
+    })
+    .refine((v) => !!v.ticketId || !!v.eventQuery, {
+      message: "Provide ticketId or eventQuery.",
+      path: ["ticketId"],
+    }),
+
+  // Used by DELETE /api/price-alerts
+  priceAlertDeleteQuery: z.object({
+    id: z.string().trim().cuid(),
   }),
 
   // Forum schemas
@@ -363,6 +392,28 @@ export const schemas = {
     priceDropAlerts: z.boolean().optional(),
     eventReminders: z.boolean().optional(),
   }),
+
+  // Used by POST /api/notifications/preferences
+  notificationPreferenceCreateApi: z.object({
+    type: z.string().trim().min(1).max(80),
+    value: z.string().trim().min(1).max(80),
+  }),
+
+  // Used by DELETE /api/notifications/preferences
+  notificationPreferenceDeleteApi: z.object({
+    id: z.string().trim().cuid(),
+  }),
+
+  // Used by PATCH /api/notifications
+  notificationsPatchApi: z
+    .object({
+      ids: z.array(z.string().trim().cuid()).min(1).max(500).optional(),
+      markAll: z.boolean().optional(),
+    })
+    .refine((v) => v.markAll === true || (Array.isArray(v.ids) && v.ids.length > 0), {
+      message: "Provide 'ids' array or set 'markAll' to true.",
+      path: ["ids"],
+    }),
 };
 
 // Sanitization utilities

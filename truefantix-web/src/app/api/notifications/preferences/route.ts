@@ -3,12 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
-
-// Utility to normalize string inputs
-function normalizeString(v: unknown): string | null {
-  const s = String(v ?? "").trim();
-  return s.length > 0 ? s.slice(0, 80) : null;
-}
+import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/notifications/preferences
 // Get a user's notification preferences
@@ -49,21 +44,10 @@ export async function POST(req: Request) {
     if (!gate.user) {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }
-    const body = (await req.json().catch(() => null)) as {
-      type?: string;
-      value?: string;
-    } | null;
+    const validation = await validateRequest(schemas.notificationPreferenceCreateApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body || !body.type || !body.value) {
-      return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message: "Missing type or value." }, { status: 400 });
-    }
-
-    const type = normalizeString(body.type);
-    const value = normalizeString(body.value);
-
-    if (!type || !value) {
-      return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message: "Invalid type or value." }, { status: 400 });
-    }
+    const { type, value } = validation.data;
 
     // Prevent duplicates with upsert
     const preference = await prisma.notificationPreference.upsert({
@@ -91,17 +75,14 @@ export async function DELETE(req: Request) {
     if (!gate.user) {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }
-    const body = (await req.json().catch(() => null)) as {
-      id?: string;
-    } | null;
+    const validation = await validateRequest(schemas.notificationPreferenceDeleteApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body || !body.id) {
-      return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message: "Missing preference ID." }, { status: 400 });
-    }
+    const { id } = validation.data;
 
     // Ensure user owns the preference before deleting
     const preference = await prisma.notificationPreference.findUnique({
-      where: { id: body.id },
+      where: { id },
     });
 
     if (!preference || preference.userId !== gate.user.id) {
@@ -109,7 +90,7 @@ export async function DELETE(req: Request) {
     }
 
     await prisma.notificationPreference.delete({
-      where: { id: body.id },
+      where: { id },
     });
 
     return NextResponse.json({ ok: true, message: "Preference deleted." }, { status: 200 });

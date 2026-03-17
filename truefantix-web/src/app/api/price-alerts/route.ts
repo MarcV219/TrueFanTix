@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { createNotification } from "@/lib/notifications/service";
+import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/price-alerts
 // List user's price alerts
@@ -67,18 +68,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = (await req.json().catch(() => null)) as {
-      ticketId?: string;
-      targetPrice?: number;
-      eventQuery?: string;
-    } | null;
+    const validation = await validateRequest(schemas.priceAlertCreateApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body || (!body.ticketId && !body.eventQuery)) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Provide ticketId or eventQuery." },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     if (body.ticketId) {
       // Alert for specific ticket
@@ -173,14 +166,18 @@ export async function DELETE(req: Request) {
     }
 
     const { searchParams } = new URL(req.url);
-    const alertId = searchParams.get("id");
+    const parsed = schemas.priceAlertDeleteQuery.safeParse({
+      id: searchParams.get("id"),
+    });
 
-    if (!alertId) {
+    if (!parsed.success) {
       return NextResponse.json(
         { ok: false, error: "VALIDATION_ERROR", message: "Alert ID required." },
         { status: 400 }
       );
     }
+
+    const alertId = parsed.data.id;
 
     // Ensure user owns this alert
     const alert = await prisma.priceAlert.findFirst({
