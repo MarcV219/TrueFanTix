@@ -72,7 +72,8 @@ export default function ForgotPasswordPage() {
     setIsSubmitting(false);
 
     if (!res.ok) {
-      setError(data?.message || "Failed to send reset email. Please try again.");
+      const details = Array.isArray(data?.details) ? data.details : null;
+      setError(data?.message || (details?.length ? details[0] : null) || "Failed to send reset email. Please try again.");
       return;
     }
 

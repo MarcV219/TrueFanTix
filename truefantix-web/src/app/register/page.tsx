@@ -193,8 +193,10 @@ function RegisterForm() {
       });
 
       if (!res.ok) {
+        const details = Array.isArray((data as any)?.details) ? (data as any).details : null;
         const msg =
           (data && typeof data === "object" && "message" in data && (data as any).message) ||
+          (details && details.length ? details[0] : null) ||
           "Registration failed.";
         setError(String(msg));
         return;

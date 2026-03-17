@@ -72,7 +72,8 @@ export default function NewThreadPage() {
       const json = await res.json().catch(() => null);
 
       if (!res.ok) {
-        const msg = json?.message || json?.error || `Failed to create thread (${res.status})`;
+        const details = Array.isArray(json?.details) ? json.details : null;
+        const msg = json?.message || json?.error || (details?.length ? details[0] : null) || `Failed to create thread (${res.status})`;
         setError(msg);
         return;
       }

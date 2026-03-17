@@ -49,7 +49,8 @@ function CheckoutContent() {
       // First, get order details
       const orderRes = await fetchJson(`/api/orders/${orderId}`);
       if (!orderRes.res.ok) {
-        setError(orderRes.data?.message || "Failed to load order.");
+        const details = Array.isArray(orderRes.data?.details) ? orderRes.data.details : null;
+        setError(orderRes.data?.message || (details?.length ? details[0] : null) || "Failed to load order.");
         setIsLoading(false);
         return;
       }
@@ -64,7 +65,8 @@ function CheckoutContent() {
       });
 
       if (!intentRes.res.ok) {
-        setError(intentRes.data?.message || "Failed to initialize payment.");
+        const details = Array.isArray(intentRes.data?.details) ? intentRes.data.details : null;
+        setError(intentRes.data?.message || (details?.length ? details[0] : null) || "Failed to initialize payment.");
         setIsLoading(false);
         return;
       }

@@ -77,7 +77,11 @@ function friendlyError(status: number, json: any): string {
   const apiError = String(json?.error ?? "").toUpperCase();
   const apiMessage = typeof json?.message === "string" ? json.message : "";
 
-  if (status === 400 && apiMessage) return apiMessage;
+  if (status === 400) {
+    const details = Array.isArray(json?.details) ? json.details : null;
+    if (apiMessage) return apiMessage;
+    if (details?.length) return String(details[0]);
+  }
 
   if (status === 401 || apiError === "NOT_AUTHENTICATED" || apiError === "UNAUTHORIZED") {
     return "Please log in to reply.";

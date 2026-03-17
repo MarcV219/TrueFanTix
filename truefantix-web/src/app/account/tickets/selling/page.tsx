@@ -263,7 +263,11 @@ function ActiveListings({
         });
 
         if (!res.ok || !data?.ok) {
-          const msg = (data && (data.message || data.error || data.details)) || `Failed to load listings (${res.status}).`;
+          const details = Array.isArray(data?.details) ? data.details : null;
+          const msg =
+            (data && (data.message || data.error)) ||
+            (details && details.length ? details[0] : null) ||
+            `Failed to load listings (${res.status}).`;
           throw new Error(String(msg));
         }
 
@@ -409,8 +413,10 @@ function Body({ me }: { me: MeUser }) {
       });
 
       if (!res.ok) {
+        const details = Array.isArray(data?.details) ? data.details : null;
         const msg =
-          (data && (data.message || data.error || data.details)) ||
+          (data && (data.message || data.error)) ||
+          (details && details.length ? details[0] : null) ||
           `Create listing failed (${res.status}).`;
         setError(String(msg));
         return;

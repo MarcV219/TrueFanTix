@@ -102,7 +102,8 @@ function ResetPasswordForm() {
     setIsSubmitting(false);
 
     if (!res.ok) {
-      setError(data?.message || "Failed to reset password. Please try again.");
+      const details = Array.isArray(data?.details) ? data.details : null;
+      setError(data?.message || (details?.length ? details[0] : null) || "Failed to reset password. Please try again.");
       return;
     }
 
