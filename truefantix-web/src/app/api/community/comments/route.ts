@@ -3,15 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
-
-type CreateCommentBody = {
-  body?: string;
-  parentId?: string | null;
-
-  // Optional associations
-  ticketId?: string | null;
-  eventId?: string | null;
-};
+import { schemas, validateRequest } from "@/lib/validation";
 
 function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message }, { status: 400 });
@@ -36,25 +28,16 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: CreateCommentBody;
-  try {
-    body = (await req.json()) as CreateCommentBody;
-  } catch {
-    return badRequest("Invalid JSON body.");
-  }
+  const validation = await validateRequest(schemas.communityCommentCreateApi)(req);
+  if (!validation.success) return validation.response;
 
-  const text = (body.body ?? "").trim();
-  if (!text) return badRequest("Comment text is required.");
-  if (text.length > 2000) return badRequest("Comment must be 2000 characters or less.");
+  const body = validation.data;
+
+  const text = body.body;
 
   const parentId = body.parentId ? normalizeId(body.parentId) : null;
   const ticketId = body.ticketId ? normalizeId(body.ticketId) : null;
   const eventId = body.eventId ? normalizeId(body.eventId) : null;
-
-  // Require a “target” OR a parent (reply)
-  if (!parentId && !ticketId && !eventId) {
-    return badRequest("Choose what you are commenting on (ticketId or eventId) or provide parentId to reply.");
-  }
 
   // Prevent ambiguous targets (keep MVP simple)
   const targetCount = [ticketId, eventId].filter(Boolean).length;

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { createNotification } from "@/lib/notifications/service";
 import { createHash } from "crypto";
+import { schemas, validateRequest } from "@/lib/validation";
 
 const REFERRAL_SECRET = process.env.REFERRAL_SECRET || "referral-secret";
 
@@ -102,17 +103,10 @@ export async function GET(req: Request) {
 // Claim a referral code during signup
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as {
-      referralCode?: string;
-      newUserId?: string;
-    } | null;
+    const validation = await validateRequest(schemas.referralClaimApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body?.referralCode || !body?.newUserId) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "referralCode and newUserId required" },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     // Find referrer
     const referrer = await prisma.user.findUnique({
@@ -185,17 +179,10 @@ export async function POST(req: Request) {
 // Complete referral when referred user makes first purchase
 export async function PATCH(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as {
-      referredId?: string;
-      orderAmount?: number;
-    } | null;
+    const validation = await validateRequest(schemas.referralCompleteApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body?.referredId) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR" },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     // Find pending referral
     const referral = await prisma.referral.findUnique({

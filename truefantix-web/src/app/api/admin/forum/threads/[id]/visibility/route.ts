@@ -3,13 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
-
-type Visibility = "VISIBLE" | "HIDDEN" | "DELETED";
-
-type VisibilityBody = {
-  visibility?: Visibility | string;
-  reason?: string | null;
-};
+import { schemas, validateRequest } from "@/lib/validation";
 
 function normalizeId(value: unknown) {
   try {
@@ -37,14 +31,6 @@ function badRequest(message: string) {
   );
 }
 
-function normalizeVisibility(v: unknown): Visibility | null {
-  const s = String(v ?? "").trim().toUpperCase();
-  if (s === "VISIBLE") return "VISIBLE";
-  if (s === "HIDDEN") return "HIDDEN";
-  if (s === "DELETED") return "DELETED";
-  return null;
-}
-
 /**
  * POST /api/admin/forum/threads/[id]/visibility
  * Admin only.
@@ -63,14 +49,10 @@ export async function POST(req: Request) {
     const threadId = getThreadIdFromUrl(req);
     if (!threadId) return badRequest("Missing thread id.");
 
-    const bodyJson = (await req.json().catch(() => null)) as VisibilityBody | null;
-    if (!bodyJson) return badRequest("Invalid JSON body.");
+    const validation = await validateRequest(schemas.forumVisibilityApi)(req);
+    if (!validation.success) return validation.response;
 
-    const nextVisibility = normalizeVisibility(bodyJson.visibility);
-    if (!nextVisibility) return badRequest("visibility must be VISIBLE, HIDDEN, or DELETED.");
-
-    const reasonRaw = bodyJson.reason == null ? null : String(bodyJson.reason).trim();
-    const reason = reasonRaw && reasonRaw.length ? reasonRaw.slice(0, 300) : null;
+    const { visibility: nextVisibility, reason } = validation.data;
 
     const existing = await prisma.forumThread.findUnique({
       where: { id: threadId },

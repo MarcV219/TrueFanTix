@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { updateSellerBadges } from "@/lib/reputation";
+import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/reviews
 // Get reviews for a seller or by a buyer
@@ -121,32 +122,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = (await req.json().catch(() => null)) as {
-      orderId: string;
-      rating: number;
-      title?: string;
-      content: string;
-      aspects?: {
-        communication?: number;
-        accuracy?: number;
-        delivery?: number;
-      };
-    } | null;
+    const validation = await validateRequest(schemas.reviewCreateApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body?.orderId || !body?.rating || !body?.content) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "orderId, rating, and content required" },
-        { status: 400 }
-      );
-    }
-
-    // Validate rating
-    if (body.rating < 1 || body.rating > 5) {
-      return NextResponse.json(
-        { ok: false, error: "INVALID_RATING", message: "Rating must be between 1 and 5" },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     // Check order exists and is completed
     const order = await prisma.order.findUnique({
@@ -267,19 +246,10 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const body = (await req.json().catch(() => null)) as {
-      reviewId: string;
-      rating?: number;
-      title?: string;
-      content?: string;
-    } | null;
+    const validation = await validateRequest(schemas.reviewUpdateApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body?.reviewId) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR" },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     const review = await prisma.review.findFirst({
       where: {
@@ -353,14 +323,14 @@ export async function DELETE(req: Request) {
     }
 
     const { searchParams } = new URL(req.url);
-    const reviewId = searchParams.get("id");
-
-    if (!reviewId) {
+    const parsed = schemas.reviewDeleteQuery.safeParse({ id: searchParams.get("id") });
+    if (!parsed.success) {
       return NextResponse.json(
         { ok: false, error: "VALIDATION_ERROR" },
         { status: 400 }
       );
     }
+    const reviewId = parsed.data.id;
 
     const review = await prisma.review.findFirst({
       where: {

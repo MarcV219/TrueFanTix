@@ -414,6 +414,102 @@ export const schemas = {
       message: "Provide 'ids' array or set 'markAll' to true.",
       path: ["ids"],
     }),
+
+  reviewCreateApi: z.object({
+    orderId: z.string().trim().cuid(),
+    rating: z.number().int().min(1).max(5),
+    title: z.string().trim().max(200).optional().nullable(),
+    content: z.string().trim().min(1).max(5000),
+    aspects: z
+      .object({
+        communication: z.number().int().min(1).max(5).optional(),
+        accuracy: z.number().int().min(1).max(5).optional(),
+        delivery: z.number().int().min(1).max(5).optional(),
+      })
+      .optional(),
+  }),
+
+  reviewUpdateApi: z
+    .object({
+      reviewId: z.string().trim().cuid(),
+      rating: z.number().int().min(1).max(5).optional(),
+      title: z.string().trim().max(200).optional().nullable(),
+      content: z.string().trim().min(1).max(5000).optional(),
+    })
+    .refine((v) => v.rating !== undefined || v.title !== undefined || v.content !== undefined, {
+      message: "Provide at least one field to update.",
+      path: ["reviewId"],
+    }),
+
+  reviewDeleteQuery: z.object({ id: z.string().trim().cuid() }),
+  messageDeleteQuery: z.object({ id: z.string().trim().cuid() }),
+
+  messageCreateApi: z
+    .object({
+      conversationId: z.string().trim().cuid().optional(),
+      orderId: z.string().trim().cuid().optional(),
+      recipientId: z.string().trim().cuid().optional(),
+      content: z.string().trim().min(1).max(5000),
+      attachments: z
+        .array(
+          z.object({
+            type: z.string().trim().min(1).max(40),
+            url: z.string().trim().url().max(2000),
+            name: z.string().trim().max(255).optional(),
+          })
+        )
+        .max(10)
+        .optional(),
+    })
+    .refine((v) => !!v.conversationId || !!v.orderId || !!v.recipientId, {
+      message: "content and recipient required",
+      path: ["conversationId"],
+    }),
+
+  communityCommentCreateApi: z
+    .object({
+      body: z.string().trim().min(1).max(2000),
+      parentId: z.string().trim().cuid().optional().nullable(),
+      ticketId: z.string().trim().cuid().optional().nullable(),
+      eventId: z.string().trim().cuid().optional().nullable(),
+    })
+    .refine((v) => !!v.parentId || !!v.ticketId || !!v.eventId, {
+      message: "Choose what you are commenting on (ticketId or eventId) or provide parentId to reply.",
+      path: ["parentId"],
+    }),
+
+  forumPostCreateApi: z.object({
+    threadId: z.string().trim().cuid(),
+    body: z.string().trim().min(1).max(8000),
+    parentId: z.string().trim().cuid().optional().nullable(),
+  }),
+
+  forumThreadCreateApi: z.object({
+    title: z.string().trim().min(5).max(140),
+    topicType: z.enum(["ARTIST", "TEAM", "SHOW", "OTHER"]).optional(),
+    topic: z.string().trim().max(140).optional().nullable(),
+    body: z.string().trim().min(5).max(8000),
+  }),
+
+  forumLockApi: z.object({
+    locked: z.boolean(),
+    reason: z.string().trim().max(300).optional().nullable(),
+  }),
+
+  forumVisibilityApi: z.object({
+    visibility: z.enum(["VISIBLE", "HIDDEN", "DELETED"]),
+    reason: z.string().trim().max(300).optional().nullable(),
+  }),
+
+  referralClaimApi: z.object({
+    referralCode: z.string().trim().min(4).max(40),
+    newUserId: z.string().trim().cuid(),
+  }),
+
+  referralCompleteApi: z.object({
+    referredId: z.string().trim().cuid(),
+    orderAmount: z.number().positive().optional(),
+  }),
 };
 
 // Sanitization utilities

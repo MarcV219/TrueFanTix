@@ -3,38 +3,13 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
-
-type ForumTopicTypeValue = "ARTIST" | "TEAM" | "SHOW" | "OTHER";
-
-type CreateThreadBody = {
-  title?: string;
-  topicType?: ForumTopicTypeValue | string;
-  topic?: string | null;
-  body?: string; // first post
-};
+import { schemas, validateRequest } from "@/lib/validation";
 
 function badRequest(message: string) {
   return NextResponse.json(
     { ok: false, error: "VALIDATION_ERROR", message },
     { status: 400 }
   );
-}
-
-function normalizeTopicType(v: unknown): ForumTopicTypeValue {
-  const s = String(v ?? "").trim().toUpperCase();
-
-  if (s === "ARTIST") return "ARTIST";
-  if (s === "TEAM") return "TEAM";
-  if (s === "SHOW") return "SHOW";
-  if (s === "OTHER") return "OTHER";
-
-  // Default to OTHER (safe MVP default)
-  return "OTHER";
-}
-
-function normalizeString(v: unknown) {
-  const s = String(v ?? "").trim();
-  return s.length ? s : "";
 }
 
 function clamp(n: number, min: number, max: number) {
@@ -145,20 +120,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const bodyJson = (await req.json().catch(() => null)) as CreateThreadBody | null;
-    if (!bodyJson) return badRequest("Invalid JSON body.");
+    const validation = await validateRequest(schemas.forumThreadCreateApi)(req);
+    if (!validation.success) return validation.response;
 
-    const title = normalizeString(bodyJson.title);
-    const firstPostBody = normalizeString(bodyJson.body);
-
-    if (title.length < 5) return badRequest("Title must be at least 5 characters.");
-    if (title.length > 140) return badRequest("Title must be 140 characters or less.");
-
-    if (firstPostBody.length < 5) return badRequest("Post must be at least 5 characters.");
-    if (firstPostBody.length > 8000) return badRequest("Post must be 8000 characters or less.");
-
-    const topicType = normalizeTopicType(bodyJson.topicType);
-    const topic = bodyJson.topic == null ? null : String(bodyJson.topic).trim() || null;
+    const { title, body: firstPostBody, topic, topicType = "OTHER" } = validation.data;
 
     const created = await prisma.$transaction(async (tx: any) => {
       const thread = await tx.forumThread.create({

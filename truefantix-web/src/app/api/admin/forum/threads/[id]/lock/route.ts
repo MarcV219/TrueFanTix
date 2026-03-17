@@ -3,11 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
-
-type LockBody = {
-  locked?: boolean;
-  reason?: string | null;
-};
+import { schemas, validateRequest } from "@/lib/validation";
 
 function normalizeId(value: unknown) {
   try {
@@ -50,12 +46,10 @@ export async function POST(req: Request) {
     const threadId = getThreadIdFromUrl(req);
     if (!threadId) return badRequest("Missing thread id.");
 
-    const bodyJson = (await req.json().catch(() => null)) as LockBody | null;
-    if (!bodyJson) return badRequest("Invalid JSON body.");
+    const validation = await validateRequest(schemas.forumLockApi)(req);
+    if (!validation.success) return validation.response;
 
-    const locked = Boolean(bodyJson.locked);
-    const reasonRaw = bodyJson.reason == null ? null : String(bodyJson.reason).trim();
-    const reason = reasonRaw && reasonRaw.length ? reasonRaw.slice(0, 300) : null;
+    const { locked, reason } = validation.data;
 
     const existing = await prisma.forumThread.findUnique({
       where: { id: threadId },

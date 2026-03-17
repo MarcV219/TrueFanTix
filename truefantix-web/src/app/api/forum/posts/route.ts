@@ -3,23 +3,13 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
-
-type CreatePostBody = {
-  threadId?: string;
-  body?: string;
-  parentId?: string | null; // optional reply-to
-};
+import { schemas, validateRequest } from "@/lib/validation";
 
 function badRequest(message: string) {
   return NextResponse.json(
     { ok: false, error: "VALIDATION_ERROR", message },
     { status: 400 }
   );
-}
-
-function normalizeString(v: unknown) {
-  const s = String(v ?? "").trim();
-  return s.length ? s : "";
 }
 
 function normalizeNullableId(v: unknown): string | null {
@@ -132,16 +122,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const bodyJson = (await req.json().catch(() => null)) as CreatePostBody | null;
-    if (!bodyJson) return badRequest("Invalid JSON body.");
+    const validation = await validateRequest(schemas.forumPostCreateApi)(req);
+    if (!validation.success) return validation.response;
 
-    const threadId = normalizeString(bodyJson.threadId);
-    const body = normalizeString(bodyJson.body);
-    const requestedParentId = normalizeNullableId(bodyJson.parentId);
-
-    if (!threadId) return badRequest("threadId is required.");
-    if (body.length < 1) return badRequest("Post body is required.");
-    if (body.length > 8000) return badRequest("Post must be 8000 characters or less.");
+    const { threadId, body, parentId } = validation.data;
+    const requestedParentId = normalizeNullableId(parentId);
 
     // Validate thread
     const thread = await prisma.forumThread.findFirst({

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { sendNotificationToUser } from "@/lib/websocket";
 import { createNotification } from "@/lib/notifications/service";
+import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/messages
 // Get conversations or messages
@@ -132,20 +133,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = (await req.json().catch(() => null)) as {
-      conversationId?: string;
-      orderId?: string;
-      recipientId?: string;
-      content: string;
-      attachments?: { type: string; url: string; name?: string }[];
-    } | null;
+    const validation = await validateRequest(schemas.messageCreateApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body?.content || (!body?.conversationId && !body?.orderId && !body?.recipientId)) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "content and recipient required" },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     let conversationId = body.conversationId;
 
@@ -330,14 +321,16 @@ export async function DELETE(req: Request) {
     }
 
     const { searchParams } = new URL(req.url);
-    const messageId = searchParams.get("id");
+    const parsed = schemas.messageDeleteQuery.safeParse({ id: searchParams.get("id") });
 
-    if (!messageId) {
+    if (!parsed.success) {
       return NextResponse.json(
         { ok: false, error: "VALIDATION_ERROR" },
         { status: 400 }
       );
     }
+
+    const messageId = parsed.data.id;
 
     const message = await prisma.message.findFirst({
       where: {
