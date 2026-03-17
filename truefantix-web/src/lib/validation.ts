@@ -114,6 +114,34 @@ export const schemas = {
     code: z.string().trim().regex(/^\d{6}$/),
   }),
 
+  // Used by POST /api/auth/verify-email
+  authVerifyEmailSend: z
+    .object({
+      email: z.string().trim().email().max(255).optional(),
+      userId: z.string().trim().cuid().optional(),
+    })
+    .refine((v) => !!v.email || !!v.userId, {
+      message: "Email or userId required.",
+      path: ["email"],
+    }),
+
+  // Used by GET /api/auth/verify-email
+  authVerifyEmailConfirm: z.object({
+    token: z.string().trim().min(10).max(256),
+    userId: z.string().trim().cuid(),
+  }),
+
+  // Used by POST /api/auth/reset-password
+  authResetPassword: z.object({
+    token: z.string().trim().min(16).max(256),
+    email: z.string().trim().email().max(255),
+    password: z
+      .string()
+      .min(10)
+      .max(100)
+      .regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, "Password must include at least one letter and one number"),
+  }),
+
   // Notification preference schemas
   notificationPreference: z.object({
     type: z.enum(["ARTIST", "TEAM", "VENUE", "CITY", "EVENT_TYPE", "PRICE_DROP"]),
@@ -282,6 +310,12 @@ export const schemas = {
   ticketPurchase: z.object({
     buyerSellerId: z.string().cuid(),
     idempotencyKey: z.string().min(10).max(100).optional(),
+  }),
+
+  // Used by POST /api/tickets/[id]/purchase (query string)
+  ticketPurchaseQuery: z.object({
+    buyerSellerId: z.string().trim().cuid(),
+    idempotencyKey: z.string().trim().min(10).max(100).optional(),
   }),
 
   // Escrow action schemas

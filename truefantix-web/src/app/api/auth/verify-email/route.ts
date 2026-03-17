@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createHash } from "crypto";
 import { sendEmail } from "@/lib/email";
+import { schemas, validateRequest } from "@/lib/validation";
 
 const VERIFICATION_SECRET = process.env.VERIFICATION_SECRET || "your-secret-key";
 
@@ -17,21 +18,14 @@ function generateVerificationToken(): string {
 // Send verification email
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as {
-      email?: string;
-      userId?: string;
-    } | null;
+    const validation = await validateRequest(schemas.authVerifyEmailSend)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body?.email && !body?.userId) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Email or userId required." },
-        { status: 400 }
-      );
-    }
+    const { email, userId } = validation.data;
 
     // Find user
     const user = await prisma.user.findFirst({
-      where: body.email ? { email: body.email } : { id: body.userId },
+      where: email ? { email } : { id: userId },
       select: {
         id: true,
         email: true,
@@ -99,7 +93,6 @@ export async function POST(req: Request) {
       { ok: true, message: "Verification email sent. Please check your inbox." },
       { status: 200 }
     );
-
   } catch (err) {
     console.error("POST /api/auth/verify-email failed:", err);
     return NextResponse.json(
@@ -114,15 +107,25 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const token = searchParams.get("token");
-    const userId = searchParams.get("userId");
 
-    if (!token || !userId) {
+    const parsed = schemas.authVerifyEmailConfirm.safeParse({
+      token: searchParams.get("token"),
+      userId: searchParams.get("userId"),
+    });
+
+    if (!parsed.success) {
       return NextResponse.json(
-        { ok: false, error: "MISSING_PARAMS", message: "Token and userId required." },
+        {
+          ok: false,
+          error: "MISSING_PARAMS",
+          message: "Token and userId required.",
+          details: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+        },
         { status: 400 }
       );
     }
+
+    const { token, userId } = parsed.data;
 
     const tokenHash = hashToken(token);
 
@@ -166,7 +169,6 @@ export async function GET(req: Request) {
       { ok: true, message: "Email verified successfully!" },
       { status: 200 }
     );
-
   } catch (err) {
     console.error("GET /api/auth/verify-email failed:", err);
     return NextResponse.json(
