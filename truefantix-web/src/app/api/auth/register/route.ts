@@ -4,29 +4,13 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { createSessionForUser } from "@/lib/auth/session";
+import { schemas, validateRequest } from "@/lib/validation";
 
-type RegisterBody = {
-  email?: string;
-  phone?: string;
-  password?: string;
-
-  firstName?: string;
-  lastName?: string;
-  displayName?: string | null;
-
-  streetAddress1?: string;
-  streetAddress2?: string | null;
-  city?: string;
-  region?: string;
-  postalCode?: string;
-  country?: string;
-
-  acceptTerms?: boolean;
-  acceptPrivacy?: boolean;
-};
-
-function badRequest(message: string) {
-  return NextResponse.json({ error: "VALIDATION_ERROR", message }, { status: 400 });
+function badRequest(message: string, details?: string[]) {
+  return NextResponse.json(
+    { ok: false, error: "VALIDATION_ERROR", message, ...(details ? { details } : {}) },
+    { status: 400 }
+  );
 }
 
 function normalizeEmail(email: string) {
@@ -38,68 +22,14 @@ function normalizePhone(phone: string) {
   return phone.trim();
 }
 
-function isEmailLike(email: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function isStrongEnoughPassword(pw: string) {
-  // Your MVP rule from earlier: >=10 chars, at least 1 letter and 1 number
-  if (pw.length < 10) return false;
-  const hasLetter = /[A-Za-z]/.test(pw);
-  const hasNumber = /[0-9]/.test(pw);
-  return hasLetter && hasNumber;
-}
-
 export async function POST(req: Request) {
-  let body: RegisterBody;
-  try {
-    body = (await req.json()) as RegisterBody;
-  } catch {
-    return badRequest("Invalid JSON body.");
-  }
+  const validation = await validateRequest(schemas.authRegister)(req);
+  if (!validation.success) return validation.response;
 
-  const email = (body.email ?? "").trim();
-  const phone = (body.phone ?? "").trim();
-  const password = body.password ?? "";
+  const body = validation.data;
 
-  const firstName = (body.firstName ?? "").trim();
-  const lastName = (body.lastName ?? "").trim();
-
-  const streetAddress1 = (body.streetAddress1 ?? "").trim();
-  const streetAddress2 = (body.streetAddress2 ?? "")?.trim() || null;
-  const city = (body.city ?? "").trim();
-  const region = (body.region ?? "").trim();
-  const postalCode = (body.postalCode ?? "").trim();
-  const country = (body.country ?? "").trim();
-
-  const acceptTerms = body.acceptTerms === true;
-  const acceptPrivacy = body.acceptPrivacy === true;
-
-  // --- Validation (copy/paste friendly messages) ---
-  if (!email) return badRequest("Email is required.");
-  if (!isEmailLike(email)) return badRequest("Enter a valid email address.");
-
-  if (!phone) return badRequest("Phone number is required.");
-  if (phone.length < 7) return badRequest("Enter a valid phone number.");
-
-  if (!password) return badRequest("Password is required.");
-  if (!isStrongEnoughPassword(password))
-    return badRequest("Password must be at least 10 characters and include at least one letter and one number.");
-
-  if (!firstName) return badRequest("First name is required.");
-  if (!lastName) return badRequest("Last name is required.");
-
-  if (!country) return badRequest("Country is required.");
-  if (!region) return badRequest("Province/State is required.");
-  if (!city) return badRequest("City is required.");
-  if (!postalCode) return badRequest("Postal/ZIP code is required.");
-  if (!streetAddress1) return badRequest("Street address is required.");
-
-  if (!acceptTerms) return badRequest("You must accept the Terms of Service to continue.");
-  if (!acceptPrivacy) return badRequest("You must accept the Privacy Policy to continue.");
-
-  const emailNorm = normalizeEmail(email);
-  const phoneNorm = normalizePhone(phone);
+  const emailNorm = normalizeEmail(body.email);
+  const phoneNorm = normalizePhone(body.phone);
 
   // --- Uniqueness checks ---
   const [existingByEmail, existingByPhone] = await Promise.all([
@@ -109,20 +39,20 @@ export async function POST(req: Request) {
 
   if (existingByEmail) {
     return NextResponse.json(
-      { error: "EMAIL_IN_USE", message: "That email is already in use. Log in instead." },
+      { ok: false, error: "EMAIL_IN_USE", message: "That email is already in use. Log in instead." },
       { status: 409 }
     );
   }
 
   if (existingByPhone) {
     return NextResponse.json(
-      { error: "PHONE_IN_USE", message: "That phone number is already in use. Log in instead." },
+      { ok: false, error: "PHONE_IN_USE", message: "That phone number is already in use. Log in instead." },
       { status: 409 }
     );
   }
 
   // --- Create user ---
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(body.password, 12);
 
   // You can bump these versions whenever you update legal docs
   const TERMS_VERSION = "v1";
@@ -134,16 +64,16 @@ export async function POST(req: Request) {
       phone: phoneNorm,
       passwordHash,
 
-      firstName,
-      lastName,
-      displayName: body.displayName?.trim() || null,
+      firstName: body.firstName,
+      lastName: body.lastName,
+      displayName: body.displayName ?? null,
 
-      streetAddress1,
-      streetAddress2,
-      city,
-      region,
-      postalCode,
-      country,
+      streetAddress1: body.streetAddress1,
+      streetAddress2: body.streetAddress2 ?? null,
+      city: body.city,
+      region: body.region,
+      postalCode: body.postalCode,
+      country: body.country,
 
       canBuy: true,
       canComment: true,

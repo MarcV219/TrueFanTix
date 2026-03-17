@@ -3,7 +3,8 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
-import { applyRateLimit, rateLimitError } from "@/lib/rate-limit";
+import { applyRateLimit } from "@/lib/rate-limit";
+import { schemas, validateRequest } from "@/lib/validation";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -15,14 +16,6 @@ async function getStripe() {
   return new StripeCtor(key, { apiVersion: "2024-06-20" });
 }
 
-function normalizeId(value: unknown) {
-  try {
-    return decodeURIComponent(String(value ?? "")).trim();
-  } catch {
-    return String(value ?? "").trim();
-  }
-}
-
 export async function POST(req: Request) {
   const rlResult = await applyRateLimit(req, "payments:create-intent");
   if (!rlResult.ok) return rlResult.response;
@@ -31,23 +24,10 @@ export async function POST(req: Request) {
   if (!gate.ok) return gate.res;
 
   try {
-    let body: { orderId?: string };
-    try {
-      body = (await req.json()) as { orderId?: string };
-    } catch {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Invalid JSON body." },
-        { status: 400 }
-      );
-    }
+    const validation = await validateRequest(schemas.paymentsCreateIntent)(req);
+    if (!validation.success) return validation.response;
 
-    const orderId = normalizeId(body.orderId);
-    if (!orderId) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Order ID is required." },
-        { status: 400 }
-      );
-    }
+    const { orderId } = validation.data;
 
     // Get order with items
     const order = await prisma.order.findUnique({
@@ -115,13 +95,15 @@ export async function POST(req: Request) {
       description: `TrueFanTix Order #${order.id.slice(0, 8)}`,
     });
 
-    return NextResponse.json({
-      ok: true,
-      clientSecret: paymentIntent.client_secret,
-      amount: order.totalCents,
-      currency: "cad",
-    }, { status: 200 });
-
+    return NextResponse.json(
+      {
+        ok: true,
+        clientSecret: paymentIntent.client_secret,
+        amount: order.totalCents,
+        currency: "cad",
+      },
+      { status: 200 }
+    );
   } catch (err: any) {
     console.error("POST /api/payments/create-intent error:", err);
     return NextResponse.json(

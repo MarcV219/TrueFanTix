@@ -3,6 +3,7 @@ import { z } from "zod";
 // Common validation schemas
 export const schemas = {
   // Ticket schemas
+  // NOTE: This is a generic ticket schema used by some parts of the app.
   ticketCreate: z.object({
     title: z.string().min(3).max(200),
     priceCents: z.number().int().positive().max(10000000), // Max $100,000
@@ -18,6 +19,32 @@ export const schemas = {
     eventId: z.string().optional(),
   }),
 
+  // Used by POST /api/tickets (seller creates a listing)
+  ticketCreateApi: z.object({
+    title: z.string().trim().min(1).max(120),
+    priceCents: z.number().int().positive().max(10_000_000),
+    faceValueCents: z.number().int().nonnegative().optional().nullable(),
+
+    // Optional client-provided image (server will try to auto-fetch a relevant one first)
+    image: z.string().trim().url().max(2048).optional().nullable(),
+
+    venue: z.string().trim().min(1).max(200),
+    date: z.string().trim().min(1).max(100),
+
+    // Seller override for event type when auto-tagging is incorrect
+    eventTypeOverride: z.string().trim().max(80).optional().nullable(),
+
+    eventId: z.string().trim().cuid().optional().nullable(),
+
+    barcodeData: z.string().trim().min(8).max(8192).optional().nullable(),
+    barcodeType: z.string().trim().max(100).optional().nullable(),
+
+    primaryVendor: z.string().trim().max(80).optional().nullable(),
+    transferMethod: z.string().trim().max(80).optional().nullable(),
+    barcodeText: z.string().trim().max(255).optional().nullable(),
+    verificationImage: z.string().trim().url().max(2048).optional().nullable(),
+  }),
+
   // Order schemas
   orderCheckout: z.object({
     ticketIds: z.array(z.string().cuid()).min(1).max(10),
@@ -30,6 +57,11 @@ export const schemas = {
     orderId: z.string().cuid(),
     amount: z.number().positive(),
     currency: z.enum(["USD", "CAD", "EUR", "GBP"]).default("USD"),
+  }),
+
+  // Used by POST /api/payments/create-intent
+  paymentsCreateIntent: z.object({
+    orderId: z.string().trim().cuid(),
   }),
 
   // User schemas
