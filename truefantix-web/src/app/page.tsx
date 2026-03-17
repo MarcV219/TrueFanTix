@@ -389,7 +389,8 @@ export default function Page() {
       });
       const json: any = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setWaitlistStatus({ type: "error", message: json?.message || json?.error || "Could not join right now." });
+        const details = Array.isArray(json?.details) ? json.details : null;
+        setWaitlistStatus({ type: "error", message: json?.message || json?.error || (details?.length ? details[0] : null) || "Could not join right now." });
         return;
       }
       setWaitlistEmail("");

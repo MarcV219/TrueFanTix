@@ -53,7 +53,10 @@ export default function TicketVerificationAdminPage() {
         cache: "no-store",
       });
       const data = await res.json();
-      if (!res.ok || !data?.ok) throw new Error(data?.message || data?.error || "Failed to load queue");
+      if (!res.ok || !data?.ok) {
+        const details = Array.isArray(data?.details) ? data.details : null;
+        throw new Error(data?.message || data?.error || (details?.length ? details[0] : null) || "Failed to load queue");
+      }
       setTickets(Array.isArray(data.tickets) ? data.tickets : []);
     } catch (e: any) {
       setError(e?.message || "Failed to load queue.");
@@ -75,7 +78,10 @@ export default function TicketVerificationAdminPage() {
         body: JSON.stringify({ verificationStatus, verificationProvider: "admin-queue" }),
       });
       const data = await res.json();
-      if (!res.ok || !data?.ok) throw new Error(data?.message || data?.error || "Update failed");
+      if (!res.ok || !data?.ok) {
+        const details = Array.isArray(data?.details) ? data.details : null;
+        throw new Error(data?.message || data?.error || (details?.length ? details[0] : null) || "Update failed");
+      }
       await load();
     } catch (e: any) {
       setError(e?.message || "Update failed.");

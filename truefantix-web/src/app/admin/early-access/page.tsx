@@ -58,7 +58,10 @@ export default function EarlyAccessAdminPage() {
 
       const res = await fetch(`/api/admin/early-access/export?${buildQuery(filters)}`, { cache: "no-store" });
       const data = await res.json();
-      if (!res.ok || !data?.ok) throw new Error(data?.message || data?.error || "Failed to load waitlist");
+      if (!res.ok || !data?.ok) {
+        const details = Array.isArray(data?.details) ? data.details : null;
+        throw new Error(data?.message || data?.error || (details?.length ? details[0] : null) || "Failed to load waitlist");
+      }
 
       const items = Array.isArray(data.items) ? (data.items as Lead[]) : [];
       const sources = Array.isArray(data?.filters?.availableSources) ? (data.filters.availableSources as string[]) : [];

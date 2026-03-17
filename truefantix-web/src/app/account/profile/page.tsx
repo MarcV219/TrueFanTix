@@ -123,7 +123,8 @@ function ProfileEditor({ me, onUpdated }: { me: MeUser; onUpdated: (user: MeUser
     setIsSaving(false);
 
     if (!res.ok) {
-      const message = data?.message || "Failed to update profile.";
+      const details = Array.isArray(data?.details) ? data.details : null;
+      const message = data?.message || (details?.length ? details[0] : null) || "Failed to update profile.";
       setError(message);
       return;
     }
