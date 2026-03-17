@@ -136,10 +136,24 @@ export const schemas = {
   }),
 
   // Transfer proof schemas
+  // (Legacy/strict) expects proofData to be a URL
   transferProof: z.object({
     orderId: z.string().cuid(),
     transferProofType: z.enum(["Screenshot", "Transfer ID", "Email Confirmation", "Other"]),
     transferProofData: z.string().url().max(500),
+  }),
+
+  // Used by POST /api/orders/transfer-proof
+  // proofData can be a URL (screenshot) OR an ID-like string.
+  orderTransferProof: z.object({
+    orderId: z.string().trim().cuid(),
+    transferProofType: z.enum(["Screenshot", "Transfer ID", "Email Confirmation", "Other"]),
+    transferProofData: z.string().trim().min(1).max(2048),
+  }),
+
+  // Used by POST /api/orders/confirm-receipt
+  orderConfirmReceipt: z.object({
+    orderId: z.string().trim().cuid(),
   }),
 
   // Profile update schemas
