@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { schemas, validateRequest } from "@/lib/validation";
 
 function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
@@ -23,22 +24,13 @@ function sha256(input: string) {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
-type Body = { code?: string };
-
 const MAX_ATTEMPTS_PER_CODE = 10;
 
 export async function POST(req: Request) {
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return jsonError(400, "VALIDATION_ERROR", "Invalid JSON body.");
-  }
+  const validation = await validateRequest(schemas.verificationCodeConfirm)(req);
+  if (!validation.success) return validation.response;
 
-  const code = String(body.code ?? "").trim();
-  if (!/^\d{6}$/.test(code)) {
-    return jsonError(400, "VALIDATION_ERROR", "Enter the 6-digit code.");
-  }
+  const { code } = validation.data;
 
   const userId = await getUserIdFromSessionCookie();
   if (!userId) return jsonError(401, "NOT_AUTHENTICATED", "Please log in.");

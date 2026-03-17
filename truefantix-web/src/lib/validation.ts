@@ -199,6 +199,25 @@ export const schemas = {
     country: z.string().trim().min(2).max(2).optional(),
   }),
 
+  // Used by PATCH /api/account/profile (keeps existing API constraints)
+  accountProfileUpdate: z.object({
+    firstName: z.string().trim().min(1).max(100).optional(),
+    lastName: z.string().trim().min(1).max(100).optional(),
+    displayName: z.string().trim().max(100).optional().nullable(),
+    phone: z.string().trim().min(7).max(50).optional(),
+    streetAddress1: z.string().trim().min(1).max(200).optional(),
+    streetAddress2: z.string().trim().max(200).optional().nullable(),
+    city: z.string().trim().min(1).max(100).optional(),
+    region: z.string().trim().min(1).max(100).optional(),
+    postalCode: z.string().trim().min(1).max(20).optional(),
+    country: z.string().trim().min(1).max(100).optional(),
+  }),
+
+  // Used by POST /api/account/delete
+  accountDelete: z.object({
+    password: z.string().min(1).max(200),
+  }),
+
   // Password change schema
   passwordChange: z.object({
     currentPassword: z.string().min(1).max(200),
