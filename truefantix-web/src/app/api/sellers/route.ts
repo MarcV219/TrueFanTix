@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { schemas, validateRequest } from "@/lib/validation";
 
 export async function GET() {
   const sellers = await prisma.seller.findMany({
@@ -25,34 +26,14 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const validation = await validateRequest(schemas.sellerCreateApi)(req);
+    if (!validation.success) return validation.response;
 
-    const name = String(body?.name ?? "").trim();
-    const rating = body?.rating == null ? undefined : Number(body.rating);
-    const reviews = body?.reviews == null ? undefined : Number(body.reviews);
+    const { name, rating, reviews, badges: badgesInput = [] } = validation.data;
 
-    const badgesInput = Array.isArray(body?.badges) ? body.badges : [];
     const badges = badgesInput
       .map((b: unknown) => String(b).trim())
       .filter(Boolean);
-
-    if (!name) {
-      return NextResponse.json({ error: "name is required" }, { status: 400 });
-    }
-
-    if (rating != null && (!Number.isFinite(rating) || rating < 0 || rating > 5)) {
-      return NextResponse.json(
-        { error: "rating must be a number between 0 and 5" },
-        { status: 400 }
-      );
-    }
-
-    if (reviews != null && (!Number.isFinite(reviews) || reviews < 0)) {
-      return NextResponse.json(
-        { error: "reviews must be a non-negative number" },
-        { status: 400 }
-      );
-    }
 
     const seller = await prisma.seller.create({
       data: {

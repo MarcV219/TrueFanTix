@@ -510,6 +510,40 @@ export const schemas = {
     referredId: z.string().trim().cuid(),
     orderAmount: z.number().positive().optional(),
   }),
+
+  sellerCreateApi: z.object({
+    name: z.string().trim().min(1).max(120),
+    rating: z.number().min(0).max(5).optional(),
+    reviews: z.number().int().min(0).optional(),
+    badges: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+  }),
+
+  sellerCreditsAdjustApi: z.object({
+    sellerId: z.string().trim().cuid(),
+    amount: z.number().int().refine((n) => n !== 0, { message: "amount cannot be 0" }),
+    reason: z.string().trim().min(1).max(500),
+    ticketId: z.string().trim().cuid().optional().nullable(),
+  }),
+
+  sellerFraudCheckApi: z.object({
+    buyerId: z.string().trim().cuid().optional(),
+    ticketId: z.string().trim().cuid(),
+    amountCents: z.number().int().positive(),
+  }),
+
+  pricingRecommendationQuery: z.object({
+    eventTitle: z.string().trim().min(1).max(200),
+    venue: z.string().trim().min(1).max(200),
+    date: z.string().trim().min(1).max(80),
+    row: z.string().trim().max(40).optional(),
+    seat: z.string().trim().max(40).optional(),
+    faceValue: z.coerce.number().nonnegative().optional(),
+  }),
+
+  pricingTrendsApi: z.object({
+    eventTitle: z.string().trim().min(1).max(200),
+    days: z.number().int().min(1).max(365).optional(),
+  }),
 };
 
 // Sanitization utilities

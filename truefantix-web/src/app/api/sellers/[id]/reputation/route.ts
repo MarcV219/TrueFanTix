@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { calculateSellerReputation, calculateFraudRisk } from "@/lib/reputation";
+import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/sellers/:id/reputation
 // Get seller's reputation score
@@ -60,18 +61,11 @@ export async function POST(
 ) {
   try {
     const { id: sellerId } = await params;
-    const body = (await req.json().catch(() => null)) as {
-      buyerId?: string;
-      ticketId?: string;
-      amountCents?: number;
-    } | null;
 
-    if (!body?.ticketId || !body?.amountCents) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "ticketId and amountCents required." },
-        { status: 400 }
-      );
-    }
+    const validation = await validateRequest(schemas.sellerFraudCheckApi)(req);
+    if (!validation.success) return validation.response;
+
+    const body = validation.data;
 
     // Calculate fraud risk
     const fraudCheck = await calculateFraudRisk({

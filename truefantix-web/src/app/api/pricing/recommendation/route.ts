@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { getPriceRecommendation, getPriceTrends } from "@/lib/pricing";
+import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/pricing/recommendation
 // Get AI-powered price recommendation
@@ -10,19 +11,28 @@ export async function GET(req: Request) {
     const gate = await requireUser();
     
     const { searchParams } = new URL(req.url);
-    const eventTitle = searchParams.get("eventTitle");
-    const venue = searchParams.get("venue");
-    const date = searchParams.get("date");
-    const row = searchParams.get("row");
-    const seat = searchParams.get("seat");
-    const faceValue = searchParams.get("faceValue");
+    const queryParsed = schemas.pricingRecommendationQuery.safeParse({
+      eventTitle: searchParams.get("eventTitle"),
+      venue: searchParams.get("venue"),
+      date: searchParams.get("date"),
+      row: searchParams.get("row") || undefined,
+      seat: searchParams.get("seat") || undefined,
+      faceValue: searchParams.get("faceValue") ?? undefined,
+    });
 
-    if (!eventTitle || !venue || !date) {
+    if (!queryParsed.success) {
       return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "eventTitle, venue, and date required." },
+        {
+          ok: false,
+          error: "VALIDATION_ERROR",
+          message: "eventTitle, venue, and date required.",
+          details: queryParsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
         { status: 400 }
       );
     }
+
+    const { eventTitle, venue, date, row, seat, faceValue } = queryParsed.data;
 
     const recommendation = await getPriceRecommendation({
       eventTitle,
@@ -30,7 +40,7 @@ export async function GET(req: Request) {
       date,
       row: row || undefined,
       seat: seat || undefined,
-      faceValueCents: faceValue ? parseInt(faceValue) * 100 : undefined,
+      faceValueCents: faceValue != null ? Math.round(faceValue * 100) : undefined,
       sellerId: gate.user?.id,
     });
 
@@ -66,17 +76,10 @@ export async function GET(req: Request) {
 // Get price trends for an event
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as {
-      eventTitle?: string;
-      days?: number;
-    } | null;
+    const validation = await validateRequest(schemas.pricingTrendsApi)(req);
+    if (!validation.success) return validation.response;
 
-    if (!body?.eventTitle) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "eventTitle required." },
-        { status: 400 }
-      );
-    }
+    const body = validation.data;
 
     const trends = await getPriceTrends(body.eventTitle, body.days || 30);
 
