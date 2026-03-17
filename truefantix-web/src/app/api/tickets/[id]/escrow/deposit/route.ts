@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
-import { schemas, validateRequest } from "@/lib/validation";
+import { schemas, validateOptionalRequest } from "@/lib/validation";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
 
@@ -45,29 +45,11 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ ok: false, error: "Rejected ticket cannot be deposited" }, { status: 409 });
   }
 
-  // Body is optional; defaults apply.
-  let body: any = {};
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const validation = await validateOptionalRequest(schemas.ticketEscrowDeposit)(req);
+  if (!validation.success) return validation.response;
 
-  const parsed = schemas.ticketEscrowDeposit.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "VALIDATION_ERROR",
-        message: "Invalid request body",
-        details: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
-      },
-      { status: 400 }
-    );
-  }
-
-  const provider = parsed.data.provider;
-  const providerRef = parsed.data.providerRef ?? null;
+  const provider = validation.data.provider;
+  const providerRef = validation.data.providerRef ?? null;
 
   const escrow = await prisma.ticketEscrow.upsert({
     where: { ticketId },

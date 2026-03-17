@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createHash } from "crypto";
 import { sendEmail } from "@/lib/email";
 import bcrypt from "bcryptjs";
-import { schemas } from "@/lib/validation";
+import { schemas, validateRequest } from "@/lib/validation";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { applyRateLimit } from "@/lib/rate-limit";
 
@@ -32,17 +32,10 @@ export async function POST(req: Request) {
     const rlResult = await applyRateLimit(req, "auth:forgot-password-request");
     if (!rlResult.ok) return rlResult.response;
 
-    const body = await req.json().catch(() => null);
-    const parsed = schemas.forgotPasswordRequest.safeParse(body);
+    const validation = await validateRequest(schemas.forgotPasswordRequest)(req);
+    if (!validation.success) return validation.response;
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Valid email required." },
-        { status: 400 }
-      );
-    }
-
-    const email = parsed.data.email.toLowerCase();
+    const email = validation.data.email.toLowerCase();
 
     // Find user
     const user = await prisma.user.findUnique({
@@ -204,22 +197,17 @@ export async function PATCH(req: Request) {
     const rlResult = await applyRateLimit(req, "auth:forgot-password-reset");
     if (!rlResult.ok) return rlResult.response;
 
-    const body = await req.json().catch(() => null);
-    const parsed = schemas.forgotPasswordReset.safeParse(body);
+    const validation = await validateRequest(schemas.forgotPasswordReset)(req);
+    if (!validation.success) return validation.response;
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: "VALIDATION_ERROR", message: "Token, valid userId, and newPassword required." },
-        { status: 400 }
-      );
-    }
+    const data = validation.data;
 
-    const tokenHash = hashToken(parsed.data.token);
+    const tokenHash = hashToken(data.token);
 
     // Find valid token
     const resetToken = await prisma.passwordResetToken.findFirst({
       where: {
-        userId: parsed.data.userId,
+        userId: data.userId,
         tokenHash,
         usedAt: null,
         expiresAt: { gt: new Date() },
@@ -234,26 +222,26 @@ export async function PATCH(req: Request) {
     }
 
     // Hash new password
-    const passwordHash = await bcrypt.hash(parsed.data.newPassword, SALT_ROUNDS);
+    const passwordHash = await bcrypt.hash(data.newPassword, SALT_ROUNDS);
 
     // Update password and mark token as used
     await prisma.$transaction([
       prisma.user.update({
-        where: { id: parsed.data.userId },
+        where: { id: data.userId },
         data: { passwordHash },
       }),
       prisma.passwordResetToken.update({
         where: { id: resetToken.id },
         data: { usedAt: new Date() },
       }),
-      prisma.session.deleteMany({ where: { userId: parsed.data.userId } }),
+      prisma.session.deleteMany({ where: { userId: data.userId } }),
     ]);
 
     await auditLog({
       action: "PASSWORD_RESET_COMPLETE",
-      userId: parsed.data.userId,
+      userId: data.userId,
       targetType: "User",
-      targetId: parsed.data.userId,
+      targetId: data.userId,
       metadata: { resetTokenId: resetToken.id },
       ...createAuditContext(req),
     });

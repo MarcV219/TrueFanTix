@@ -576,11 +576,51 @@ export function validateRequest<T>(schema: z.ZodSchema<T>) {
     try {
       const body = await req.json();
       const result = sanitizeInput(body, schema);
-      
+
       if (result.success) {
         return { success: true, data: result.data };
       }
-      
+
+      return {
+        success: false,
+        response: new Response(
+          JSON.stringify({
+            ok: false,
+            error: "VALIDATION_ERROR",
+            message: "Invalid request data",
+            details: result.errors,
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        ),
+      };
+    } catch {
+      return {
+        success: false,
+        response: new Response(
+          JSON.stringify({
+            ok: false,
+            error: "INVALID_JSON",
+            message: "Could not parse request body",
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        ),
+      };
+    }
+  };
+}
+
+// Like validateRequest, but tolerates empty body and treats it as {}
+export function validateOptionalRequest<T>(schema: z.ZodSchema<T>) {
+  return async (req: Request): Promise<{ success: true; data: T } | { success: false; response: Response }> => {
+    try {
+      const raw = await req.text();
+      const body = raw.trim() ? JSON.parse(raw) : {};
+      const result = sanitizeInput(body, schema);
+
+      if (result.success) {
+        return { success: true, data: result.data };
+      }
+
       return {
         success: false,
         response: new Response(

@@ -4,19 +4,10 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { createSessionForUser } from "@/lib/auth/session";
-import { schemas } from "@/lib/validation";
+import { schemas, validateRequest } from "@/lib/validation";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { ensureCsrfCookie, csrfCookieName } from "@/lib/security/csrf";
-
-type LoginBody = {
-  emailOrPhone?: string;
-  password?: string;
-};
-
-function badRequest(message: string) {
-  return NextResponse.json({ error: "VALIDATION_ERROR", message }, { status: 400 });
-}
 
 function authError() {
   // Deliberately vague to avoid leaking which field was wrong
@@ -34,20 +25,11 @@ export async function POST(req: Request) {
   const rlResult = await applyRateLimit(req, "auth:login");
   if (!rlResult.ok) return rlResult.response;
 
-  let body: LoginBody;
-  try {
-    body = (await req.json()) as LoginBody;
-  } catch {
-    return badRequest("Invalid JSON body.");
-  }
+  const validation = await validateRequest(schemas.authLogin)(req);
+  if (!validation.success) return validation.response;
 
-  const parsed = schemas.authLogin.safeParse(body);
-  if (!parsed.success) {
-    return badRequest(parsed.error.issues[0]?.message ?? "Invalid request body.");
-  }
-
-  const emailOrPhoneRaw = parsed.data.emailOrPhone.trim();
-  const password = parsed.data.password;
+  const emailOrPhoneRaw = validation.data.emailOrPhone.trim();
+  const password = validation.data.password;
 
   // Determine whether input looks like an email
   const looksLikeEmail = emailOrPhoneRaw.includes("@");
