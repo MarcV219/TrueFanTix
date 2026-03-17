@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
+import { schemas, validateRequest } from "@/lib/validation";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
 
@@ -26,44 +27,19 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ ok: false, error: "Missing ticket id" }, { status: 400 });
   }
 
-  let body: any = {};
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const validation = await validateRequest(schemas.adminTicketVerificationById)(req);
+  if (!validation.success) return validation.response;
 
-  const statusRaw = String(body?.verificationStatus ?? "").trim().toUpperCase();
-  const verificationStatus:
-    | "PENDING"
-    | "VERIFIED"
-    | "REJECTED"
-    | "NEEDS_REVIEW"
-    | null =
-    statusRaw === "VERIFIED" || statusRaw === "REJECTED" || statusRaw === "NEEDS_REVIEW" || statusRaw === "PENDING"
-      ? (statusRaw as "PENDING" | "VERIFIED" | "REJECTED" | "NEEDS_REVIEW")
-      : null;
-
-  if (!verificationStatus) {
-    return NextResponse.json(
-      { ok: false, error: "verificationStatus must be one of PENDING|VERIFIED|REJECTED|NEEDS_REVIEW" },
-      { status: 400 }
-    );
-  }
-
-  const verificationScore =
-    body?.verificationScore == null ? null : Number.isFinite(Number(body.verificationScore)) ? Number(body.verificationScore) : null;
-  const verificationReason = body?.verificationReason ? String(body.verificationReason) : null;
-  const verificationProvider = body?.verificationProvider ? String(body.verificationProvider) : "manual-admin";
+  const { status, score, reason, provider } = validation.data;
 
   const updated = await prisma.ticket.update({
     where: { id: ticketId },
     data: {
-      verificationStatus,
-      verificationScore,
-      verificationReason,
-      verificationProvider,
-      verifiedAt: verificationStatus === "VERIFIED" ? new Date() : null,
+      verificationStatus: status,
+      verificationScore: score ?? null,
+      verificationReason: reason ?? null,
+      verificationProvider: provider ?? "manual-admin",
+      verifiedAt: status === "VERIFIED" ? new Date() : null,
     },
     select: {
       id: true,

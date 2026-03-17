@@ -237,6 +237,25 @@ export const schemas = {
     score: z.number().int().min(0).max(100).optional(),
   }),
 
+  // Used by POST /api/tickets/[id]/verify (ticketId comes from route param)
+  adminTicketVerificationById: z.object({
+    status: z.enum(["PENDING", "VERIFIED", "REJECTED", "NEEDS_REVIEW"]),
+    reason: z.string().trim().max(500).optional().nullable(),
+    score: z.number().int().min(0).max(100).optional().nullable(),
+    provider: z.string().trim().max(80).optional().nullable(),
+  }),
+
+  // Used by POST /api/tickets/verify/pending
+  ticketVerifyPending: z.object({
+    take: z.number().int().min(1).max(200).optional().default(25),
+  }),
+
+  // Used by POST /api/tickets/[id]/escrow/deposit
+  ticketEscrowDeposit: z.object({
+    provider: z.string().trim().max(50).optional().default("MANUAL"),
+    providerRef: z.string().trim().max(200).optional().nullable(),
+  }),
+
   adminForumModeration: z.object({
     postId: z.string().cuid().optional(),
     threadId: z.string().cuid().optional(),

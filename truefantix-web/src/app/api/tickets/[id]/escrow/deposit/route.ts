@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
+import { schemas, validateRequest } from "@/lib/validation";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
 
@@ -21,14 +22,20 @@ export async function POST(req: Request, ctx: Ctx) {
   const p: any = ctx?.params;
   const resolved = typeof p?.then === "function" ? await p : p;
   const ticketId = normalizeId(resolved?.id);
-  if (!ticketId) return NextResponse.json({ ok: false, error: "Missing ticket id" }, { status: 400 });
+  if (!ticketId) {
+    return NextResponse.json({ ok: false, error: "Missing ticket id" }, { status: 400 });
+  }
 
   const ticket = await prisma.ticket.findUnique({ where: { id: ticketId }, include: { escrow: true } });
-  if (!ticket) return NextResponse.json({ ok: false, error: "Ticket not found" }, { status: 404 });
+  if (!ticket) {
+    return NextResponse.json({ ok: false, error: "Ticket not found" }, { status: 404 });
+  }
 
   const isSeller = gate.user.sellerId === ticket.sellerId;
   const isAdmin = gate.user.role === "ADMIN";
-  if (!isSeller && !isAdmin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  if (!isSeller && !isAdmin) {
+    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
 
   if (ticket.status !== "AVAILABLE") {
     return NextResponse.json({ ok: false, error: "Ticket must be AVAILABLE for escrow deposit" }, { status: 409 });
@@ -38,11 +45,29 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ ok: false, error: "Rejected ticket cannot be deposited" }, { status: 409 });
   }
 
+  // Body is optional; defaults apply.
   let body: any = {};
-  try { body = await req.json(); } catch {}
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
 
-  const provider = body?.provider ? String(body.provider) : "MANUAL";
-  const providerRef = body?.providerRef ? String(body.providerRef) : null;
+  const parsed = schemas.ticketEscrowDeposit.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "VALIDATION_ERROR",
+        message: "Invalid request body",
+        details: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+      },
+      { status: 400 }
+    );
+  }
+
+  const provider = parsed.data.provider;
+  const providerRef = parsed.data.providerRef ?? null;
 
   const escrow = await prisma.ticketEscrow.upsert({
     where: { ticketId },
