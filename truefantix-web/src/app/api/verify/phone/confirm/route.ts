@@ -11,11 +11,10 @@ function jsonError(status: number, error: string, message: string) {
 }
 
 function getVerificationSecret() {
-  const secret = process.env.VERIFICATION_SECRET;
+  // Allow fallback to SESSION_SECRET so dev/staging doesn't hard-fail.
+  const secret = process.env.VERIFICATION_SECRET || process.env.SESSION_SECRET;
   if (!secret || secret.length < 32) {
-    throw new Error(
-      "VERIFICATION_SECRET is missing or too short. Set VERIFICATION_SECRET in .env (min 32 chars)."
-    );
+    return null;
   }
   return secret;
 }
@@ -74,6 +73,13 @@ export async function POST(req: Request) {
   }
 
   const secret = getVerificationSecret();
+  if (!secret) {
+    return jsonError(
+      503,
+      "SERVER_MISCONFIGURED",
+      "Verification is temporarily unavailable (missing VERIFICATION_SECRET/SESSION_SECRET)."
+    );
+  }
   const incomingHash = sha256(secret + code);
 
   const matches = crypto.timingSafeEqual(
