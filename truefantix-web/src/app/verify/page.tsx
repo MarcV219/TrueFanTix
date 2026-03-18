@@ -209,7 +209,13 @@ function VerifyForm() {
         setErr((data && (data as any).message) || "Could not send email code.");
         return;
       }
-      setMsg("Email code generated. (Dev: check your server console for the code.)");
+      const delivered = !!(data as any)?.delivered;
+      const dev = !!(data as any)?.dev;
+      if (delivered && !dev) {
+        setMsg("Email code sent. Check your inbox (and spam folder). ");
+      } else {
+        setMsg("Email code generated. (Dev mode: check server logs/console for the code.)");
+      }
     } finally {
       setBusy(false);
     }
@@ -252,7 +258,13 @@ function VerifyForm() {
         setErr((data && (data as any).message) || "Could not send phone code.");
         return;
       }
-      setMsg("Phone code generated. (Dev: check your server console for the code.)");
+      const delivered = !!(data as any)?.delivered;
+      const dev = !!(data as any)?.dev;
+      if (delivered && !dev) {
+        setMsg("Text code sent. Check your phone for the SMS.");
+      } else {
+        setMsg("Phone code generated. (Dev mode: check server logs/console for the code.)");
+      }
     } finally {
       setBusy(false);
     }
@@ -366,7 +378,7 @@ function VerifyForm() {
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.75 }}>
-              Dev mode: the code prints in your terminal (later we'll email it for real).
+              If email provider keys are missing, code is generated in dev mode and printed to server logs.
             </div>
           </div>
         ) : null}
@@ -414,7 +426,7 @@ function VerifyForm() {
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.75 }}>
-              Dev mode: the code prints in your terminal (later we'll SMS it for real).
+              If SMS provider keys are missing, code is generated in dev mode and printed to server logs.
             </div>
           </div>
         ) : null}
