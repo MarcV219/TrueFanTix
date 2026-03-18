@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { COUNTRIES } from "@/lib/countries";
 
 type RegisterResponse = { ok: true; next?: string } | { error?: string; message?: string };
 
@@ -431,17 +432,24 @@ function RegisterForm() {
         </label>
 
         <label style={{ display: "grid", gap: 6 }}>
-          <span>Country (2-letter code)</span>
-          <input
+          <span>Country</span>
+          <select
             value={country}
-            onChange={(e) => setCountry(e.target.value.toUpperCase())}
+            onChange={(e) => setCountry(e.target.value)}
             autoComplete="country"
             disabled={busy}
-            placeholder="CA"
-            maxLength={2}
             style={baseInputStyle}
-          />
-          <div style={helpTextStyle}>Use ISO codes like CA (Canada) or US (United States).</div>
+          >
+            {/* Put the most likely choices first */}
+            <option value="CA">Canada</option>
+            <option value="US">United States</option>
+            <option disabled>──────────</option>
+            {COUNTRIES.filter((c) => c.code !== "CA" && c.code !== "US").map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
