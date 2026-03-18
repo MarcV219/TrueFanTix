@@ -175,7 +175,7 @@ function RegisterForm() {
 
     setBusy(true);
     try {
-      const { res, data } = await fetchJson("/api/auth/register", {
+      const { res, data, text } = await fetchJson("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -198,10 +198,15 @@ function RegisterForm() {
 
       if (!res.ok) {
         const details = Array.isArray((data as any)?.details) ? (data as any).details : null;
+        const serverMsg =
+          (data && typeof data === "object" && "message" in data && (data as any).message) || null;
+
         const msg =
-          (data && typeof data === "object" && "message" in data && (data as any).message) ||
+          serverMsg ||
           (details && details.length ? details[0] : null) ||
-          "Registration failed.";
+          // If server returned non-JSON (or empty), show status to help debug.
+          `Registration failed (${res.status}).`;
+
         setError(String(msg));
         return;
       }

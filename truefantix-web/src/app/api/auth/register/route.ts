@@ -30,87 +30,111 @@ export async function POST(req: Request) {
 
   const body = validation.data;
 
-  const emailNorm = normalizeEmail(body.email);
-  const phoneNorm = normalizePhone(body.phone);
+  try {
+    const emailNorm = normalizeEmail(body.email);
+    const phoneNorm = normalizePhone(body.phone);
 
-  // --- Uniqueness checks ---
-  const [existingByEmail, existingByPhone] = await Promise.all([
-    prisma.user.findUnique({ where: { email: emailNorm }, select: { id: true } }),
-    prisma.user.findUnique({ where: { phone: phoneNorm }, select: { id: true } }),
-  ]);
+    // --- Uniqueness checks ---
+    const [existingByEmail, existingByPhone] = await Promise.all([
+      prisma.user.findUnique({ where: { email: emailNorm }, select: { id: true } }),
+      prisma.user.findUnique({ where: { phone: phoneNorm }, select: { id: true } }),
+    ]);
 
-  if (existingByEmail) {
+    if (existingByEmail) {
+      return NextResponse.json(
+        { ok: false, error: "EMAIL_IN_USE", message: "That email is already in use. Log in instead." },
+        { status: 409 }
+      );
+    }
+
+    if (existingByPhone) {
+      return NextResponse.json(
+        { ok: false, error: "PHONE_IN_USE", message: "That phone number is already in use. Log in instead." },
+        { status: 409 }
+      );
+    }
+
+    // --- Create user ---
+    const passwordHash = await bcrypt.hash(body.password, 12);
+
+    // You can bump these versions whenever you update legal docs
+    const TERMS_VERSION = "v1";
+    const PRIVACY_VERSION = "v1";
+
+    const user = await prisma.user.create({
+      data: {
+        email: emailNorm,
+        phone: phoneNorm,
+        passwordHash,
+
+        firstName: body.firstName,
+        lastName: body.lastName,
+        displayName: body.displayName ?? null,
+
+        streetAddress1: body.streetAddress1,
+        streetAddress2: body.streetAddress2 ?? null,
+        city: body.city,
+        region: body.region,
+        postalCode: body.postalCode,
+        country: body.country,
+
+        canBuy: true,
+        canComment: true,
+        canSell: false,
+
+        role: "USER",
+
+        termsAcceptedAt: new Date(),
+        termsVersion: TERMS_VERSION,
+        privacyAcceptedAt: new Date(),
+        privacyVersion: PRIVACY_VERSION,
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        displayName: true,
+        emailVerifiedAt: true,
+        phoneVerifiedAt: true,
+        canSell: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+
+    // Create session cookie so they are logged in immediately
+    await createSessionForUser(user.id);
+
     return NextResponse.json(
-      { ok: false, error: "EMAIL_IN_USE", message: "That email is already in use. Log in instead." },
-      { status: 409 }
+      {
+        ok: true,
+        user,
+        next: "/verify", // we'll build /verify later; for now it's just a hint to the client
+      },
+      { status: 201 }
+    );
+  } catch (e: any) {
+    // Prisma uniqueness race (two requests at same time)
+    const code = e?.code as string | undefined;
+    if (code === "P2002") {
+      const target = Array.isArray(e?.meta?.target) ? e.meta.target.join(",") : String(e?.meta?.target ?? "");
+      const message = target.includes("email")
+        ? "That email is already in use. Log in instead."
+        : target.includes("phone")
+          ? "That phone number is already in use. Log in instead."
+          : "That account detail is already in use. Log in instead.";
+      return NextResponse.json({ ok: false, error: "DUPLICATE", message }, { status: 409 });
+    }
+
+    console.error("/api/auth/register failed", e);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "SERVER_ERROR",
+        message: "Registration failed. Please try again in a moment.",
+      },
+      { status: 500 }
     );
   }
-
-  if (existingByPhone) {
-    return NextResponse.json(
-      { ok: false, error: "PHONE_IN_USE", message: "That phone number is already in use. Log in instead." },
-      { status: 409 }
-    );
-  }
-
-  // --- Create user ---
-  const passwordHash = await bcrypt.hash(body.password, 12);
-
-  // You can bump these versions whenever you update legal docs
-  const TERMS_VERSION = "v1";
-  const PRIVACY_VERSION = "v1";
-
-  const user = await prisma.user.create({
-    data: {
-      email: emailNorm,
-      phone: phoneNorm,
-      passwordHash,
-
-      firstName: body.firstName,
-      lastName: body.lastName,
-      displayName: body.displayName ?? null,
-
-      streetAddress1: body.streetAddress1,
-      streetAddress2: body.streetAddress2 ?? null,
-      city: body.city,
-      region: body.region,
-      postalCode: body.postalCode,
-      country: body.country,
-
-      canBuy: true,
-      canComment: true,
-      canSell: false,
-
-      role: "USER",
-
-      termsAcceptedAt: new Date(),
-      termsVersion: TERMS_VERSION,
-      privacyAcceptedAt: new Date(),
-      privacyVersion: PRIVACY_VERSION,
-    },
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      displayName: true,
-      emailVerifiedAt: true,
-      phoneVerifiedAt: true,
-      canSell: true,
-      role: true,
-      createdAt: true,
-    },
-  });
-
-  // Create session cookie so they are logged in immediately
-  await createSessionForUser(user.id);
-
-  return NextResponse.json(
-    {
-      ok: true,
-      user,
-      next: "/verify", // we'll build /verify later; for now it's just a hint to the client
-    },
-    { status: 201 }
-  );
 }
