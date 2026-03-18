@@ -33,7 +33,6 @@ export async function GET(req: Request) {
       select: {
         id: true,
         referralCode: true,
-        referralCreditsEarned: true,
       },
     });
 
@@ -45,7 +44,6 @@ export async function GET(req: Request) {
         select: {
           id: true,
           referralCode: true,
-          referralCreditsEarned: true,
         },
       });
     }
@@ -75,7 +73,7 @@ export async function GET(req: Request) {
     // Calculate pending and completed
     const completedReferrals = referrals.filter(r => r.status === "COMPLETED").length;
     const pendingReferrals = referrals.filter(r => r.status === "PENDING").length;
-    const totalCredits = referrals.reduce((sum, r) => sum + (r.creditsAwarded || 0), 0);
+    const totalAccessTokens = referrals.reduce((sum, r) => sum + (r.creditsAwarded || 0), 0);
 
     return NextResponse.json({
       ok: true,
@@ -84,7 +82,7 @@ export async function GET(req: Request) {
         total: stats._count.id,
         completed: completedReferrals,
         pending: pendingReferrals,
-        totalCreditsEarned: user.referralCreditsEarned || 0,
+        totalAccessTokensEarned: totalAccessTokens,
       },
       referrals,
       referralLink: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/signup?ref=${user.referralCode}`,
@@ -156,7 +154,7 @@ export async function POST(req: Request) {
     await createNotification({
       userId: referrer.id,
       type: "REFERRAL_SIGNUP",
-      message: "Someone used your referral code to sign up! You'll earn credits when they make their first purchase.",
+      message: "Someone used your referral code to sign up! You'll earn access tokens when they make their first purchase.",
       link: "/referrals",
     });
 
@@ -199,24 +197,24 @@ export async function PATCH(req: Request) {
       );
     }
 
-    // Calculate credits (e.g., 10% of order or fixed amount)
-    const creditAmount = 10; // 10 credits per successful referral
+    // Calculate access tokens (e.g., fixed amount)
+    const accessTokenAmount = 10; // 10 access tokens per successful referral
 
-    // Complete the referral and award credits
+    // Complete the referral and award access tokens
     await prisma.$transaction([
       prisma.referral.update({
         where: { id: referral.id },
         data: {
           status: "COMPLETED",
           completedAt: new Date(),
-          creditsAwarded: creditAmount,
+          creditsAwarded: accessTokenAmount,
         },
       }),
       prisma.seller.update({
         where: { id: referral.referrerId },
         data: {
           creditBalanceCredits: {
-            increment: creditAmount,
+            increment: accessTokenAmount,
           },
         },
       }),
@@ -224,19 +222,11 @@ export async function PATCH(req: Request) {
         data: {
           sellerId: referral.referrerId,
           type: "EARNED",
-          amountCredits: creditAmount,
+          amountCredits: accessTokenAmount,
           source: "ADMIN",
           referenceType: "REFERRAL",
           referenceId: referral.id,
           note: `Referral bonus for inviting ${referral.referredId}`,
-        },
-      }),
-      prisma.user.update({
-        where: { id: referral.referrerId },
-        data: {
-          referralCreditsEarned: {
-            increment: creditAmount,
-          },
         },
       }),
     ]);
@@ -245,14 +235,14 @@ export async function PATCH(req: Request) {
     await createNotification({
       userId: referral.referrerId,
       type: "REFERRAL_COMPLETED",
-      message: `Congratulations! Your referral completed their first purchase. You earned ${creditAmount} credits!`,
+      message: `Congratulations! Your referral completed their first purchase. You earned ${accessTokenAmount} access tokens!`,
       link: "/referrals",
     });
 
     return NextResponse.json({
       ok: true,
-      message: `Referral completed. ${creditAmount} credits awarded.`,
-      creditsAwarded: creditAmount,
+      message: `Referral completed. ${accessTokenAmount} access tokens awarded.`,
+      creditsAwarded: accessTokenAmount,
     });
 
   } catch (err) {

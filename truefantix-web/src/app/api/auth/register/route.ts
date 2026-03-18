@@ -117,27 +117,7 @@ export async function POST(req: Request) {
         },
       });
 
-    let user;
-    try {
-      user = await createUser();
-    } catch (createErr: any) {
-      // Dev DB schema drift hotfix: add missing referral columns if needed, then retry once.
-      if (
-        createErr?.code === "P2022" &&
-        String(createErr?.message || "").includes("referralCreditsEarned")
-      ) {
-        await prisma.$executeRawUnsafe(`
-          ALTER TABLE "User"
-          ADD COLUMN IF NOT EXISTS "referralCode" TEXT,
-          ADD COLUMN IF NOT EXISTS "referralCreditsEarned" INTEGER NOT NULL DEFAULT 0,
-          ADD COLUMN IF NOT EXISTS "emailVerificationToken" TEXT,
-          ADD COLUMN IF NOT EXISTS "passwordResetTokenHash" TEXT;
-        `);
-        user = await createUser();
-      } else {
-        throw createErr;
-      }
-    }
+    const user = await createUser();
 
     // Create session cookie so they are logged in immediately
     await createSessionForUser(user.id);

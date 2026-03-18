@@ -144,7 +144,6 @@ model User {
 
   // Referral program
   referralCode          String? @unique
-  referralCreditsEarned Int     @default(0)
 
   // Identity (basic)
   firstName    String
