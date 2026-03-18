@@ -78,7 +78,8 @@ function RegisterForm() {
   const [city, setCity] = useState("");
   const [region, setRegion] = useState("");
   const [postalCode, setPostalCode] = useState("");
-  const [country, setCountry] = useState("Canada");
+  // API expects 2-letter ISO country code (e.g., CA, US)
+  const [country, setCountry] = useState("CA");
 
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [acceptPrivacy, setAcceptPrivacy] = useState(false);
@@ -430,14 +431,17 @@ function RegisterForm() {
         </label>
 
         <label style={{ display: "grid", gap: 6 }}>
-          <span>Country</span>
+          <span>Country (2-letter code)</span>
           <input
             value={country}
-            onChange={(e) => setCountry(e.target.value)}
-            autoComplete="country-name"
+            onChange={(e) => setCountry(e.target.value.toUpperCase())}
+            autoComplete="country"
             disabled={busy}
+            placeholder="CA"
+            maxLength={2}
             style={baseInputStyle}
           />
+          <div style={helpTextStyle}>Use ISO codes like CA (Canada) or US (United States).</div>
         </label>
 
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
