@@ -252,8 +252,6 @@ export default function Page() {
   const [error, setError] = React.useState<string | null>(null);
   const [forumLoading, setForumLoading] = React.useState(true);
   const [forumThreads, setForumThreads] = React.useState<ForumThreadPreview[]>([]);
-  const [waitlistEmail, setWaitlistEmail] = React.useState("");
-  const [waitlistStatus, setWaitlistStatus] = React.useState<{type:"idle"}|{type:"loading"}|{type:"success";message:string}|{type:"error";message:string}>({ type: "idle" });
 
   const TICKETS_PER_PAGE = 4;
 
@@ -372,34 +370,6 @@ export default function Page() {
   const canGoPrev = currentIndex > 0;
   const canGoNext = currentIndex + TICKETS_PER_PAGE < sortedTickets.length;
 
-  async function submitWaitlist(e: React.FormEvent) {
-    e.preventDefault();
-    const email = waitlistEmail.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setWaitlistStatus({ type: "error", message: "Please enter a valid email address." });
-      return;
-    }
-
-    try {
-      setWaitlistStatus({ type: "loading" });
-      const res = await fetch("/api/early-access", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, source: "homepage" }),
-      });
-      const json: any = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const details = Array.isArray(json?.details) ? json.details : null;
-        setWaitlistStatus({ type: "error", message: json?.message || json?.error || (details?.length ? details[0] : null) || "Could not join right now." });
-        return;
-      }
-      setWaitlistEmail("");
-      setWaitlistStatus({ type: "success", message: "You’re in! We’ll email you when Early Access opens." });
-    } catch {
-      setWaitlistStatus({ type: "error", message: "Network error. Please try again." });
-    }
-  }
-
   return (
     <div className={`min-h-screen flex flex-col ${BRAND.pageBg}`}>
       <section className="relative text-center py-16 bg-white/70 dark:bg-white/5 border-b border-[var(--border)] overflow-hidden">
@@ -415,20 +385,6 @@ export default function Page() {
           <p className={`text-lg mb-6 ${BRAND.subtle}`}>Buy and sell tickets at or below face value. Secure, fair, and fan-first.</p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
             <Link href="/tickets" className={BRAND.btnPrimary}>Browse Tickets</Link>
-            <a href="#early-access" className={BRAND.btnOutline}>Get Early Access</a>
-          </div>
-
-          <div id="early-access" className="mt-10 max-w-xl mx-auto">
-            <div className="rounded-2xl border border-[var(--border)] bg-white/90 dark:bg-white/5 shadow-sm p-5 text-left">
-              <div className={`text-xl font-bold ${BRAND.title}`}>Join the Early Access List</div>
-              <div className={`text-sm mt-1 ${BRAND.subtle}`}>Be first to access fair-priced tickets. Early supporters get priority access at launch.</div>
-              <form onSubmit={submitWaitlist} className="mt-4 flex flex-col sm:flex-row gap-3">
-                <input value={waitlistEmail} onChange={(e) => setWaitlistEmail(e.target.value)} type="email" placeholder="you@email.com" className="flex-1 px-4 py-3 rounded-lg border border-[var(--border)] bg-white dark:bg-black/20" />
-                <button type="submit" className={BRAND.btnPrimarySm} disabled={waitlistStatus.type === "loading"}>{waitlistStatus.type === "loading" ? "Submitting…" : "Get Early Access"}</button>
-              </form>
-              {waitlistStatus.type === "success" && <div className="mt-3 text-sm font-semibold text-green-700">{waitlistStatus.message}</div>}
-              {waitlistStatus.type === "error" && <div className="mt-3 text-sm font-semibold text-red-600">{waitlistStatus.message}</div>}
-            </div>
           </div>
         </div>
       </section>
