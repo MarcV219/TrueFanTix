@@ -141,11 +141,13 @@ export async function POST(req: Request) {
     }
 
     console.error("/api/auth/register failed", e);
+    const reason = e instanceof Error ? e.message : "Unknown server error";
+    const codeText = typeof code === "string" ? ` [${code}]` : "";
     return NextResponse.json(
       {
         ok: false,
         error: "SERVER_ERROR",
-        message: "Registration failed. Please try again in a moment.",
+        message: `Registration failed${codeText}: ${reason}`,
       },
       { status: 500 }
     );
