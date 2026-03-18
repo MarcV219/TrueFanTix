@@ -61,7 +61,27 @@ export async function GET() {
       3500,
       prisma.user.findUnique({
         where: { id: userId },
-        include: {
+        select: {
+          id: true,
+          email: true,
+          phone: true,
+          firstName: true,
+          lastName: true,
+          displayName: true,
+          sellerId: true,
+          emailVerifiedAt: true,
+          phoneVerifiedAt: true,
+          country: true,
+          region: true,
+          city: true,
+          postalCode: true,
+          streetAddress1: true,
+          streetAddress2: true,
+          canBuy: true,
+          canComment: true,
+          canSell: true,
+          role: true,
+          isBanned: true,
           seller: { select: { status: true } },
         },
       })

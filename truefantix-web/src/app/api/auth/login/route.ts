@@ -21,6 +21,10 @@ function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
+function normalizePhone(phone: string) {
+  return phone.trim().replace(/[^\d+]/g, "");
+}
+
 export async function POST(req: Request) {
   const rlResult = await applyRateLimit(req, "auth:login");
   if (!rlResult.ok) return rlResult.response;
@@ -45,13 +49,26 @@ export async function POST(req: Request) {
   // Determine whether input looks like an email
   const looksLikeEmail = emailOrPhoneRaw.includes("@");
   const email = looksLikeEmail ? normalizeEmail(emailOrPhoneRaw) : null;
-  const phone = looksLikeEmail ? null : emailOrPhoneRaw;
+
+  const phoneCandidates = looksLikeEmail
+    ? []
+    : (() => {
+        const raw = emailOrPhoneRaw;
+        const n = normalizePhone(emailOrPhoneRaw);
+        const out = new Set<string>([raw, n]);
+        const digits = n.replace(/^\+/, "");
+        if (!n.startsWith("+") && /^\d{10}$/.test(digits)) {
+          out.add(`+1${digits}`);
+          out.add(`1${digits}`);
+        }
+        return Array.from(out).filter(Boolean);
+      })();
 
   const user = await prisma.user.findFirst({
     where: {
       OR: [
         ...(email ? [{ email }] : []),
-        ...(phone ? [{ phone }] : []),
+        ...phoneCandidates.map((p) => ({ phone: p })),
       ],
     },
     select: {
