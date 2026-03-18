@@ -38,8 +38,7 @@ function buildVerifyUrl(nextPath: string) {
 }
 
 function normalizePhoneLike(s: string) {
-  // VERY light normalization for "do these match" checks in UI.
-  // (Server should do real normalization/validation.)
+  // Keep consistent with server-side normalizePhone.
   return (s ?? "").replace(/[^\d+]/g, "").trim();
 }
 
@@ -158,6 +157,9 @@ function RegisterForm() {
     // Minimal client-side checks (server enforces real rules)
     if (!email.trim()) return setError("Email is required.");
     if (!phone.trim()) return setError("Phone number is required.");
+    if (!/^\+?[1-9]\d{1,14}$/.test(normalizePhoneLike(phone))) {
+      return setError("Phone must be in international format (e.g., +14165550123).");
+    }
     if (!password) return setError("Password is required.");
     if (!confirmPassword) return setError("Please confirm your password.");
     if (password !== confirmPassword) return setError("Passwords do not match.");
@@ -178,7 +180,7 @@ function RegisterForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email,
-          phone,
+          phone: normalizePhoneLike(phone),
           password,
           firstName,
           lastName,
@@ -300,11 +302,11 @@ function RegisterForm() {
             style={baseInputStyle}
           />
           <div style={helpTextStyle}>
-            Tip: enter your number in international format if possible (e.g., +1…).
+            Required format: international (E.164), e.g. <strong>+14165550123</strong> (you can type spaces/dashes; we’ll clean it).
           </div>
-          {phone.trim() && normalizePhoneLike(phone).length < 7 ? (
+          {phone.trim() && !/^\+?[1-9]\d{1,14}$/.test(normalizePhoneLike(phone)) ? (
             <div style={{ ...helpTextStyle, color: "rgba(200,0,0,0.9)" }}>
-              That phone number looks too short.
+              Please enter a valid international phone number (example: +14165550123).
             </div>
           ) : null}
         </label>

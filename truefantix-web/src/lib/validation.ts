@@ -85,7 +85,8 @@ export const schemas = {
 
   authRegister: z.object({
     email: z.string().trim().email().max(255),
-    phone: z.string().trim().min(7).max(30),
+    // E.164-ish: +14165550123 (allow optional leading +)
+    phone: z.string().trim().regex(/^\+?[1-9]\d{1,14}$/, "Phone must be in international format (e.g., +14165550123)"),
     password: z.string().min(10).max(100).regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, "Password must include at least one letter and one number"),
     firstName: z.string().trim().min(1).max(100),
     lastName: z.string().trim().min(1).max(100),

@@ -18,8 +18,10 @@ function normalizeEmail(email: string) {
 }
 
 function normalizePhone(phone: string) {
-  // Keep simple for now: trim spaces. Later you can enforce E.164.
-  return phone.trim();
+  // Normalize to something close to E.164 for consistent uniqueness checks.
+  // Keep leading "+" if present; strip spaces, dashes, parens, etc.
+  const s = phone.trim().replace(/[^\d+]/g, "");
+  return s;
 }
 
 export async function POST(req: Request) {
