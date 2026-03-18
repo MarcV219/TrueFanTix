@@ -74,47 +74,70 @@ export async function POST(req: Request) {
     const TERMS_VERSION = "v1";
     const PRIVACY_VERSION = "v1";
 
-    const user = await prisma.user.create({
-      data: {
-        email: emailNorm,
-        phone: phoneNorm,
-        passwordHash,
+    const createUser = () =>
+      prisma.user.create({
+        data: {
+          email: emailNorm,
+          phone: phoneNorm,
+          passwordHash,
 
-        firstName: body.firstName,
-        lastName: body.lastName,
-        displayName: body.displayName ?? null,
+          firstName: body.firstName,
+          lastName: body.lastName,
+          displayName: body.displayName ?? null,
 
-        streetAddress1: body.streetAddress1,
-        streetAddress2: body.streetAddress2 ?? null,
-        city: body.city,
-        region: body.region,
-        postalCode: body.postalCode,
-        country: body.country,
+          streetAddress1: body.streetAddress1,
+          streetAddress2: body.streetAddress2 ?? null,
+          city: body.city,
+          region: body.region,
+          postalCode: body.postalCode,
+          country: body.country,
 
-        canBuy: true,
-        canComment: true,
-        canSell: false,
+          canBuy: true,
+          canComment: true,
+          canSell: false,
 
-        role: "USER",
+          role: "USER",
 
-        termsAcceptedAt: new Date(),
-        termsVersion: TERMS_VERSION,
-        privacyAcceptedAt: new Date(),
-        privacyVersion: PRIVACY_VERSION,
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        displayName: true,
-        emailVerifiedAt: true,
-        phoneVerifiedAt: true,
-        canSell: true,
-        role: true,
-        createdAt: true,
-      },
-    });
+          termsAcceptedAt: new Date(),
+          termsVersion: TERMS_VERSION,
+          privacyAcceptedAt: new Date(),
+          privacyVersion: PRIVACY_VERSION,
+        },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          displayName: true,
+          emailVerifiedAt: true,
+          phoneVerifiedAt: true,
+          canSell: true,
+          role: true,
+          createdAt: true,
+        },
+      });
+
+    let user;
+    try {
+      user = await createUser();
+    } catch (createErr: any) {
+      // Dev DB schema drift hotfix: add missing referral columns if needed, then retry once.
+      if (
+        createErr?.code === "P2022" &&
+        String(createErr?.message || "").includes("referralCreditsEarned")
+      ) {
+        await prisma.$executeRawUnsafe(`
+          ALTER TABLE "User"
+          ADD COLUMN IF NOT EXISTS "referralCode" TEXT,
+          ADD COLUMN IF NOT EXISTS "referralCreditsEarned" INTEGER NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS "emailVerificationToken" TEXT,
+          ADD COLUMN IF NOT EXISTS "passwordResetTokenHash" TEXT;
+        `);
+        user = await createUser();
+      } else {
+        throw createErr;
+      }
+    }
 
     // Create session cookie so they are logged in immediately
     await createSessionForUser(user.id);
