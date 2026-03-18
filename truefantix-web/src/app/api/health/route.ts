@@ -5,22 +5,39 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET() {
   const started = Date.now();
+  const hasSessionSecret = !!process.env.SESSION_SECRET && process.env.SESSION_SECRET.length >= 32;
+
   try {
     await prisma.$queryRaw`SELECT 1`;
-    return NextResponse.json({
-      ok: true,
-      status: "healthy",
-      checks: { db: "ok" },
-      latencyMs: Date.now() - started,
-      ts: new Date().toISOString(),
-    });
-  } catch (e: any) {
+
+    const checks = {
+      db: "ok" as const,
+      sessionSecret: hasSessionSecret ? ("ok" as const) : ("missing_or_too_short" as const),
+    };
+
+    const ok = checks.db === "ok" && checks.sessionSecret === "ok";
+
+    return NextResponse.json(
+      {
+        ok,
+        status: ok ? "healthy" : "unhealthy",
+        checks,
+        latencyMs: Date.now() - started,
+        ts: new Date().toISOString(),
+      },
+      { status: ok ? 200 : 503 }
+    );
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Health check failed";
     return NextResponse.json(
       {
         ok: false,
         status: "unhealthy",
-        checks: { db: "failed" },
-        error: e?.message || "Health check failed",
+        checks: {
+          db: "failed",
+          sessionSecret: hasSessionSecret ? "ok" : "missing_or_too_short",
+        },
+        error: message,
         ts: new Date().toISOString(),
       },
       { status: 503 }
