@@ -13,15 +13,21 @@ function isE164(v: string | undefined | null) {
 
 export async function GET() {
   const sendgridApiKey = process.env.SENDGRID_API_KEY;
+  const resendApiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.FROM_EMAIL;
 
   const twilioSid = process.env.TWILIO_ACCOUNT_SID;
   const twilioAuth = process.env.TWILIO_AUTH_TOKEN;
   const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
 
-  const sendgrid = {
-    configured: isNonEmpty(sendgridApiKey) && isNonEmpty(fromEmail),
+  const sendgridConfigured = isNonEmpty(sendgridApiKey) && isNonEmpty(fromEmail);
+  const resendConfigured = isNonEmpty(resendApiKey) && isNonEmpty(fromEmail);
+
+  const email = {
+    configured: sendgridConfigured || resendConfigured,
+    provider: resendConfigured ? "resend" : sendgridConfigured ? "sendgrid" : "none",
     checks: {
+      RESEND_API_KEY: isNonEmpty(resendApiKey) ? "ok" : "missing",
       SENDGRID_API_KEY: isNonEmpty(sendgridApiKey) ? "ok" : "missing",
       FROM_EMAIL: isNonEmpty(fromEmail) ? "ok" : "missing",
     },
@@ -40,14 +46,14 @@ export async function GET() {
     },
   };
 
-  const ok = sendgrid.configured && twilio.configured;
+  const ok = email.configured && twilio.configured;
 
   return NextResponse.json(
     {
       ok,
       status: ok ? "healthy" : "degraded",
       providers: {
-        sendgrid,
+        email,
         twilio,
       },
       ts: new Date().toISOString(),

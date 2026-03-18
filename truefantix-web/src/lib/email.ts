@@ -8,32 +8,64 @@ export type EmailPayload = {
 };
 
 export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; error?: string }> {
-  const apiKey = process.env.SENDGRID_API_KEY;
+  const sendgridApiKey = process.env.SENDGRID_API_KEY;
+  const resendApiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.FROM_EMAIL || "noreply@truefantix.com";
 
-  if (!apiKey) {
-    console.log("[EMAIL] SENDGRID_API_KEY not set - logging to console instead");
-    console.log("[EMAIL] To:", payload.to);
-    console.log("[EMAIL] Subject:", payload.subject);
-    console.log("[EMAIL] Text:", payload.text.slice(0, 200) + "...");
-    return { ok: true }; // DEV mode - pretend it worked
+  // Prefer Resend when configured (Path B), fallback to SendGrid.
+  if (resendApiKey) {
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [payload.to],
+          subject: payload.subject,
+          text: payload.text,
+          html: payload.html,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error("[EMAIL] Resend error:", res.status, body);
+        return { ok: false, error: `Resend ${res.status}` };
+      }
+
+      return { ok: true };
+    } catch (err: any) {
+      console.error("[EMAIL] Resend network error:", err);
+      return { ok: false, error: err?.message || "Resend request failed" };
+    }
   }
 
-  sgMail.setApiKey(apiKey);
+  if (sendgridApiKey) {
+    sgMail.setApiKey(sendgridApiKey);
 
-  try {
-    await sgMail.send({
-      to: payload.to,
-      from: fromEmail,
-      subject: payload.subject,
-      text: payload.text,
-      html: payload.html,
-    });
-    return { ok: true };
-  } catch (err: any) {
-    console.error("[EMAIL] SendGrid error:", err);
-    return { ok: false, error: err.message };
+    try {
+      await sgMail.send({
+        to: payload.to,
+        from: fromEmail,
+        subject: payload.subject,
+        text: payload.text,
+        html: payload.html,
+      });
+      return { ok: true };
+    } catch (err: any) {
+      console.error("[EMAIL] SendGrid error:", err);
+      return { ok: false, error: err.message };
+    }
   }
+
+  console.log("[EMAIL] No provider configured (RESEND_API_KEY/SENDGRID_API_KEY). Logging to console instead");
+  console.log("[EMAIL] To:", payload.to);
+  console.log("[EMAIL] Subject:", payload.subject);
+  console.log("[EMAIL] Text:", payload.text.slice(0, 200) + "...");
+  return { ok: true }; // DEV mode - pretend it worked
 }
 
 export function generateVerificationEmail(code: string, firstName: string | null) {
