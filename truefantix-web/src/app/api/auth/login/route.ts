@@ -25,6 +25,17 @@ export async function POST(req: Request) {
   const rlResult = await applyRateLimit(req, "auth:login");
   if (!rlResult.ok) return rlResult.response;
 
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "SERVER_MISCONFIGURED",
+        message: "Login is temporarily unavailable (session configuration missing).",
+      },
+      { status: 503 }
+    );
+  }
+
   const validation = await validateRequest(schemas.authLogin)(req);
   if (!validation.success) return validation.response;
 

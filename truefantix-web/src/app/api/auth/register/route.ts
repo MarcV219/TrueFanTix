@@ -30,6 +30,19 @@ export async function POST(req: Request) {
 
   const body = validation.data;
 
+  // Preflight: session config must exist before we create user, otherwise we'd create
+  // an account and still fail with 500 while trying to set session cookie.
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "SERVER_MISCONFIGURED",
+        message: "Registration is temporarily unavailable (session configuration missing).",
+      },
+      { status: 503 }
+    );
+  }
+
   try {
     const emailNorm = normalizeEmail(body.email);
     const phoneNorm = normalizePhone(body.phone);
