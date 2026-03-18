@@ -15,7 +15,7 @@ export async function GET() {
     name: s.name,
     rating: s.rating,
     reviews: s.reviews,
-    accessTokenBalance: s.creditBalanceCredits,
+    accessTokenBalance: s.accessTokenBalance,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     badges: s.badges.map((b: any) => b.name),
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
     const seller = await prisma.seller.create({
       data: {
         name,
-        creditBalanceCredits: 0,
+        accessTokenBalance: 0,
         ...(rating == null ? {} : { rating }),
         ...(reviews == null ? {} : { reviews }),
         badges: badges.length
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
         name: seller.name,
         rating: seller.rating,
         reviews: seller.reviews,
-        accessTokenBalance: seller.creditBalanceCredits,
+        accessTokenBalance: seller.accessTokenBalance,
         createdAt: seller.createdAt,
         updatedAt: seller.updatedAt,
         badges: seller.badges.map((b: any) => b.name),

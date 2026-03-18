@@ -58,7 +58,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (type) where.type = type;
     if (source) where.source = source;
 
-    const rows = await prisma.creditTransaction.findMany({
+    const rows = await prisma.accessTokenTransaction.findMany({
       where,
       orderBy: { createdAt: "desc" },
       take: take + 1,
@@ -73,8 +73,8 @@ export async function GET(req: Request, ctx: Ctx) {
         sellerId: true,
         type: true,
         source: true,
-        amountCredits: true,
-        balanceAfterCredits: true,
+        amountAccessTokens: true,
+        balanceAfterAccessTokens: true,
         note: true,
         referenceType: true,
         referenceId: true,
@@ -86,8 +86,15 @@ export async function GET(req: Request, ctx: Ctx) {
     });
 
     const hasNext = rows.length > take;
-    const page = hasNext ? rows.slice(0, take) : rows;
+    const page = (hasNext ? rows.slice(0, take) : rows).map((row) => ({
+      ...row,
+      amountCredits: row.amountAccessTokens,
+      balanceAfterCredits: row.balanceAfterAccessTokens,
+    }));
     const nextCursor = hasNext ? page[page.length - 1]?.id ?? null : null;
+
+    const pathname = new URL(req.url).pathname;
+    const isLegacyCreditsPath = pathname.endsWith("/credits");
 
     return NextResponse.json({
       ok: true,
@@ -95,6 +102,7 @@ export async function GET(req: Request, ctx: Ctx) {
       take,
       nextCursor,
       accessTokens: page,
+      ...(isLegacyCreditsPath ? { credits: page } : {}),
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

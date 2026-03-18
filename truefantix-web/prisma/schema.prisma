@@ -25,17 +25,17 @@ enum OrderStatus {
   FAILED
 }
 
-enum CreditTxType {
-  EARNED      // seller earned credits (e.g., from sale)
-  SPENT       // seller spent credits (boosts/fees/etc.)
-  HELD        // credits reserved (e.g., pending payout)
+enum AccessTokenTxType {
+  EARNED      // seller earned access tokens (e.g., from sale)
+  SPENT       // seller spent access tokens (boosts/fees/etc.)
+  HELD        // access tokens reserved (e.g., pending payout)
   RELEASED    // hold released (cancel/failed payout)
-  WITHDRAWN   // payout completed (credits converted/consumed)
+  WITHDRAWN   // payout completed (access tokens converted/consumed)
   ADJUSTMENT  // system/admin adjustment
   REVERSAL    // reversal/chargeback/refund related
 }
 
-enum CreditTxSource {
+enum AccessTokenTxSource {
   SOLD_OUT_PURCHASE
   ADMIN
   REFUND
@@ -236,8 +236,8 @@ model Seller {
   rating  Float  @default(0)
   reviews Int    @default(0)
 
-  // Credits stored as integer counts (NOT dollars)
-  creditBalanceCredits Int @default(0)
+  // Access tokens stored as integer counts (NOT dollars)
+  accessTokenBalance Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -275,7 +275,7 @@ model Seller {
   // Marketplace relations
   tickets            Ticket[]
   badges             SellerBadge[]
-  creditTransactions CreditTransaction[]
+  accessTokenTransactions AccessTokenTransaction[]
   orders             Order[]
   buyerOrders        Order[] @relation("BuyerOrders")
 
@@ -372,7 +372,7 @@ model Ticket {
 
   escrow TicketEscrow?
 
-  creditTransactions CreditTransaction[]
+  accessTokenTransactions AccessTokenTransaction[]
 
   // Community comments (optional)
   comments CommunityComment[]
@@ -424,7 +424,7 @@ model Order {
   payment Payment?
 
   ticketEscrows TicketEscrow[]
-  creditTransactions CreditTransaction[]
+  accessTokenTransactions AccessTokenTransaction[]
 
   // Conversation for this order
   conversation Conversation?
@@ -459,20 +459,20 @@ model OrderItem {
   @@index([ticketId])
 }
 
-model CreditTransaction {
+model AccessTokenTransaction {
   id       String @id @default(cuid())
   sellerId String
   seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
-  type          CreditTxType
-  amountCredits Int @default(0)
+  type               AccessTokenTxType
+  amountAccessTokens Int @default(0)
 
   // ✅ Make source required so compound unique is reliable (no NULL weakening)
-  source CreditTxSource @default(UNKNOWN)
+  source AccessTokenTxSource @default(UNKNOWN)
 
   // Recommended: populate this for every txn (routes now do this for SOLD_OUT_PURCHASE).
   // Keep nullable for now to avoid forcing a migration/backfill immediately.
-  balanceAfterCredits Int?
+  balanceAfterAccessTokens Int?
 
   note String?
 
@@ -497,8 +497,8 @@ model CreditTransaction {
   @@index([payoutId])
   @@index([ticketId])
 
-  // Prevent duplicate credit awards/spends per ticket per order
-  @@unique([orderId, ticketId, sellerId, type, source], name: "uniq_credit_per_ticket_reason")
+  // Prevent duplicate access token awards/spends per ticket per order
+  @@unique([orderId, ticketId, sellerId, type, source], name: "uniq_access_token_per_ticket_reason")
 }
 
 model Payout {
@@ -506,7 +506,7 @@ model Payout {
   sellerId String
   seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
-  creditTransactions CreditTransaction[]
+  accessTokenTransactions AccessTokenTransaction[]
 
   amountCents Int
   feeCents    Int @default(0)
@@ -1028,7 +1028,7 @@ model Referral {
   status String @default("PENDING") // PENDING, COMPLETED, CANCELLED
   completedAt DateTime?
 
-  creditsAwarded Int @default(0)
+  accessTokensAwarded Int @default(0)
 
   @@index([referrerId, status])
   @@index([referredId])

@@ -37,7 +37,7 @@ export async function GET(req: Request) {
       include: {
         badges: true,
         tickets: true,
-        creditTransactions: { orderBy: { createdAt: "desc" }, take: 25 },
+        accessTokenTransactions: { orderBy: { createdAt: "desc" }, take: 25 },
         orders: { orderBy: { createdAt: "desc" }, take: 25 },
       },
     });

@@ -6,7 +6,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 // Legacy endpoint kept for compatibility; semantics are access tokens.
 export async function POST(req: Request) {
   try {
-    const validation = await validateRequest(schemas.sellerCreditsAdjustApi)(req);
+    const validation = await validateRequest(schemas.sellerAccessTokensAdjustApi)(req);
     if (!validation.success) return validation.response;
 
     const { sellerId, amount: intAmount, reason, ticketId = null } = validation.data;
@@ -17,15 +17,15 @@ export async function POST(req: Request) {
     }
 
     const updated = await prisma.$transaction(async (tx: any) => {
-      const nextBalance = (seller.creditBalanceCredits ?? 0) + intAmount;
+      const nextBalance = (seller.accessTokenBalance ?? 0) + intAmount;
 
-      await tx.creditTransaction.create({
+      await tx.accessTokenTransaction.create({
         data: {
           sellerId,
           type: intAmount > 0 ? "ADJUSTMENT" : "REVERSAL",
           source: "UNKNOWN",
-          amountCredits: intAmount,
-          balanceAfterCredits: nextBalance,
+          amountAccessTokens: intAmount,
+          balanceAfterAccessTokens: nextBalance,
           note: reason,
           ticketId,
         },
@@ -33,13 +33,14 @@ export async function POST(req: Request) {
 
       return tx.seller.update({
         where: { id: sellerId },
-        data: { creditBalanceCredits: nextBalance },
+        data: { accessTokenBalance: nextBalance },
       });
     });
 
     return NextResponse.json({
       ok: true,
-      accessTokenBalance: updated.creditBalanceCredits,
+      accessTokenBalance: updated.accessTokenBalance,
+      credits: updated.accessTokenBalance,
     });
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });

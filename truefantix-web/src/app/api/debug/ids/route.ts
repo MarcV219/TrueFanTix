@@ -31,16 +31,16 @@ export async function GET(req: Request) {
             select: {
               id: true,
               name: true,
-              creditBalanceCredits: true,
+              accessTokenBalance: true,
             },
           },
         },
       }),
 
       prisma.seller.findMany({
-        orderBy: [{ creditBalanceCredits: "desc" }, { name: "asc" }],
+        orderBy: [{ accessTokenBalance: "desc" }, { name: "asc" }],
         take: 50,
-        select: { id: true, name: true, creditBalanceCredits: true },
+        select: { id: true, name: true, accessTokenBalance: true },
       }),
 
       prisma.communityComment.findMany({
@@ -96,7 +96,7 @@ export async function GET(req: Request) {
 
         sellerId: t.sellerId,
         sellerName: t.seller?.name ?? null,
-        sellerCreditBalanceCredits: t.seller?.creditBalanceCredits ?? null,
+        sellerAccessTokenBalance: t.seller?.accessTokenBalance ?? null,
 
         purchaseUrl: `/api/tickets/${t.id}/purchase`,
         purchaseUrlFull: `${baseUrl}/api/tickets/${t.id}/purchase`,
@@ -105,7 +105,7 @@ export async function GET(req: Request) {
       sellers: sellers.map((s: any) => ({
         sellerId: s.id,
         sellerName: s.name,
-        creditBalanceCredits: s.creditBalanceCredits,
+        accessTokenBalance: s.accessTokenBalance,
       })),
 
       recentComments: recentComments.map((c: any) => ({

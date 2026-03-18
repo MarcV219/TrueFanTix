@@ -21,7 +21,7 @@ export async function GET(req: Request) {
       );
     }
 
-    const transactions = await prisma.creditTransaction.findMany({
+    const transactions = await prisma.accessTokenTransaction.findMany({
       where: { sellerId: user.seller.id },
       orderBy: { createdAt: "desc" },
       take: 100,
@@ -29,8 +29,8 @@ export async function GET(req: Request) {
         id: true,
         type: true,
         source: true,
-        amountCredits: true,
-        balanceAfterCredits: true,
+        amountAccessTokens: true,
+        balanceAfterAccessTokens: true,
         note: true,
         createdAt: true,
       },
@@ -39,7 +39,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         ok: true,
-        accessTokenBalance: user.seller.creditBalanceCredits ?? 0,
+        accessTokenBalance: user.seller.accessTokenBalance ?? 0,
         transactions,
       },
       { status: 200 }

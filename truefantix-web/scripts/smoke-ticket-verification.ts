@@ -8,7 +8,7 @@ async function main(){
   const tag = `smoke-${Date.now()}`;
 
   const seller = await prisma.seller.create({
-    data: { name: `Smoke Seller ${tag}`, creditBalanceCredits: 0 },
+    data: { name: `Smoke Seller ${tag}`, accessTokenBalance: 0 },
   });
 
   const event = await prisma.event.create({

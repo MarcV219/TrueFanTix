@@ -519,7 +519,7 @@ export const schemas = {
     badges: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
   }),
 
-  sellerCreditsAdjustApi: z.object({
+  sellerAccessTokensAdjustApi: z.object({
     sellerId: z.string().trim().cuid(),
     amount: z.number().int().refine((n) => n !== 0, { message: "amount cannot be 0" }),
     reason: z.string().trim().min(1).max(500),

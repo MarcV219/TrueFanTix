@@ -117,7 +117,8 @@ export async function GET(req: Request) {
       const faceValueCents =
         (t as any).faceValueCents == null ? null : safeInt((t as any).faceValueCents);
 
-      const sellerCredits = t.seller ? safeInt((t.seller as any).creditBalanceCredits) : 0;
+      const sellerAccessTokenBalance =
+        t.seller ? safeInt((t.seller as any).accessTokenBalance) : 0;
 
       const eventAny: any = (t as any).event;
 
@@ -207,7 +208,7 @@ export async function GET(req: Request) {
               rating: t.seller.rating,
               reviews: t.seller.reviews,
 
-              creditBalanceCredits: sellerCredits,
+              accessTokenBalance: sellerAccessTokenBalance,
 
               badges: t.seller.badges.map((b: any) => b.name),
             }

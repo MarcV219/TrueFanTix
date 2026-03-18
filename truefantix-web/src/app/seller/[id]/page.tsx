@@ -346,10 +346,10 @@ export default function SellerPage() {
                       </span>
                     </td>
                     <td className="py-2 pr-3">{t.source ?? "—"}</td>
-                    <td className={`py-2 pr-3 font-semibold ${Number(t.amountCredits ?? 0) >= 0 ? "text-green-700" : "text-red-700"}`}>
-                      {Number(t.amountCredits ?? 0) >= 0 ? "+" : ""}{Number(t.amountCredits ?? 0)}
+                    <td className={`py-2 pr-3 font-semibold ${Number(t.amountAccessTokens ?? 0) >= 0 ? "text-green-700" : "text-red-700"}`}>
+                      {Number(t.amountAccessTokens ?? 0) >= 0 ? "+" : ""}{Number(t.amountAccessTokens ?? 0)}
                     </td>
-                    <td className="py-2 pr-3">{t.balanceAfterCredits ?? "—"}</td>
+                    <td className="py-2 pr-3">{t.balanceAfterAccessTokens ?? "—"}</td>
                     <td className="py-2 pr-3">{t.note ?? "—"}</td>
                   </tr>
                 ))}

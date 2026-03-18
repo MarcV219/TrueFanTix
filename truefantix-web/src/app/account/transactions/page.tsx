@@ -8,8 +8,8 @@ type AccessTokenTxn = {
   id: string;
   type: string;
   source: string | null;
-  amountCredits: number;
-  balanceAfterCredits: number | null;
+  amountAccessTokens: number;
+  balanceAfterAccessTokens: number | null;
   note: string | null;
   createdAt: string;
 };
@@ -191,13 +191,13 @@ function AccessTokenTable({ transactions }: { transactions: AccessTokenTxn[] }) 
                   style={{
                     padding: "8px 6px",
                     fontWeight: 900,
-                    color: t.amountCredits >= 0 ? "rgba(22,101,52,1)" : "rgba(153,27,27,1)",
+                    color: t.amountAccessTokens >= 0 ? "rgba(22,101,52,1)" : "rgba(153,27,27,1)",
                   }}
                 >
-                  {t.amountCredits >= 0 ? "+" : ""}
-                  {t.amountCredits}
+                  {t.amountAccessTokens >= 0 ? "+" : ""}
+                  {t.amountAccessTokens}
                 </td>
-                <td style={{ padding: "8px 6px" }}>{t.balanceAfterCredits ?? "—"}</td>
+                <td style={{ padding: "8px 6px" }}>{t.balanceAfterAccessTokens ?? "—"}</td>
                 <td style={{ padding: "8px 6px" }}>{t.note || "—"}</td>
               </tr>
             ))}

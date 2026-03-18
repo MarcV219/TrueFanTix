@@ -8,7 +8,7 @@ const ADMIN_FEE_BPS = 875;
 const BPS_DENOMINATOR = 10_000;
 
 const RESERVATION_MINUTES = 15;
-const CREDIT_COST_PER_SOLDOUT_PURCHASE = 1;
+const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1;
 
 function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));
@@ -94,7 +94,7 @@ export async function POST(req: Request) {
       // Buyer must exist (buyer is a Seller record in your current model)
       const buyer = await tx.seller.findUnique({
         where: { id: buyerSellerId },
-        select: { id: true, creditBalanceCredits: true },
+        select: { id: true, accessTokenBalance: true },
       });
       if (!buyer) {
         return {
@@ -159,9 +159,9 @@ export async function POST(req: Request) {
       const soldOutCount = tickets.filter(
         (t: any) => t.event?.selloutStatus === "SOLD_OUT"
       ).length;
-      const requiredCredits = soldOutCount * CREDIT_COST_PER_SOLDOUT_PURCHASE;
+      const requiredAccessTokens = soldOutCount * ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE;
 
-      if (requiredCredits > 0 && (buyer.creditBalanceCredits ?? 0) < requiredCredits) {
+      if (requiredAccessTokens > 0 && (buyer.accessTokenBalance ?? 0) < requiredAccessTokens) {
         return {
           ok: false as const,
           status: 400 as const,
@@ -169,8 +169,8 @@ export async function POST(req: Request) {
             ok: false,
             error: "Insufficient access tokens to reserve sold-out event tickets",
             debug: {
-              buyerCredits: buyer.creditBalanceCredits ?? 0,
-              requiredCredits,
+              buyerAccessTokens: buyer.accessTokenBalance ?? 0,
+              requiredAccessTokens,
               soldOutCount,
             },
           },
@@ -260,7 +260,7 @@ export async function POST(req: Request) {
             : null,
           reservation: { reservedUntil, minutes: RESERVATION_MINUTES },
           soldOutCount,
-          requiredCredits,
+          requiredAccessTokens,
           next: "Proceed to payment capture -> set Order.PAID, then delivery confirmation -> Order.DELIVERED, then finalize -> Order.COMPLETED",
         },
       };

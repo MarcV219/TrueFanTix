@@ -73,7 +73,7 @@ export async function GET(req: Request) {
     // Calculate pending and completed
     const completedReferrals = referrals.filter(r => r.status === "COMPLETED").length;
     const pendingReferrals = referrals.filter(r => r.status === "PENDING").length;
-    const totalAccessTokens = referrals.reduce((sum, r) => sum + (r.creditsAwarded || 0), 0);
+    const totalAccessTokens = referrals.reduce((sum, r) => sum + (r.accessTokensAwarded || 0), 0);
 
     return NextResponse.json({
       ok: true,
@@ -146,7 +146,7 @@ export async function POST(req: Request) {
         referredId: body.newUserId,
         code: body.referralCode.toUpperCase(),
         status: "PENDING",
-        creditsAwarded: 0,
+        accessTokensAwarded: 0,
       },
     });
 
@@ -207,22 +207,22 @@ export async function PATCH(req: Request) {
         data: {
           status: "COMPLETED",
           completedAt: new Date(),
-          creditsAwarded: accessTokenAmount,
+          accessTokensAwarded: accessTokenAmount,
         },
       }),
       prisma.seller.update({
         where: { id: referral.referrerId },
         data: {
-          creditBalanceCredits: {
+          accessTokenBalance: {
             increment: accessTokenAmount,
           },
         },
       }),
-      prisma.creditTransaction.create({
+      prisma.accessTokenTransaction.create({
         data: {
           sellerId: referral.referrerId,
           type: "EARNED",
-          amountCredits: accessTokenAmount,
+          amountAccessTokens: accessTokenAmount,
           source: "ADMIN",
           referenceType: "REFERRAL",
           referenceId: referral.id,
@@ -242,7 +242,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({
       ok: true,
       message: `Referral completed. ${accessTokenAmount} access tokens awarded.`,
-      creditsAwarded: accessTokenAmount,
+      accessTokensAwarded: accessTokenAmount,
     });
 
   } catch (err) {

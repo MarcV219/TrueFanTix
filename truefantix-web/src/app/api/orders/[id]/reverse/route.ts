@@ -62,7 +62,7 @@ export async function POST(req: Request, ctx: Ctx) {
       }
 
       // 4) Reverse buyer spend ledger entries for this order
-      const buyerSpend = await tx.creditTransaction.findMany({
+      const buyerSpend = await tx.accessTokenTransaction.findMany({
         where: {
           userId: order.buyerId,
           ticketId: { in: ticketIds },
@@ -70,7 +70,7 @@ export async function POST(req: Request, ctx: Ctx) {
         },
       });
       for (const t of buyerSpend) {
-        await tx.creditTransaction.create({
+        await tx.accessTokenTransaction.create({
           data: {
             userId: t.userId,
             ticketId: t.ticketId,

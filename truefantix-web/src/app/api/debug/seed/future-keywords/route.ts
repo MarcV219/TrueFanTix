@@ -50,7 +50,7 @@ export async function POST(req: Request) {
   let seedSeller = await prisma.seller.findFirst({ where: { name: "Seed Seller" } });
   if (!seedSeller) {
     seedSeller = await prisma.seller.create({
-      data: { name: "Seed Seller", rating: 4.8, reviews: 120, creditBalanceCredits: 0 },
+      data: { name: "Seed Seller", rating: 4.8, reviews: 120, accessTokenBalance: 0 },
     });
   }
 

@@ -4,8 +4,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 
-const CREDIT_AWARD_PER_SOLDOUT_SALE = 1; // seller earns per sold-out ticket
-const CREDIT_COST_PER_SOLDOUT_PURCHASE = 1; // buyer spends per sold-out ticket
+const ACCESS_TOKEN_AWARD_PER_SOLDOUT_SALE = 1; // seller earns per sold-out ticket
+const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1; // buyer spends per sold-out ticket
 
 function normalizeId(value: unknown) {
   try {
@@ -30,12 +30,12 @@ function uniqStrings(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
-async function createCreditTxnIdempotent(
+async function createAccessTokenTxnIdempotent(
   tx: any,
   data: any
 ) {
   try {
-    await tx.creditTransaction.create({ data });
+    await tx.accessTokenTransaction.create({ data });
     return true; // created now
   } catch (e: any) {
     // Unique constraint violation => already exists => idempotent success
@@ -170,17 +170,17 @@ export async function POST(req: Request) {
       const soldOutTicketIds = uniqStrings(soldOutItems.map((i: any) => i.ticketId));
       const soldOutCount = soldOutTicketIds.length;
 
-      let creditsSpentByBuyer = 0;
-      let creditsAwardedToSeller = 0;
+      let accessTokensSpentByBuyer = 0;
+      let accessTokensAwardedToSeller = 0;
 
       if (soldOutCount > 0) {
-        const spendPerTicket = CREDIT_COST_PER_SOLDOUT_PURCHASE;
-        const earnPerTicket = CREDIT_AWARD_PER_SOLDOUT_SALE;
+        const spendPerTicket = ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE;
+        const earnPerTicket = ACCESS_TOKEN_AWARD_PER_SOLDOUT_SALE;
 
         // Load buyer + seller balances up front
         const buyer = await tx.seller.findUnique({
           where: { id: order.buyerSellerId },
-          select: { id: true, creditBalanceCredits: true },
+          select: { id: true, accessTokenBalance: true },
         });
 
         if (!buyer) {
@@ -197,7 +197,7 @@ export async function POST(req: Request) {
 
         const seller = await tx.seller.findUnique({
           where: { id: order.sellerId },
-          select: { id: true, creditBalanceCredits: true },
+          select: { id: true, accessTokenBalance: true },
         });
 
         if (!seller) {
@@ -213,7 +213,7 @@ export async function POST(req: Request) {
         }
 
         // Determine which buyer SPENT txns already exist (idempotency safety)
-        const existingBuyerSpend = await tx.creditTransaction.findMany({
+        const existingBuyerSpend = await tx.accessTokenTransaction.findMany({
           where: {
             sellerId: order.buyerSellerId,
             orderId: order.id,
@@ -231,7 +231,7 @@ export async function POST(req: Request) {
         );
 
         // Buyer must have enough access tokens for missing spends
-        const buyerStartBal = buyer.creditBalanceCredits ?? 0;
+        const buyerStartBal = buyer.accessTokenBalance ?? 0;
         const buyerMaxRequired = candidateBuyerCreates.length * spendPerTicket;
 
         if (buyerStartBal < buyerMaxRequired) {
@@ -242,7 +242,7 @@ export async function POST(req: Request) {
               ok: false,
               error: "Cannot complete: buyer has insufficient access tokens for sold-out items",
               debug: {
-                buyerCredits: buyerStartBal,
+                buyerAccessTokens: buyerStartBal,
                 required: buyerMaxRequired,
                 missingSpendTxns: candidateBuyerCreates.length,
               },
@@ -250,19 +250,19 @@ export async function POST(req: Request) {
           };
         }
 
-        // --- BUYER SPEND (step balances, write balanceAfterCredits on each txn) ---
+        // --- BUYER SPEND (step balances, write balanceAfterAccessTokens on each txn) ---
         let buyerBal = buyerStartBal;
 
         for (const ticketId of candidateBuyerCreates) {
           const nextBal = buyerBal - spendPerTicket;
 
-          const created = await createCreditTxnIdempotent(tx, {
+          const created = await createAccessTokenTxnIdempotent(tx, {
             seller: { connect: { id: order.buyerSellerId } },
             type: "SPENT",
             source: "SOLD_OUT_PURCHASE",
-            amountCredits: -spendPerTicket,
-            balanceAfterCredits: nextBal,
-            note: `Credit spent for sold-out ticket ${ticketId}`,
+            amountAccessTokens: -spendPerTicket,
+            balanceAfterAccessTokens: nextBal,
+            note: `Access token spent for sold-out ticket ${ticketId}`,
             referenceType: "Order",
             referenceId: order.id,
             order: { connect: { id: order.id } },
@@ -271,19 +271,19 @@ export async function POST(req: Request) {
 
           if (created) {
             buyerBal = nextBal;
-            creditsSpentByBuyer += spendPerTicket;
+            accessTokensSpentByBuyer += spendPerTicket;
           }
         }
 
-        if (creditsSpentByBuyer > 0) {
+        if (accessTokensSpentByBuyer > 0) {
           await tx.seller.update({
             where: { id: order.buyerSellerId },
-            data: { creditBalanceCredits: buyerBal },
+            data: { accessTokenBalance: buyerBal },
           });
         }
 
-        // --- SELLER EARN (step balances, write balanceAfterCredits on each txn) ---
-        const existingSellerEarn = await tx.creditTransaction.findMany({
+        // --- SELLER EARN (step balances, write balanceAfterAccessTokens on each txn) ---
+        const existingSellerEarn = await tx.accessTokenTransaction.findMany({
           where: {
             sellerId: order.sellerId,
             orderId: order.id,
@@ -300,18 +300,18 @@ export async function POST(req: Request) {
         const candidateSellerCreates = soldOutTicketIds.filter((ticketId: any) => !existingSellerTicketIds.has(ticketId)
         );
 
-        let sellerBal = seller.creditBalanceCredits ?? 0;
+        let sellerBal = seller.accessTokenBalance ?? 0;
 
         for (const ticketId of candidateSellerCreates) {
           const nextBal = sellerBal + earnPerTicket;
 
-          const created = await createCreditTxnIdempotent(tx, {
+          const created = await createAccessTokenTxnIdempotent(tx, {
             seller: { connect: { id: order.sellerId } },
             type: "EARNED",
             source: "SOLD_OUT_PURCHASE",
-            amountCredits: earnPerTicket,
-            balanceAfterCredits: nextBal,
-            note: `Credit earned for sold-out ticket ${ticketId}`,
+            amountAccessTokens: earnPerTicket,
+            balanceAfterAccessTokens: nextBal,
+            note: `Access token earned for sold-out ticket ${ticketId}`,
             referenceType: "Order",
             referenceId: order.id,
             order: { connect: { id: order.id } },
@@ -320,14 +320,14 @@ export async function POST(req: Request) {
 
           if (created) {
             sellerBal = nextBal;
-            creditsAwardedToSeller += earnPerTicket;
+            accessTokensAwardedToSeller += earnPerTicket;
           }
         }
 
-        if (creditsAwardedToSeller > 0) {
+        if (accessTokensAwardedToSeller > 0) {
           await tx.seller.update({
             where: { id: order.sellerId },
-            data: { creditBalanceCredits: sellerBal },
+            data: { accessTokenBalance: sellerBal },
           });
         }
       }
@@ -377,8 +377,8 @@ export async function POST(req: Request) {
           ok: true,
           order: completed,
           soldOutCount,
-          creditsSpentByBuyer,
-          creditsAwardedToSeller,
+          accessTokensSpentByBuyer,
+          accessTokensAwardedToSeller,
           escrowRelease: {
             released: true,
             payoutId: payout.id,

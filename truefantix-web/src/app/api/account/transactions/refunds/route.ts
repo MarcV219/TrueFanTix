@@ -45,7 +45,7 @@ export async function GET(req: Request) {
           items: { select: { ticketId: true, ticket: { select: { title: true } } } },
         },
       }),
-      prisma.creditTransaction.findMany({
+      prisma.accessTokenTransaction.findMany({
         where: { sellerId, source: "REFUND" },
         orderBy: { createdAt: "desc" },
         take: 100,
@@ -53,8 +53,8 @@ export async function GET(req: Request) {
           id: true,
           type: true,
           source: true,
-          amountCredits: true,
-          balanceAfterCredits: true,
+          amountAccessTokens: true,
+          balanceAfterAccessTokens: true,
           note: true,
           orderId: true,
           createdAt: true,
@@ -89,7 +89,7 @@ export async function GET(req: Request) {
         orderId: t.orderId,
         status: t.type,
         amount: 0,
-        accessTokenDelta: t.amountCredits ?? 0,
+        accessTokenDelta: t.amountAccessTokens ?? 0,
         note: t.note ?? "Access token refund adjustment",
         createdAt: t.createdAt.toISOString(),
       })),

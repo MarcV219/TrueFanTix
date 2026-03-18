@@ -48,8 +48,8 @@ export async function calculateSellerReputation(sellerId: string): Promise<Reput
           disputeWindowEndsAt: true,
         },
       },
-      creditTransactions: {
-        select: { type: true, amountCredits: true, createdAt: true },
+      accessTokenTransactions: {
+        select: { type: true, amountAccessTokens: true, createdAt: true },
         orderBy: { createdAt: "desc" },
         take: 100,
       },
@@ -105,7 +105,7 @@ async function calculateTrustworthiness(seller: any): Promise<number> {
   score -= disputedOrders * 10;
 
   // Credit balance (indicates successful transactions)
-  if (seller.creditBalanceCredits > 0) score += 5;
+  if (seller.accessTokenBalance > 0) score += 5;
 
   return Math.max(0, Math.min(100, score));
 }

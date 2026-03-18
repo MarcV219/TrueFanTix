@@ -136,7 +136,7 @@ export async function POST(req: Request) {
       // NOTE: We keep USERS (protected ones) and avoid wiping ALL sellers.
       await prisma.payment.deleteMany({}).catch(() => {});
       await prisma.payout.deleteMany({}).catch(() => {});
-      await prisma.creditTransaction.deleteMany({}).catch(() => {});
+      await prisma.accessTokenTransaction.deleteMany({}).catch(() => {});
       await prisma.order.deleteMany({}).catch(() => {});
       await prisma.ticket.deleteMany({}).catch(() => {});
       await prisma.event.deleteMany({}).catch(() => {});
@@ -322,7 +322,7 @@ export async function POST(req: Request) {
           name: "Seed Seller",
           rating: 4.8,
           reviews: 120,
-          creditBalanceCredits: 0,
+          accessTokenBalance: 0,
         },
         include: { badges: true },
       });
@@ -353,14 +353,14 @@ export async function POST(req: Request) {
           name: "Seed Buyer",
           rating: 4.9,
           reviews: 12,
-          creditBalanceCredits: 1,
+          accessTokenBalance: 1,
         },
         include: { badges: true },
       });
     } else {
       seedBuyer = await prisma.seller.update({
         where: { id: seedBuyer.id },
-        data: { creditBalanceCredits: 1 },
+        data: { accessTokenBalance: 1 },
         include: { badges: true },
       });
     }
@@ -461,7 +461,7 @@ export async function POST(req: Request) {
         ? {
             sellerId: sellerOut.id,
             name: sellerOut.name,
-            creditBalanceCredits: sellerOut.creditBalanceCredits,
+            accessTokenBalance: sellerOut.accessTokenBalance,
             badges: sellerOut.badges.map((b: any) => b.name),
           }
         : null,
@@ -469,7 +469,7 @@ export async function POST(req: Request) {
         ? {
             buyerSellerId: buyerOut.id,
             name: buyerOut.name,
-            creditBalanceCredits: buyerOut.creditBalanceCredits,
+            accessTokenBalance: buyerOut.accessTokenBalance,
             badges: buyerOut.badges.map((b: any) => b.name),
           }
         : null,

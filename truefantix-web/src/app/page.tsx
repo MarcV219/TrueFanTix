@@ -25,7 +25,7 @@ type ApiTicket = {
     name: string;
     rating: number;
     reviews: number;
-    creditBalance: number;
+    accessTokenBalance: number;
     badges: string[];
   };
   event?: {

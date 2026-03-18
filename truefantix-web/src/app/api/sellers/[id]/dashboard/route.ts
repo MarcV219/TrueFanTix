@@ -62,7 +62,7 @@ export async function GET(req: Request, ctx: Ctx) {
       prisma.ticket.count({ where: { sellerId, status: "WITHDRAWN" } }),
     ]);
 
-    const [recentTickets, recentOrders, recentCredits, recentPayouts, earnedSoldOutAgg] =
+    const [recentTickets, recentOrders, recentAccessTokens, recentPayouts, earnedSoldOutAgg] =
       await Promise.all([
         prisma.ticket.findMany({
           where: { sellerId },
@@ -87,7 +87,7 @@ export async function GET(req: Request, ctx: Ctx) {
             },
           },
         }),
-        prisma.creditTransaction.findMany({
+        prisma.accessTokenTransaction.findMany({
           where: { sellerId },
           orderBy: { createdAt: "desc" },
           take: 10,
@@ -97,13 +97,13 @@ export async function GET(req: Request, ctx: Ctx) {
           orderBy: { createdAt: "desc" },
           take: 10,
         }),
-        prisma.creditTransaction.aggregate({
+        prisma.accessTokenTransaction.aggregate({
           where: {
             sellerId,
             type: "EARNED",
             source: "SOLD_OUT_PURCHASE",
           },
-          _sum: { amountCredits: true },
+          _sum: { amountAccessTokens: true },
         }),
       ]);
 
@@ -111,9 +111,9 @@ export async function GET(req: Request, ctx: Ctx) {
     const lifetimeOrders = seller.metrics?.lifetimeOrders ?? 0;
     const lifetimeTicketsSold = seller.metrics?.lifetimeTicketsSold ?? 0;
 
-    const accessTokenBalance = seller.creditBalanceCredits ?? 0;
+    const accessTokenBalance = seller.accessTokenBalance ?? 0;
 
-    const soldOutAccessTokensEarned = earnedSoldOutAgg._sum.amountCredits ?? 0;
+    const soldOutAccessTokensEarned = earnedSoldOutAgg._sum.amountAccessTokens ?? 0;
 
     return NextResponse.json({
       ok: true,
@@ -179,12 +179,12 @@ export async function GET(req: Request, ctx: Ctx) {
           createdAt: o.createdAt,
         })),
 
-        accessTokens: recentCredits.map((ct: any) => ({
+        accessTokens: recentAccessTokens.map((ct: any) => ({
           id: ct.id,
           type: ct.type,
           source: (ct as any).source ?? null,
-          amountCredits: ct.amountCredits,
-          balanceAfterCredits: ct.balanceAfterCredits ?? null,
+          amountAccessTokens: ct.amountAccessTokens,
+          balanceAfterAccessTokens: ct.balanceAfterAccessTokens ?? null,
           note: ct.note ?? null,
           referenceType: ct.referenceType ?? null,
           referenceId: ct.referenceId ?? null,

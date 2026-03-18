@@ -11,7 +11,7 @@ const ADMIN_FEE_BPS = 875; // 8.75%
 const BPS_DENOMINATOR = 10_000;
 
 const RESERVATION_MINUTES = 15;
-const CREDIT_COST_PER_SOLDOUT_PURCHASE = 1;
+const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1;
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
 
@@ -170,7 +170,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const result = await prisma.$transaction(async (tx: any) => {
       const buyer = await tx.seller.findUnique({
         where: { id: buyerSellerId },
-        select: { id: true, creditBalanceCredits: true },
+        select: { id: true, accessTokenBalance: true },
       });
 
       if (!buyer) {
@@ -212,7 +212,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
       const soldOutEvent = ticket.event?.selloutStatus === "SOLD_OUT";
 
-      if (soldOutEvent && (buyer.creditBalanceCredits ?? 0) < CREDIT_COST_PER_SOLDOUT_PURCHASE) {
+      if (soldOutEvent && (buyer.accessTokenBalance ?? 0) < ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE) {
         return {
           ok: false as const,
           status: 400 as const,
