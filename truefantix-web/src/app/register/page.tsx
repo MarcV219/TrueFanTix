@@ -157,8 +157,8 @@ function RegisterForm() {
     // Minimal client-side checks (server enforces real rules)
     if (!email.trim()) return setError("Email is required.");
     if (!phone.trim()) return setError("Phone number is required.");
-    if (!/^\+?[1-9]\d{1,14}$/.test(normalizePhoneLike(phone))) {
-      return setError("Phone must be in international format (e.g., +14165550123).");
+    if (!/^\+[1-9]\d{1,14}$/.test(normalizePhoneLike(phone))) {
+      return setError("Phone must start with + and include country code (example: +14165550123).");
     }
     if (!password) return setError("Password is required.");
     if (!confirmPassword) return setError("Please confirm your password.");
@@ -307,11 +307,11 @@ function RegisterForm() {
             style={baseInputStyle}
           />
           <div style={helpTextStyle}>
-            Required format: international (E.164), e.g. <strong>+14165550123</strong> (you can type spaces/dashes; we’ll clean it).
+            Required format: <strong>+countrycode+number</strong> (E.164), e.g. <strong>+14165550123</strong>. If you type spaces/dashes, we’ll clean them.
           </div>
-          {phone.trim() && !/^\+?[1-9]\d{1,14}$/.test(normalizePhoneLike(phone)) ? (
+          {phone.trim() && !/^\+[1-9]\d{1,14}$/.test(normalizePhoneLike(phone)) ? (
             <div style={{ ...helpTextStyle, color: "rgba(200,0,0,0.9)" }}>
-              Please enter a valid international phone number (example: +14165550123).
+              Use format +countrycode+number (example: +14165550123).
             </div>
           ) : null}
         </label>
