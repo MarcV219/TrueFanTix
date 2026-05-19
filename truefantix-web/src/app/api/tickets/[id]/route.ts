@@ -46,8 +46,6 @@ export async function GET(req: Request) {
         seat: true,
         date: true,
         status: true,
-        reservedUntil: true,
-        reservedByOrderId: true,
         soldAt: true,
         withdrawnAt: true,
         verificationStatus: true,
@@ -64,9 +62,6 @@ export async function GET(req: Request) {
         event: {
           select: {
             id: true,
-            title: true,
-            venue: true,
-            date: true,
             selloutStatus: true,
           },
         },
@@ -152,8 +147,6 @@ export async function DELETE(req: Request) {
         id: true,
         sellerId: true,
         status: true,
-        reservedUntil: true,
-        reservedByOrderId: true,
       },
     });
 
