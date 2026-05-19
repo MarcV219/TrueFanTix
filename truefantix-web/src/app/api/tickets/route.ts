@@ -102,9 +102,56 @@ export async function GET(req: Request) {
             skip: 1,
           }
         : {}),
-      include: {
-        seller: { include: { badges: true } },
-        ...(includeEvent ? { event: true } : {}),
+      select: {
+        id: true,
+        title: true,
+        priceCents: true,
+        faceValueCents: true,
+        image: true,
+        venue: true,
+        row: true,
+        seat: true,
+        date: true,
+        status: true,
+        soldAt: true,
+        withdrawnAt: true,
+        verificationStatus: true,
+        verificationScore: true,
+        verificationReason: true,
+        verificationProvider: true,
+        verificationEvidence: true,
+        verifiedAt: true,
+        viewCount: true,
+        lastViewedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        sellerId: true,
+        seller: {
+          select: {
+            id: true,
+            name: true,
+            rating: true,
+            reviews: true,
+            badges: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        ...(includeEvent
+          ? {
+              event: {
+                select: {
+                  id: true,
+                  title: true,
+                  venue: true,
+                  date: true,
+                  selloutStatus: true,
+                },
+              },
+            }
+          : {}),
       },
     });
 
