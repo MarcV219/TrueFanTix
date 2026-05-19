@@ -147,6 +147,8 @@ export async function DELETE(req: Request) {
         id: true,
         sellerId: true,
         status: true,
+        reservedUntil: true,
+        reservedByOrderId: true,
       },
     });
 
