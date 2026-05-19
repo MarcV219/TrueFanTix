@@ -63,7 +63,7 @@ export default function ComingSoonPageClient() {
         {!submitted ? (
           <div className="max-w-md mx-auto bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 border border-slate-200 dark:border-slate-700">
             <h2 className="text-2xl font-bold mb-3 text-slate-900 dark:text-white">
-              Join the Early Access List
+              Get 4 Access Tokens by Joining the Early Access List
             </h2>
             <p className="text-slate-600 dark:text-slate-400 mb-6">
               Be the first to know when we launch. No spam, just tickets.
