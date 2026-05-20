@@ -149,6 +149,17 @@ export async function POST(req: Request, ctx: Ctx) {
     // Fast idempotency replay (outside tx)
     const existingByKey = await prisma.order.findUnique({ where: { idempotencyKey } });
     if (existingByKey) {
+      if (existingByKey.buyerSellerId !== loggedInBuyerSellerId) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "FORBIDDEN_BUYER",
+            message: "Idempotency key belongs to a different buyer.",
+          },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json(
         {
           ok: true,
@@ -348,6 +359,17 @@ export async function POST(req: Request, ctx: Ctx) {
       if (key) {
         const existing = await prisma.order.findUnique({ where: { idempotencyKey: key } });
         if (existing) {
+          if (existing.buyerSellerId !== gate.user.sellerId) {
+            return NextResponse.json(
+              {
+                ok: false,
+                error: "FORBIDDEN_BUYER",
+                message: "Idempotency key belongs to a different buyer.",
+              },
+              { status: 403 }
+            );
+          }
+
           return NextResponse.json(
             {
               ok: true,
