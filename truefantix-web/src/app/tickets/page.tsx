@@ -345,9 +345,11 @@ export default function TicketsPage() {
           )}
 
           {!loading && !error && sortedFilteredTickets.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory sm:grid sm:grid-cols-2 sm:gap-6 sm:overflow-visible sm:pb-0 lg:grid-cols-3 xl:grid-cols-4">
               {sortedFilteredTickets.map((ticket) => (
-                <TicketCard key={ticket.id} ticket={ticket} />
+                <div key={ticket.id} className="min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
+                  <TicketCard ticket={ticket} />
+                </div>
               ))}
             </div>
           )}
