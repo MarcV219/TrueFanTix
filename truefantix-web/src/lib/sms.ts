@@ -9,6 +9,11 @@ export async function sendSms(payload: SmsPayload): Promise<{ ok: boolean; error
   const fromPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
 
   if (!accountSid || !authToken || !fromPhoneNumber) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("[SMS] Twilio provider is not fully configured.");
+      return { ok: false, error: "SMS provider is not configured" };
+    }
+
     console.log("[SMS] TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER not set - logging to console instead");
     console.log("[SMS] To:", payload.to);
     console.log("[SMS] Body:", payload.body.slice(0, 200) + "...");

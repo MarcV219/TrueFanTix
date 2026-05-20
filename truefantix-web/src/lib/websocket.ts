@@ -3,7 +3,20 @@ import { createServer } from "http";
 import { prisma } from "./prisma";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET || process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32 || secret === "your-secret-key") {
+    throw new Error("JWT_SECRET or SESSION_SECRET must be configured with a strong secret.");
+  }
+  return secret;
+}
+
+function getAppOrigin(): string {
+  const configured = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN;
+  if (configured) return configured.replace(/\/$/, "");
+  if (process.env.NODE_ENV !== "production") return "http://localhost:3000";
+  throw new Error("NEXT_PUBLIC_APP_URL or APP_ORIGIN must be configured for websocket CORS.");
+}
 
 // Active connections map: userId -> socket[]
 const userSockets = new Map<string, any[]>();
@@ -14,7 +27,7 @@ const eventRooms = new Map<string, Set<string>>();
 export function initializeWebSocketServer(httpServer: any) {
   const io = new SocketIOServer(httpServer, {
     cors: {
-      origin: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+      origin: getAppOrigin(),
       methods: ["GET", "POST"],
       credentials: true,
     },
@@ -30,7 +43,7 @@ export function initializeWebSocketServer(httpServer: any) {
         return next(new Error("Authentication required"));
       }
 
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      const decoded = jwt.verify(token, getJwtSecret()) as any;
       socket.data.userId = decoded.userId;
       socket.data.userEmail = decoded.email;
       

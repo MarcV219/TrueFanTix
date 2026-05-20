@@ -433,7 +433,7 @@ function VerifyForm() {
       </div>
 
       <div style={{ marginTop: 18, fontSize: 13, opacity: 0.8 }}>
-        When both are verified, you'll be redirected automatically.
+        When both are verified, you&apos;ll be redirected automatically.
       </div>
     </div>
   );

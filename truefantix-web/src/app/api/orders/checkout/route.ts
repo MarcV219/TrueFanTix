@@ -2,6 +2,8 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireVerifiedUser } from "@/lib/auth/guards";
+import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
 
 const ADMIN_FEE_BPS = 875;
@@ -39,11 +41,40 @@ class TicketNotAvailableError extends Error {
 }
 
 export async function POST(req: Request) {
+  const gate = await requireVerifiedUser(req);
+  if (!gate.ok) return gate.res;
+
+  const rateLimit = await applyRateLimit(req, "orders:checkout");
+  if (!rateLimit.ok) return rateLimit.response;
+
   try {
     const validation = await validateRequest(schemas.orderCheckout)(req);
     if (!validation.success) return validation.response;
 
-    const buyerSellerId = normalizeId(validation.data.buyerSellerId);
+    const buyerSellerId = normalizeId(gate.user.sellerId);
+    const requestedBuyerSellerId = normalizeId(validation.data.buyerSellerId);
+
+    if (!buyerSellerId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "BUYER_WALLET_MISSING",
+          message: "Buyer wallet is not set up for this account.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (requestedBuyerSellerId && requestedBuyerSellerId !== buyerSellerId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "FORBIDDEN_BUYER",
+          message: "buyerSellerId does not match the logged-in user.",
+        },
+        { status: 403 }
+      );
+    }
 
     // IMPORTANT: de-dupe ticketIds to avoid duplicate OrderItems / confusing totals
     const ticketIds = Array.from(
@@ -72,6 +103,17 @@ export async function POST(req: Request) {
       include: { items: { include: { ticket: true } }, payment: true },
     });
     if (existing && existing.items?.length) {
+      if (existing.buyerSellerId !== buyerSellerId) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "FORBIDDEN_BUYER",
+            message: "Idempotency key belongs to a different buyer.",
+          },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json(
         {
           ok: true,

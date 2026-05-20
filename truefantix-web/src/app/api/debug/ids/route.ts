@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireDebugAccess } from "@/lib/security/debug-access";
 
 function preview(text: string, max = 80) {
   const t = (text ?? "").replace(/\s+/g, " ").trim();
@@ -9,6 +10,8 @@ function preview(text: string, max = 80) {
 }
 
 export async function GET(req: Request) {
+  const debugGate = requireDebugAccess(req);
+  if (!debugGate.ok) return debugGate.res;
   try {
     // Build an absolute base URL for copy/paste-friendly links.
     const url = new URL(req.url);

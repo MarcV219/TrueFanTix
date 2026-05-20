@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getEventType } from "@/lib/ticketsView";
 import { fetchOfficialSnapshot } from "@/lib/officialPricing";
+import { requireDebugAccess } from "@/lib/security/debug-access";
 
 function dollarsToCents(d: number) {
   return Math.round(d * 100);
@@ -51,6 +52,8 @@ async function fetchOfficialEvents(apiKey: string): Promise<TMEvent[]> {
 }
 
 export async function POST(req: Request) {
+  const debugGate = requireDebugAccess(req);
+  if (!debugGate.ok) return debugGate.res;
   const key = process.env.TICKETMASTER_API_KEY;
   if (!key) {
     return NextResponse.json({ ok: false, error: "Missing TICKETMASTER_API_KEY" }, { status: 500 });

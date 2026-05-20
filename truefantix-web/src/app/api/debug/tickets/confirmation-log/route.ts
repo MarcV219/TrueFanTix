@@ -2,8 +2,11 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireDebugAccess } from "@/lib/security/debug-access";
 
 export async function GET(req: Request) {
+  const debugGate = requireDebugAccess(req);
+  if (!debugGate.ok) return debugGate.res;
   const url = new URL(req.url);
   const take = Math.min(Math.max(Number(url.searchParams.get("take") || 100), 1), 500);
 

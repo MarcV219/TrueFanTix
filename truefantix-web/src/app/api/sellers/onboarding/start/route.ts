@@ -2,7 +2,8 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { requireVerifiedUser } from "@/lib/auth/guards";
+import { applyRateLimit } from "@/lib/rate-limit";
 
 function noStoreJson(body: any, init?: ResponseInit) {
   const res = NextResponse.json(body, init);
@@ -44,10 +45,13 @@ function normalizeCountry(country?: string | null): string {
 
 export async function POST(req: Request) {
   try {
-    const userId = await getUserIdFromSessionCookie();
-    if (!userId) {
-      return noStoreJson({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
-    }
+    const gate = await requireVerifiedUser(req);
+    if (!gate.ok) return gate.res;
+
+    const rateLimit = await applyRateLimit(req, "seller:onboarding:start");
+    if (!rateLimit.ok) return rateLimit.response;
+
+    const userId = gate.user.id;
 
     const user = await prisma.user.findUnique({
       where: { id: userId },

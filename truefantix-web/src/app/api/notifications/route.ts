@@ -7,7 +7,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 // List all notifications for the current user
 export async function GET(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
@@ -71,7 +71,7 @@ export async function GET(req: Request) {
 // Bulk mark notifications as read
 export async function PATCH(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
@@ -143,7 +143,7 @@ export async function PATCH(req: Request) {
 // Delete old/read notifications
 export async function DELETE(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },

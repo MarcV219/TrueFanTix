@@ -9,7 +9,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 // Get conversations or messages
 export async function GET(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED" },
@@ -125,7 +125,7 @@ export async function GET(req: Request) {
 // Send a message
 export async function POST(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED" },
@@ -312,7 +312,7 @@ export async function POST(req: Request) {
 // Delete a message (soft delete)
 export async function DELETE(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED" },

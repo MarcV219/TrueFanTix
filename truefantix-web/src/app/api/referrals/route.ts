@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth/guards";
+import { requireAdmin, requireUser } from "@/lib/auth/guards";
 import { createNotification } from "@/lib/notifications/service";
 import { createHash } from "crypto";
 import { schemas, validateRequest } from "@/lib/validation";
 
 const REFERRAL_SECRET = process.env.REFERRAL_SECRET || "referral-secret";
+
+function getAppOrigin(req: Request): string | null {
+  const configured = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN;
+  if (configured) return configured.replace(/\/$/, "");
+  if (process.env.NODE_ENV !== "production") return new URL(req.url).origin;
+  return null;
+}
 
 // Generate unique referral code for user
 export function generateReferralCode(userId: string): string {
@@ -19,7 +26,7 @@ export function generateReferralCode(userId: string): string {
 // Get user's referral stats and history
 export async function GET(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED" },
@@ -75,6 +82,14 @@ export async function GET(req: Request) {
     const pendingReferrals = referrals.filter(r => r.status === "PENDING").length;
     const totalAccessTokens = referrals.reduce((sum, r) => sum + (r.accessTokensAwarded || 0), 0);
 
+    const origin = getAppOrigin(req);
+    if (!origin) {
+      return NextResponse.json(
+        { ok: false, error: "SERVER_MISCONFIGURED", message: "Application origin is not configured." },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       referralCode: user.referralCode,
@@ -85,7 +100,7 @@ export async function GET(req: Request) {
         totalAccessTokensEarned: totalAccessTokens,
       },
       referrals,
-      referralLink: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/signup?ref=${user.referralCode}`,
+      referralLink: `${origin}/signup?ref=${user.referralCode}`,
     });
 
   } catch (err) {
@@ -101,10 +116,20 @@ export async function GET(req: Request) {
 // Claim a referral code during signup
 export async function POST(req: Request) {
   try {
+    const gate = await requireUser(req);
+    if (!gate.ok) return gate.res;
+
     const validation = await validateRequest(schemas.referralClaimApi)(req);
     if (!validation.success) return validation.response;
 
     const body = validation.data;
+
+    if (body.newUserId !== gate.user.id) {
+      return NextResponse.json(
+        { ok: false, error: "FORBIDDEN", message: "Referral can only be claimed for the logged-in user." },
+        { status: 403 }
+      );
+    }
 
     // Find referrer
     const referrer = await prisma.user.findUnique({
@@ -177,6 +202,9 @@ export async function POST(req: Request) {
 // Complete referral when referred user makes first purchase
 export async function PATCH(req: Request) {
   try {
+    const gate = await requireAdmin(req);
+    if (!gate.ok) return gate.res;
+
     const validation = await validateRequest(schemas.referralCompleteApi)(req);
     if (!validation.success) return validation.response;
 

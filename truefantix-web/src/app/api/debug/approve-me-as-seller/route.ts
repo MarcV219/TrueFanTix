@@ -3,8 +3,11 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { requireDebugAccess } from "@/lib/security/debug-access";
 
-export async function POST() {
+export async function POST(req: Request) {
+  const debugGate = requireDebugAccess(req);
+  if (!debugGate.ok) return debugGate.res;
   if (process.env.NODE_ENV === "production") {
     return NextResponse.json(
       { ok: false, error: "FORBIDDEN", message: "Not available in production." },

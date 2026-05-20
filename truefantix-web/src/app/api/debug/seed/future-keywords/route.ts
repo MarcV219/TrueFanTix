@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getEventType } from "@/lib/ticketsView";
+import { requireDebugAccess } from "@/lib/security/debug-access";
 
 const DEFAULT_KEYWORDS = [
   "Toronto Maple Leafs",
@@ -39,6 +40,8 @@ async function fetchByKeyword(apikey: string, keyword: string) {
 }
 
 export async function POST(req: Request) {
+  const debugGate = requireDebugAccess(req);
+  if (!debugGate.ok) return debugGate.res;
   const key = process.env.TICKETMASTER_API_KEY;
   if (!key) {
     return NextResponse.json({ ok: false, error: "Missing TICKETMASTER_API_KEY" }, { status: 500 });

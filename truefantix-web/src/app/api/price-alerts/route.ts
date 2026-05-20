@@ -8,7 +8,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 // List user's price alerts
 export async function GET(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
@@ -60,7 +60,7 @@ export async function GET(req: Request) {
 // Create a new price alert
 export async function POST(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
@@ -157,7 +157,7 @@ export async function POST(req: Request) {
 // Delete a price alert
 export async function DELETE(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },

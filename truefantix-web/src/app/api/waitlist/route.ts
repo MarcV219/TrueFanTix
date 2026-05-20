@@ -8,7 +8,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 // Get user's waitlist entries
 export async function GET(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
@@ -56,7 +56,7 @@ export async function GET(req: Request) {
 // Join waitlist for an event
 export async function POST(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
@@ -156,7 +156,7 @@ export async function POST(req: Request) {
 // Leave waitlist
 export async function DELETE(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },

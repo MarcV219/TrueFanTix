@@ -9,7 +9,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 // Get a user's notification preferences
 export async function GET(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }
@@ -40,7 +40,7 @@ export async function GET(req: Request) {
 // Add a new notification preference
 export async function POST(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
 // Delete a notification preference by ID
 export async function DELETE(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }

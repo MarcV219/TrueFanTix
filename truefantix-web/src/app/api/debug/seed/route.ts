@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getTicketImage } from "@/lib/imageSearch";
+import { requireDebugAccess } from "@/lib/security/debug-access";
 
 function dollarsToCents(dollars: number) {
   return Math.round(dollars * 100);
@@ -120,6 +121,8 @@ function curatedSeedImageForTitle(_title: string): string | null {
 }
 
 export async function POST(req: Request) {
+  const debugGate = requireDebugAccess(req);
+  if (!debugGate.ok) return debugGate.res;
   try {
     const url = new URL(req.url);
     const fresh = url.searchParams.get("fresh") === "1";

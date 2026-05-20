@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { requireUser } from "@/lib/auth/guards";
 import { sendSms, generateVerificationSms } from "@/lib/sms";
 
 function jsonError(status: number, error: string, message: string) {
@@ -33,10 +33,10 @@ const MIN_SECONDS_BETWEEN_SENDS = 60;
 const MAX_SENDS_PER_HOUR = 5;
 
 export async function POST(req: Request) {
-  void req;
+  const gate = await requireUser(req);
+  if (!gate.ok) return gate.res;
 
-  const userId = await getUserIdFromSessionCookie();
-  if (!userId) return jsonError(401, "NOT_AUTHENTICATED", "Please log in.");
+  const userId = gate.user.id;
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -147,11 +147,15 @@ export async function POST(req: Request) {
     body: smsContent.body,
   });
 
+  if (!smsResult.ok) {
+    return jsonError(503, "SMS_DELIVERY_FAILED", smsResult.error ?? "Could not send verification text.");
+  }
+
   return NextResponse.json(
     {
       ok: true,
-      delivered: smsResult.ok,
-      dev: !process.env.TWILIO_ACCOUNT_SID,
+      delivered: true,
+      dev: !process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER,
       expiresInMinutes: CODE_TTL_MINUTES,
     },
     { status: 200 }

@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { requireUser } from "@/lib/auth/guards";
 import { sendEmail, generateVerificationEmail } from "@/lib/email";
 
 function jsonError(status: number, error: string, message: string) {
@@ -34,12 +34,10 @@ const MIN_SECONDS_BETWEEN_SENDS = 60;
 const MAX_SENDS_PER_HOUR = 5;
 
 export async function POST(req: Request) {
-  void req;
+  const gate = await requireUser(req);
+  if (!gate.ok) return gate.res;
 
-  const userId = await getUserIdFromSessionCookie();
-  if (!userId) {
-    return jsonError(401, "NOT_AUTHENTICATED", "Please log in.");
-  }
+  const userId = gate.user.id;
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -155,11 +153,15 @@ export async function POST(req: Request) {
     html: emailContent.html,
   });
 
+  if (!emailResult.ok) {
+    return jsonError(503, "EMAIL_DELIVERY_FAILED", emailResult.error ?? "Could not send verification email.");
+  }
+
   return NextResponse.json(
     {
       ok: true,
-      delivered: emailResult.ok,
-      dev: !process.env.SENDGRID_API_KEY,
+      delivered: true,
+      dev: !process.env.RESEND_API_KEY && !process.env.SENDGRID_API_KEY,
       expiresInMinutes: CODE_TTL_MINUTES,
     },
     { status: 200 }

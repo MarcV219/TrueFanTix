@@ -4,12 +4,15 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
+import { requireDebugAccess } from "@/lib/security/debug-access";
 
 function normalizeBaseTitle(title: string) {
   return (title || "").replace(/\s*\(Alt\s*\d+\)\s*$/i, "").trim();
 }
 
 export async function GET(req: Request) {
+  const debugGate = requireDebugAccess(req);
+  if (!debugGate.ok) return debugGate.res;
   try {
     const { searchParams } = new URL(req.url);
     const take = Math.min(Math.max(Number(searchParams.get("take") || 25), 1), 100);

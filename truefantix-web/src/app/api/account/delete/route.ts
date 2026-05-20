@@ -3,7 +3,8 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie, clearSessionCookie } from "@/lib/auth/session";
+import { requireUser } from "@/lib/auth/guards";
+import { clearSessionCookie } from "@/lib/auth/session";
 import { schemas, validateRequest } from "@/lib/validation";
 
 const COOKIE_NAME = "tft_session";
@@ -18,10 +19,9 @@ function jsonError(status: number, error: string, message: string) {
  */
 export async function POST(req: Request) {
   try {
-    const userId = await getUserIdFromSessionCookie();
-    if (!userId) {
-      return jsonError(401, "NOT_AUTHENTICATED", "Please log in.");
-    }
+    const gate = await requireUser(req);
+    if (!gate.ok) return gate.res;
+    const userId = gate.user.id;
 
     const validation = await validateRequest(schemas.accountDelete)(req);
     if (!validation.success) return validation.response;

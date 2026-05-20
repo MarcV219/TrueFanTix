@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
 
 function jsonError(status: number, error: string, message: string) {
@@ -15,10 +15,9 @@ function normalizePhone(phone: string) {
 
 export async function PATCH(req: Request) {
   try {
-    const userId = await getUserIdFromSessionCookie();
-    if (!userId) {
-      return jsonError(401, "UNAUTHORIZED", "Please log in.");
-    }
+    const gate = await requireUser(req);
+    if (!gate.ok) return gate.res;
+    const userId = gate.user.id;
 
     const user = await prisma.user.findUnique({
       where: { id: userId },

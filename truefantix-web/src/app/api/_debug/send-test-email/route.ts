@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { resend, DEFAULT_FROM } from "@/lib/email/resend";
+import { requireDebugAccess } from "@/lib/security/debug-access";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const debugGate = requireDebugAccess(req);
+  if (!debugGate.ok) return debugGate.res;
   try {
     const result = await resend.emails.send({
       from: DEFAULT_FROM,

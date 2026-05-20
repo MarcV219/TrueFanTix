@@ -4,10 +4,21 @@ import { createHash } from "crypto";
 import { sendEmail } from "@/lib/email";
 import { schemas, validateRequest } from "@/lib/validation";
 
-const VERIFICATION_SECRET = process.env.VERIFICATION_SECRET || "your-secret-key";
+function getVerificationSecret(): string | null {
+  const secret = process.env.VERIFICATION_SECRET || process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) return null;
+  return secret;
+}
 
-function hashToken(token: string): string {
-  return createHash("sha256").update(VERIFICATION_SECRET + token).digest("hex");
+function hashToken(token: string, secret: string): string {
+  return createHash("sha256").update(secret + token).digest("hex");
+}
+
+function getAppOrigin(req: Request): string | null {
+  const configured = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN;
+  if (configured) return configured.replace(/\/$/, "");
+  if (process.env.NODE_ENV !== "production") return new URL(req.url).origin;
+  return null;
 }
 
 function generateVerificationToken(): string {
@@ -50,9 +61,25 @@ export async function POST(req: Request) {
       );
     }
 
+    const secret = getVerificationSecret();
+    if (!secret) {
+      return NextResponse.json(
+        { ok: false, error: "SERVER_MISCONFIGURED", message: "Email verification is temporarily unavailable." },
+        { status: 503 }
+      );
+    }
+
+    const origin = getAppOrigin(req);
+    if (!origin) {
+      return NextResponse.json(
+        { ok: false, error: "SERVER_MISCONFIGURED", message: "Application origin is not configured." },
+        { status: 503 }
+      );
+    }
+
     // Generate new verification token
     const token = generateVerificationToken();
-    const tokenHash = hashToken(token);
+    const tokenHash = hashToken(token, secret);
 
     // Save token to user
     await prisma.user.update({
@@ -61,7 +88,7 @@ export async function POST(req: Request) {
     });
 
     // Send verification email
-    const verificationUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/verify-email?token=${token}&userId=${user.id}`;
+    const verificationUrl = `${origin}/verify-email?token=${token}&userId=${user.id}`;
 
     const emailResult = await sendEmail({
       to: user.email,
@@ -127,7 +154,15 @@ export async function GET(req: Request) {
 
     const { token, userId } = parsed.data;
 
-    const tokenHash = hashToken(token);
+    const secret = getVerificationSecret();
+    if (!secret) {
+      return NextResponse.json(
+        { ok: false, error: "SERVER_MISCONFIGURED", message: "Email verification is temporarily unavailable." },
+        { status: 503 }
+      );
+    }
+
+    const tokenHash = hashToken(token, secret);
 
     // Find user with matching token
     const user = await prisma.user.findFirst({

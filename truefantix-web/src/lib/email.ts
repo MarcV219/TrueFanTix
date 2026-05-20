@@ -61,6 +61,11 @@ export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; e
     }
   }
 
+  if (process.env.NODE_ENV === "production") {
+    console.error("[EMAIL] No provider configured (RESEND_API_KEY/SENDGRID_API_KEY).");
+    return { ok: false, error: "Email provider is not configured" };
+  }
+
   console.log("[EMAIL] No provider configured (RESEND_API_KEY/SENDGRID_API_KEY). Logging to console instead");
   console.log("[EMAIL] To:", payload.to);
   console.log("[EMAIL] Subject:", payload.subject);

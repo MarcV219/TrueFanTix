@@ -9,7 +9,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 // Allows a seller to submit proof of ticket transfer for a specific order.
 export async function POST(req: Request) {
   try {
-    const gate = await requireUser(); // Ensure user is logged in
+    const gate = await requireUser(req); // Ensure user is logged in
 
     const validation = await validateRequest(schemas.orderTransferProof)(req);
     if (!validation.success) return validation.response;

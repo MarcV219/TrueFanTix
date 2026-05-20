@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
 
 function jsonError(status: number, error: string, message: string) {
@@ -26,13 +26,15 @@ function sha256(input: string) {
 const MAX_ATTEMPTS_PER_CODE = 10;
 
 export async function POST(req: Request) {
+  const gate = await requireUser(req);
+  if (!gate.ok) return gate.res;
+
   const validation = await validateRequest(schemas.verificationCodeConfirm)(req);
   if (!validation.success) return validation.response;
 
   const { code } = validation.data;
 
-  const userId = await getUserIdFromSessionCookie();
-  if (!userId) return jsonError(401, "NOT_AUTHENTICATED", "Please log in.");
+  const userId = gate.user.id;
 
   const user = await prisma.user.findUnique({
     where: { id: userId },

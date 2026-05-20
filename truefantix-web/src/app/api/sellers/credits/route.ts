@@ -2,9 +2,13 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
 // Legacy endpoint kept for compatibility; semantics are access tokens.
 export async function POST(req: Request) {
+  const gate = await requireAdmin(req);
+  if (!gate.ok) return gate.res;
+
   try {
     const validation = await validateRequest(schemas.sellerAccessTokensAdjustApi)(req);
     if (!validation.success) return validation.response;

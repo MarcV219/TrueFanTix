@@ -114,7 +114,7 @@ export async function GET(req: Request) {
 // Create a review
 export async function POST(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED" },
@@ -238,7 +238,7 @@ export async function POST(req: Request) {
 // Update a review (within 24 hours)
 export async function PATCH(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED" },
@@ -314,7 +314,7 @@ export async function PATCH(req: Request) {
 // Delete a review
 export async function DELETE(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     if (!gate.user) {
       return NextResponse.json(
         { ok: false, error: "NOT_AUTHENTICATED" },

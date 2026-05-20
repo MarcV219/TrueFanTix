@@ -25,6 +25,13 @@ function generateResetToken(): string {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
+function getAppOrigin(req: Request): string | null {
+  const configured = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN;
+  if (configured) return configured.replace(/\/$/, "");
+  if (process.env.NODE_ENV !== "production") return new URL(req.url).origin;
+  return null;
+}
+
 // POST /api/auth/forgot-password
 // Request password reset
 export async function POST(req: Request) {
@@ -74,8 +81,16 @@ export async function POST(req: Request) {
       },
     });
 
+    const origin = getAppOrigin(req);
+    if (!origin) {
+      return NextResponse.json(
+        { ok: false, error: "SERVER_MISCONFIGURED", message: "Application origin is not configured." },
+        { status: 503 }
+      );
+    }
+
     // Send reset email
-    const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/reset-password?token=${token}&userId=${user.id}`;
+    const resetUrl = `${origin}/reset-password?token=${token}&userId=${user.id}`;
 
     const emailResult = await sendEmail({
       to: user.email,

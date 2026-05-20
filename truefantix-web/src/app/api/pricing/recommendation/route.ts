@@ -8,7 +8,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 // Get AI-powered price recommendation
 export async function GET(req: Request) {
   try {
-    const gate = await requireUser();
+    const gate = await requireUser(req);
     
     const { searchParams } = new URL(req.url);
     const queryParsed = schemas.pricingRecommendationQuery.safeParse({
