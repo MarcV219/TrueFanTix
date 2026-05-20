@@ -43,6 +43,9 @@ export async function POST(req: Request) {
 
   if (!user) return jsonError(401, "NOT_AUTHENTICATED", "Please log in.");
   if (user.isBanned) return jsonError(403, "BANNED", "This account is restricted.");
+  if (!user.phone) {
+    return jsonError(400, "PHONE_MISSING", "Add a phone number before confirming phone verification.");
+  }
 
   if (user.phoneVerifiedAt) {
     return NextResponse.json({ ok: true, alreadyVerified: true }, { status: 200 });
