@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireSellerApproved } from "@/lib/auth/guards";
 
 function normalizeId(value: unknown) {
   try {
@@ -115,10 +116,14 @@ export async function GET(req: Request) {
  * - AVAILABLE is withdrawable.
  */
 export async function DELETE(req: Request) {
+  const gate = await requireSellerApproved(req);
+  if (!gate.ok) return gate.res;
+
   try {
     const ticketId = parseTicketIdFromUrl(req);
     const url = new URL(req.url);
-    const sellerId = normalizeId(url.searchParams.get("sellerId"));
+    const requestedSellerId = normalizeId(url.searchParams.get("sellerId"));
+    const sellerId = gate.user.sellerId;
 
     if (!ticketId) {
       return NextResponse.json(
@@ -129,12 +134,15 @@ export async function DELETE(req: Request) {
 
     if (!sellerId) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "Missing sellerId",
-          hint: "Use DELETE /api/tickets/<TICKET_ID>?sellerId=<SELLER_ID>",
-        },
-        { status: 400 }
+        { ok: false, error: "SELLER_LINK_MISSING", message: "Seller profile is missing." },
+        { status: 409 }
+      );
+    }
+
+    if (requestedSellerId && requestedSellerId !== sellerId) {
+      return NextResponse.json(
+        { ok: false, error: "FORBIDDEN", message: "sellerId does not match the logged-in user." },
+        { status: 403 }
       );
     }
 
@@ -162,7 +170,6 @@ export async function DELETE(req: Request) {
         {
           ok: false,
           error: "Not authorized to withdraw this ticket",
-          debug: { ticketSellerId: ticket.sellerId, sellerId },
         },
         { status: 403 }
       );

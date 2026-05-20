@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createHash } from "crypto";
 import { sendEmail } from "@/lib/email";
 import { schemas, validateRequest } from "@/lib/validation";
+import { applyRateLimit } from "@/lib/rate-limit";
 
 function getVerificationSecret(): string | null {
   const secret = process.env.VERIFICATION_SECRET || process.env.SESSION_SECRET;
@@ -29,6 +30,9 @@ function generateVerificationToken(): string {
 // Send verification email
 export async function POST(req: Request) {
   try {
+    const rlResult = await applyRateLimit(req, "verify:email:send");
+    if (!rlResult.ok) return rlResult.response;
+
     const validation = await validateRequest(schemas.authVerifyEmailSend)(req);
     if (!validation.success) return validation.response;
 
@@ -133,6 +137,9 @@ export async function POST(req: Request) {
 // Verify email with token
 export async function GET(req: Request) {
   try {
+    const rlResult = await applyRateLimit(req, "verify:email:confirm");
+    if (!rlResult.ok) return rlResult.response;
+
     const { searchParams } = new URL(req.url);
 
     const parsed = schemas.authVerifyEmailConfirm.safeParse({

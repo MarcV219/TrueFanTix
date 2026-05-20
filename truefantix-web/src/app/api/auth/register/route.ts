@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { createSessionForUser } from "@/lib/auth/session";
 import { schemas, validateRequest } from "@/lib/validation";
+import { applyRateLimit } from "@/lib/rate-limit";
 
 function badRequest(message: string, details?: string[]) {
   return NextResponse.json(
@@ -25,6 +26,9 @@ function normalizePhone(phone: string) {
 }
 
 export async function POST(req: Request) {
+  const rlResult = await applyRateLimit(req, "auth:register");
+  if (!rlResult.ok) return rlResult.response;
+
   const validation = await validateRequest(schemas.authRegister)(req);
   if (!validation.success) return validation.response;
 

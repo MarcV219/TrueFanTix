@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireVerifiedUser } from "@/lib/auth/guards";
 import { calculateSellerReputation, calculateFraudRisk } from "@/lib/reputation";
 import { schemas, validateRequest } from "@/lib/validation";
 
@@ -59,6 +60,9 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const gate = await requireVerifiedUser(req);
+  if (!gate.ok) return gate.res;
+
   try {
     const { id: sellerId } = await params;
 
@@ -70,7 +74,7 @@ export async function POST(
     // Calculate fraud risk
     const fraudCheck = await calculateFraudRisk({
       sellerId,
-      buyerId: body.buyerId || "anonymous",
+      buyerId: gate.user.id,
       ticketId: body.ticketId,
       amountCents: body.amountCents,
     });
