@@ -5,7 +5,13 @@ import { createNotification } from "@/lib/notifications/service";
 import { createHash } from "crypto";
 import { schemas, validateRequest } from "@/lib/validation";
 
-const REFERRAL_SECRET = process.env.REFERRAL_SECRET || "referral-secret";
+function getReferralSecret(): string {
+  const secret = process.env.REFERRAL_SECRET || process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error("REFERRAL_SECRET or SESSION_SECRET must be configured with a strong secret.");
+  }
+  return secret;
+}
 
 function getAppOrigin(req: Request): string | null {
   const configured = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN;
@@ -17,7 +23,7 @@ function getAppOrigin(req: Request): string | null {
 // Generate unique referral code for user
 export function generateReferralCode(userId: string): string {
   const hash = createHash("sha256")
-    .update(REFERRAL_SECRET + userId)
+    .update(getReferralSecret() + userId)
     .digest("hex");
   return hash.substring(0, 10).toUpperCase();
 }

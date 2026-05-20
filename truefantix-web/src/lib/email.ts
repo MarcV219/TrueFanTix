@@ -10,7 +10,13 @@ export type EmailPayload = {
 export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; error?: string }> {
   const sendgridApiKey = process.env.SENDGRID_API_KEY;
   const resendApiKey = process.env.RESEND_API_KEY;
-  const fromEmail = process.env.FROM_EMAIL || "noreply@truefantix.com";
+  const configuredFromEmail = process.env.FROM_EMAIL?.trim();
+  const fromEmail = configuredFromEmail || "noreply@truefantix.com";
+
+  if (process.env.NODE_ENV === "production" && !configuredFromEmail) {
+    console.error("[EMAIL] FROM_EMAIL is required in production.");
+    return { ok: false, error: "Email sender is not configured" };
+  }
 
   // Prefer Resend when configured (Path B), fallback to SendGrid.
   if (resendApiKey) {
