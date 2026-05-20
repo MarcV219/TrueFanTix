@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { sendEmail } from "@/lib/email";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
@@ -23,7 +23,7 @@ function getAppOrigin(req: Request): string | null {
 }
 
 function generateVerificationToken(): string {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  return randomBytes(32).toString("hex");
 }
 
 // POST /api/auth/verify-email

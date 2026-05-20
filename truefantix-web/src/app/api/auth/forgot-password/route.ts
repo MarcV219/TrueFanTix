@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { sendEmail } from "@/lib/email";
 import bcrypt from "bcryptjs";
 import { schemas, validateRequest } from "@/lib/validation";
@@ -22,7 +22,7 @@ function hashToken(token: string): string {
 }
 
 function generateResetToken(): string {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  return randomBytes(32).toString("hex");
 }
 
 function getAppOrigin(req: Request): string | null {
