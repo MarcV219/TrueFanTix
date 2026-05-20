@@ -19,14 +19,13 @@ interface StripeProviderProps {
 }
 
 export function StripeProvider({ children }: StripeProviderProps) {
+  const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
   const [stripe, setStripe] = useState<Stripe | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(Boolean(publishableKey));
 
   useEffect(() => {
-    const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
     if (!publishableKey) {
       console.error("Missing NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY");
-      setIsLoading(false);
       return;
     }
 
@@ -39,7 +38,7 @@ export function StripeProvider({ children }: StripeProviderProps) {
         console.error("Failed to load Stripe:", err);
         setIsLoading(false);
       });
-  }, []);
+  }, [publishableKey]);
 
   return (
     <StripeContext.Provider value={{ stripe, isLoading }}>

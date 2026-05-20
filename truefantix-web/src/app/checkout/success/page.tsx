@@ -24,14 +24,12 @@ function SuccessContent() {
   const searchParams = useSearchParams();
   const orderId = searchParams.get("orderId");
 
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(Boolean(orderId));
   const [order, setOrder] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(orderId ? null : "No order ID provided.");
 
   useEffect(() => {
     if (!orderId) {
-      setError("No order ID provided.");
-      setIsLoading(false);
       return;
     }
 

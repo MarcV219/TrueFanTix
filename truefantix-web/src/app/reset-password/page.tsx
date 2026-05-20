@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -50,11 +50,7 @@ function ResetPasswordForm() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  useEffect(() => {
-    if (!token || !email) {
-      setError("Invalid reset link. Please request a new password reset.");
-    }
-  }, [token, email]);
+  const visibleError = error ?? (!token || !email ? "Invalid reset link. Please request a new password reset." : null);
 
   const passwordsMatch = password === confirmPassword;
   const passwordsEntered = password.length > 0 || confirmPassword.length > 0;
@@ -143,7 +139,7 @@ function ResetPasswordForm() {
         Enter a new password for your account.
       </p>
 
-      {error && (
+      {visibleError && (
         <div
           role="alert"
           style={{
@@ -155,7 +151,7 @@ function ResetPasswordForm() {
             color: "rgba(153, 27, 27, 1)",
           }}
         >
-          {error}
+          {visibleError}
         </div>
       )}
 

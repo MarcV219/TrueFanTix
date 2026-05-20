@@ -256,11 +256,14 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                     </div>
                     {seller?.badges && seller.badges.length > 0 && (
                       <div className="flex flex-wrap gap-2 mb-4">
-                        {seller.badges.map((badge: any) => (
-                          <span key={badge.id || badge.name || String(Math.random())} className="bg-[rgba(6,74,147,0.10)] text-[var(--tft-navy)] px-2 py-1 rounded-full text-sm">
-                            {badge.name || badge}
-                          </span>
-                        ))}
+                        {seller.badges.map((badge: any, index: number) => {
+                          const badgeLabel = typeof badge === "string" ? badge : badge.name || "Badge";
+                          return (
+                            <span key={badge.id || `${badgeLabel}-${index}`} className="bg-[rgba(6,74,147,0.10)] text-[var(--tft-navy)] px-2 py-1 rounded-full text-sm">
+                              {badgeLabel}
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

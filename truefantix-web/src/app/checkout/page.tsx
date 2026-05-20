@@ -31,8 +31,8 @@ function CheckoutContent() {
   const searchParams = useSearchParams();
   const orderId = searchParams.get("orderId");
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(Boolean(orderId));
+  const [error, setError] = useState<string | null>(orderId ? null : "No order ID provided.");
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [amount, setAmount] = useState<number>(0);
   const [order, setOrder] = useState<any>(null);
@@ -40,8 +40,6 @@ function CheckoutContent() {
 
   useEffect(() => {
     if (!orderId) {
-      setError("No order ID provided.");
-      setIsLoading(false);
       return;
     }
 
