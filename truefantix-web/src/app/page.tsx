@@ -404,17 +404,19 @@ export default function Page() {
         {!loading && !error && allTickets.length > 0 && (
           <div className="max-w-7xl mx-auto">
             <div className="relative flex items-center gap-4">
-              <button onClick={handlePrev} disabled={!canGoPrev} className="flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] flex items-center justify-center" aria-label="Previous tickets">
+              <button onClick={handlePrev} disabled={!canGoPrev} className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center" aria-label="Previous tickets">
                 <ChevronLeftIcon className="w-6 h-6" />
               </button>
 
-              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="flex-1 min-w-0 flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory sm:grid sm:grid-cols-2 sm:gap-6 sm:overflow-visible sm:pb-0 lg:grid-cols-4">
                 {displayedTickets.map((ticket) => (
-                  <TicketCard key={ticket.id} ticket={ticket as unknown as TicketCardView} />
+                  <div key={ticket.id} className="min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
+                    <TicketCard ticket={ticket as unknown as TicketCardView} />
+                  </div>
                 ))}
               </div>
 
-              <button onClick={handleNext} disabled={!canGoNext} className="flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] flex items-center justify-center" aria-label="Next tickets">
+              <button onClick={handleNext} disabled={!canGoNext} className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center" aria-label="Next tickets">
                 <ChevronRightIcon className="w-6 h-6" />
               </button>
             </div>
