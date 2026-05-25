@@ -248,20 +248,39 @@ export async function POST(req: Request) {
           break;
         }
 
-        await prisma.payment.upsert({
-          where: { orderId },
-          create: {
-            orderId,
-            amountCents: paymentIntent.amount,
-            currency: paymentIntent.currency.toUpperCase(),
-            status: "FAILED",
-            provider: "STRIPE",
-            providerRef: paymentIntent.id,
-          },
-          update: {
-            status: "FAILED",
-            providerRef: paymentIntent.id,
-          },
+        await prisma.$transaction(async (tx: any) => {
+          await tx.payment.upsert({
+            where: { orderId },
+            create: {
+              orderId,
+              amountCents: paymentIntent.amount,
+              currency: paymentIntent.currency.toUpperCase(),
+              status: "FAILED",
+              provider: "STRIPE",
+              providerRef: paymentIntent.id,
+            },
+            update: {
+              status: "FAILED",
+              providerRef: paymentIntent.id,
+            },
+          });
+
+          await tx.order.updateMany({
+            where: { id: orderId, status: "PENDING" },
+            data: { status: "CANCELLED" },
+          });
+
+          await tx.ticket.updateMany({
+            where: {
+              status: "RESERVED",
+              reservedByOrderId: orderId,
+            },
+            data: {
+              status: "AVAILABLE",
+              reservedByOrderId: null,
+              reservedUntil: null,
+            },
+          });
         });
 
         console.log(`[STRIPE WEBHOOK] Payment failed for order ${orderId}`);
