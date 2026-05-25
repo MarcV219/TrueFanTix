@@ -90,6 +90,8 @@ export default function TicketVerificationAdminPage() {
     }
   }
 
+  const canViewQueue = isAdmin === true;
+
   return (
     <div style={{ maxWidth: 1100, margin: "40px auto", padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -99,32 +101,36 @@ export default function TicketVerificationAdminPage() {
             <Link href="/account" style={{ textDecoration: "underline" }}>← Back to Account</Link>
           </div>
         </div>
-        <button onClick={load} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.12)", background: "white", fontWeight: 800 }}>Refresh</button>
+        {canViewQueue ? (
+          <button onClick={load} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.12)", background: "white", fontWeight: 800 }}>Refresh</button>
+        ) : null}
       </div>
 
-      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {(["PENDING", "NEEDS_REVIEW", "REJECTED", "VERIFIED"] as const).map((s) => (
-          <button
-            key={s}
-            onClick={() => setStatus(s)}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 999,
-              border: status === s ? "1px solid rgba(37,99,235,0.45)" : "1px solid rgba(0,0,0,0.1)",
-              background: status === s ? "rgba(239,246,255,1)" : "white",
-              fontWeight: 800,
-            }}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
+      {canViewQueue ? (
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {(["PENDING", "NEEDS_REVIEW", "REJECTED", "VERIFIED"] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatus(s)}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: status === s ? "1px solid rgba(37,99,235,0.45)" : "1px solid rgba(0,0,0,0.1)",
+                background: status === s ? "rgba(239,246,255,1)" : "white",
+                fontWeight: 800,
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {error ? <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1px solid rgba(255,0,0,0.35)", background: "rgba(254,242,242,1)", color: "rgba(153,27,27,1)" }}>{error}</div> : null}
       {loading ? <div style={{ marginTop: 12, opacity: 0.8 }}>Loading queue…</div> : null}
       {isAdmin === false ? <div style={{ marginTop: 12, opacity: 0.85 }}>You are not authorized to view this page.</div> : null}
 
-      <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+      {canViewQueue ? <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
         {tickets.map((t) => (
           <div key={t.id} style={{ border: "1px solid rgba(0,0,0,0.1)", background: "white", borderRadius: 12, padding: 12, display: "grid", gridTemplateColumns: "96px 1fr auto", gap: 12 }}>
             <img src={t.image} alt="" style={{ width: 96, height: 96, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(0,0,0,0.08)" }} />
@@ -158,7 +164,7 @@ export default function TicketVerificationAdminPage() {
             No tickets in this queue.
           </div>
         ) : null}
-      </div>
+      </div> : null}
     </div>
   );
 }
