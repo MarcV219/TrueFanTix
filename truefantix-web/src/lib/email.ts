@@ -1,5 +1,7 @@
 import sgMail from "@sendgrid/mail";
 
+export const DEFAULT_FROM_EMAIL = "noreply@truefantix.com";
+
 export type EmailPayload = {
   to: string;
   subject: string;
@@ -11,12 +13,7 @@ export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; e
   const sendgridApiKey = process.env.SENDGRID_API_KEY;
   const resendApiKey = process.env.RESEND_API_KEY;
   const configuredFromEmail = process.env.FROM_EMAIL?.trim();
-  const fromEmail = configuredFromEmail || "noreply@truefantix.com";
-
-  if (process.env.NODE_ENV === "production" && !configuredFromEmail) {
-    console.error("[EMAIL] FROM_EMAIL is required in production.");
-    return { ok: false, error: "Email sender is not configured" };
-  }
+  const fromEmail = configuredFromEmail || DEFAULT_FROM_EMAIL;
 
   // Prefer Resend when configured (Path B), fallback to SendGrid.
   if (resendApiKey) {
