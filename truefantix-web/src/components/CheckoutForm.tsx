@@ -18,6 +18,10 @@ function centsToDollars(cents: number) {
   return (cents / 100).toFixed(2);
 }
 
+export function buildCheckoutReturnUrl(origin: string, orderId: string) {
+  return `${origin}/checkout/success?orderId=${encodeURIComponent(orderId)}`;
+}
+
 export function CheckoutForm({ orderId, amount, onSuccess, onError }: CheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
@@ -36,7 +40,7 @@ export function CheckoutForm({ orderId, amount, onSuccess, onError }: CheckoutFo
     const { error, paymentIntent } = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        return_url: `${window.location.origin}/checkout/complete`,
+        return_url: buildCheckoutReturnUrl(window.location.origin, orderId),
       },
       redirect: "if_required",
     });
