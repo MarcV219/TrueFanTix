@@ -4,6 +4,7 @@ import TicketImage from "@/components/TicketImage";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import { getTicketImage, getPlaceholderImage } from "@/lib/imageSearch";
+import PurchaseButton from "./PurchaseButton";
 
 interface TicketPageProps {
   params: Promise<{ id: string }>;
@@ -270,9 +271,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
 
                   {/* Purchase Section */}
                   <div className="mt-8">
-                    <button className="w-full bg-[var(--tft-navy)] text-white py-4 rounded-lg font-bold text-lg hover:bg-[var(--tft-navy-dark)] transition">
-                      Buy Ticket - ${price.toFixed(2)}
-                    </button>
+                    <PurchaseButton ticketId={ticket.id} price={`$${price.toFixed(2)}`} />
                     <p className="text-sm text-gray-500 mt-2 text-center">
                       + 8.75% admin fee + applicable taxes
                     </p>
