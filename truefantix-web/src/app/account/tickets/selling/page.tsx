@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import AccountGate, { MeUser } from "@/app/account/_components/accountgate";
+import { fetchJson } from "@/lib/api-fetch";
 
 type CreateTicketBody = {
   title: string;
@@ -29,18 +30,6 @@ type TicketRow = {
   verificationScore?: number | null;
   verificationReason?: string | null;
 };
-
-async function fetchJson(path: string, init?: RequestInit) {
-  const res = await fetch(path, init);
-  const text = await res.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-  return { res, data, text };
-}
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (

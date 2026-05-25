@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import AccountGate, { MeUser } from "@/app/account/_components/accountgate";
+import { fetchJson } from "@/lib/api-fetch";
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -70,18 +71,6 @@ const buttonSecondary: React.CSSProperties = {
   fontWeight: 800,
   fontSize: 14,
 };
-
-async function fetchJson(path: string, init?: RequestInit) {
-  const res = await fetch(path, init);
-  const text = await res.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-  return { res, data, text };
-}
 
 function ProfileEditor({ me, onUpdated }: { me: MeUser; onUpdated: (user: MeUser) => void }) {
   const [isEditing, setIsEditing] = useState(false);
