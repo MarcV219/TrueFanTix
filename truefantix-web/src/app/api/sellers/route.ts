@@ -14,9 +14,6 @@ export async function GET() {
         name: true,
         rating: true,
         reviews: true,
-        accessTokenBalance: true,
-        createdAt: true,
-        updatedAt: true,
         badges: {
           select: {
             name: true,
@@ -30,9 +27,9 @@ export async function GET() {
       name: s.name,
       rating: s.rating,
       reviews: s.reviews,
-      accessTokenBalance: s.accessTokenBalance,
-      createdAt: s.createdAt,
-      updatedAt: s.updatedAt,
+      accessTokenBalance: 0,
+      createdAt: null,
+      updatedAt: null,
       badges: s.badges.map((b: any) => b.name),
     }));
 
