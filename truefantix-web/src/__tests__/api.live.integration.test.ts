@@ -56,4 +56,43 @@ describe("live API integration (dev env)", () => {
     );
     expect([401, 403]).toContain(res.status);
   });
+
+  it("GET /api/tickets/search returns the search page contract", () => {
+    const res = curlJson("GET", "/api/tickets/search?q=Toronto&limit=2");
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(Array.isArray(res.body.tickets)).toBe(true);
+    expect(res.body.tickets.length).toBeGreaterThan(0);
+    expect(res.body).toHaveProperty("nextCursor");
+    expect(typeof res.body.hasMore).toBe("boolean");
+
+    // Back-compat for older callers that used the first route shape.
+    expect(Array.isArray(res.body.results)).toBe(true);
+    expect(res.body.pagination).toEqual(
+      expect.objectContaining({
+        total: expect.any(Number),
+        limit: expect.any(Number),
+        hasMore: expect.any(Boolean),
+      })
+    );
+  });
+
+  it("GET /api/sellers returns stable JSON instead of broad Prisma drift failures", () => {
+    const res = curlJson("GET", "/api/sellers");
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(Array.isArray(res.body.sellers)).toBe(true);
+    expect(res.body.sellers.length).toBeGreaterThan(0);
+    expect(res.body.sellers[0]).toEqual(
+      expect.objectContaining({
+        id: expect.any(String),
+        name: expect.any(String),
+        rating: expect.any(Number),
+        reviews: expect.any(Number),
+        badges: expect.any(Array),
+      })
+    );
+  });
 });
