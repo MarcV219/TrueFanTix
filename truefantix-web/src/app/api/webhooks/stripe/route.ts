@@ -60,15 +60,15 @@ async function releaseEventClaim(eventId: string) {
 }
 
 export async function POST(req: Request) {
+  const signature = req.headers.get("stripe-signature");
+  if (!signature) {
+    return NextResponse.json({ ok: false, error: "MISSING_SIGNATURE" }, { status: 400 });
+  }
+
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error("Missing STRIPE_WEBHOOK_SECRET");
     return NextResponse.json({ ok: false, error: "CONFIG_ERROR" }, { status: 500 });
-  }
-
-  const signature = req.headers.get("stripe-signature");
-  if (!signature) {
-    return NextResponse.json({ ok: false, error: "MISSING_SIGNATURE" }, { status: 400 });
   }
 
   const payload = await req.text();
