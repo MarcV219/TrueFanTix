@@ -6,23 +6,41 @@ import { requireAdmin } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
 
 export async function GET() {
-  const sellers = await prisma.seller.findMany({
-    orderBy: { name: "asc" },
-    include: { badges: true },
-  });
+  try {
+    const sellers = await prisma.seller.findMany({
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        rating: true,
+        reviews: true,
+        accessTokenBalance: true,
+        createdAt: true,
+        updatedAt: true,
+        badges: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
 
-  const normalized = sellers.map((s: any) => ({
-    id: s.id,
-    name: s.name,
-    rating: s.rating,
-    reviews: s.reviews,
-    accessTokenBalance: s.accessTokenBalance,
-    createdAt: s.createdAt,
-    updatedAt: s.updatedAt,
-    badges: s.badges.map((b: any) => b.name),
-  }));
+    const normalized = sellers.map((s: any) => ({
+      id: s.id,
+      name: s.name,
+      rating: s.rating,
+      reviews: s.reviews,
+      accessTokenBalance: s.accessTokenBalance,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+      badges: s.badges.map((b: any) => b.name),
+    }));
 
-  return NextResponse.json(normalized);
+    return NextResponse.json({ ok: true, sellers: normalized });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ ok: false, error: "SELLERS_FETCH_FAILED", message }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
