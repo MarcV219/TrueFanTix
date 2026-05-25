@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Footer from "@/components/Footer";
+import { fetchJson } from "@/lib/api-fetch";
 
 type TopicType = "ARTIST" | "TEAM" | "SHOW" | "OTHER";
 
@@ -58,7 +59,7 @@ export default function NewThreadPage() {
     setError(null);
 
     try {
-      const res = await fetch("/api/forum/threads", {
+      const { res, data: json } = await fetchJson("/api/forum/threads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -68,8 +69,6 @@ export default function NewThreadPage() {
           topic: topic.trim() || null,
         }),
       });
-
-      const json = await res.json().catch(() => null);
 
       if (!res.ok) {
         const details = Array.isArray(json?.details) ? json.details : null;

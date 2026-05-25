@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { fetchJson } from "@/lib/api-fetch";
 
 type ForumAuthor = {
   id: string;
@@ -166,7 +167,7 @@ function InlineReplyComposer({
     setStatusMsg(null);
 
     try {
-      const res = await fetch("/api/forum/posts", {
+      const { res, data: json } = await fetchJson("/api/forum/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -175,8 +176,6 @@ function InlineReplyComposer({
           body: trimmed,
         }),
       });
-
-      const json = await res.json().catch(() => null);
 
       if (!res.ok) {
         setStatusMsg(friendlyError(res.status, json));
@@ -312,7 +311,7 @@ export default function ThreadRepliesClient({
     setModMsg(null);
 
     try {
-      const res = await fetch(`/api/admin/forum/posts/${encodeURIComponent(postId)}/visibility`, {
+      const { res, data: json } = await fetchJson(`/api/admin/forum/posts/${encodeURIComponent(postId)}/visibility`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -320,8 +319,6 @@ export default function ThreadRepliesClient({
           reason: nextVisibility === "HIDDEN" ? "Hidden by moderator." : null,
         }),
       });
-
-      const json = await res.json().catch(() => null);
 
       if (!res.ok) {
         setModMsg(friendlyError(res.status, json));
@@ -364,7 +361,7 @@ export default function ThreadRepliesClient({
     setTopStatusMsg(null);
 
     try {
-      const res = await fetch("/api/forum/posts", {
+      const { res, data: json } = await fetchJson("/api/forum/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -373,8 +370,6 @@ export default function ThreadRepliesClient({
           body: trimmed,
         }),
       });
-
-      const json = await res.json().catch(() => null);
 
       if (!res.ok) {
         setTopStatusMsg(friendlyError(res.status, json));
