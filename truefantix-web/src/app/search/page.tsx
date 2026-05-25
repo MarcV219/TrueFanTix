@@ -292,7 +292,7 @@ function SearchContent() {
             {tickets.map((ticket) => (
               <Link
                 key={ticket.id}
-                href={`/ticket/${ticket.id}`}
+                href={`/tickets/${ticket.id}`}
                 style={{
                   display: "block",
                   textDecoration: "none",
