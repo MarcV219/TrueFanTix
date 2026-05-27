@@ -10,7 +10,10 @@ function jsonError(status: number, error: string, message: string) {
 }
 
 function normalizePhone(phone: string) {
-  return phone.trim().replace(/[^\d+]/g, "");
+  const cleaned = phone.trim().replace(/[^\d+]/g, "");
+  if (/^[2-9]\d{9}$/.test(cleaned)) return `+1${cleaned}`;
+  if (/^1[2-9]\d{9}$/.test(cleaned)) return `+${cleaned}`;
+  return cleaned;
 }
 
 export async function PATCH(req: Request) {
