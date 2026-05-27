@@ -72,6 +72,13 @@ const buttonSecondary: React.CSSProperties = {
   fontSize: 14,
 };
 
+function normalizePhoneLike(phone: string) {
+  const cleaned = phone.trim().replace(/[^\d+]/g, "");
+  if (/^[2-9]\d{9}$/.test(cleaned)) return `+1${cleaned}`;
+  if (/^1[2-9]\d{9}$/.test(cleaned)) return `+${cleaned}`;
+  return cleaned;
+}
+
 function ProfileEditor({ me, onUpdated }: { me: MeUser; onUpdated: (user: MeUser) => void }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -99,6 +106,12 @@ function ProfileEditor({ me, onUpdated }: { me: MeUser; onUpdated: (user: MeUser
   };
 
   const handleSave = async () => {
+    const normalizedPhone = normalizePhoneLike(formData.phone);
+    if (!/^\+[1-9]\d{1,14}$/.test(normalizedPhone)) {
+      setError("Phone must include country code, for example +17057954131.");
+      return;
+    }
+
     setIsSaving(true);
     setError(null);
     setSuccess(null);
@@ -106,14 +119,14 @@ function ProfileEditor({ me, onUpdated }: { me: MeUser; onUpdated: (user: MeUser
     const { res, data } = await fetchJson("/api/account/profile", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData),
+      body: JSON.stringify({ ...formData, phone: normalizedPhone }),
     });
 
     setIsSaving(false);
 
     if (!res.ok) {
       const details = Array.isArray(data?.details) ? data.details : null;
-      const message = data?.message || (details?.length ? details[0] : null) || "Failed to update profile.";
+      const message = data?.message || (details?.length ? details[0] : null) || data?.error || "Failed to update profile.";
       setError(message);
       return;
     }

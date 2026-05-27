@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
@@ -99,6 +100,15 @@ export async function PATCH(req: Request) {
     );
   } catch (err: any) {
     console.error("PATCH /api/account/profile error:", err);
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      if (err.code === "P2002") {
+        return jsonError(409, "UNIQUE_CONSTRAINT", "That email or phone number is already in use.");
+      }
+      if (err.code === "P2025") {
+        return jsonError(404, "NOT_FOUND", "Account not found.");
+      }
+      return jsonError(500, err.code, "Profile update failed. Please try again.");
+    }
     return jsonError(500, "SERVER_ERROR", "An unexpected error occurred.");
   }
 }
