@@ -10,7 +10,7 @@ function jsonError(status: number, error: string, message: string) {
 }
 
 function normalizePhone(phone: string) {
-  return phone.trim();
+  return phone.trim().replace(/[^\d+]/g, "");
 }
 
 export async function PATCH(req: Request) {
@@ -40,11 +40,15 @@ export async function PATCH(req: Request) {
 
     if (body.phone !== undefined) {
       const phone = normalizePhone(body.phone);
+      if (!/^\+[1-9]\d{1,14}$/.test(phone)) {
+        return jsonError(400, "PHONE_INVALID", "Phone must include country code, for example +17057954131.");
+      }
       if (phone !== user.phone) {
         const existing = await prisma.user.findUnique({ where: { phone }, select: { id: true } });
         if (existing) {
           return jsonError(409, "PHONE_IN_USE", "That phone number is already in use.");
         }
+        updateData.phoneVerifiedAt = null;
       }
       updateData.phone = phone;
     }

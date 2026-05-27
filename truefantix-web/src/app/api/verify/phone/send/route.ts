@@ -31,6 +31,7 @@ function generate6DigitCode() {
 const CODE_TTL_MINUTES = 10;
 const MIN_SECONDS_BETWEEN_SENDS = 60;
 const MAX_SENDS_PER_HOUR = 5;
+const E164_PHONE_RE = /^\+[1-9]\d{1,14}$/;
 
 export async function POST(req: Request) {
   const gate = await requireUser(req);
@@ -52,6 +53,13 @@ export async function POST(req: Request) {
   if (user.isBanned) return jsonError(403, "BANNED", "This account is restricted.");
   if (!user.phone) {
     return jsonError(400, "PHONE_MISSING", "Add a phone number before requesting a verification code.");
+  }
+  if (!E164_PHONE_RE.test(user.phone)) {
+    return jsonError(
+      400,
+      "PHONE_INVALID",
+      "Update your phone number to include country code, for example +17057954131."
+    );
   }
 
   if (user.phoneVerifiedAt) {
