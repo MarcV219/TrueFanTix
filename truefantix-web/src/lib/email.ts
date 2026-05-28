@@ -9,9 +9,23 @@ export type EmailPayload = {
   html?: string;
 };
 
+function cleanSecret(value: string | undefined) {
+  return value?.trim().replace(/^['"]|['"]$/g, "");
+}
+
+function resendErrorMessage(status: number, body: string) {
+  if (status === 401 || /api key is invalid/i.test(body)) {
+    return "Email provider rejected the Resend API key. Update RESEND_API_KEY in Vercel.";
+  }
+  if (/domain|from/i.test(body)) {
+    return "Email provider rejected the sender address. Verify FROM_EMAIL or the sending domain in Resend.";
+  }
+  return `Resend ${status}`;
+}
+
 export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; error?: string }> {
-  const sendgridApiKey = process.env.SENDGRID_API_KEY;
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const sendgridApiKey = cleanSecret(process.env.SENDGRID_API_KEY);
+  const resendApiKey = cleanSecret(process.env.RESEND_API_KEY);
   const configuredFromEmail = process.env.FROM_EMAIL?.trim();
   const fromEmail = configuredFromEmail || DEFAULT_FROM_EMAIL;
 
@@ -36,7 +50,7 @@ export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; e
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         console.error("[EMAIL] Resend error:", res.status, body);
-        return { ok: false, error: `Resend ${res.status}` };
+        return { ok: false, error: resendErrorMessage(res.status, body) };
       }
 
       return { ok: true };
