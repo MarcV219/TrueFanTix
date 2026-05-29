@@ -42,7 +42,7 @@ function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
-  const email = searchParams.get("email");
+  const userId = searchParams.get("userId");
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -50,7 +50,7 @@ function ResetPasswordForm() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  const visibleError = error ?? (!token || !email ? "Invalid reset link. Please request a new password reset." : null);
+  const visibleError = error ?? (!token || !userId ? "Invalid reset link. Please request a new password reset." : null);
 
   const passwordsMatch = password === confirmPassword;
   const passwordsEntered = password.length > 0 || confirmPassword.length > 0;
@@ -60,7 +60,7 @@ function ResetPasswordForm() {
     e.preventDefault();
     setError(null);
 
-    if (!token || !email) {
+    if (!token || !userId) {
       setError("Invalid reset link.");
       return;
     }
@@ -89,10 +89,10 @@ function ResetPasswordForm() {
 
     setIsSubmitting(true);
 
-    const { res, data } = await fetchJson("/api/auth/reset-password", {
-      method: "POST",
+    const { res, data } = await fetchJson("/api/auth/forgot-password", {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, email, password }),
+      body: JSON.stringify({ token, userId, newPassword: password }),
     });
 
     setIsSubmitting(false);
@@ -164,7 +164,7 @@ function ResetPasswordForm() {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••••"
             style={inputStyle}
-            disabled={isSubmitting || !token || !email}
+            disabled={isSubmitting || !token || !userId}
             autoComplete="new-password"
           />
           <span style={{ fontSize: 12, opacity: 0.7 }}>
@@ -186,7 +186,7 @@ function ResetPasswordForm() {
                 : "1px solid rgba(148, 163, 184, 0.9)",
               background: showMismatch ? "rgba(255,0,0,0.04)" : "rgba(248, 250, 252, 1)",
             }}
-            disabled={isSubmitting || !token || !email}
+            disabled={isSubmitting || !token || !userId}
             autoComplete="new-password"
           />
           {showMismatch && (
@@ -196,11 +196,11 @@ function ResetPasswordForm() {
 
         <button
           type="submit"
-          disabled={isSubmitting || !token || !email}
+          disabled={isSubmitting || !token || !userId}
           style={{
             ...buttonPrimary,
-            opacity: isSubmitting || !token || !email ? 0.6 : 1,
-            cursor: isSubmitting || !token || !email ? "not-allowed" : "pointer",
+            opacity: isSubmitting || !token || !userId ? 0.6 : 1,
+            cursor: isSubmitting || !token || !userId ? "not-allowed" : "pointer",
           }}
         >
           {isSubmitting ? "Resetting..." : "Reset password"}
