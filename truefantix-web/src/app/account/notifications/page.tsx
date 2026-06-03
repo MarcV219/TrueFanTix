@@ -60,6 +60,7 @@ function Body() {
   const [preferences, setPreferences] = React.useState<Preference[]>([]);
   const [selectedType, setSelectedType] = React.useState<PreferenceType>("ARTIST");
   const [value, setValue] = React.useState("");
+  const [selectedSuggestion, setSelectedSuggestion] = React.useState<CatalogSuggestion | null>(null);
   const [suggestions, setSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
@@ -119,14 +120,17 @@ function Body() {
     };
   }, [selectedType, value]);
 
-  const selectedSuggestion = suggestions.find(
-    (suggestion) => suggestion.label.toLowerCase() === value.trim().toLowerCase(),
-  );
+  const canAdd = !!selectedSuggestion && selectedSuggestion.type === selectedType && selectedSuggestion.label === value.trim();
 
   async function addPreference(e: React.FormEvent) {
     e.preventDefault();
-    const preferenceValue = (selectedSuggestion?.value || value).trim();
-    if (!preferenceValue) return;
+    if (!canAdd || !selectedSuggestion) {
+      setError("Choose an item from the suggestions before adding it.");
+      setOk(null);
+      return;
+    }
+
+    const preferenceValue = selectedSuggestion.value.trim();
 
     setBusy(true);
     setError(null);
@@ -148,6 +152,7 @@ function Body() {
         return [...withoutDuplicate, next].sort((a, b) => a.type.localeCompare(b.type) || a.value.localeCompare(b.value));
       });
       setValue("");
+      setSelectedSuggestion(null);
       setSuggestions([]);
       setOk("Notification preference saved.");
     } catch (e: any) {
@@ -235,6 +240,7 @@ function Body() {
             onChange={(e) => {
               setSelectedType(e.target.value as PreferenceType);
               setValue("");
+              setSelectedSuggestion(null);
               setSuggestions([]);
             }}
             disabled={busy}
@@ -257,9 +263,11 @@ function Body() {
           <div style={{ flex: "999 1 260px" }}>
             <input
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => {
+                setValue(e.target.value);
+                setSelectedSuggestion(null);
+              }}
               disabled={busy}
-              list="notification-catalog-suggestions"
               placeholder={`Start typing a ${selectedType.toLowerCase()}...`}
               style={{
                 width: "100%",
@@ -269,28 +277,71 @@ function Body() {
                 background: "rgba(248, 250, 252, 1)",
               }}
             />
-            <datalist id="notification-catalog-suggestions">
-              {suggestions.map((suggestion) => (
-                <option
-                  key={`${suggestion.type}:${suggestion.value}`}
-                  value={suggestion.label}
-                  label={suggestion.subtitle ?? suggestion.type}
-                />
-              ))}
-            </datalist>
+            {value.trim().length >= 2 ? (
+              <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                {suggestions.length > 0 ? (
+                  suggestions.map((suggestion) => {
+                    const isSelected = selectedSuggestion?.type === suggestion.type && selectedSuggestion.value === suggestion.value;
+                    return (
+                      <button
+                        key={`${suggestion.type}:${suggestion.value}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedSuggestion(suggestion);
+                          setValue(suggestion.label);
+                          setSuggestions([]);
+                          setError(null);
+                          setOk(null);
+                        }}
+                        disabled={busy}
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          padding: 10,
+                          borderRadius: 10,
+                          border: isSelected
+                            ? "1px solid rgba(37, 99, 235, 0.65)"
+                            : "1px solid rgba(148, 163, 184, 0.55)",
+                          background: isSelected ? "rgba(239, 246, 255, 1)" : "white",
+                          cursor: busy ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        <span style={{ display: "block", fontWeight: 950 }}>{suggestion.label}</span>
+                        <span style={{ display: "block", marginTop: 2, fontSize: 12, opacity: 0.72 }}>
+                          {suggestion.subtitle ?? suggestion.type}
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : selectedSuggestion ? null : (
+                  <div
+                    style={{
+                      padding: 10,
+                      borderRadius: 10,
+                      border: "1px solid rgba(148, 163, 184, 0.35)",
+                      background: "rgba(248, 250, 252, 1)",
+                      fontSize: 13,
+                      opacity: 0.78,
+                    }}
+                  >
+                    No catalog match found. Check the spelling or try another term.
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
 
           <button
             type="submit"
-            disabled={busy || !value.trim()}
+            disabled={busy || !canAdd}
             style={{
               padding: "10px 14px",
               borderRadius: 10,
               border: "1px solid rgba(0,0,0,0.12)",
-              background: busy || !value.trim() ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.92)",
-              color: busy || !value.trim() ? "rgba(15,23,42,0.55)" : "white",
+              background: busy || !canAdd ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.92)",
+              color: busy || !canAdd ? "rgba(15,23,42,0.55)" : "white",
               fontWeight: 950,
-              cursor: busy || !value.trim() ? "not-allowed" : "pointer",
+              cursor: busy || !canAdd ? "not-allowed" : "pointer",
             }}
           >
             Add
