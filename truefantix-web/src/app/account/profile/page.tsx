@@ -22,7 +22,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
           <Link href="/" style={{ textDecoration: "underline" }}>
             Home
           </Link>
-          <Link href="/verify" style={{ textDecoration: "underline" }}>
+          <Link href="/verify?manage=1" style={{ textDecoration: "underline" }}>
             Verify
           </Link>
         </div>

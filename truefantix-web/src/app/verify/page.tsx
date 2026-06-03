@@ -30,6 +30,7 @@ function VerifyForm() {
   }, [sp]);
 
   const desiredNext = useMemo(() => nextFromQuery ?? "/", [nextFromQuery]);
+  const manageMode = sp.get("manage") === "1";
 
   const loginReturnTo = useMemo(() => {
     // /login?next=<encoded "/verify?next=<encoded desiredNext>">
@@ -181,12 +182,12 @@ function VerifyForm() {
 
   // Guard: if logged in + verified, redirect to desiredNext
   useEffect(() => {
-    if (!loading && isAuthed && isVerified) {
+    if (!manageMode && !loading && isAuthed && isVerified) {
       setRedirecting(true);
       router.replace(desiredNext);
       router.refresh();
     }
-  }, [loading, isAuthed, isVerified, router, desiredNext]);
+  }, [manageMode, loading, isAuthed, isVerified, router, desiredNext]);
 
   async function sendEmail() {
     setMsg(null);

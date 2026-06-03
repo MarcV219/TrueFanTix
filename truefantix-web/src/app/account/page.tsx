@@ -354,7 +354,7 @@ function AccountHub({ me }: { me: MeUser }) {
           <Link href="/" style={{ textDecoration: "underline" }}>
             Home
           </Link>
-          <Link href="/verify" style={{ textDecoration: "underline" }}>
+          <Link href="/verify?manage=1" style={{ textDecoration: "underline" }}>
             Verify
           </Link>
         </div>
@@ -404,7 +404,7 @@ function AccountHub({ me }: { me: MeUser }) {
               <ToolLink
                 label="Manage verification"
                 hint="Verify email/phone and complete any remaining checks."
-                href="/verify"
+                href="/verify?manage=1"
               />
             </div>
           </div>
@@ -511,7 +511,7 @@ function AccountHub({ me }: { me: MeUser }) {
               </button>
 
               <Link
-                href="/verify"
+                href="/verify?manage=1"
                 style={{
                   padding: "12px 14px",
                   borderRadius: 10,
