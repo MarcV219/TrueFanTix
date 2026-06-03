@@ -88,6 +88,15 @@ export async function getUserIdFromSessionCookie(): Promise<string | null> {
   return session.userId;
 }
 
+export async function getCurrentSessionTokenHash(): Promise<string | null> {
+  const jar = await cookies();
+  const token = jar.get(COOKIE_NAME)?.value;
+  if (!token) return null;
+
+  const secret = getSessionSecret();
+  return sha256(secret + token);
+}
+
 export async function deleteCurrentSession() {
   const jar = await cookies();
   const token = jar.get(COOKIE_NAME)?.value;

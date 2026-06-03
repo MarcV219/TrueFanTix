@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { getCurrentSessionTokenHash, getUserIdFromSessionCookie } from "@/lib/auth/session";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { enforceOriginAndCsrf } from "@/lib/security/csrf";
@@ -50,12 +50,19 @@ export async function POST(req: Request) {
     // Hash and update new password
     const newPasswordHash = await bcrypt.hash(newPassword, 12);
 
+    const currentSessionTokenHash = await getCurrentSessionTokenHash();
+
     await prisma.$transaction([
       prisma.user.update({
         where: { id: userId },
         data: { passwordHash: newPasswordHash },
       }),
-      prisma.session.deleteMany({ where: { userId } }),
+      prisma.session.deleteMany({
+        where: {
+          userId,
+          ...(currentSessionTokenHash ? { tokenHash: { not: currentSessionTokenHash } } : {}),
+        },
+      }),
     ]);
 
     return NextResponse.json(
