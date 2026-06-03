@@ -31,6 +31,13 @@ type TicketRow = {
   verificationReason?: string | null;
 };
 
+type CatalogSuggestion = {
+  type: "VENUE";
+  value: string;
+  label: string;
+  subtitle?: string;
+};
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 920, margin: "40px auto", padding: 16 }}>
@@ -333,6 +340,7 @@ function Body({ me }: { me: MeUser }) {
   // form state
   const [title, setTitle] = React.useState("");
   const [venue, setVenue] = React.useState("");
+  const [venueSuggestions, setVenueSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [date, setDate] = React.useState("");
   const [price, setPrice] = React.useState("");
   const [faceValue, setFaceValue] = React.useState("");
@@ -351,6 +359,31 @@ function Body({ me }: { me: MeUser }) {
   const [fPrice, setFPrice] = React.useState(false);
   const [fFace, setFFace] = React.useState(false);
   const [fImage, setFImage] = React.useState(false);
+
+  React.useEffect(() => {
+    const q = venue.trim();
+    if (q.length < 2) {
+      setVenueSuggestions([]);
+      return;
+    }
+
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ q, type: "VENUE", limit: "12" });
+        const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
+        const data = await res.json();
+        if (alive) setVenueSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+      } catch {
+        if (alive) setVenueSuggestions([]);
+      }
+    }, 160);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [venue]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -615,10 +648,20 @@ function Body({ me }: { me: MeUser }) {
               onChange={(e) => setVenue(e.target.value)}
               disabled={busy}
               placeholder='e.g., "Rogers Centre"'
+              list="seller-venue-suggestions"
               style={inputStyle(fVenue)}
               onFocus={() => setFVenue(true)}
               onBlur={() => setFVenue(false)}
             />
+            <datalist id="seller-venue-suggestions">
+              {venueSuggestions.map((suggestion) => (
+                <option
+                  key={`${suggestion.type}:${suggestion.value}`}
+                  value={suggestion.label}
+                  label={suggestion.subtitle ?? suggestion.type}
+                />
+              ))}
+            </datalist>
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>

@@ -29,6 +29,13 @@ type SearchResponse = {
   error?: string;
 };
 
+type CatalogSuggestion = {
+  type: "ARTIST" | "TEAM" | "VENUE" | "CITY";
+  value: string;
+  label: string;
+  subtitle?: string;
+};
+
 const DEFAULT_IMAGE = "/default.jpg";
 
 function resolveTicketImageSrc(raw: unknown) {
@@ -72,6 +79,7 @@ function SearchContent() {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [sortBy, setSortBy] = useState("relevance");
+  const [suggestions, setSuggestions] = useState<CatalogSuggestion[]>([]);
 
   const performSearch = useCallback(async (searchQuery: string, nextCursor?: string) => {
     if (!searchQuery.trim() && !nextCursor) {
@@ -129,6 +137,31 @@ function SearchContent() {
     }
   }, []); // Only on mount
 
+  useEffect(() => {
+    const q = searchInput.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ q, type: "ALL", limit: "12" });
+        const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
+        const data = await res.json();
+        if (alive) setSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+      } catch {
+        if (alive) setSuggestions([]);
+      }
+    }, 160);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [searchInput]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setQuery(searchInput);
@@ -157,6 +190,7 @@ function SearchContent() {
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Artist, team, venue..."
+              list="ticket-search-suggestions"
               style={{
                 width: "100%",
                 padding: 12,
@@ -165,6 +199,15 @@ function SearchContent() {
                 fontSize: 16,
               }}
             />
+            <datalist id="ticket-search-suggestions">
+              {suggestions.map((suggestion) => (
+                <option
+                  key={`${suggestion.type}:${suggestion.value}`}
+                  value={suggestion.label}
+                  label={`${suggestion.type}${suggestion.subtitle ? ` - ${suggestion.subtitle}` : ""}`}
+                />
+              ))}
+            </datalist>
           </div>
 
           <div style={{ width: 140 }}>
