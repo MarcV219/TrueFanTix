@@ -96,6 +96,7 @@ function Body() {
   const [suggestions, setSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
+  const [requestBusy, setRequestBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
 
@@ -209,6 +210,52 @@ function Body() {
     }
   }
 
+  async function requestCatalogAddition() {
+    const requestValue = value.trim();
+    if (requestValue.length < 2) {
+      setError("Type the missing artist, team, venue, or city before requesting an addition.");
+      setOk(null);
+      return;
+    }
+
+    setRequestBusy(true);
+    setError(null);
+    setOk(null);
+    try {
+      const { res, data } = await fetchJson("/api/catalog/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: selectedType,
+          value: requestValue,
+        }),
+      });
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(String(data?.message || data?.error || "Could not submit catalog request."));
+      }
+
+      if (data.alreadyExists && data.preference) {
+        const existing = data.preference as Preference;
+        setPreferences((prev) => {
+          const withoutDuplicate = prev.filter((item) => item.id !== existing.id);
+          return [...withoutDuplicate, existing].sort((a, b) => a.type.localeCompare(b.type) || a.value.localeCompare(b.value));
+        });
+        setOk("That notification preference is already in your list.");
+      } else {
+        setOk("Request sent. TrueFanTix will research it and add it to your notifications when it is verified.");
+      }
+
+      setValue("");
+      setSelectedSuggestion(null);
+      setSuggestions([]);
+    } catch (e: any) {
+      setError(e?.message ?? "Could not submit catalog request.");
+    } finally {
+      setRequestBusy(false);
+    }
+  }
+
   async function removePreference(id: string) {
     setBusy(true);
     setError(null);
@@ -290,7 +337,7 @@ function Body() {
               setSelectedSuggestion(null);
               setSuggestions([]);
             }}
-            disabled={busy}
+            disabled={busy || requestBusy}
             style={{
               padding: 12,
               borderRadius: 10,
@@ -314,7 +361,7 @@ function Body() {
                 setValue(e.target.value);
                 setSelectedSuggestion(null);
               }}
-              disabled={busy}
+              disabled={busy || requestBusy}
               placeholder={`Start typing a ${selectedType.toLowerCase()}...`}
               style={{
                 width: "100%",
@@ -340,7 +387,7 @@ function Body() {
                           setError(null);
                           setOk(null);
                         }}
-                        disabled={busy}
+                        disabled={busy || requestBusy}
                         style={{
                           width: "100%",
                           textAlign: "left",
@@ -350,7 +397,7 @@ function Body() {
                             ? "1px solid rgba(37, 99, 235, 0.65)"
                             : "1px solid rgba(148, 163, 184, 0.55)",
                           background: isSelected ? "rgba(239, 246, 255, 1)" : "white",
-                          cursor: busy ? "not-allowed" : "pointer",
+                          cursor: busy || requestBusy ? "not-allowed" : "pointer",
                         }}
                       >
                         <span style={{ display: "block", fontWeight: 950 }}>{suggestion.label}</span>
@@ -371,7 +418,24 @@ function Body() {
                       opacity: 0.78,
                     }}
                   >
-                    No verified catalog match found. Check the spelling or try another term.
+                    <div>No verified catalog match found. Check the spelling or try another term.</div>
+                    <button
+                      type="button"
+                      onClick={requestCatalogAddition}
+                      disabled={busy || requestBusy}
+                      style={{
+                        marginTop: 8,
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid rgba(37, 99, 235, 0.35)",
+                        background: busy || requestBusy ? "rgba(148, 163, 184, 0.18)" : "rgba(239, 246, 255, 1)",
+                        color: "rgba(30, 64, 175, 1)",
+                        fontWeight: 900,
+                        cursor: busy || requestBusy ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {requestBusy ? "Sending request..." : `Request this ${selectedType.toLowerCase()}`}
+                    </button>
                   </div>
                 )}
               </div>
@@ -380,15 +444,15 @@ function Body() {
 
           <button
             type="submit"
-            disabled={busy || !canAdd}
+            disabled={busy || requestBusy || !canAdd}
             style={{
               padding: "10px 14px",
               borderRadius: 10,
               border: "1px solid rgba(0,0,0,0.12)",
-              background: busy || !canAdd ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.92)",
-              color: busy || !canAdd ? "rgba(15,23,42,0.55)" : "white",
+              background: busy || requestBusy || !canAdd ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.92)",
+              color: busy || requestBusy || !canAdd ? "rgba(15,23,42,0.55)" : "white",
               fontWeight: 950,
-              cursor: busy || !canAdd ? "not-allowed" : "pointer",
+              cursor: busy || requestBusy || !canAdd ? "not-allowed" : "pointer",
             }}
           >
             Add

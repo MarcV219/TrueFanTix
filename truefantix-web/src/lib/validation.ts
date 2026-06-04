@@ -406,6 +406,25 @@ export const schemas = {
     id: z.string().trim().cuid(),
   }),
 
+  // Used by POST /api/catalog/requests
+  catalogRequestCreateApi: z.object({
+    type: z.enum(["ARTIST", "TEAM", "VENUE", "CITY"]),
+    value: z.string().trim().min(2).max(120),
+    notes: z.string().trim().max(1000).optional().nullable(),
+  }),
+
+  // Used by PATCH /api/admin/catalog-requests/[id]
+  catalogRequestReviewApi: z
+    .object({
+      status: z.enum(["FULFILLED", "REJECTED"]),
+      catalogEntityId: z.string().trim().cuid().optional().nullable(),
+      adminNotes: z.string().trim().max(1000).optional().nullable(),
+    })
+    .refine((v) => v.status !== "FULFILLED" || !!v.catalogEntityId, {
+      message: "catalogEntityId is required when fulfilling a catalog request.",
+      path: ["catalogEntityId"],
+    }),
+
   // Used by PATCH /api/notifications
   notificationsPatchApi: z
     .object({

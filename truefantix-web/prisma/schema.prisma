@@ -201,6 +201,7 @@ model User {
 
   // Notification system relations
   notificationPreferences NotificationPreference[]
+  catalogRequests         CatalogRequest[]
   notifications           Notification[]
 
   // Audit logging
@@ -815,11 +816,42 @@ model CatalogEntity {
   lastSeenAt DateTime @default(now())
 
   notificationPreferences NotificationPreference[]
+  catalogRequests         CatalogRequest[]
 
   @@unique([provider, providerId, type])
   @@index([type, canonicalName])
   @@index([type, city, region, country])
   @@index([lastSeenAt])
+}
+
+model CatalogRequest {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  requestedType  String
+  requestedValue String
+  notes          String?
+
+  status     String @default("PENDING") // PENDING, FULFILLED, REJECTED
+  adminNotes String?
+
+  emailSentAt DateTime?
+  emailError  String?
+
+  resolvedCatalogEntityId String?
+  resolvedCatalogEntity   CatalogEntity? @relation(fields: [resolvedCatalogEntityId], references: [id], onDelete: SetNull)
+
+  fulfilledPreferenceId String?
+  reviewedAt            DateTime?
+
+  @@unique([userId, requestedType, requestedValue])
+  @@index([status, createdAt])
+  @@index([requestedType, requestedValue])
+  @@index([resolvedCatalogEntityId])
 }
 
 model Notification {
