@@ -47,6 +47,13 @@ const TYPE_OPTIONS: Array<{ value: PreferenceType; label: string }> = [
   { value: "CITY", label: "City" },
 ];
 
+const TYPE_SECTION_LABELS: Record<PreferenceType, string> = {
+  ARTIST: "Artists",
+  TEAM: "Teams",
+  VENUE: "Venues",
+  CITY: "Cities",
+};
+
 function wordsForSearch(text: string) {
   return text
     .toLowerCase()
@@ -112,8 +119,25 @@ function Body() {
   const [spotifyPanelOpen, setSpotifyPanelOpen] = React.useState(false);
   const [spotifyArtists, setSpotifyArtists] = React.useState<SpotifyArtistCandidate[]>([]);
   const [selectedSpotifyIds, setSelectedSpotifyIds] = React.useState<Set<string>>(new Set());
+  const [preferenceSectionsOpen, setPreferenceSectionsOpen] = React.useState<Record<PreferenceType, boolean>>({
+    ARTIST: true,
+    TEAM: true,
+    VENUE: true,
+    CITY: true,
+  });
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
+
+  const groupedPreferences = React.useMemo(() => {
+    return TYPE_OPTIONS.map((option) => ({
+      ...option,
+      sectionLabel: TYPE_SECTION_LABELS[option.value],
+      items: preferences
+        .filter((preference) => preference.type === option.value)
+        .slice()
+        .sort((a, b) => a.value.localeCompare(b.value, undefined, { sensitivity: "base" })),
+    }));
+  }, [preferences]);
 
   React.useEffect(() => {
     let alive = true;
@@ -430,6 +454,10 @@ function Body() {
       if (prev.size === spotifyArtists.length) return new Set();
       return new Set(spotifyArtists.map((artist) => artist.spotifyId));
     });
+  }
+
+  function togglePreferenceSection(type: PreferenceType) {
+    setPreferenceSectionsOpen((prev) => ({ ...prev, [type]: !prev[type] }));
   }
 
   return (
@@ -805,44 +833,83 @@ function Body() {
           <div style={{ opacity: 0.8 }}>No notification interests yet.</div>
         ) : null}
 
-        {preferences.map((preference) => {
-          const typeLabel = TYPE_OPTIONS.find((option) => option.value === preference.type)?.label ?? preference.type;
+        {groupedPreferences.map((group) => {
+          if (group.items.length === 0) return null;
+          const isOpen = preferenceSectionsOpen[group.value];
           return (
-            <div
-              key={preference.id}
+            <section
+              key={group.value}
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 12,
-                padding: 12,
                 borderRadius: 10,
                 border: "1px solid rgba(0,0,0,0.10)",
                 background: "rgba(248, 250, 252, 1)",
+                overflow: "hidden",
               }}
             >
-              <div>
-                <div style={{ fontWeight: 950 }}>{preference.value}</div>
-                <div style={{ fontSize: 12, opacity: 0.72 }}>
-                  {typeLabel} - {preference.status}
-                </div>
-              </div>
               <button
                 type="button"
-                onClick={() => removePreference(preference.id)}
-                disabled={busy}
+                aria-expanded={isOpen}
+                onClick={() => togglePreferenceSection(group.value)}
                 style={{
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(0,0,0,0.12)",
+                  width: "100%",
+                  padding: 12,
+                  border: 0,
                   background: "white",
-                  fontWeight: 900,
-                  cursor: busy ? "not-allowed" : "pointer",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  color: "inherit",
+                  cursor: "pointer",
+                  textAlign: "left",
                 }}
               >
-                Remove
+                <span style={{ fontWeight: 950 }}>
+                  {group.sectionLabel} ({group.items.length})
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 900, opacity: 0.72 }}>{isOpen ? "Hide" : "Show"}</span>
               </button>
-            </div>
+
+              {isOpen ? (
+                <div style={{ display: "grid", gap: 8, padding: 10 }}>
+                  {group.items.map((preference) => (
+                    <div
+                      key={preference.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: 10,
+                        borderRadius: 8,
+                        border: "1px solid rgba(0,0,0,0.08)",
+                        background: "white",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 950 }}>{preference.value}</div>
+                        <div style={{ fontSize: 12, opacity: 0.72 }}>{preference.status}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removePreference(preference.id)}
+                        disabled={busy}
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: 10,
+                          border: "1px solid rgba(0,0,0,0.12)",
+                          background: "white",
+                          fontWeight: 900,
+                          cursor: busy ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
           );
         })}
       </div>
