@@ -343,7 +343,7 @@ function Body() {
       setSpotifyConnected(Boolean(data.connected));
       const artists = Array.isArray(data.artists) ? (data.artists as SpotifyArtistCandidate[]) : [];
       setSpotifyArtists(artists);
-      setSelectedSpotifyIds(new Set(artists.filter((artist) => artist.match?.catalogEntityId).map((artist) => artist.spotifyId)));
+      setSelectedSpotifyIds(new Set(artists.map((artist) => artist.spotifyId)));
       if (!data.connected) {
         setOk(null);
       } else {
@@ -419,6 +419,13 @@ function Body() {
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
+    });
+  }
+
+  function toggleAllSpotifyArtists() {
+    setSelectedSpotifyIds((prev) => {
+      if (prev.size === spotifyArtists.length) return new Set();
+      return new Set(spotifyArtists.map((artist) => artist.spotifyId));
     });
   }
 
@@ -517,22 +524,40 @@ function Body() {
               <div style={{ fontSize: 13, opacity: 0.78 }}>
                 {selectedSpotifyIds.size} selected · unmatched selections become catalog requests.
               </div>
-              <button
-                type="button"
-                onClick={importSpotifyArtists}
-                disabled={spotifyLoading || selectedSpotifyIds.size === 0}
-                style={{
-                  padding: "9px 11px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(15, 23, 42, 0.15)",
-                  background: spotifyLoading || selectedSpotifyIds.size === 0 ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.92)",
-                  color: spotifyLoading || selectedSpotifyIds.size === 0 ? "rgba(15,23,42,0.55)" : "white",
-                  fontWeight: 950,
-                  cursor: spotifyLoading || selectedSpotifyIds.size === 0 ? "not-allowed" : "pointer",
-                }}
-              >
-                Import selected
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={toggleAllSpotifyArtists}
+                  disabled={spotifyLoading}
+                  style={{
+                    padding: "9px 11px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(15, 23, 42, 0.15)",
+                    background: "white",
+                    color: "inherit",
+                    fontWeight: 950,
+                    cursor: spotifyLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {selectedSpotifyIds.size === spotifyArtists.length ? "Deselect all" : "Select all"}
+                </button>
+                <button
+                  type="button"
+                  onClick={importSpotifyArtists}
+                  disabled={spotifyLoading || selectedSpotifyIds.size === 0}
+                  style={{
+                    padding: "9px 11px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(15, 23, 42, 0.15)",
+                    background: spotifyLoading || selectedSpotifyIds.size === 0 ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.92)",
+                    color: spotifyLoading || selectedSpotifyIds.size === 0 ? "rgba(15,23,42,0.55)" : "white",
+                    fontWeight: 950,
+                    cursor: spotifyLoading || selectedSpotifyIds.size === 0 ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Import selected
+                </button>
+              </div>
             </div>
 
             <div style={{ display: "grid", gap: 6, maxHeight: 360, overflow: "auto" }}>
