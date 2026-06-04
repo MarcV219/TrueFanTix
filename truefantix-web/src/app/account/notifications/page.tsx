@@ -12,12 +12,17 @@ type Preference = {
   type: PreferenceType;
   value: string;
   status: string;
+  catalogEntityId?: string | null;
 };
 
 type CatalogSuggestion = {
   type: PreferenceType;
   value: string;
   label: string;
+  catalogEntityId?: string;
+  provider?: string;
+  providerId?: string;
+  canonicalName?: string;
   subtitle?: string;
   address?: string;
   city?: string;
@@ -121,24 +126,18 @@ function Body() {
   }, [selectedType, value]);
 
   const trimmedValue = value.trim();
-  const canAddSelectedSuggestion =
+  const canAdd =
     !!selectedSuggestion && selectedSuggestion.type === selectedType && selectedSuggestion.label === trimmedValue;
-  const canAddCustomArtist = selectedType === "ARTIST" && trimmedValue.length >= 2 && !selectedSuggestion;
-  const canAdd = canAddSelectedSuggestion || canAddCustomArtist;
 
   async function addPreference(e: React.FormEvent) {
     e.preventDefault();
-    if (!canAdd) {
-      setError(
-        selectedType === "ARTIST"
-          ? "Choose a suggestion or enter at least 2 characters for the artist."
-          : "Choose an item from the suggestions before adding it."
-      );
+    if (!canAdd || !selectedSuggestion) {
+      setError("Choose a verified catalog suggestion before adding it.");
       setOk(null);
       return;
     }
 
-    const preferenceValue = (selectedSuggestion?.value ?? trimmedValue).trim();
+    const preferenceValue = (selectedSuggestion.canonicalName ?? selectedSuggestion.value).trim();
 
     setBusy(true);
     setError(null);
@@ -147,7 +146,11 @@ function Body() {
       const { res, data } = await fetchJson("/api/notifications/preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: selectedType, value: preferenceValue }),
+        body: JSON.stringify({
+          type: selectedType,
+          value: preferenceValue,
+          catalogEntityId: selectedSuggestion.catalogEntityId,
+        }),
       });
 
       if (!res.ok || !data?.ok) {
@@ -316,42 +319,12 @@ function Body() {
                       >
                         <span style={{ display: "block", fontWeight: 950 }}>{suggestion.label}</span>
                         <span style={{ display: "block", marginTop: 2, fontSize: 12, opacity: 0.72 }}>
-                          {suggestion.subtitle ?? suggestion.type}
+                          {[suggestion.subtitle ?? suggestion.type, suggestion.provider].filter(Boolean).join(" · ")}
                         </span>
                       </button>
                     );
                   })
-                ) : selectedSuggestion ? null : selectedType === "ARTIST" ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedSuggestion({
-                        type: "ARTIST",
-                        value: value.trim(),
-                        label: value.trim(),
-                        subtitle: "Custom artist or band",
-                      });
-                      setSuggestions([]);
-                      setError(null);
-                      setOk(null);
-                    }}
-                    disabled={busy}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: 10,
-                      borderRadius: 10,
-                      border: "1px solid rgba(148, 163, 184, 0.55)",
-                      background: "white",
-                      cursor: busy ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    <span style={{ display: "block", fontWeight: 950 }}>Add "{value.trim()}"</span>
-                    <span style={{ display: "block", marginTop: 2, fontSize: 12, opacity: 0.72 }}>
-                      Custom artist or band
-                    </span>
-                  </button>
-                ) : (
+                ) : selectedSuggestion ? null : (
                   <div
                     style={{
                       padding: 10,
@@ -362,7 +335,7 @@ function Body() {
                       opacity: 0.78,
                     }}
                   >
-                    No catalog match found. Check the spelling or try another term.
+                    No verified catalog match found. Check the spelling or try another term.
                   </div>
                 )}
               </div>

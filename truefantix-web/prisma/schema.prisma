@@ -767,8 +767,6 @@ model EarlyAccessLead {
   @@index([createdAt])
 }
 
-// Add this model to your schema.prisma
-
 model NotificationPreference {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -776,6 +774,9 @@ model NotificationPreference {
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  catalogEntityId String?
+  catalogEntity   CatalogEntity? @relation(fields: [catalogEntityId], references: [id], onDelete: SetNull)
 
   // What kind of notification is this? (e.g., "ARTIST", "TEAM", "VENUE", "CITY", "EVENT_TYPE")
   type      String
@@ -786,11 +787,40 @@ model NotificationPreference {
 
   // Unique constraint to prevent duplicate preferences for the same user/type/value
   @@unique([userId, type, value])
+  @@index([catalogEntityId])
   @@index([type, value, status])
   @@index([userId, status])
 }
 
-// Add this model to your schema.prisma
+model CatalogEntity {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  type          String
+  canonicalName String
+  provider      String
+  providerId    String
+
+  aliases  String?
+  subtitle String?
+  address  String?
+  city     String?
+  region   String?
+  country  String?
+  sourceUrl String?
+  metadata String?
+
+  popularity Int @default(0)
+  lastSeenAt DateTime @default(now())
+
+  notificationPreferences NotificationPreference[]
+
+  @@unique([provider, providerId, type])
+  @@index([type, canonicalName])
+  @@index([type, city, region, country])
+  @@index([lastSeenAt])
+}
 
 model Notification {
   id        String   @id @default(cuid())

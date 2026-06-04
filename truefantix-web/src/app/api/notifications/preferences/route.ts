@@ -22,6 +22,17 @@ export async function GET(req: Request) {
         value: true,
         status: true,
         createdAt: true,
+        catalogEntityId: true,
+        catalogEntity: {
+          select: {
+            id: true,
+            provider: true,
+            providerId: true,
+            canonicalName: true,
+            subtitle: true,
+            aliases: true,
+          },
+        },
       },
       orderBy: { createdAt: "asc" },
     });
@@ -47,14 +58,35 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.notificationPreferenceCreateApi)(req);
     if (!validation.success) return validation.response;
 
-    const { type, value } = validation.data;
+    const requestedType = validation.data.type;
+    let type = requestedType;
+    let value = validation.data.value;
+    let catalogEntityId = validation.data.catalogEntityId ?? null;
+
+    if (catalogEntityId) {
+      const entity = await prisma.catalogEntity.findUnique({ where: { id: catalogEntityId } });
+      if (!entity) {
+        return NextResponse.json(
+          { ok: false, error: "CATALOG_ENTITY_NOT_FOUND", message: "Choose a valid catalog suggestion before adding it." },
+          { status: 400 }
+        );
+      }
+      if (entity.type !== requestedType) {
+        return NextResponse.json(
+          { ok: false, error: "CATALOG_TYPE_MISMATCH", message: "The selected catalog suggestion does not match this preference type." },
+          { status: 400 }
+        );
+      }
+      type = entity.type;
+      value = entity.canonicalName;
+    }
 
     // Prevent duplicates with upsert
     const preference = await prisma.notificationPreference.upsert({
       where: { userId_type_value: { userId: gate.user.id, type, value } },
-      create: { userId: gate.user.id, type, value, status: "ACTIVE" },
-      update: { status: "ACTIVE" },
-      select: { id: true, type: true, value: true, status: true, createdAt: true },
+      create: { userId: gate.user.id, type, value, catalogEntityId, status: "ACTIVE" },
+      update: { catalogEntityId, status: "ACTIVE" },
+      select: { id: true, type: true, value: true, status: true, createdAt: true, catalogEntityId: true },
     });
 
     return NextResponse.json({ ok: true, preference }, { status: 201 });

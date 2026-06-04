@@ -398,6 +398,7 @@ export const schemas = {
   notificationPreferenceCreateApi: z.object({
     type: z.string().trim().min(1).max(80),
     value: z.string().trim().min(1).max(80),
+    catalogEntityId: z.string().trim().cuid().optional(),
   }),
 
   // Used by DELETE /api/notifications/preferences
