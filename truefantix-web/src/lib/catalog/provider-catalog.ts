@@ -37,6 +37,41 @@ function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
   return out;
 }
 
+function wordsForSearch(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function suggestionSearchWords(item: ProviderCatalogSuggestion) {
+  return [
+    item.label,
+    item.value,
+    item.canonicalName,
+    item.subtitle,
+    item.address,
+    item.city,
+    item.region,
+    item.country,
+    ...(item.aliases ?? []),
+  ].flatMap((value) => wordsForSearch(value ?? ""));
+}
+
+function matchesTypedQuery(item: ProviderCatalogSuggestion, query: string) {
+  const queryWords = wordsForSearch(query);
+  if (queryWords.length === 0) return true;
+
+  const candidateWords = suggestionSearchWords(item);
+  return queryWords.every((queryWord) => candidateWords.some((candidateWord) => candidateWord.startsWith(queryWord)));
+}
+
+function filterTypedMatches(items: ProviderCatalogSuggestion[], query: string) {
+  return items.filter((item) => matchesTypedQuery(item, query));
+}
+
 function safeJson(value: unknown) {
   try {
     return JSON.stringify(value);
@@ -246,7 +281,9 @@ async function fetchTicketmasterSuggestions(query: string, type: CatalogSuggesti
     }
   }
 
-  return cacheSuggestions(uniqueByKey(out, (item) => `${item.provider}:${item.providerId}:${item.type}`).slice(0, limit));
+  return cacheSuggestions(
+    uniqueByKey(filterTypedMatches(out, query), (item) => `${item.provider}:${item.providerId}:${item.type}`).slice(0, limit)
+  );
 }
 
 async function fetchMusicBrainzArtists(query: string, limit: number) {
@@ -286,7 +323,7 @@ async function fetchMusicBrainzArtists(query: string, limit: number) {
     })
     .filter(Boolean) as ProviderCatalogSuggestion[];
 
-  return cacheSuggestions(items);
+  return cacheSuggestions(filterTypedMatches(items, query).slice(0, limit));
 }
 
 async function fetchGeoNamesCities(query: string, limit: number) {
@@ -332,7 +369,7 @@ async function fetchGeoNamesCities(query: string, limit: number) {
     })
     .filter(Boolean) as ProviderCatalogSuggestion[];
 
-  return cacheSuggestions(items);
+  return cacheSuggestions(filterTypedMatches(items, query).slice(0, limit));
 }
 
 async function fetchProviderSuggestions(query: string, type: CatalogSuggestionType | "ALL", limit: number) {
@@ -383,10 +420,10 @@ export async function searchProviderCatalog({
 
   const local = await searchLocalCatalog(q, resolvedType, max);
   const providerItems = includeProviders && local.length < max ? await fetchProviderSuggestions(q, resolvedType, max) : [];
-  const staticItems = await cacheSuggestions(fromStaticCatalog(q, resolvedType, max));
+  const staticItems = await cacheSuggestions(filterTypedMatches(fromStaticCatalog(q, resolvedType, max), q));
 
   return uniqueByKey(
-    [...local, ...providerItems, ...staticItems],
+    filterTypedMatches([...local, ...providerItems, ...staticItems], q),
     (item) => `${item.provider}:${item.providerId}:${item.type}`
   ).slice(0, max);
 }
