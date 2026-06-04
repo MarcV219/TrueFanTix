@@ -46,6 +46,49 @@ function wordsForSearch(value: string) {
     .filter(Boolean);
 }
 
+function normalizedDisplayName(value: string) {
+  return wordsForSearch(value).join(" ");
+}
+
+function providerRank(provider: string) {
+  if (provider === "ticketmaster" || provider === "ticketmaster-city") return 400;
+  if (provider === "static") return 300;
+  if (provider === "geonames") return 250;
+  if (provider === "musicbrainz") return 200;
+  return 100;
+}
+
+function typedMatchRank(item: ProviderCatalogSuggestion, query: string) {
+  const name = normalizedDisplayName(item.canonicalName || item.label);
+  const q = normalizedDisplayName(query);
+  if (!q) return 0;
+  if (name === q) return 1000;
+  if (name.startsWith(q)) return 800;
+  return 0;
+}
+
+function suggestionRank(item: ProviderCatalogSuggestion, query: string) {
+  return typedMatchRank(item, query) + providerRank(item.provider) + Math.min(item.aliases?.length ?? 0, 20);
+}
+
+function dedupeDisplaySuggestions(items: ProviderCatalogSuggestion[], query: string) {
+  const bestByName = new Map<string, ProviderCatalogSuggestion>();
+
+  for (const item of items) {
+    const key = `${item.type}:${normalizedDisplayName(item.canonicalName || item.label)}`;
+    const existing = bestByName.get(key);
+    if (!existing || suggestionRank(item, query) > suggestionRank(existing, query)) {
+      bestByName.set(key, item);
+    }
+  }
+
+  return Array.from(bestByName.values()).sort((a, b) => {
+    const rankDiff = suggestionRank(b, query) - suggestionRank(a, query);
+    if (rankDiff !== 0) return rankDiff;
+    return a.label.localeCompare(b.label);
+  });
+}
+
 function suggestionSearchWords(item: ProviderCatalogSuggestion) {
   return [
     item.label,
@@ -419,12 +462,15 @@ export async function searchProviderCatalog({
   }
 
   const local = await searchLocalCatalog(q, resolvedType, max);
-  const providerItems = includeProviders && local.length < max ? await fetchProviderSuggestions(q, resolvedType, max) : [];
+  const providerItems = includeProviders ? await fetchProviderSuggestions(q, resolvedType, max) : [];
   const staticItems = await cacheSuggestions(filterTypedMatches(fromStaticCatalog(q, resolvedType, max), q));
 
-  return uniqueByKey(
-    filterTypedMatches([...local, ...providerItems, ...staticItems], q),
-    (item) => `${item.provider}:${item.providerId}:${item.type}`
+  return dedupeDisplaySuggestions(
+    uniqueByKey(
+      filterTypedMatches([...providerItems, ...local, ...staticItems], q),
+      (item) => `${item.provider}:${item.providerId}:${item.type}`
+    ),
+    q
   ).slice(0, max);
 }
 
