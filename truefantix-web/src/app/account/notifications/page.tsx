@@ -109,6 +109,7 @@ function Body() {
   const [requestBusy, setRequestBusy] = React.useState(false);
   const [spotifyLoading, setSpotifyLoading] = React.useState(false);
   const [spotifyConnected, setSpotifyConnected] = React.useState<boolean | null>(null);
+  const [spotifyPanelOpen, setSpotifyPanelOpen] = React.useState(false);
   const [spotifyArtists, setSpotifyArtists] = React.useState<SpotifyArtistCandidate[]>([]);
   const [selectedSpotifyIds, setSelectedSpotifyIds] = React.useState<Set<string>>(new Set());
   const [error, setError] = React.useState<string | null>(null);
@@ -146,6 +147,7 @@ function Body() {
     const params = new URLSearchParams(window.location.search);
     const spotify = params.get("spotify");
     if (!spotify) return;
+    setSpotifyPanelOpen(true);
     if (spotify === "connected") {
       setSpotifyConnected(true);
       setOk("Spotify connected. Find your Spotify artists to import favorites.");
@@ -344,6 +346,7 @@ function Body() {
       const artists = Array.isArray(data.artists) ? (data.artists as SpotifyArtistCandidate[]) : [];
       setSpotifyArtists(artists);
       setSelectedSpotifyIds(new Set(artists.map((artist) => artist.spotifyId)));
+      setSpotifyPanelOpen(true);
       if (!data.connected) {
         setOk(null);
       } else {
@@ -454,13 +457,48 @@ function Body() {
           gap: 10,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          aria-expanded={spotifyPanelOpen}
+          onClick={() => setSpotifyPanelOpen((open) => !open)}
+          style={{
+            width: "100%",
+            border: 0,
+            background: "transparent",
+            padding: 0,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+            textAlign: "left",
+            cursor: "pointer",
+            color: "inherit",
+          }}
+        >
           <div>
             <div style={{ fontWeight: 950 }}>Import artists from Spotify</div>
             <div style={{ marginTop: 2, fontSize: 13, opacity: 0.75 }}>
-              Connect Spotify to read followed/top artists only for importing notification favorites.
+              {spotifyConnected
+                ? "Spotify connected. Open to find and import artists."
+                : "Connect Spotify to import followed/top artists into notification favorites."}
             </div>
           </div>
+          <span
+            style={{
+              padding: "7px 10px",
+              borderRadius: 8,
+              border: "1px solid rgba(22, 163, 74, 0.28)",
+              background: "white",
+              fontWeight: 900,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {spotifyPanelOpen ? "Hide" : "Show"}
+          </span>
+        </button>
+
+        {spotifyPanelOpen ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <a
               href="/api/integrations/spotify/start"
@@ -512,13 +550,13 @@ function Body() {
               </>
             ) : null}
           </div>
-        </div>
+        ) : null}
 
-        {spotifyConnected === false ? (
+        {spotifyPanelOpen && spotifyConnected === false ? (
           <div style={{ fontSize: 13, opacity: 0.78 }}>Connect Spotify first to find artists for import.</div>
         ) : null}
 
-        {spotifyArtists.length > 0 ? (
+        {spotifyPanelOpen && spotifyArtists.length > 0 ? (
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ fontSize: 13, opacity: 0.78 }}>
