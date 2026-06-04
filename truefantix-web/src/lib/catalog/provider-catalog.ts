@@ -106,11 +106,13 @@ function dedupeDisplaySuggestions(items: ProviderCatalogSuggestion[], query: str
 function suppressVariantsWhenExactExists(items: ProviderCatalogSuggestion[], query: string) {
   const q = normalizedDisplayName(query);
   if (!q) return items;
+  const queryLength = q.replace(/\s+/g, "").length;
+  const exactItems = items.filter((item) => normalizedDisplayName(item.canonicalName || item.label) === q);
+  const hasCuratedExact = exactItems.some((item) => item.provider === "static");
+  if (!hasCuratedExact && queryLength < 4) return items;
 
   const exactTypes = new Set(
-    items
-      .filter((item) => normalizedDisplayName(item.canonicalName || item.label) === q)
-      .map((item) => item.type)
+    exactItems.map((item) => item.type)
   );
   if (exactTypes.size === 0) return items;
 
@@ -363,15 +365,27 @@ async function fetchTicketmasterSuggestions(query: string, type: CatalogSuggesti
 
 async function fetchMusicBrainzArtists(query: string, limit: number) {
   if (query.length < 2) return [];
-  const url = new URL("https://musicbrainz.org/ws/2/artist");
-  url.searchParams.set("query", `artist:${query}`);
-  url.searchParams.set("fmt", "json");
-  url.searchParams.set("limit", String(Math.min(limit, 10)));
+  const queryWords = wordsForSearch(query);
+  const queries = uniqueByKey(
+    [
+      `artist:${query}`,
+      queryWords.length === 1 && queryWords[0].length <= 4 ? `artist:${queryWords[0]}*` : null,
+    ].filter(Boolean) as string[],
+    (item) => item
+  );
+  const artists: any[] = [];
 
-  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, next: { revalidate: 86400 } });
-  if (!res.ok) return [];
-  const data = await res.json();
-  const artists = Array.isArray(data?.artists) ? data.artists : [];
+  for (const musicBrainzQuery of queries) {
+    const url = new URL("https://musicbrainz.org/ws/2/artist");
+    url.searchParams.set("query", musicBrainzQuery);
+    url.searchParams.set("fmt", "json");
+    url.searchParams.set("limit", String(Math.min(limit, 10)));
+
+    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, next: { revalidate: 86400 } });
+    if (!res.ok) continue;
+    const data = await res.json();
+    artists.push(...(Array.isArray(data?.artists) ? data.artists : []));
+  }
 
   const items = artists
     .map((artist: any) => {
