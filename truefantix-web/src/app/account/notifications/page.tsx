@@ -37,6 +37,33 @@ const TYPE_OPTIONS: Array<{ value: PreferenceType; label: string }> = [
   { value: "CITY", label: "City" },
 ];
 
+function wordsForSearch(text: string) {
+  return text
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function suggestionMatchesTypedValue(suggestion: CatalogSuggestion, typedValue: string) {
+  const queryWords = wordsForSearch(typedValue);
+  if (queryWords.length === 0) return true;
+
+  const candidateWords = [
+    suggestion.label,
+    suggestion.value,
+    suggestion.canonicalName,
+    suggestion.subtitle,
+    suggestion.address,
+    suggestion.city,
+    suggestion.region,
+    suggestion.country,
+  ].flatMap((part) => wordsForSearch(part ?? ""));
+
+  return queryWords.every((queryWord) => candidateWords.some((candidateWord) => candidateWord.startsWith(queryWord)));
+}
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 860, margin: "40px auto", padding: 16 }}>
@@ -126,8 +153,15 @@ function Body() {
   }, [selectedType, value]);
 
   const trimmedValue = value.trim();
+  const visibleSuggestions = React.useMemo(
+    () => suggestions.filter((suggestion) => suggestionMatchesTypedValue(suggestion, trimmedValue)),
+    [suggestions, trimmedValue]
+  );
   const canAdd =
-    !!selectedSuggestion && selectedSuggestion.type === selectedType && selectedSuggestion.label === trimmedValue;
+    !!selectedSuggestion &&
+    selectedSuggestion.type === selectedType &&
+    selectedSuggestion.label === trimmedValue &&
+    suggestionMatchesTypedValue(selectedSuggestion, trimmedValue);
 
   async function addPreference(e: React.FormEvent) {
     e.preventDefault();
@@ -290,8 +324,8 @@ function Body() {
             />
             {value.trim().length >= 2 ? (
               <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-                {suggestions.length > 0 ? (
-                  suggestions.map((suggestion) => {
+                {visibleSuggestions.length > 0 ? (
+                  visibleSuggestions.map((suggestion) => {
                     const isSelected = selectedSuggestion?.type === suggestion.type && selectedSuggestion.value === suggestion.value;
                     return (
                       <button
