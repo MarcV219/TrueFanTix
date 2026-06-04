@@ -157,21 +157,23 @@ function Body() {
     () => suggestions.filter((suggestion) => suggestionMatchesTypedValue(suggestion, trimmedValue)),
     [suggestions, trimmedValue]
   );
-  const canAdd =
+  const validSelectedSuggestion =
     !!selectedSuggestion &&
     selectedSuggestion.type === selectedType &&
     selectedSuggestion.label === trimmedValue &&
     suggestionMatchesTypedValue(selectedSuggestion, trimmedValue);
+  const suggestionToAdd = validSelectedSuggestion ? selectedSuggestion : visibleSuggestions[0] ?? null;
+  const canAdd = !!suggestionToAdd && suggestionToAdd.type === selectedType;
 
   async function addPreference(e: React.FormEvent) {
     e.preventDefault();
-    if (!canAdd || !selectedSuggestion) {
+    if (!canAdd || !suggestionToAdd) {
       setError("Choose a verified catalog suggestion before adding it.");
       setOk(null);
       return;
     }
 
-    const preferenceValue = (selectedSuggestion.canonicalName ?? selectedSuggestion.value).trim();
+    const preferenceValue = (suggestionToAdd.canonicalName ?? suggestionToAdd.value).trim();
 
     setBusy(true);
     setError(null);
@@ -183,7 +185,7 @@ function Body() {
         body: JSON.stringify({
           type: selectedType,
           value: preferenceValue,
-          catalogEntityId: selectedSuggestion.catalogEntityId,
+          catalogEntityId: suggestionToAdd.catalogEntityId,
         }),
       });
 
