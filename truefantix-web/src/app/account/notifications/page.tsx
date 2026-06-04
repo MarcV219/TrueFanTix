@@ -30,6 +30,16 @@ type CatalogSuggestion = {
   country?: string;
 };
 
+type SpotifyArtistCandidate = {
+  spotifyId: string;
+  name: string;
+  popularity?: number;
+  source: "followed" | "top";
+  spotifyUrl?: string;
+  imageUrl?: string;
+  match: CatalogSuggestion | null;
+};
+
 const TYPE_OPTIONS: Array<{ value: PreferenceType; label: string }> = [
   { value: "ARTIST", label: "Artist" },
   { value: "TEAM", label: "Team" },
@@ -97,6 +107,10 @@ function Body() {
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
   const [requestBusy, setRequestBusy] = React.useState(false);
+  const [spotifyLoading, setSpotifyLoading] = React.useState(false);
+  const [spotifyConnected, setSpotifyConnected] = React.useState<boolean | null>(null);
+  const [spotifyArtists, setSpotifyArtists] = React.useState<SpotifyArtistCandidate[]>([]);
+  const [selectedSpotifyIds, setSelectedSpotifyIds] = React.useState<Set<string>>(new Set());
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
 
@@ -126,6 +140,22 @@ function Body() {
     return () => {
       alive = false;
     };
+  }, []);
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const spotify = params.get("spotify");
+    if (!spotify) return;
+    if (spotify === "connected") {
+      setOk("Spotify connected. Load your Spotify artists to import favorites.");
+    } else if (spotify === "not_configured") {
+      setError("Spotify import is not configured yet.");
+    } else if (spotify === "denied") {
+      setError("Spotify connection was cancelled.");
+    } else {
+      setError("Spotify connection failed. Please try again.");
+    }
+    window.history.replaceState(null, "", window.location.pathname);
   }, []);
 
   React.useEffect(() => {
@@ -280,6 +310,75 @@ function Body() {
     }
   }
 
+  async function loadSpotifyArtists() {
+    setSpotifyLoading(true);
+    setError(null);
+    setOk(null);
+    try {
+      const { res, data } = await fetchJson("/api/integrations/spotify/artists", { method: "GET" });
+      if (!res.ok || !data?.ok) {
+        throw new Error(String(data?.message || data?.error || "Could not load Spotify artists."));
+      }
+      setSpotifyConnected(Boolean(data.connected));
+      const artists = Array.isArray(data.artists) ? (data.artists as SpotifyArtistCandidate[]) : [];
+      setSpotifyArtists(artists);
+      setSelectedSpotifyIds(new Set(artists.filter((artist) => artist.match?.catalogEntityId).map((artist) => artist.spotifyId)));
+      if (!data.connected) {
+        setOk(null);
+      } else {
+        setOk(`Loaded ${artists.length} Spotify artists.`);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "Could not load Spotify artists.");
+    } finally {
+      setSpotifyLoading(false);
+    }
+  }
+
+  async function importSpotifyArtists() {
+    if (selectedSpotifyIds.size === 0) {
+      setError("Select at least one Spotify artist to import.");
+      setOk(null);
+      return;
+    }
+
+    setSpotifyLoading(true);
+    setError(null);
+    setOk(null);
+    try {
+      const { res, data } = await fetchJson("/api/integrations/spotify/artists", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spotifyIds: Array.from(selectedSpotifyIds), includeUnmatched: true }),
+      });
+      if (!res.ok || !data?.ok) {
+        throw new Error(String(data?.message || data?.error || "Could not import Spotify artists."));
+      }
+
+      const imported = Array.isArray(data.imported) ? (data.imported as Preference[]) : [];
+      setPreferences((prev) => {
+        const byId = new Map(prev.map((item) => [item.id, item]));
+        for (const item of imported) byId.set(item.id, item);
+        return Array.from(byId.values()).sort((a, b) => a.type.localeCompare(b.type) || a.value.localeCompare(b.value));
+      });
+      setOk(`Imported ${imported.length} Spotify artist${imported.length === 1 ? "" : "s"} into notifications.`);
+      await loadSpotifyArtists();
+    } catch (e: any) {
+      setError(e?.message ?? "Could not import Spotify artists.");
+    } finally {
+      setSpotifyLoading(false);
+    }
+  }
+
+  function toggleSpotifyArtist(id: string) {
+    setSelectedSpotifyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   return (
     <div
       style={{
@@ -292,6 +391,119 @@ function Body() {
       <div style={{ fontWeight: 950, fontSize: 18 }}>Notification interests</div>
       <div style={{ marginTop: 8, opacity: 0.85 }}>
         Add artists, teams, venues, and cities for alerts and sold-out access matching.
+      </div>
+
+      <div
+        style={{
+          marginTop: 14,
+          padding: 12,
+          borderRadius: 10,
+          border: "1px solid rgba(30, 215, 96, 0.35)",
+          background: "rgba(240, 253, 244, 1)",
+          display: "grid",
+          gap: 10,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontWeight: 950 }}>Import artists from Spotify</div>
+            <div style={{ marginTop: 2, fontSize: 13, opacity: 0.75 }}>
+              Connect Spotify to add followed and top artists to notification favorites.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <a
+              href="/api/integrations/spotify/start"
+              style={{
+                padding: "9px 11px",
+                borderRadius: 8,
+                border: "1px solid rgba(22, 163, 74, 0.35)",
+                background: "white",
+                color: "inherit",
+                textDecoration: "none",
+                fontWeight: 900,
+              }}
+            >
+              Connect Spotify
+            </a>
+            <button
+              type="button"
+              onClick={loadSpotifyArtists}
+              disabled={spotifyLoading}
+              style={{
+                padding: "9px 11px",
+                borderRadius: 8,
+                border: "1px solid rgba(0,0,0,0.12)",
+                background: "white",
+                fontWeight: 900,
+                cursor: spotifyLoading ? "not-allowed" : "pointer",
+              }}
+            >
+              {spotifyLoading ? "Loading..." : "Load artists"}
+            </button>
+          </div>
+        </div>
+
+        {spotifyConnected === false ? (
+          <div style={{ fontSize: 13, opacity: 0.78 }}>Connect Spotify first, then load artists.</div>
+        ) : null}
+
+        {spotifyArtists.length > 0 ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ fontSize: 13, opacity: 0.78 }}>
+                {selectedSpotifyIds.size} selected · unmatched selections become catalog requests.
+              </div>
+              <button
+                type="button"
+                onClick={importSpotifyArtists}
+                disabled={spotifyLoading || selectedSpotifyIds.size === 0}
+                style={{
+                  padding: "9px 11px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(15, 23, 42, 0.15)",
+                  background: spotifyLoading || selectedSpotifyIds.size === 0 ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.92)",
+                  color: spotifyLoading || selectedSpotifyIds.size === 0 ? "rgba(15,23,42,0.55)" : "white",
+                  fontWeight: 950,
+                  cursor: spotifyLoading || selectedSpotifyIds.size === 0 ? "not-allowed" : "pointer",
+                }}
+              >
+                Import selected
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: 6, maxHeight: 360, overflow: "auto" }}>
+              {spotifyArtists.map((artist) => {
+                const checked = selectedSpotifyIds.has(artist.spotifyId);
+                return (
+                  <label
+                    key={artist.spotifyId}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "auto 1fr",
+                      gap: 10,
+                      alignItems: "center",
+                      padding: 10,
+                      borderRadius: 8,
+                      border: "1px solid rgba(148, 163, 184, 0.45)",
+                      background: "white",
+                    }}
+                  >
+                    <input type="checkbox" checked={checked} onChange={() => toggleSpotifyArtist(artist.spotifyId)} />
+                    <span>
+                      <span style={{ display: "block", fontWeight: 900 }}>{artist.name}</span>
+                      <span style={{ display: "block", marginTop: 2, fontSize: 12, opacity: 0.72 }}>
+                        {artist.match
+                          ? `Matched to ${artist.match.label}`
+                          : "No catalog match yet; will request admin review if selected"}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {error ? (

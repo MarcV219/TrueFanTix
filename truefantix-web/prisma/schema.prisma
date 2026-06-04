@@ -202,6 +202,7 @@ model User {
   // Notification system relations
   notificationPreferences NotificationPreference[]
   catalogRequests         CatalogRequest[]
+  connectedAccounts       ConnectedAccount[]
   notifications           Notification[]
 
   // Audit logging
@@ -852,6 +853,32 @@ model CatalogRequest {
   @@index([status, createdAt])
   @@index([requestedType, requestedValue])
   @@index([resolvedCatalogEntityId])
+}
+
+model ConnectedAccount {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider          String
+  providerAccountId String
+
+  accessTokenEncrypted  String
+  refreshTokenEncrypted String?
+  tokenType             String?
+  scope                 String?
+  expiresAt             DateTime?
+
+  displayName String?
+  email       String?
+
+  @@unique([provider, providerAccountId])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@index([provider])
 }
 
 model Notification {
