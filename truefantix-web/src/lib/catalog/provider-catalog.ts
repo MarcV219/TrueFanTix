@@ -68,7 +68,20 @@ function typedMatchRank(item: ProviderCatalogSuggestion, query: string) {
 }
 
 function suggestionRank(item: ProviderCatalogSuggestion, query: string) {
-  return typedMatchRank(item, query) + providerRank(item.provider) + Math.min(item.aliases?.length ?? 0, 20);
+  const exactCuratedBoost =
+    item.provider === "static" && normalizedDisplayName(item.canonicalName || item.label) === normalizedDisplayName(query)
+      ? 500
+      : 0;
+  const canadaBoost = item.country === "Canada" || item.country === "CA" ? 100 : 0;
+  const ontarioBoost = item.region === "ON" ? 75 : 0;
+  return (
+    typedMatchRank(item, query) +
+    providerRank(item.provider) +
+    exactCuratedBoost +
+    canadaBoost +
+    ontarioBoost +
+    Math.min(item.aliases?.length ?? 0, 20)
+  );
 }
 
 function dedupeDisplaySuggestions(items: ProviderCatalogSuggestion[], query: string) {
