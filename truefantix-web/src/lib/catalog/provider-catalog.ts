@@ -478,6 +478,30 @@ const WIKIDATA_REJECT_TERMS = [
   "song",
 ];
 
+const WIKIDATA_ARTIST_TERMS = [
+  "musician",
+  "singer",
+  "rapper",
+  "band",
+  "musical group",
+  "music group",
+  "record producer",
+  "disc jockey",
+  "dj",
+  "composer",
+  "songwriter",
+  "vocalist",
+  "guitarist",
+  "pianist",
+  "drummer",
+  "bassist",
+  "violinist",
+  "orchestra",
+  "choir",
+  "music artist",
+  "recording artist",
+];
+
 const WIKIDATA_TEAM_TERMS = [
   "team",
   "club",
@@ -542,6 +566,13 @@ function includesAnyTerm(text: string, terms: string[]) {
   return terms.some((term) => text.includes(term));
 }
 
+function includesAnyWholeTerm(text: string, terms: string[]) {
+  return terms.some((term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(text);
+  });
+}
+
 function isExactOrPrefixName(label: string, query: string) {
   const name = normalizedDisplayName(label);
   const q = normalizedDisplayName(query);
@@ -550,7 +581,8 @@ function isExactOrPrefixName(label: string, query: string) {
 
 function wikidataTypeMatches(type: CatalogSuggestionType, label: string, description: string) {
   const searchable = `${label} ${description}`.toLowerCase();
-  if (includesAnyTerm(searchable, WIKIDATA_REJECT_TERMS)) return false;
+  if (includesAnyWholeTerm(searchable, WIKIDATA_REJECT_TERMS)) return false;
+  if (type === "ARTIST") return includesAnyTerm(searchable, WIKIDATA_ARTIST_TERMS);
   if (type === "TEAM") return includesAnyTerm(searchable, WIKIDATA_TEAM_TERMS);
   if (type === "VENUE") return includesAnyTerm(searchable, WIKIDATA_VENUE_TERMS);
   return false;
@@ -563,7 +595,7 @@ function wikidataNorthAmericaConfidence(label: string, description: string, quer
 }
 
 async function fetchWikidataSuggestions(query: string, type: CatalogSuggestionType | "ALL", limit: number) {
-  if (query.length < 3 || (type !== "ALL" && type !== "TEAM" && type !== "VENUE")) return [];
+  if (query.length < 3 || (type !== "ALL" && type !== "ARTIST" && type !== "TEAM" && type !== "VENUE")) return [];
 
   const url = new URL("https://www.wikidata.org/w/api.php");
   url.searchParams.set("action", "wbsearchentities");
@@ -579,7 +611,7 @@ async function fetchWikidataSuggestions(query: string, type: CatalogSuggestionTy
   if (!res.ok) return [];
   const data = await res.json();
   const rows = Array.isArray(data?.search) ? data.search : [];
-  const wantedTypes: CatalogSuggestionType[] = type === "ALL" ? ["TEAM", "VENUE"] : [type];
+  const wantedTypes: CatalogSuggestionType[] = type === "ALL" ? ["ARTIST", "TEAM", "VENUE"] : [type];
   const items: ProviderCatalogSuggestion[] = [];
 
   for (const row of rows) {
@@ -590,7 +622,7 @@ async function fetchWikidataSuggestions(query: string, type: CatalogSuggestionTy
 
     for (const wantedType of wantedTypes) {
       if (!wikidataTypeMatches(wantedType, label, description)) continue;
-      if (!wikidataNorthAmericaConfidence(label, description, query)) continue;
+      if (wantedType !== "ARTIST" && !wikidataNorthAmericaConfidence(label, description, query)) continue;
 
       items.push({
         type: wantedType,
@@ -621,7 +653,7 @@ async function fetchProviderSuggestions(query: string, type: CatalogSuggestionTy
     // Provider failures should not break autocomplete.
   }
 
-  if (out.length < limit && (type === "ALL" || type === "TEAM" || type === "VENUE")) {
+  if (out.length < limit && (type === "ALL" || type === "ARTIST" || type === "TEAM" || type === "VENUE")) {
     try {
       out.push(...await fetchWikidataSuggestions(query, type, limit - out.length));
     } catch {
