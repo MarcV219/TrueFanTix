@@ -147,7 +147,8 @@ function Body() {
     const spotify = params.get("spotify");
     if (!spotify) return;
     if (spotify === "connected") {
-      setOk("Spotify connected. Load your Spotify artists to import favorites.");
+      setSpotifyConnected(true);
+      setOk("Spotify connected. Find your Spotify artists to import favorites.");
     } else if (spotify === "not_configured") {
       setError("Spotify import is not configured yet.");
     } else if (spotify === "denied") {
@@ -156,6 +157,26 @@ function Body() {
       setError("Spotify connection failed. Please try again.");
     }
     window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+
+  React.useEffect(() => {
+    let alive = true;
+    async function loadSpotifyConnection() {
+      try {
+        const { res, data } = await fetchJson("/api/integrations/spotify/connection", {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (alive && res.ok && data?.ok) setSpotifyConnected(Boolean(data.connected));
+      } catch {
+        if (alive) setSpotifyConnected(false);
+      }
+    }
+
+    loadSpotifyConnection();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   React.useEffect(() => {
@@ -448,44 +469,46 @@ function Body() {
             >
               Connect Spotify
             </a>
-            <button
-              type="button"
-              onClick={loadSpotifyArtists}
-              disabled={spotifyLoading}
-              style={{
-                padding: "9px 11px",
-                borderRadius: 8,
-                border: "1px solid rgba(0,0,0,0.12)",
-                background: "white",
-                fontWeight: 900,
-                cursor: spotifyLoading ? "not-allowed" : "pointer",
-              }}
-            >
-              {spotifyLoading ? "Loading..." : "Load artists"}
-            </button>
             {spotifyConnected ? (
-              <button
-                type="button"
-                onClick={disconnectSpotify}
-                disabled={spotifyLoading}
-                style={{
-                  padding: "9px 11px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(220, 38, 38, 0.28)",
-                  background: "white",
-                  color: "rgba(153, 27, 27, 1)",
-                  fontWeight: 900,
-                  cursor: spotifyLoading ? "not-allowed" : "pointer",
-                }}
-              >
-                Disconnect Spotify
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={loadSpotifyArtists}
+                  disabled={spotifyLoading}
+                  style={{
+                    padding: "9px 11px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(0,0,0,0.12)",
+                    background: "white",
+                    fontWeight: 900,
+                    cursor: spotifyLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {spotifyLoading ? "Loading..." : "Find my Spotify artists"}
+                </button>
+                <button
+                  type="button"
+                  onClick={disconnectSpotify}
+                  disabled={spotifyLoading}
+                  style={{
+                    padding: "9px 11px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(220, 38, 38, 0.28)",
+                    background: "white",
+                    color: "rgba(153, 27, 27, 1)",
+                    fontWeight: 900,
+                    cursor: spotifyLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Disconnect Spotify
+                </button>
+              </>
             ) : null}
           </div>
         </div>
 
         {spotifyConnected === false ? (
-          <div style={{ fontSize: 13, opacity: 0.78 }}>Connect Spotify first, then load artists.</div>
+          <div style={{ fontSize: 13, opacity: 0.78 }}>Connect Spotify first to find artists for import.</div>
         ) : null}
 
         {spotifyArtists.length > 0 ? (

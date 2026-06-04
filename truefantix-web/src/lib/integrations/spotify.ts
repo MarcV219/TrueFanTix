@@ -149,6 +149,14 @@ export async function getSpotifyAccessToken(userId: string) {
   return decrypt(account.accessTokenEncrypted);
 }
 
+export async function hasSpotifyConnection(userId: string) {
+  const account = await prisma.connectedAccount.findUnique({
+    where: { userId_provider: { userId, provider: SPOTIFY_PROVIDER } },
+    select: { id: true },
+  });
+  return Boolean(account);
+}
+
 export async function disconnectSpotify(userId: string) {
   await prisma.connectedAccount.deleteMany({
     where: { userId, provider: SPOTIFY_PROVIDER },
