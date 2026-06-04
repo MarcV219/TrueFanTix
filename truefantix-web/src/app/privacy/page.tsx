@@ -55,6 +55,13 @@ export default function PrivacyPage() {
                 collect email addresses and phone numbers to send transaction confirmations, updates, 
                 and important account information.
               </p>
+              <p className="leading-relaxed">
+                <strong className="text-gray-900 dark:text-white">Spotify Artist Import:</strong> If you choose
+                to connect Spotify, we request permission to read your followed artists and top artists so you can
+                import artist notification favorites. We store encrypted Spotify access credentials only as needed
+                to operate the import feature. We do not use Spotify data for advertising, resale, machine learning
+                training, or unrelated purposes.
+              </p>
             </div>
           </div>
 
@@ -101,6 +108,11 @@ export default function PrivacyPage() {
               <li>Opt out of marketing communications</li>
               <li>Export your data</li>
             </ul>
+            <p className="text-gray-600 dark:text-gray-400 leading-relaxed mt-4">
+              You can disconnect Spotify from Account &gt; Notifications at any time. Disconnecting removes our stored
+              Spotify connection credentials and stops future Spotify artist imports. Artist notification favorites
+              you explicitly imported into TrueFanTix can be removed from your notification interests.
+            </p>
           </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8">

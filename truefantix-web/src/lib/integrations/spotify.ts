@@ -149,6 +149,12 @@ export async function getSpotifyAccessToken(userId: string) {
   return decrypt(account.accessTokenEncrypted);
 }
 
+export async function disconnectSpotify(userId: string) {
+  await prisma.connectedAccount.deleteMany({
+    where: { userId, provider: SPOTIFY_PROVIDER },
+  });
+}
+
 async function spotifyApi<T>(accessToken: string, path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { Authorization: `Bearer ${accessToken}` },

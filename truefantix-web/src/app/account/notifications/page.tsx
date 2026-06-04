@@ -370,6 +370,28 @@ function Body() {
     }
   }
 
+  async function disconnectSpotify() {
+    setSpotifyLoading(true);
+    setError(null);
+    setOk(null);
+    try {
+      const { res, data } = await fetchJson("/api/integrations/spotify/connection", {
+        method: "DELETE",
+      });
+      if (!res.ok || !data?.ok) {
+        throw new Error(String(data?.message || data?.error || "Could not disconnect Spotify."));
+      }
+      setSpotifyConnected(false);
+      setSpotifyArtists([]);
+      setSelectedSpotifyIds(new Set());
+      setOk("Spotify disconnected. Imported notification favorites remain in your list unless you remove them.");
+    } catch (e: any) {
+      setError(e?.message ?? "Could not disconnect Spotify.");
+    } finally {
+      setSpotifyLoading(false);
+    }
+  }
+
   function toggleSpotifyArtist(id: string) {
     setSelectedSpotifyIds((prev) => {
       const next = new Set(prev);
@@ -408,7 +430,7 @@ function Body() {
           <div>
             <div style={{ fontWeight: 950 }}>Import artists from Spotify</div>
             <div style={{ marginTop: 2, fontSize: 13, opacity: 0.75 }}>
-              Connect Spotify to add followed and top artists to notification favorites.
+              Connect Spotify to read followed/top artists only for importing notification favorites.
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -441,6 +463,24 @@ function Body() {
             >
               {spotifyLoading ? "Loading..." : "Load artists"}
             </button>
+            {spotifyConnected ? (
+              <button
+                type="button"
+                onClick={disconnectSpotify}
+                disabled={spotifyLoading}
+                style={{
+                  padding: "9px 11px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(220, 38, 38, 0.28)",
+                  background: "white",
+                  color: "rgba(153, 27, 27, 1)",
+                  fontWeight: 900,
+                  cursor: spotifyLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                Disconnect Spotify
+              </button>
+            ) : null}
           </div>
         </div>
 

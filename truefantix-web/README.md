@@ -80,6 +80,8 @@ Key variables:
 
 The catalog also uses the public MusicBrainz API as an artist fallback. MusicBrainz does not require a key, but its public API is rate-limited and may require a commercial MetaBrainz plan depending on production usage.
 
+Spotify import is limited to user-authorized followed/top artists for notification favorite import. Do not use Spotify data for ads, resale, ML training, scraping, streaming capture, or unrelated purposes. Users must be able to disconnect Spotify from Account > Notifications; disconnecting deletes the stored Spotify connection credentials.
+
 ## 📖 Documentation
 
 - [SETUP.md](./SETUP.md) - Development setup and configuration
