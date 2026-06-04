@@ -71,8 +71,8 @@ Key variables:
 - `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` - Stripe API keys
 - `SENDGRID_API_KEY` - Email service
 - `VERIFICATION_SECRET` - For secure tokens
-- `TICKETMASTER_API_KEY` - Free Ticketmaster Discovery API key for live-event artists, teams, and venues
-- `GEONAMES_USERNAME` - Free GeoNames username for city autocomplete and normalization
+- `TICKETMASTER_API_KEY` - Free Ticketmaster Discovery API key for live-event artists, teams, venues, and event-city suggestions
+- `GEONAMES_USERNAME` - Optional free GeoNames username for broader city autocomplete and normalization
 - `CRON_SECRET` - Required for internal cron endpoints such as `/api/cron/catalog-sync`
 
 The catalog also uses the public MusicBrainz API as an artist fallback. MusicBrainz does not require a key, but its public API is rate-limited and may require a commercial MetaBrainz plan depending on production usage.

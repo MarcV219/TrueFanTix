@@ -204,7 +204,7 @@ async function fetchTicketmasterSuggestions(query: string, type: CatalogSuggesti
     });
   }
 
-  if (type === "ALL" || type === "VENUE") {
+  if (type === "ALL" || type === "VENUE" || type === "CITY") {
     for (const venue of venues) {
       const name = cleanText(venue.name);
       const id = cleanText(venue.id);
@@ -213,20 +213,36 @@ async function fetchTicketmasterSuggestions(query: string, type: CatalogSuggesti
       const region = cleanText(venue.state?.stateCode || venue.state?.name);
       const country = cleanText(venue.country?.countryCode || venue.country?.name);
       const address = cleanText(venue.address?.line1);
-      out.push({
-        type: "VENUE",
-        value: name,
-        label: name,
-        canonicalName: name,
-        provider: "ticketmaster",
-        providerId: id,
-        subtitle: [address, city, region].filter(Boolean).join(", ") || "Ticketmaster venue",
-        address: address || undefined,
-        city: city || undefined,
-        region: region || undefined,
-        country: country || undefined,
-        sourceUrl: cleanText(venue.url) || undefined,
-      });
+      if (type === "ALL" || type === "VENUE") {
+        out.push({
+          type: "VENUE",
+          value: name,
+          label: name,
+          canonicalName: name,
+          provider: "ticketmaster",
+          providerId: id,
+          subtitle: [address, city, region].filter(Boolean).join(", ") || "Ticketmaster venue",
+          address: address || undefined,
+          city: city || undefined,
+          region: region || undefined,
+          country: country || undefined,
+          sourceUrl: cleanText(venue.url) || undefined,
+        });
+      }
+      if (city && (type === "ALL" || type === "CITY")) {
+        out.push({
+          type: "CITY",
+          value: city,
+          label: city,
+          canonicalName: city,
+          provider: "ticketmaster-city",
+          providerId: [country, region, city].filter(Boolean).join(":").toLowerCase(),
+          subtitle: [region, country, "Ticketmaster event city"].filter(Boolean).join(", "),
+          city,
+          region: region || undefined,
+          country: country || undefined,
+        });
+      }
     }
   }
 
