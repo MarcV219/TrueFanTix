@@ -653,9 +653,9 @@ async function fetchProviderSuggestions(query: string, type: CatalogSuggestionTy
     // Provider failures should not break autocomplete.
   }
 
-  if (out.length < limit && (type === "ALL" || type === "ARTIST" || type === "TEAM" || type === "VENUE")) {
+  if ((type === "ARTIST" || out.length < limit) && (type === "ALL" || type === "ARTIST" || type === "TEAM" || type === "VENUE")) {
     try {
-      out.push(...await fetchWikidataSuggestions(query, type, limit - out.length));
+      out.push(...await fetchWikidataSuggestions(query, type, type === "ARTIST" ? limit : limit - out.length));
     } catch {
       // Wikidata is broad public data; stale/local/static results are acceptable fallback.
     }
