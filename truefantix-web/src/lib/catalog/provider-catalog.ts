@@ -102,6 +102,24 @@ function dedupeDisplaySuggestions(items: ProviderCatalogSuggestion[], query: str
   });
 }
 
+function suppressVariantsWhenExactExists(items: ProviderCatalogSuggestion[], query: string) {
+  const q = normalizedDisplayName(query);
+  if (!q) return items;
+
+  const exactTypes = new Set(
+    items
+      .filter((item) => normalizedDisplayName(item.canonicalName || item.label) === q)
+      .map((item) => item.type)
+  );
+  if (exactTypes.size === 0) return items;
+
+  return items.filter((item) => {
+    if (!exactTypes.has(item.type)) return true;
+    const name = normalizedDisplayName(item.canonicalName || item.label);
+    return name === q || !name.startsWith(`${q} `);
+  });
+}
+
 function suggestionSearchWords(item: ProviderCatalogSuggestion) {
   return [
     item.label,
@@ -478,13 +496,13 @@ export async function searchProviderCatalog({
   const providerItems = includeProviders ? await fetchProviderSuggestions(q, resolvedType, max) : [];
   const staticItems = await cacheSuggestions(filterTypedMatches(fromStaticCatalog(q, resolvedType, max), q));
 
-  return dedupeDisplaySuggestions(
+  return suppressVariantsWhenExactExists(dedupeDisplaySuggestions(
     uniqueByKey(
       filterTypedMatches([...providerItems, ...local, ...staticItems], q),
       (item) => `${item.provider}:${item.providerId}:${item.type}`
     ),
     q
-  ).slice(0, max);
+  ), q).slice(0, max);
 }
 
 export async function seedStaticCatalog() {
