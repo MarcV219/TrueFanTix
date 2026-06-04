@@ -53,6 +53,7 @@ function normalizedDisplayName(value: string) {
 function providerRank(provider: string) {
   if (provider === "ticketmaster" || provider === "ticketmaster-city") return 400;
   if (provider === "static") return 300;
+  if (provider === "wikidata") return 275;
   if (provider === "geonames") return 250;
   if (provider === "musicbrainz") return 200;
   return 100;
@@ -116,7 +117,7 @@ function suppressVariantsWhenExactExists(items: ProviderCatalogSuggestion[], que
   return items.filter((item) => {
     if (!exactTypes.has(item.type)) return true;
     const name = normalizedDisplayName(item.canonicalName || item.label);
-    return name === q || !name.startsWith(`${q} `);
+    return name === q;
   });
 }
 
@@ -446,6 +447,157 @@ async function fetchGeoNamesCities(query: string, limit: number) {
   return cacheSuggestions(filterTypedMatches(items, query).slice(0, limit));
 }
 
+const WIKIDATA_REJECT_TERMS = [
+  "wikimedia",
+  "wikinews",
+  "disambiguation",
+  "article",
+  "defunct",
+  "season",
+  "statistics",
+  "records",
+  "match",
+  "game",
+  "film",
+  "television series",
+  "album",
+  "song",
+];
+
+const WIKIDATA_TEAM_TERMS = [
+  "team",
+  "club",
+  "franchise",
+  "football",
+  "baseball",
+  "basketball",
+  "hockey",
+  "soccer",
+  "lacrosse",
+  "rugby",
+  "volleyball",
+  "softball",
+  "curling",
+];
+
+const WIKIDATA_VENUE_TERMS = [
+  "venue",
+  "stadium",
+  "arena",
+  "theatre",
+  "theater",
+  "amphitheatre",
+  "amphitheater",
+  "ballpark",
+  "field",
+  "centre",
+  "center",
+  "coliseum",
+  "auditorium",
+  "hall",
+  "racetrack",
+  "speedway",
+];
+
+const WIKIDATA_NORTH_AMERICA_TERMS = [
+  "canada",
+  "canadian",
+  "united states",
+  "usa",
+  "u.s.",
+  "american",
+  "mexico",
+  "mexican",
+  "north america",
+  "cfl",
+  "nfl",
+  "nba",
+  "nhl",
+  "mlb",
+  "mls",
+  "nll",
+  "ahl",
+  "ohl",
+  "whl",
+  "qmjhl",
+  "pwhl",
+  "ncaa",
+];
+
+function includesAnyTerm(text: string, terms: string[]) {
+  return terms.some((term) => text.includes(term));
+}
+
+function isExactOrPrefixName(label: string, query: string) {
+  const name = normalizedDisplayName(label);
+  const q = normalizedDisplayName(query);
+  return Boolean(q && (name === q || name.startsWith(`${q} `) || q.startsWith(`${name} `)));
+}
+
+function wikidataTypeMatches(type: CatalogSuggestionType, label: string, description: string) {
+  const searchable = `${label} ${description}`.toLowerCase();
+  if (includesAnyTerm(searchable, WIKIDATA_REJECT_TERMS)) return false;
+  if (type === "TEAM") return includesAnyTerm(searchable, WIKIDATA_TEAM_TERMS);
+  if (type === "VENUE") return includesAnyTerm(searchable, WIKIDATA_VENUE_TERMS);
+  return false;
+}
+
+function wikidataNorthAmericaConfidence(label: string, description: string, query: string) {
+  const searchable = `${label} ${description}`.toLowerCase();
+  if (includesAnyTerm(searchable, WIKIDATA_NORTH_AMERICA_TERMS)) return true;
+  return isExactOrPrefixName(label, query);
+}
+
+async function fetchWikidataSuggestions(query: string, type: CatalogSuggestionType | "ALL", limit: number) {
+  if (query.length < 3 || (type !== "ALL" && type !== "TEAM" && type !== "VENUE")) return [];
+
+  const url = new URL("https://www.wikidata.org/w/api.php");
+  url.searchParams.set("action", "wbsearchentities");
+  url.searchParams.set("search", query);
+  url.searchParams.set("language", "en");
+  url.searchParams.set("uselang", "en");
+  url.searchParams.set("type", "item");
+  url.searchParams.set("limit", String(Math.min(limit * 2, 20)));
+  url.searchParams.set("format", "json");
+  url.searchParams.set("origin", "*");
+
+  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, next: { revalidate: 86400 } });
+  if (!res.ok) return [];
+  const data = await res.json();
+  const rows = Array.isArray(data?.search) ? data.search : [];
+  const wantedTypes: CatalogSuggestionType[] = type === "ALL" ? ["TEAM", "VENUE"] : [type];
+  const items: ProviderCatalogSuggestion[] = [];
+
+  for (const row of rows) {
+    const id = cleanText(row?.id);
+    const label = cleanText(row?.label);
+    const description = cleanText(row?.description);
+    if (!id || !label) continue;
+
+    for (const wantedType of wantedTypes) {
+      if (!wikidataTypeMatches(wantedType, label, description)) continue;
+      if (!wikidataNorthAmericaConfidence(label, description, query)) continue;
+
+      items.push({
+        type: wantedType,
+        value: label,
+        label,
+        canonicalName: label,
+        provider: "wikidata",
+        providerId: `${id}:${wantedType.toLowerCase()}`,
+        subtitle: [description, "Wikidata"].filter(Boolean).join(" · "),
+        aliases: Array.isArray(row?.aliases) ? row.aliases.map(cleanText).filter(Boolean) : [],
+        sourceUrl: `https://www.wikidata.org/wiki/${id}`,
+        metadata: safeJson({ wikidataId: id, description }),
+      });
+    }
+  }
+
+  return cacheSuggestions(
+    uniqueByKey(filterTypedMatches(items, query), (item) => `${item.provider}:${item.providerId}:${item.type}`).slice(0, limit)
+  );
+}
+
 async function fetchProviderSuggestions(query: string, type: CatalogSuggestionType | "ALL", limit: number) {
   const out: ProviderCatalogSuggestion[] = [];
 
@@ -453,6 +605,14 @@ async function fetchProviderSuggestions(query: string, type: CatalogSuggestionTy
     out.push(...await fetchTicketmasterSuggestions(query, type, limit));
   } catch {
     // Provider failures should not break autocomplete.
+  }
+
+  if (out.length < limit && (type === "ALL" || type === "TEAM" || type === "VENUE")) {
+    try {
+      out.push(...await fetchWikidataSuggestions(query, type, limit - out.length));
+    } catch {
+      // Wikidata is broad public data; stale/local/static results are acceptable fallback.
+    }
   }
 
   if (out.length < limit && (type === "ALL" || type === "CITY")) {
