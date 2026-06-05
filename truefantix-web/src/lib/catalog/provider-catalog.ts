@@ -60,11 +60,13 @@ function providerRank(provider: string) {
 }
 
 function typedMatchRank(item: ProviderCatalogSuggestion, query: string) {
-  const name = normalizedDisplayName(item.canonicalName || item.label);
+  const names = [item.canonicalName || item.label, item.label, item.value, ...(item.aliases ?? [])]
+    .map((value) => normalizedDisplayName(value))
+    .filter(Boolean);
   const q = normalizedDisplayName(query);
   if (!q) return 0;
-  if (name === q) return 1000;
-  if (name.startsWith(q)) return 800;
+  if (names.some((name) => name === q)) return 1000;
+  if (names.some((name) => name.startsWith(q))) return 800;
   return 0;
 }
 
