@@ -43,6 +43,54 @@ function normalizeCountry(country?: string | null): string {
   return "CA";
 }
 
+function sellerDisplayName(user: { firstName: string; lastName: string }) {
+  return `${user.firstName} ${user.lastName}`.trim();
+}
+
+function stripeAccountPrefill(user: {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  streetAddress1: string;
+  streetAddress2?: string | null;
+  city: string;
+  region: string;
+  postalCode: string;
+  country: string;
+}, seller: { id: string }) {
+  const country = normalizeCountry(user.country);
+  const address = {
+    line1: user.streetAddress1 || undefined,
+    line2: user.streetAddress2 || undefined,
+    city: user.city || undefined,
+    state: user.region || undefined,
+    postal_code: user.postalCode || undefined,
+    country,
+  };
+
+  return {
+    email: user.email,
+    business_type: "individual",
+    business_profile: {
+      product_description: "Individual seller listing personal event tickets at or below face value through the TrueFanTix marketplace.",
+    },
+    individual: {
+      first_name: user.firstName,
+      last_name: user.lastName,
+      email: user.email,
+      phone: user.phone || undefined,
+      address,
+    },
+    metadata: {
+      userId: user.id,
+      sellerId: seller.id,
+      platform: "TrueFanTix",
+    },
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const gate = await requireVerifiedUser(req);
@@ -91,7 +139,7 @@ export async function POST(req: Request) {
     if (!seller) {
       seller = await prisma.seller.create({
         data: {
-          name: `${user.firstName} ${user.lastName}`.trim(),
+          name: sellerDisplayName(user),
           status: "PENDING",
           statusUpdatedAt: new Date(),
           user: { connect: { id: user.id } },
@@ -107,12 +155,12 @@ export async function POST(req: Request) {
     // Create Stripe account if needed
     if (!seller.stripeAccountId) {
       const country = normalizeCountry(user.country);
+      const prefill = stripeAccountPrefill(user, seller);
 
       const account = await stripe.accounts.create({
         type: "express",
         country,
-        email: user.email,
-        business_type: "individual",
+        ...prefill,
         capabilities: {
           card_payments: { requested: true },
           transfers: { requested: true },
@@ -132,6 +180,12 @@ export async function POST(req: Request) {
           stripePayoutsEnabled: !!account.payouts_enabled,
         },
       });
+    } else {
+      try {
+        await stripe.accounts.update(seller.stripeAccountId, stripeAccountPrefill(user, seller));
+      } catch (err) {
+        console.warn("Could not prefill existing Stripe connected account:", err);
+      }
     }
 
     const origin = new URL(req.url).origin;
