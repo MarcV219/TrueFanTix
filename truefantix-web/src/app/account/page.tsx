@@ -157,6 +157,9 @@ function AccountHub({ me }: { me: MeUser }) {
 
       if (!res.ok) {
         setStripeChecked(true);
+        if (data?.error === "STRIPE_NOT_CONFIGURED") {
+          setStripeError("Seller verification is temporarily unavailable while Stripe setup is completed.");
+        }
         return { ok: false as const, chargesEnabled: false, payoutsEnabled: false };
       }
 
@@ -255,8 +258,9 @@ function AccountHub({ me }: { me: MeUser }) {
       });
 
       if (!res.ok) {
-        const msg =
-          (data && (data.message || data.error)) || `Unable to start onboarding (${res.status}).`;
+        const msg = data?.error === "STRIPE_NOT_CONFIGURED"
+          ? "Seller verification is temporarily unavailable while Stripe setup is completed."
+          : (data && (data.message || data.error)) || `Unable to start onboarding (${res.status}).`;
         setStripeError(String(msg));
         return;
       }

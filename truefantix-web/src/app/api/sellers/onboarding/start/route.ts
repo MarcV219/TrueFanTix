@@ -16,7 +16,7 @@ function noStoreJson(body: any, init?: ResponseInit) {
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
-    throw new Error("Missing STRIPE_SECRET_KEY in environment.");
+    return null;
   }
   const mod: any = await import("stripe");
   const StripeCtor = mod?.default ?? mod;
@@ -74,6 +74,16 @@ export async function POST(req: Request) {
     }
 
     const stripe = await getStripe();
+    if (!stripe) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "STRIPE_NOT_CONFIGURED",
+          message: "Seller verification is temporarily unavailable while Stripe setup is completed.",
+        },
+        { status: 503 }
+      );
+    }
 
     // Ensure seller record exists
     let seller = user.seller;
