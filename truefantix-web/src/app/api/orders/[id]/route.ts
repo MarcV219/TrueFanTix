@@ -75,6 +75,7 @@ export async function GET(req: Request) {
           ...order,
           amount: order.amountCents / 100,
           adminFee: order.adminFeeCents / 100,
+          adminFeeTax: (order.adminFeeTaxCents ?? 0) / 100,
           total: order.totalCents / 100,
         },
       },

@@ -3,9 +3,18 @@
 import React, { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { formatTaxRate } from "@/lib/tax-rates";
 
 function centsToDollars(cents: number) {
   return (cents / 100).toFixed(2);
+}
+
+function taxLineLabel(order: any) {
+  const label = order?.taxLabel || "Tax";
+  const rate = typeof order?.taxRateBps === "number" ? formatTaxRate(order.taxRateBps) : "";
+  const region = order?.taxRegionCode ? ` ${order.taxRegionCode}` : "";
+  const suffix = rate ? ` (${rate}${region})` : "";
+  return `${label} on Service Fee${suffix}:`;
 }
 
 async function fetchJson(path: string, init?: RequestInit) {
@@ -131,6 +140,11 @@ function SuccessContent() {
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
               <span>Service Fee:</span>
               <span>${centsToDollars(order.adminFeeCents)}</span>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+              <span>{taxLineLabel(order)}</span>
+              <span>${centsToDollars(order.adminFeeTaxCents ?? 0)}</span>
             </div>
             
             <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 800, fontSize: 16 }}>

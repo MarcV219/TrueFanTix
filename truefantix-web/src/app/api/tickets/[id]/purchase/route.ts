@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
 import { schemas } from "@/lib/validation";
+import { calculateAdminFeeTax, getTaxRateForVenue } from "@/lib/tax-rates";
 
 const ADMIN_FEE_BPS = 875; // 8.75%
 const BPS_DENOMINATOR = 10_000;
@@ -168,6 +169,7 @@ export async function POST(req: Request, ctx: Ctx) {
             ...existingByKey,
             amount: centsToDollars(existingByKey.amountCents),
             adminFee: centsToDollars(existingByKey.adminFeeCents),
+            adminFeeTax: centsToDollars(existingByKey.adminFeeTaxCents ?? 0),
             total: centsToDollars(existingByKey.totalCents),
           },
         },
@@ -232,7 +234,9 @@ export async function POST(req: Request, ctx: Ctx) {
       }
 
       const adminFeeCents = Math.round((ticket.priceCents * ADMIN_FEE_BPS) / BPS_DENOMINATOR);
-      const totalCents = ticket.priceCents + adminFeeCents;
+      const taxRate = getTaxRateForVenue(ticket.event?.venue ?? ticket.venue);
+      const adminFeeTax = calculateAdminFeeTax(adminFeeCents, taxRate);
+      const totalCents = ticket.priceCents + adminFeeCents + adminFeeTax.taxCents;
 
       // Find an existing order for this ticket via OrderItem.
       const existingOrderItem = await tx.orderItem.findFirst({
@@ -302,6 +306,12 @@ export async function POST(req: Request, ctx: Ctx) {
                 buyerSellerId,
                 amountCents: ticket.priceCents,
                 adminFeeCents,
+                adminFeeTaxCents: adminFeeTax.taxCents,
+                taxRateBps: adminFeeTax.rateBps,
+                taxRegionCode: adminFeeTax.regionCode || null,
+                taxRegionName: adminFeeTax.regionName || null,
+                taxCountryCode: adminFeeTax.countryCode || null,
+                taxLabel: adminFeeTax.label,
                 totalCents,
                 status: "PENDING",
                 idempotencyKey,
@@ -320,6 +330,12 @@ export async function POST(req: Request, ctx: Ctx) {
                 buyerSellerId,
                 amountCents: ticket.priceCents,
                 adminFeeCents,
+                adminFeeTaxCents: adminFeeTax.taxCents,
+                taxRateBps: adminFeeTax.rateBps,
+                taxRegionCode: adminFeeTax.regionCode || null,
+                taxRegionName: adminFeeTax.regionName || null,
+                taxCountryCode: adminFeeTax.countryCode || null,
+                taxLabel: adminFeeTax.label,
                 totalCents,
                 status: "PENDING",
                 idempotencyKey,
@@ -337,6 +353,7 @@ export async function POST(req: Request, ctx: Ctx) {
             ...order,
             amount: centsToDollars(order.amountCents),
             adminFee: centsToDollars(order.adminFeeCents),
+            adminFeeTax: centsToDollars(order.adminFeeTaxCents ?? 0),
             total: centsToDollars(order.totalCents),
           },
           ticket: updatedTicket,
@@ -378,6 +395,7 @@ export async function POST(req: Request, ctx: Ctx) {
                 ...existing,
                 amount: centsToDollars(existing.amountCents),
                 adminFee: centsToDollars(existing.adminFeeCents),
+                adminFeeTax: centsToDollars(existing.adminFeeTaxCents ?? 0),
                 total: centsToDollars(existing.totalCents),
               },
             },

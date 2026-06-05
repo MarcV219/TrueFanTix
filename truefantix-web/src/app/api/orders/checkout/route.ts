@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
+import { calculateAdminFeeTax, getTaxRateForVenue } from "@/lib/tax-rates";
 
 const ADMIN_FEE_BPS = 875;
 const BPS_DENOMINATOR = 10_000;
@@ -122,6 +123,7 @@ export async function POST(req: Request) {
             ...existing,
             amount: centsToDollars(existing.amountCents),
             adminFee: centsToDollars(existing.adminFeeCents),
+            adminFeeTax: centsToDollars(existing.adminFeeTaxCents ?? 0),
             total: centsToDollars(existing.totalCents),
           },
         },
@@ -227,7 +229,9 @@ export async function POST(req: Request) {
       const adminFeeCents = Math.round(
         (amountCents * ADMIN_FEE_BPS) / BPS_DENOMINATOR
       );
-      const totalCents = amountCents + adminFeeCents;
+      const taxRate = getTaxRateForVenue(tickets[0]?.event?.venue ?? tickets[0]?.venue);
+      const adminFeeTax = calculateAdminFeeTax(adminFeeCents, taxRate);
+      const totalCents = amountCents + adminFeeCents + adminFeeTax.taxCents;
 
       // Create Order header first (we need its id for reservations)
       const order = await tx.order.create({
@@ -238,6 +242,12 @@ export async function POST(req: Request) {
           idempotencyKey,
           amountCents,
           adminFeeCents,
+          adminFeeTaxCents: adminFeeTax.taxCents,
+          taxRateBps: adminFeeTax.rateBps,
+          taxRegionCode: adminFeeTax.regionCode || null,
+          taxRegionName: adminFeeTax.regionName || null,
+          taxCountryCode: adminFeeTax.countryCode || null,
+          taxLabel: adminFeeTax.label,
           totalCents,
         },
       });
@@ -297,6 +307,7 @@ export async function POST(req: Request) {
                 ...out,
                 amount: centsToDollars(out.amountCents),
                 adminFee: centsToDollars(out.adminFeeCents),
+                adminFeeTax: centsToDollars(out.adminFeeTaxCents ?? 0),
                 total: centsToDollars(out.totalCents),
               }
             : null,

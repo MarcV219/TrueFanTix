@@ -400,9 +400,15 @@ model Order {
   idempotencyKey String?     @unique
 
   // Money totals for the whole order (sum of items)
-  amountCents   Int
-  adminFeeCents Int
-  totalCents    Int
+  amountCents      Int
+  adminFeeCents    Int
+  adminFeeTaxCents Int     @default(0)
+  taxRateBps       Int     @default(0)
+  taxRegionCode    String?
+  taxRegionName    String?
+  taxCountryCode   String?
+  taxLabel         String?
+  totalCents       Int
 
   createdAt DateTime @default(now())
 

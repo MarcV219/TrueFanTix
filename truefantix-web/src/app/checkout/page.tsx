@@ -7,6 +7,7 @@ import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe, Stripe } from "@stripe/stripe-js";
 import { CheckoutForm } from "@/components/CheckoutForm";
 import { fetchJson } from "@/lib/api-fetch";
+import { formatTaxRate } from "@/lib/tax-rates";
 
 let stripePromise: Promise<Stripe | null> | null = null;
 
@@ -24,6 +25,14 @@ function getStripePromise() {
 
 function centsToDollars(cents: number) {
   return (cents / 100).toFixed(2);
+}
+
+function taxLineLabel(order: any) {
+  const label = order?.taxLabel || "Tax";
+  const rate = typeof order?.taxRateBps === "number" ? formatTaxRate(order.taxRateBps) : "";
+  const region = order?.taxRegionCode ? ` ${order.taxRegionCode}` : "";
+  const suffix = rate ? ` (${rate}${region})` : "";
+  return `${label} on Service Fee${suffix}:`;
 }
 
 function CheckoutContent() {
@@ -176,6 +185,10 @@ function CheckoutContent() {
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span>Service Fee:</span>
               <span>${centsToDollars(order.adminFeeCents)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>{taxLineLabel(order)}</span>
+              <span>${centsToDollars(order.adminFeeTaxCents ?? 0)}</span>
             </div>
             <div
               style={{
