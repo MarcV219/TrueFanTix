@@ -123,8 +123,10 @@ function AccountHub({ me }: { me: MeUser }) {
     (me?.flags && me.flags.isVerified === true) || (emailVerified && phoneVerified);
 
   const [stripeOk, setStripeOk] = React.useState<boolean>(false);
+  const [stripeHasAccount, setStripeHasAccount] = React.useState<boolean>(false);
   const [stripeChecked, setStripeChecked] = React.useState<boolean>(false);
   const [stripeBusy, setStripeBusy] = React.useState<boolean>(false);
+  const [stripeManageBusy, setStripeManageBusy] = React.useState<boolean>(false);
   const [stripeError, setStripeError] = React.useState<string | null>(null);
 
   // Seller eligibility:
@@ -166,6 +168,7 @@ function AccountHub({ me }: { me: MeUser }) {
       const chargesEnabled = !!data?.stripe?.chargesEnabled;
       const payoutsEnabled = !!data?.stripe?.payoutsEnabled;
 
+      setStripeHasAccount(!!data?.stripe?.hasAccount);
       setStripeOk(chargesEnabled && payoutsEnabled);
       setStripeChecked(true);
 
@@ -276,6 +279,39 @@ function AccountHub({ me }: { me: MeUser }) {
       setStripeError(e?.message ?? "Unable to start onboarding.");
     } finally {
       setStripeBusy(false);
+    }
+  }
+
+  async function openStripeDashboard() {
+    setStripeError(null);
+    setStripeManageBusy(true);
+    try {
+      const { res, data } = await fetchJson("/api/sellers/onboarding/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({}),
+      });
+
+      if (!res.ok) {
+        const msg = data?.error === "STRIPE_NOT_CONFIGURED"
+          ? "Seller verification is temporarily unavailable while Stripe setup is completed."
+          : (data && (data.message || data.error)) || `Unable to open Stripe dashboard (${res.status}).`;
+        setStripeError(String(msg));
+        return;
+      }
+
+      const url = data?.url;
+      if (!url || typeof url !== "string") {
+        setStripeError("Stripe dashboard response missing URL.");
+        return;
+      }
+
+      window.location.assign(url);
+    } catch (e: any) {
+      setStripeError(e?.message ?? "Unable to open Stripe dashboard.");
+    } finally {
+      setStripeManageBusy(false);
     }
   }
 
@@ -512,6 +548,29 @@ function AccountHub({ me }: { me: MeUser }) {
                 }}
               >
                 Refresh Stripe status
+              </button>
+
+              <button
+                type="button"
+                onClick={openStripeDashboard}
+                disabled={stripeManageBusy || !stripeHasAccount}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(0,0,0,0.10)",
+                  background:
+                    stripeManageBusy || !stripeHasAccount
+                      ? "rgba(148, 163, 184, 0.18)"
+                      : "rgba(248, 250, 252, 1)",
+                  color:
+                    stripeManageBusy || !stripeHasAccount
+                      ? "rgba(15,23,42,0.55)"
+                      : "rgba(15, 23, 42, 1)",
+                  fontWeight: 900,
+                  cursor: stripeManageBusy || !stripeHasAccount ? "not-allowed" : "pointer",
+                }}
+              >
+                {stripeManageBusy ? "Opening Stripe…" : "Manage Stripe account"}
               </button>
 
               <Link
