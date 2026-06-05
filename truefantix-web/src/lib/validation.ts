@@ -401,6 +401,11 @@ export const schemas = {
     catalogEntityId: z.string().trim().cuid().optional(),
   }),
 
+  // Used by PATCH /api/notifications/preferences
+  notificationPreferencesSettingsApi: z.object({
+    notificationRadiusKm: z.number().int().min(1).max(5000).nullable(),
+  }),
+
   // Used by DELETE /api/notifications/preferences
   notificationPreferenceDeleteApi: z.object({
     id: z.string().trim().cuid(),
@@ -408,7 +413,7 @@ export const schemas = {
 
   // Used by POST /api/catalog/requests
   catalogRequestCreateApi: z.object({
-    type: z.enum(["ARTIST", "TEAM", "VENUE", "CITY"]),
+    type: z.enum(["ARTIST", "TEAM", "VENUE", "CITY", "SPORT"]),
     value: z.string().trim().min(2).max(120),
     notes: z.string().trim().max(1000).optional().nullable(),
   }),

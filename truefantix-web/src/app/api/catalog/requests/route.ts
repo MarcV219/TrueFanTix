@@ -44,7 +44,7 @@ User: ${user.firstName} ${user.lastName} <${user.email}>
 User ID: ${user.id}
 Notes: ${notes || "None"}
 
-Research the canonical artist/team/venue/city, add or connect the correct CatalogEntity, then fulfill the request so the item is added to the user's notification favorites.`;
+Research the canonical artist/team/venue/city/sport, add or connect the correct CatalogEntity, then fulfill the request so the item is added to the user's notification favorites.`;
 
   const html = `
 <!DOCTYPE html>
@@ -60,7 +60,7 @@ Research the canonical artist/team/venue/city, add or connect the correct Catalo
     <tr><td style="font-weight: 700; padding: 4px 10px 4px 0;">User ID</td><td>${escapeHtml(user.id)}</td></tr>
     <tr><td style="font-weight: 700; padding: 4px 10px 4px 0;">Notes</td><td>${escapeHtml(notes || "None")}</td></tr>
   </table>
-  <p>Research the canonical artist/team/venue/city, add or connect the correct CatalogEntity, then fulfill the request so the item is added to the user's notification favorites.</p>
+  <p>Research the canonical artist/team/venue/city/sport, add or connect the correct CatalogEntity, then fulfill the request so the item is added to the user's notification favorites.</p>
 </body>
 </html>`;
 

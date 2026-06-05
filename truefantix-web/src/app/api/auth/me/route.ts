@@ -77,6 +77,7 @@ export async function GET() {
           postalCode: true,
           streetAddress1: true,
           streetAddress2: true,
+          notificationRadiusKm: true,
           canBuy: true,
           canComment: true,
           canSell: true,
@@ -139,6 +140,7 @@ export async function GET() {
           postalCode: user.postalCode,
           streetAddress1: user.streetAddress1,
           streetAddress2: user.streetAddress2,
+          notificationRadiusKm: user.notificationRadiusKm,
 
           canBuy: user.canBuy,
           canComment: user.canComment,

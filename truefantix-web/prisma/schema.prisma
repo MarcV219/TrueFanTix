@@ -163,6 +163,7 @@ model User {
   region         String   // e.g., "ON", "NY"
   postalCode     String
   country        String   // e.g., "CA", "US"
+  notificationRadiusKm Int?
 
   // Capabilities (simple gating)
   canBuy       Boolean  @default(true)

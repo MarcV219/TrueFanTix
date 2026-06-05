@@ -1,4 +1,4 @@
-export type CatalogSuggestionType = "ARTIST" | "TEAM" | "VENUE" | "CITY";
+export type CatalogSuggestionType = "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT";
 
 export type CatalogSuggestion = {
   type: CatalogSuggestionType;
@@ -88,6 +88,38 @@ const ARTISTS = [
   type: "ARTIST" as const,
   value: name,
   label: name,
+}));
+
+const SPORTS = [
+  "Auto Racing",
+  "Baseball",
+  "Basketball",
+  "Boxing",
+  "Curling",
+  "Football",
+  "Soccer",
+  "Golf",
+  "Hockey",
+  "Lacrosse",
+  "Rugby",
+  "Tennis",
+  "Volleyball",
+  "Mixed Martial Arts",
+].map((name) => ({
+  type: "SPORT" as const,
+  value: name,
+  label: name,
+  subtitle: "Sports category",
+  aliases:
+    name === "Auto Racing"
+      ? ["Motorsports", "Motor Racing", "Racing", "Formula 1", "NASCAR", "IndyCar"]
+      : name === "Football"
+        ? ["NFL", "CFL", "American Football", "Canadian Football"]
+        : name === "Soccer"
+          ? ["Football", "MLS", "NWSL", "CPL"]
+          : name === "Mixed Martial Arts"
+            ? ["MMA", "UFC"]
+            : undefined,
 }));
 
 const TEAMS: TeamSeed[] = [
@@ -881,6 +913,7 @@ const ALL_CITIES = Array.from(
 
 export const LIVE_EVENT_CATALOG: CatalogSuggestion[] = [
   ...ARTISTS,
+  ...SPORTS,
   ...ALL_TEAMS.map((team) => ({
     type: "TEAM" as const,
     value: team.name,

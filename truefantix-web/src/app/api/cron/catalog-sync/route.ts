@@ -20,9 +20,12 @@ const DEFAULT_QUERIES: Array<{ type: CatalogSuggestionType; q: string }> = [
   { type: "CITY", q: "tor" },
   { type: "CITY", q: "mon" },
   { type: "CITY", q: "new" },
+  { type: "SPORT", q: "base" },
+  { type: "SPORT", q: "hock" },
+  { type: "SPORT", q: "mma" },
 ];
 
-const TYPES = new Set(["ARTIST", "TEAM", "VENUE", "CITY"]);
+const TYPES = new Set(["ARTIST", "TEAM", "VENUE", "CITY", "SPORT"]);
 
 export async function POST(req: Request) {
   if (!hasInternalCronAuth(req)) {

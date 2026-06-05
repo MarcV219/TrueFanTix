@@ -19,6 +19,7 @@ export type MeUser = {
   postalCode: string;
   streetAddress1: string;
   streetAddress2: string | null;
+  notificationRadiusKm: number | null;
   canBuy: boolean;
   canComment: boolean;
   canSell: boolean;

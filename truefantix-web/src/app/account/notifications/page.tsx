@@ -2,10 +2,10 @@
 
 import React from "react";
 import Link from "next/link";
-import AccountGate from "@/app/account/_components/accountgate";
+import AccountGate, { MeUser } from "@/app/account/_components/accountgate";
 import { fetchJson } from "@/lib/api-fetch";
 
-type PreferenceType = "ARTIST" | "TEAM" | "VENUE" | "CITY";
+type PreferenceType = "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT";
 
 type Preference = {
   id: string;
@@ -28,6 +28,7 @@ type CatalogSuggestion = {
   city?: string;
   region?: string;
   country?: string;
+  aliases?: string[];
 };
 
 type SpotifyArtistCandidate = {
@@ -45,6 +46,7 @@ const TYPE_OPTIONS: Array<{ value: PreferenceType; label: string }> = [
   { value: "TEAM", label: "Team" },
   { value: "VENUE", label: "Venue" },
   { value: "CITY", label: "City" },
+  { value: "SPORT", label: "Sport" },
 ];
 
 const TYPE_SECTION_LABELS: Record<PreferenceType, string> = {
@@ -52,6 +54,7 @@ const TYPE_SECTION_LABELS: Record<PreferenceType, string> = {
   TEAM: "Teams",
   VENUE: "Venues",
   CITY: "Cities",
+  SPORT: "Sports",
 };
 
 function wordsForSearch(text: string) {
@@ -76,6 +79,7 @@ function suggestionMatchesTypedValue(suggestion: CatalogSuggestion, typedValue: 
     suggestion.city,
     suggestion.region,
     suggestion.country,
+    ...(suggestion.aliases ?? []),
   ].flatMap((part) => wordsForSearch(part ?? ""));
 
   return queryWords.every((queryWord) => candidateWords.some((candidateWord) => candidateWord.startsWith(queryWord)));
@@ -105,7 +109,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function Body() {
+function Body({ user }: { user: MeUser }) {
   const [preferences, setPreferences] = React.useState<Preference[]>([]);
   const [selectedType, setSelectedType] = React.useState<PreferenceType>("ARTIST");
   const [value, setValue] = React.useState("");
@@ -124,7 +128,10 @@ function Body() {
     TEAM: true,
     VENUE: true,
     CITY: true,
+    SPORT: true,
   });
+  const [radiusKm, setRadiusKm] = React.useState(user.notificationRadiusKm ? String(user.notificationRadiusKm) : "");
+  const [radiusSaving, setRadiusSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
 
@@ -153,7 +160,11 @@ function Body() {
         if (!res.ok || !data?.ok) {
           throw new Error(String(data?.message || data?.error || "Could not load notification preferences."));
         }
-        if (alive) setPreferences(Array.isArray(data.preferences) ? data.preferences : []);
+        if (alive) {
+          setPreferences(Array.isArray(data.preferences) ? data.preferences : []);
+          const loadedRadius = data.settings?.notificationRadiusKm;
+          setRadiusKm(Number.isInteger(loadedRadius) ? String(loadedRadius) : "");
+        }
       } catch (e: any) {
         if (alive) setError(e?.message ?? "Could not load notification preferences.");
       } finally {
@@ -460,6 +471,38 @@ function Body() {
     setPreferenceSectionsOpen((prev) => ({ ...prev, [type]: !prev[type] }));
   }
 
+  async function saveRadius(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = radiusKm.trim();
+    const nextRadius = trimmed ? Number(trimmed) : null;
+    if (nextRadius !== null && (!Number.isInteger(nextRadius) || nextRadius < 1 || nextRadius > 5000)) {
+      setError("Enter a whole-number radius from 1 to 5000 km, or leave it blank for no distance limit.");
+      setOk(null);
+      return;
+    }
+
+    setRadiusSaving(true);
+    setError(null);
+    setOk(null);
+    try {
+      const { res, data } = await fetchJson("/api/notifications/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notificationRadiusKm: nextRadius }),
+      });
+      if (!res.ok || !data?.ok) {
+        throw new Error(String(data?.message || data?.error || "Could not update notification radius."));
+      }
+      const savedRadius = data.settings?.notificationRadiusKm;
+      setRadiusKm(Number.isInteger(savedRadius) ? String(savedRadius) : "");
+      setOk(savedRadius ? `Notification radius saved at ${savedRadius} km from your home address.` : "Notification radius cleared.");
+    } catch (e: any) {
+      setError(e?.message ?? "Could not update notification radius.");
+    } finally {
+      setRadiusSaving(false);
+    }
+  }
+
   return (
     <div
       style={{
@@ -471,8 +514,64 @@ function Body() {
     >
       <div style={{ fontWeight: 950, fontSize: 18 }}>Notification interests</div>
       <div style={{ marginTop: 8, opacity: 0.85 }}>
-        Add artists, teams, venues, and cities for alerts and sold-out access matching.
+        Add artists, teams, venues, cities, and sports for alerts and sold-out access matching.
       </div>
+
+      <form
+        onSubmit={saveRadius}
+        style={{
+          marginTop: 14,
+          padding: 12,
+          borderRadius: 10,
+          border: "1px solid rgba(37, 99, 235, 0.18)",
+          background: "rgba(239, 246, 255, 0.7)",
+          display: "grid",
+          gap: 10,
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 950 }}>Event distance radius</div>
+          <div style={{ marginTop: 3, fontSize: 13, opacity: 0.78 }}>
+            Uses your home address in {user.city}, {user.region} to limit event notifications to places you are willing to travel.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            type="number"
+            min={1}
+            max={5000}
+            step={1}
+            inputMode="numeric"
+            value={radiusKm}
+            onChange={(e) => setRadiusKm(e.target.value)}
+            disabled={radiusSaving}
+            placeholder="No limit"
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              border: "1px solid rgba(148, 163, 184, 0.9)",
+              background: "white",
+              flex: "1 1 180px",
+            }}
+          />
+          <span style={{ fontSize: 13, opacity: 0.75 }}>km from home</span>
+          <button
+            type="submit"
+            disabled={radiusSaving}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "1px solid rgba(37, 99, 235, 0.35)",
+              background: radiusSaving ? "rgba(148, 163, 184, 0.18)" : "rgba(37, 99, 235, 1)",
+              color: radiusSaving ? "rgba(15,23,42,0.55)" : "white",
+              fontWeight: 950,
+              cursor: radiusSaving ? "not-allowed" : "pointer",
+            }}
+          >
+            {radiusSaving ? "Saving..." : "Save radius"}
+          </button>
+        </div>
+      </form>
 
       <div
         style={{
@@ -938,7 +1037,7 @@ export default function NotificationsPage() {
           </div>
         )}
       >
-        {() => <Body />}
+        {(user) => <Body user={user} />}
       </AccountGate>
     </Shell>
   );

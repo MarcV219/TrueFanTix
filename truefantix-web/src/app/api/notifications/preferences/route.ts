@@ -37,13 +37,48 @@ export async function GET(req: Request) {
       orderBy: { createdAt: "asc" },
     });
 
-    return NextResponse.json({ ok: true, preferences }, { status: 200 });
+    const settings = await prisma.user.findUnique({
+      where: { id: gate.user.id },
+      select: { notificationRadiusKm: true },
+    });
+
+    return NextResponse.json(
+      { ok: true, preferences, settings: { notificationRadiusKm: settings?.notificationRadiusKm ?? null } },
+      { status: 200 }
+    );
   } catch (err) {
     if (err instanceof Error && err.message === "NOT_AUTHENTICATED") {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }
     console.error("GET /api/notifications/preferences failed:", err);
     return NextResponse.json({ ok: false, error: "SERVER_ERROR", message: "Could not fetch preferences." }, { status: 500 });
+  }
+}
+
+// PATCH /api/notifications/preferences
+// Update notification matching settings
+export async function PATCH(req: Request) {
+  try {
+    const gate = await requireUser(req);
+    if (!gate.user) {
+      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
+    }
+    const validation = await validateRequest(schemas.notificationPreferencesSettingsApi)(req);
+    if (!validation.success) return validation.response;
+
+    const user = await prisma.user.update({
+      where: { id: gate.user.id },
+      data: { notificationRadiusKm: validation.data.notificationRadiusKm },
+      select: { notificationRadiusKm: true },
+    });
+
+    return NextResponse.json({ ok: true, settings: { notificationRadiusKm: user.notificationRadiusKm } }, { status: 200 });
+  } catch (err) {
+    if (err instanceof Error && err.message === "NOT_AUTHENTICATED") {
+      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
+    }
+    console.error("PATCH /api/notifications/preferences failed:", err);
+    return NextResponse.json({ ok: false, error: "SERVER_ERROR", message: "Could not update notification settings." }, { status: 500 });
   }
 }
 

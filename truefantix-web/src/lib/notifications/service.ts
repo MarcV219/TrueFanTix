@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { haversineKm, inferCityCoordsFromVenue, inferCoordsFromCity, parseVenue } from "@/lib/ticketsView";
 
 export type NotificationType = 
   | "NEW_EVENT"           // New event matching user's preferences
@@ -63,6 +64,7 @@ export async function notifyMatchingUsers({
   artist,
   venue,
   city,
+  sport,
 }: {
   type: NotificationType;
   message: string;
@@ -71,6 +73,7 @@ export async function notifyMatchingUsers({
   artist?: string;
   venue?: string;
   city?: string;
+  sport?: string;
 }) {
   try {
     // Build a query to find users with matching preferences
@@ -85,10 +88,15 @@ export async function notifyMatchingUsers({
     if (city) {
       orConditions.push({ type: "CITY", value: city, status: "ACTIVE" });
     }
+    if (sport) {
+      orConditions.push({ type: "SPORT", value: sport, status: "ACTIVE" });
+    }
 
     if (orConditions.length === 0) {
       return { ok: true, count: 0 };
     }
+
+    const eventCoords = inferCoordsFromCity(city) ?? (venue ? inferCityCoordsFromVenue(venue) : null);
 
     // Find matching preferences
     const matchingPreferences = await prisma.notificationPreference.findMany({
@@ -97,12 +105,26 @@ export async function notifyMatchingUsers({
       },
       select: {
         userId: true,
+        user: {
+          select: {
+            city: true,
+            notificationRadiusKm: true,
+          },
+        },
       },
       distinct: ["userId"],
     });
 
     // Create notifications for each matching user
-    const userIds = matchingPreferences.map((pref) => pref.userId);
+    const userIds = matchingPreferences
+      .filter((pref) => {
+        const radiusKm = pref.user.notificationRadiusKm;
+        if (!radiusKm || !eventCoords) return true;
+        const homeCoords = inferCoordsFromCity(pref.user.city);
+        if (!homeCoords) return true;
+        return haversineKm(homeCoords, eventCoords) <= radiusKm;
+      })
+      .map((pref) => pref.userId);
     
     if (userIds.length === 0) {
       return { ok: true, count: 0 };
@@ -126,6 +148,25 @@ export async function notifyMatchingUsers({
   }
 }
 
+function sportFromTicketTitle(title: string) {
+  const lower = title.toLowerCase();
+  if (lower.match(/formula 1|formula one|f1|nascar|indycar|motogp|auto racing|motor racing|motorsport|grand prix|raceway|speedway/)) return "Auto Racing";
+  if (lower.match(/baseball|blue jays|yankees|red sox|dodgers|padres|mlb/)) return "Baseball";
+  if (lower.match(/basketball|raptors|lakers|knicks|celtics|bulls|nba|wnba/)) return "Basketball";
+  if (lower.match(/boxing|boxer|fight night/)) return "Boxing";
+  if (lower.match(/curling|brier|scotties|grand slam of curling/)) return "Curling";
+  if (lower.match(/football|nfl|cfl|argos|argonauts|bills|chiefs|packers|patriots|cowboys|steelers|raiders|49ers|seahawks|broncos|dolphins|jets|giants|eagles|vikings|bengals|browns|ravens|chargers|rams|lions|falcons|panthers|saints|buccaneers|titans|colts|jaguars|texans|commanders|cardinals|bears/) && !lower.includes("football club")) return "Football";
+  if (lower.match(/soccer|football club|fc | cf |mls|nwsl|cpl|tfc|toronto fc|inter miami/)) return "Soccer";
+  if (lower.match(/golf|pga|lpga|masters|open championship|ryder cup/)) return "Golf";
+  if (lower.match(/hockey|leafs|maple leafs|canadiens|bruins|canucks|kraken|nhl|pwhl|ohl|whl|qmjhl|ahl/)) return "Hockey";
+  if (lower.match(/lacrosse|nll|rock|rush|black bears/)) return "Lacrosse";
+  if (lower.match(/rugby|rugby union|rugby league|mlr/)) return "Rugby";
+  if (lower.match(/tennis|atp|wta|grand slam|us open|canadian open|wimbledon/)) return "Tennis";
+  if (lower.match(/volleyball|pro volleyball|nations league volleyball/)) return "Volleyball";
+  if (lower.match(/mixed martial arts|mma|ufc|bellator|pfl/)) return "Mixed Martial Arts";
+  return null;
+}
+
 /**
  * Notify when a new ticket is listed
  */
@@ -137,13 +178,18 @@ export async function notifyNewTicketListed(ticket: {
 }) {
   const message = `New ticket listed: ${ticket.title}${ticket.event ? ` for ${ticket.event.title}` : ""} by ${ticket.seller.name}`;
   const link = `/tickets/${ticket.id}`;
+  const venue = ticket.event?.venue || undefined;
+  const parsedVenue = venue ? parseVenue(venue) : null;
+  const sport = sportFromTicketTitle(ticket.title) ?? undefined;
 
   return notifyMatchingUsers({
     type: "TICKET_LISTED",
     message,
     link,
     artist: ticket.title, // Assuming title contains artist name
-    venue: ticket.event?.venue || undefined,
+    venue,
+    city: parsedVenue?.city,
+    sport,
   });
 }
 
