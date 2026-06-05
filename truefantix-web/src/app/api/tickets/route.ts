@@ -183,7 +183,7 @@ export async function GET(req: Request) {
       const isAboveConfirmedFaceValue =
         confirmedFaceValueCents != null ? priceCents > confirmedFaceValueCents : false;
       const isPriceUnconfirmed = confirmedFaceValueCents == null;
-      const isValidationMismatch = officialSync ? (!officialSync.found || !!officialSync.reason) : true;
+      const isValidationMismatch = officialSync ? (!!officialSync.found && !!officialSync.reason) : false;
 
       return {
         id: t.id,
