@@ -180,6 +180,7 @@ export default function AdminHomePage() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10 }}>
                 <Card title="Users & Sellers" href="/admin/users"><div style={{ opacity: 0.75, fontSize: 13 }}>Search accounts, seller status, restrictions, Stripe readiness.</div></Card>
                 <Card title="Orders" href="/admin/orders"><div style={{ opacity: 0.75, fontSize: 13 }}>Search payments, totals, tax, ticket details, and order state.</div></Card>
+                <Card title="Tax Reports" href="/admin/reports/tax"><div style={{ opacity: 0.75, fontSize: 13 }}>Admin fee tax by date and state/province with CSV export.</div></Card>
                 <Card title="Ticket Verification" href="/admin/tickets/verification"><div style={{ opacity: 0.75, fontSize: 13 }}>Approve, reject, or review listings.</div></Card>
                 <Card title="Catalog Requests" href="/admin/catalog-requests"><div style={{ opacity: 0.75, fontSize: 13 }}>Fulfill missing artists, teams, venues, and cities.</div></Card>
                 <Card title="Early Access" href="/admin/early-access"><div style={{ opacity: 0.75, fontSize: 13 }}>Export waitlist leads.</div></Card>

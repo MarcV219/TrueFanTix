@@ -46,7 +46,15 @@ export async function GET(req: Request) {
         buyerSellerId: true,
         amountCents: true,
         adminFeeCents: true,
+        adminFeeTaxCents: true,
+        taxRateBps: true,
+        taxRegionCode: true,
+        taxRegionName: true,
+        taxCountryCode: true,
+        taxLabel: true,
         totalCents: true,
+        seller: { select: { id: true, name: true } },
+        buyerSeller: { select: { id: true, name: true } },
         payment: {
           select: {
             status: true,
