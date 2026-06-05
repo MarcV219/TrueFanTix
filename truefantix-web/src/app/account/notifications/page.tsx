@@ -74,6 +74,12 @@ function radiusKmFromDisplay(value: string, unit: DistanceUnit) {
   return unit === "MI" ? Math.round(parsed * KM_PER_MILE) : parsed;
 }
 
+function radiusLabel(radiusKm: number | null | undefined, unit: DistanceUnit) {
+  const display = displayRadiusFromKm(radiusKm, unit);
+  if (!display) return "No distance limit saved";
+  return `${display} ${unit === "MI" ? "miles" : "km"} from home`;
+}
+
 function wordsForSearch(text: string) {
   return text
     .toLowerCase()
@@ -149,6 +155,8 @@ function Body({ user }: { user: MeUser }) {
   });
   const [radiusUnit, setRadiusUnit] = React.useState<DistanceUnit>(user.notificationRadiusUnit === "MI" ? "MI" : "KM");
   const [radiusValue, setRadiusValue] = React.useState(displayRadiusFromKm(user.notificationRadiusKm, radiusUnit));
+  const [savedRadiusKm, setSavedRadiusKm] = React.useState<number | null>(user.notificationRadiusKm ?? null);
+  const [savedRadiusUnit, setSavedRadiusUnit] = React.useState<DistanceUnit>(user.notificationRadiusUnit === "MI" ? "MI" : "KM");
   const [radiusSaving, setRadiusSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
@@ -184,6 +192,8 @@ function Body({ user }: { user: MeUser }) {
           const loadedRadius = data.settings?.notificationRadiusKm;
           setRadiusUnit(loadedUnit);
           setRadiusValue(displayRadiusFromKm(loadedRadius, loadedUnit));
+          setSavedRadiusKm(Number.isInteger(loadedRadius) ? loadedRadius : null);
+          setSavedRadiusUnit(loadedUnit);
         }
       } catch (e: any) {
         if (alive) setError(e?.message ?? "Could not load notification preferences.");
@@ -520,6 +530,8 @@ function Body({ user }: { user: MeUser }) {
       const savedUnit = data.settings?.notificationRadiusUnit === "MI" ? "MI" : "KM";
       setRadiusUnit(savedUnit);
       setRadiusValue(displayRadiusFromKm(savedRadius, savedUnit));
+      setSavedRadiusKm(Number.isInteger(savedRadius) ? savedRadius : null);
+      setSavedRadiusUnit(savedUnit);
       const savedDisplay = displayRadiusFromKm(savedRadius, savedUnit);
       setOk(savedDisplay ? `Notification radius saved at ${savedDisplay} ${savedUnit === "MI" ? "miles" : "km"} from your home address.` : "Notification radius cleared.");
     } catch (e: any) {
@@ -559,6 +571,9 @@ function Body({ user }: { user: MeUser }) {
           <div style={{ fontWeight: 950 }}>Event distance radius</div>
           <div style={{ marginTop: 3, fontSize: 13, opacity: 0.78 }}>
             Uses your home address in {user.city}, {user.region} to limit event notifications to places you are willing to travel.
+          </div>
+          <div style={{ marginTop: 8, fontSize: 13, fontWeight: 900, color: "rgba(30, 64, 175, 1)" }}>
+            Current radius: {radiusLabel(savedRadiusKm, savedRadiusUnit)}
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
