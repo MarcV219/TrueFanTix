@@ -22,9 +22,13 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
             (e.target as HTMLImageElement).src = ticket.placeholderImage || DEFAULT_IMAGE;
           }}
         />
-        {(ticket.isAboveConfirmedFaceValue || ticket.isValidationMismatch) && (
+        {(ticket.isAboveConfirmedFaceValue || ticket.isValidationMismatch || ticket.isPriceUnconfirmed) && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <span className="text-8xl font-extrabold opacity-70 leading-none text-red-600">
+            <span
+              className={`text-8xl font-extrabold opacity-70 leading-none ${
+                ticket.isAboveConfirmedFaceValue || ticket.isValidationMismatch ? "text-red-600" : "text-blue-500"
+              }`}
+            >
               ✕
             </span>
           </div>
