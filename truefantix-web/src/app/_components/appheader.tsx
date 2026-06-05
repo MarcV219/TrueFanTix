@@ -256,6 +256,11 @@ export default function AppHeader() {
           {me?.flags?.isAdmin ? (
             <>
               <NavPill
+                href="/admin"
+                label="Admin"
+                active={current === "/admin"}
+              />
+              <NavPill
                 href="/admin/tickets/verification"
                 label={
                   adminQueueCount != null

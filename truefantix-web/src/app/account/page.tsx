@@ -634,11 +634,18 @@ function AccountHub({ me }: { me: MeUser }) {
               href="/account/transactions"
             />
             {me?.flags?.isAdmin ? (
-              <ToolLink
-                label="Admin ticket verification queue"
-                hint="Review pending/flagged ticket authenticity and approve or reject listings."
-                href="/admin/tickets/verification"
-              />
+              <>
+                <ToolLink
+                  label="Admin tools"
+                  hint="Open the admin cockpit for users, sellers, orders, queues, and marketplace operations."
+                  href="/admin"
+                />
+                <ToolLink
+                  label="Admin ticket verification queue"
+                  hint="Review pending/flagged ticket authenticity and approve or reject listings."
+                  href="/admin/tickets/verification"
+                />
+              </>
             ) : null}
           </div>
         </Card>
