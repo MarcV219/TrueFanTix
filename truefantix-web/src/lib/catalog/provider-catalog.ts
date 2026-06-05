@@ -53,6 +53,7 @@ function normalizedDisplayName(value: string) {
 function providerRank(provider: string) {
   if (provider === "ticketmaster" || provider === "ticketmaster-city") return 400;
   if (provider === "static") return 300;
+  if (provider === "openstreetmap") return 285;
   if (provider === "wikidata") return 275;
   if (provider === "geonames") return 250;
   if (provider === "musicbrainz") return 200;
@@ -278,6 +279,36 @@ function ticketmasterType(raw: any): CatalogSuggestionType | null {
   return null;
 }
 
+function ticketmasterVenueSuggestion(venue: any): ProviderCatalogSuggestion | null {
+  const name = cleanText(venue.name);
+  const id = cleanText(venue.id);
+  if (!name || !id) return null;
+
+  const city = cleanText(venue.city?.name);
+  const region = cleanText(venue.state?.stateCode || venue.state?.name);
+  const country = cleanText(venue.country?.countryCode || venue.country?.name);
+  const address = cleanText(venue.address?.line1);
+  return {
+    type: "VENUE",
+    value: name,
+    label: name,
+    canonicalName: name,
+    provider: "ticketmaster",
+    providerId: id,
+    subtitle: [address, city, region].filter(Boolean).join(", ") || "Ticketmaster venue",
+    address: address || undefined,
+    city: city || undefined,
+    region: region || undefined,
+    country: country || undefined,
+    sourceUrl: cleanText(venue.url) || undefined,
+    metadata: safeJson({
+      latitude: cleanText(venue.location?.latitude) || null,
+      longitude: cleanText(venue.location?.longitude) || null,
+      timezone: cleanText(venue.timezone) || null,
+    }),
+  };
+}
+
 async function fetchTicketmasterSuggestions(query: string, type: CatalogSuggestionType | "ALL", limit: number) {
   const key = process.env.TICKETMASTER_API_KEY?.trim();
   if (!key || query.length < 2) return [];
@@ -320,28 +351,14 @@ async function fetchTicketmasterSuggestions(query: string, type: CatalogSuggesti
 
   if (type === "ALL" || type === "VENUE" || type === "CITY") {
     for (const venue of venues) {
-      const name = cleanText(venue.name);
-      const id = cleanText(venue.id);
-      if (!name || !id) continue;
+      const venueSuggestion = ticketmasterVenueSuggestion(venue);
+      if (!venueSuggestion) continue;
+      const name = venueSuggestion.canonicalName;
       const city = cleanText(venue.city?.name);
       const region = cleanText(venue.state?.stateCode || venue.state?.name);
       const country = cleanText(venue.country?.countryCode || venue.country?.name);
-      const address = cleanText(venue.address?.line1);
       if (type === "ALL" || type === "VENUE") {
-        out.push({
-          type: "VENUE",
-          value: name,
-          label: name,
-          canonicalName: name,
-          provider: "ticketmaster",
-          providerId: id,
-          subtitle: [address, city, region].filter(Boolean).join(", ") || "Ticketmaster venue",
-          address: address || undefined,
-          city: city || undefined,
-          region: region || undefined,
-          country: country || undefined,
-          sourceUrl: cleanText(venue.url) || undefined,
-        });
+        out.push(venueSuggestion);
       }
       if (city && (type === "ALL" || type === "CITY")) {
         out.push({
@@ -362,6 +379,36 @@ async function fetchTicketmasterSuggestions(query: string, type: CatalogSuggesti
 
   return cacheSuggestions(
     uniqueByKey(filterTypedMatches(out, query), (item) => `${item.provider}:${item.providerId}:${item.type}`).slice(0, limit)
+  );
+}
+
+async function fetchTicketmasterVenueSearch(query: string, type: CatalogSuggestionType | "ALL", limit: number) {
+  const key = process.env.TICKETMASTER_API_KEY?.trim();
+  if (!key || query.length < 2 || limit <= 0 || (type !== "ALL" && type !== "VENUE")) return [];
+
+  const countries = ["CA", "US", "MX"];
+  const venues: any[] = [];
+
+  for (const countryCode of countries) {
+    const url = new URL("https://app.ticketmaster.com/discovery/v2/venues.json");
+    url.searchParams.set("apikey", key);
+    url.searchParams.set("keyword", query);
+    url.searchParams.set("countryCode", countryCode);
+    url.searchParams.set("size", String(Math.min(limit, 20)));
+    url.searchParams.set("locale", "*");
+
+    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, next: { revalidate: 3600 } });
+    if (!res.ok) continue;
+    const data = await res.json();
+    venues.push(...(Array.isArray(data?._embedded?.venues) ? data._embedded.venues : []));
+  }
+
+  const items = venues
+    .map(ticketmasterVenueSuggestion)
+    .filter(Boolean) as ProviderCatalogSuggestion[];
+
+  return cacheSuggestions(
+    uniqueByKey(filterTypedMatches(items, query), (item) => `${item.provider}:${item.providerId}:${item.type}`).slice(0, limit)
   );
 }
 
@@ -461,6 +508,143 @@ async function fetchGeoNamesCities(query: string, limit: number) {
     .filter(Boolean) as ProviderCatalogSuggestion[];
 
   return cacheSuggestions(filterTypedMatches(items, query).slice(0, limit));
+}
+
+function overpassRegexLiteral(value: string) {
+  return normalizedDisplayName(value)
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, ".*");
+}
+
+function osmAddress(tags: Record<string, unknown>) {
+  return [
+    cleanText(tags["addr:housenumber"]),
+    cleanText(tags["addr:street"]),
+  ].filter(Boolean).join(" ");
+}
+
+function osmCity(tags: Record<string, unknown>) {
+  return cleanText(tags["addr:city"]) || cleanText(tags["addr:town"]) || cleanText(tags["addr:village"]);
+}
+
+function osmRegion(tags: Record<string, unknown>) {
+  return cleanText(tags["addr:province"]) || cleanText(tags["addr:state"]);
+}
+
+function osmCountry(tags: Record<string, unknown>) {
+  const code = cleanText(tags["addr:country"]).toUpperCase();
+  if (code === "CA") return "Canada";
+  if (code === "US") return "USA";
+  if (code === "MX") return "Mexico";
+  return code || undefined;
+}
+
+function osmVenueSubtitle({
+  tags,
+  address,
+  city,
+  region,
+}: {
+  tags: Record<string, unknown>;
+  address?: string;
+  city?: string;
+  region?: string;
+}) {
+  const category =
+    cleanText(tags.amenity) ||
+    cleanText(tags.leisure) ||
+    cleanText(tags.tourism) ||
+    cleanText(tags.building) ||
+    "OpenStreetMap venue";
+  return [address, city, region, category === "OpenStreetMap venue" ? category : `OpenStreetMap ${category}`]
+    .filter(Boolean)
+    .join(", ");
+}
+
+async function fetchOpenStreetMapVenues(query: string, limit: number) {
+  if (query.length < 4 || limit <= 0) return [];
+
+  const regex = overpassRegexLiteral(query);
+  if (!regex || regex.length < 4) return [];
+
+  const endpoint = process.env.OPENSTREETMAP_OVERPASS_URL?.trim() || "https://overpass-api.de/api/interpreter";
+  const boundedLimit = Math.min(Math.max(limit, 1), 12);
+  const overpassQuery = `
+[out:json][timeout:8];
+area["ISO3166-1"="CA"][admin_level=2]->.ca;
+area["ISO3166-1"="US"][admin_level=2]->.us;
+area["ISO3166-1"="MX"][admin_level=2]->.mx;
+(
+  nwr(area.ca)["name"~"${regex}",i]["amenity"~"^(theatre|cinema|arts_centre|events_venue|conference_centre|community_centre|music_venue|nightclub)$"];
+  nwr(area.us)["name"~"${regex}",i]["amenity"~"^(theatre|cinema|arts_centre|events_venue|conference_centre|community_centre|music_venue|nightclub)$"];
+  nwr(area.mx)["name"~"${regex}",i]["amenity"~"^(theatre|cinema|arts_centre|events_venue|conference_centre|community_centre|music_venue|nightclub)$"];
+  nwr(area.ca)["name"~"${regex}",i]["leisure"~"^(stadium|sports_centre|track)$"];
+  nwr(area.us)["name"~"${regex}",i]["leisure"~"^(stadium|sports_centre|track)$"];
+  nwr(area.mx)["name"~"${regex}",i]["leisure"~"^(stadium|sports_centre|track)$"];
+  nwr(area.ca)["name"~"${regex}",i]["building"~"^(stadium|theatre|civic)$"];
+  nwr(area.us)["name"~"${regex}",i]["building"~"^(stadium|theatre|civic)$"];
+  nwr(area.mx)["name"~"${regex}",i]["building"~"^(stadium|theatre|civic)$"];
+  nwr(area.ca)["name"~"${regex}",i]["tourism"="attraction"];
+  nwr(area.us)["name"~"${regex}",i]["tourism"="attraction"];
+  nwr(area.mx)["name"~"${regex}",i]["tourism"="attraction"];
+);
+out center tags ${boundedLimit};
+`.trim();
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      "User-Agent": USER_AGENT,
+    },
+    body: new URLSearchParams({ data: overpassQuery }).toString(),
+    signal: AbortSignal.timeout(5000),
+    next: { revalidate: 86400 },
+  });
+  if (!res.ok) return [];
+
+  const data = await res.json();
+  const rows = Array.isArray(data?.elements) ? data.elements : [];
+  const items = rows
+    .map((row: any) => {
+      const tags = row?.tags && typeof row.tags === "object" ? row.tags as Record<string, unknown> : {};
+      const name = cleanText(tags.name);
+      const id = cleanText(row?.id ? String(row.id) : "");
+      const elementType = cleanText(row?.type);
+      if (!name || !id || !elementType) return null;
+
+      const address = osmAddress(tags);
+      const city = osmCity(tags);
+      const region = osmRegion(tags);
+      const country = osmCountry(tags);
+      const lat = typeof row?.lat === "number" ? row.lat : typeof row?.center?.lat === "number" ? row.center.lat : null;
+      const lon = typeof row?.lon === "number" ? row.lon : typeof row?.center?.lon === "number" ? row.center.lon : null;
+
+      return {
+        type: "VENUE" as const,
+        value: name,
+        label: name,
+        canonicalName: name,
+        provider: "openstreetmap",
+        providerId: `${elementType}:${id}`,
+        subtitle: osmVenueSubtitle({ tags, address: address || undefined, city: city || undefined, region: region || undefined }),
+        address: address || undefined,
+        city: city || undefined,
+        region: region || undefined,
+        country,
+        sourceUrl: `https://www.openstreetmap.org/${elementType}/${id}`,
+        metadata: safeJson({
+          osmType: elementType,
+          osmId: id,
+          lat,
+          lon,
+          category: cleanText(tags.amenity) || cleanText(tags.leisure) || cleanText(tags.building) || null,
+        }),
+      };
+    })
+    .filter(Boolean) as ProviderCatalogSuggestion[];
+
+  return cacheSuggestions(filterTypedMatches(items, query).slice(0, boundedLimit));
 }
 
 const WIKIDATA_REJECT_TERMS = [
@@ -653,6 +837,22 @@ async function fetchProviderSuggestions(query: string, type: CatalogSuggestionTy
     out.push(...await fetchTicketmasterSuggestions(query, type, limit));
   } catch {
     // Provider failures should not break autocomplete.
+  }
+
+  if (out.length < limit && (type === "ALL" || type === "VENUE")) {
+    try {
+      out.push(...await fetchTicketmasterVenueSearch(query, type, limit - out.length));
+    } catch {
+      // Provider failures should not break autocomplete.
+    }
+  }
+
+  if (out.length < limit && (type === "ALL" || type === "VENUE")) {
+    try {
+      out.push(...await fetchOpenStreetMapVenues(query, limit - out.length));
+    } catch {
+      // OpenStreetMap provider failures should not break autocomplete.
+    }
   }
 
   if ((type === "ARTIST" || out.length < limit) && (type === "ALL" || type === "ARTIST" || type === "TEAM" || type === "VENUE")) {

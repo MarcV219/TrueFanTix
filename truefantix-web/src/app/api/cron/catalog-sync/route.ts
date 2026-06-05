@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     providerCount,
     rows,
     notes: [
-      "Uses free/provider APIs when configured: TICKETMASTER_API_KEY, GEONAMES_USERNAME, and MusicBrainz public API.",
+      "Uses free/provider APIs when configured: TICKETMASTER_API_KEY, GEONAMES_USERNAME, OpenStreetMap Overpass, and MusicBrainz public API.",
       "MusicBrainz public API is rate-limited; this route keeps the query set intentionally small.",
       "Notification preferences should save catalogEntityId plus canonical value from user-selected suggestions.",
     ],
