@@ -57,6 +57,23 @@ const TYPE_SECTION_LABELS: Record<PreferenceType, string> = {
   SPORT: "Sports",
 };
 
+type DistanceUnit = "KM" | "MI";
+
+const KM_PER_MILE = 1.609344;
+
+function displayRadiusFromKm(radiusKm: number | null | undefined, unit: DistanceUnit) {
+  if (!Number.isInteger(radiusKm) || !radiusKm) return "";
+  return String(unit === "MI" ? Math.max(1, Math.round(radiusKm / KM_PER_MILE)) : radiusKm);
+}
+
+function radiusKmFromDisplay(value: string, unit: DistanceUnit) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1) return Number.NaN;
+  return unit === "MI" ? Math.round(parsed * KM_PER_MILE) : parsed;
+}
+
 function wordsForSearch(text: string) {
   return text
     .toLowerCase()
@@ -130,7 +147,8 @@ function Body({ user }: { user: MeUser }) {
     CITY: true,
     SPORT: true,
   });
-  const [radiusKm, setRadiusKm] = React.useState(user.notificationRadiusKm ? String(user.notificationRadiusKm) : "");
+  const [radiusUnit, setRadiusUnit] = React.useState<DistanceUnit>(user.notificationRadiusUnit === "MI" ? "MI" : "KM");
+  const [radiusValue, setRadiusValue] = React.useState(displayRadiusFromKm(user.notificationRadiusKm, radiusUnit));
   const [radiusSaving, setRadiusSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
@@ -162,8 +180,10 @@ function Body({ user }: { user: MeUser }) {
         }
         if (alive) {
           setPreferences(Array.isArray(data.preferences) ? data.preferences : []);
+          const loadedUnit = data.settings?.notificationRadiusUnit === "MI" ? "MI" : "KM";
           const loadedRadius = data.settings?.notificationRadiusKm;
-          setRadiusKm(Number.isInteger(loadedRadius) ? String(loadedRadius) : "");
+          setRadiusUnit(loadedUnit);
+          setRadiusValue(displayRadiusFromKm(loadedRadius, loadedUnit));
         }
       } catch (e: any) {
         if (alive) setError(e?.message ?? "Could not load notification preferences.");
@@ -473,10 +493,13 @@ function Body({ user }: { user: MeUser }) {
 
   async function saveRadius(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = radiusKm.trim();
-    const nextRadius = trimmed ? Number(trimmed) : null;
-    if (nextRadius !== null && (!Number.isInteger(nextRadius) || nextRadius < 1 || nextRadius > 5000)) {
-      setError("Enter a whole-number radius from 1 to 5000 km, or leave it blank for no distance limit.");
+    const nextRadiusKm = radiusKmFromDisplay(radiusValue, radiusUnit);
+    if (nextRadiusKm !== null && (!Number.isInteger(nextRadiusKm) || nextRadiusKm < 1 || nextRadiusKm > 5000)) {
+      setError(
+        radiusUnit === "MI"
+          ? "Enter a whole-number radius from 1 to 3107 miles, or leave it blank for no distance limit."
+          : "Enter a whole-number radius from 1 to 5000 km, or leave it blank for no distance limit."
+      );
       setOk(null);
       return;
     }
@@ -488,14 +511,17 @@ function Body({ user }: { user: MeUser }) {
       const { res, data } = await fetchJson("/api/notifications/preferences", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notificationRadiusKm: nextRadius }),
+        body: JSON.stringify({ notificationRadiusKm: nextRadiusKm, notificationRadiusUnit: radiusUnit }),
       });
       if (!res.ok || !data?.ok) {
         throw new Error(String(data?.message || data?.error || "Could not update notification radius."));
       }
       const savedRadius = data.settings?.notificationRadiusKm;
-      setRadiusKm(Number.isInteger(savedRadius) ? String(savedRadius) : "");
-      setOk(savedRadius ? `Notification radius saved at ${savedRadius} km from your home address.` : "Notification radius cleared.");
+      const savedUnit = data.settings?.notificationRadiusUnit === "MI" ? "MI" : "KM";
+      setRadiusUnit(savedUnit);
+      setRadiusValue(displayRadiusFromKm(savedRadius, savedUnit));
+      const savedDisplay = displayRadiusFromKm(savedRadius, savedUnit);
+      setOk(savedDisplay ? `Notification radius saved at ${savedDisplay} ${savedUnit === "MI" ? "miles" : "km"} from your home address.` : "Notification radius cleared.");
     } catch (e: any) {
       setError(e?.message ?? "Could not update notification radius.");
     } finally {
@@ -539,11 +565,11 @@ function Body({ user }: { user: MeUser }) {
           <input
             type="number"
             min={1}
-            max={5000}
+            max={radiusUnit === "MI" ? 3107 : 5000}
             step={1}
             inputMode="numeric"
-            value={radiusKm}
-            onChange={(e) => setRadiusKm(e.target.value)}
+            value={radiusValue}
+            onChange={(e) => setRadiusValue(e.target.value)}
             disabled={radiusSaving}
             placeholder="No limit"
             style={{
@@ -554,7 +580,27 @@ function Body({ user }: { user: MeUser }) {
               flex: "1 1 180px",
             }}
           />
-          <span style={{ fontSize: 13, opacity: 0.75 }}>km from home</span>
+          <select
+            value={radiusUnit}
+            onChange={(e) => {
+              const nextUnit = e.target.value === "MI" ? "MI" : "KM";
+              const currentKm = radiusKmFromDisplay(radiusValue, radiusUnit);
+              setRadiusUnit(nextUnit);
+              setRadiusValue(Number.isInteger(currentKm) && currentKm ? displayRadiusFromKm(currentKm, nextUnit) : "");
+            }}
+            disabled={radiusSaving}
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              border: "1px solid rgba(148, 163, 184, 0.9)",
+              background: "white",
+              fontWeight: 900,
+            }}
+          >
+            <option value="KM">km</option>
+            <option value="MI">miles</option>
+          </select>
+          <span style={{ fontSize: 13, opacity: 0.75 }}>from home</span>
           <button
             type="submit"
             disabled={radiusSaving}

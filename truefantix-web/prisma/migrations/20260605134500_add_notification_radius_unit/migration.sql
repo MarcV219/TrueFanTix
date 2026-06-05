@@ -1,0 +1,1 @@
+ALTER TABLE "User" ADD COLUMN "notificationRadiusUnit" TEXT NOT NULL DEFAULT 'KM';

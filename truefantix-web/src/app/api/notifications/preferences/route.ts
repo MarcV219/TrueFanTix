@@ -39,11 +39,18 @@ export async function GET(req: Request) {
 
     const settings = await prisma.user.findUnique({
       where: { id: gate.user.id },
-      select: { notificationRadiusKm: true },
+      select: { notificationRadiusKm: true, notificationRadiusUnit: true },
     });
 
     return NextResponse.json(
-      { ok: true, preferences, settings: { notificationRadiusKm: settings?.notificationRadiusKm ?? null } },
+      {
+        ok: true,
+        preferences,
+        settings: {
+          notificationRadiusKm: settings?.notificationRadiusKm ?? null,
+          notificationRadiusUnit: settings?.notificationRadiusUnit === "MI" ? "MI" : "KM",
+        },
+      },
       { status: 200 }
     );
   } catch (err) {
@@ -68,11 +75,23 @@ export async function PATCH(req: Request) {
 
     const user = await prisma.user.update({
       where: { id: gate.user.id },
-      data: { notificationRadiusKm: validation.data.notificationRadiusKm },
-      select: { notificationRadiusKm: true },
+      data: {
+        notificationRadiusKm: validation.data.notificationRadiusKm,
+        notificationRadiusUnit: validation.data.notificationRadiusUnit ?? "KM",
+      },
+      select: { notificationRadiusKm: true, notificationRadiusUnit: true },
     });
 
-    return NextResponse.json({ ok: true, settings: { notificationRadiusKm: user.notificationRadiusKm } }, { status: 200 });
+    return NextResponse.json(
+      {
+        ok: true,
+        settings: {
+          notificationRadiusKm: user.notificationRadiusKm,
+          notificationRadiusUnit: user.notificationRadiusUnit === "MI" ? "MI" : "KM",
+        },
+      },
+      { status: 200 }
+    );
   } catch (err) {
     if (err instanceof Error && err.message === "NOT_AUTHENTICATED") {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });

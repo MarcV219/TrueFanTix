@@ -404,6 +404,7 @@ export const schemas = {
   // Used by PATCH /api/notifications/preferences
   notificationPreferencesSettingsApi: z.object({
     notificationRadiusKm: z.number().int().min(1).max(5000).nullable(),
+    notificationRadiusUnit: z.enum(["KM", "MI"]).optional(),
   }),
 
   // Used by DELETE /api/notifications/preferences

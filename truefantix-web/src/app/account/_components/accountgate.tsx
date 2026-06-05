@@ -20,6 +20,7 @@ export type MeUser = {
   streetAddress1: string;
   streetAddress2: string | null;
   notificationRadiusKm: number | null;
+  notificationRadiusUnit: "KM" | "MI";
   canBuy: boolean;
   canComment: boolean;
   canSell: boolean;

@@ -1,3 +1,5 @@
+import { NCAA_D1_TEAMS } from "@/lib/catalog/ncaa-d1-teams.generated";
+
 export type CatalogSuggestionType = "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT";
 
 export type CatalogSuggestion = {
@@ -572,7 +574,7 @@ const EXPANDED_PRO_TEAMS: TeamSeed[] = [
 ];
 
 const ALL_TEAMS = Array.from(
-  [...TEAMS, ...EXPANDED_PRO_TEAMS].reduce((byName, item) => {
+  [...TEAMS, ...EXPANDED_PRO_TEAMS, ...NCAA_D1_TEAMS].reduce((byName, item) => {
     if (!byName.has(item.name)) byName.set(item.name, item);
     return byName;
   }, new Map<string, TeamSeed>()).values()
