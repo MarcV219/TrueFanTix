@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
+import { CANADA_TAX_RATES, US_TAX_RATES } from "@/lib/tax-rates";
 
 const REPORT_STATUSES = ["PAID", "DELIVERED", "COMPLETED"] as const;
 
@@ -91,6 +92,7 @@ export async function GET(req: Request) {
     taxLabel: string | null;
     taxRateBps: number;
   }>();
+  const byJurisdiction = new Map<string, typeof summary>();
 
   for (const order of orders) {
     const key = [
@@ -118,6 +120,21 @@ export async function GET(req: Request) {
     existing.adminFeeTaxCents += order.adminFeeTaxCents;
     existing.totalCents += order.totalCents;
     byRegion.set(key, existing);
+
+    const jurisdictionKey = `${order.taxCountryCode || ""}|${order.taxRegionCode || ""}`;
+    const jurisdiction = byJurisdiction.get(jurisdictionKey) ?? {
+      orderCount: 0,
+      ticketSubtotalCents: 0,
+      adminFeeCents: 0,
+      adminFeeTaxCents: 0,
+      totalCents: 0,
+    };
+    jurisdiction.orderCount += 1;
+    jurisdiction.ticketSubtotalCents += order.amountCents;
+    jurisdiction.adminFeeCents += order.adminFeeCents;
+    jurisdiction.adminFeeTaxCents += order.adminFeeTaxCents;
+    jurisdiction.totalCents += order.totalCents;
+    byJurisdiction.set(jurisdictionKey, jurisdiction);
   }
 
   const regionRows = Array.from(byRegion.values())
@@ -133,6 +150,30 @@ export async function GET(req: Request) {
       adminFeeTax: centsToDollars(row.adminFeeTaxCents),
       total: centsToDollars(row.totalCents),
     }));
+
+  const configuredRates = [
+    ...Object.values(CANADA_TAX_RATES),
+    ...Object.values(US_TAX_RATES),
+  ]
+    .sort((a, b) => `${a.countryCode}-${a.regionCode}`.localeCompare(`${b.countryCode}-${b.regionCode}`))
+    .map((rate) => {
+      const totals = byJurisdiction.get(`${rate.countryCode}|${rate.regionCode}`) ?? {
+        orderCount: 0,
+        ticketSubtotalCents: 0,
+        adminFeeCents: 0,
+        adminFeeTaxCents: 0,
+        totalCents: 0,
+      };
+
+      return {
+        ...rate,
+        orderCount: totals.orderCount,
+        ticketSubtotal: centsToDollars(totals.ticketSubtotalCents),
+        adminFee: centsToDollars(totals.adminFeeCents),
+        adminFeeTax: centsToDollars(totals.adminFeeTaxCents),
+        total: centsToDollars(totals.totalCents),
+      };
+    });
 
   const orderRows = orders.map((order) => ({
     id: order.id,
@@ -201,6 +242,7 @@ export async function GET(req: Request) {
       adminFeeTax: centsToDollars(summary.adminFeeTaxCents),
       total: centsToDollars(summary.totalCents),
     },
+    configuredRates,
     regions: regionRows,
     orders: orderRows,
   });

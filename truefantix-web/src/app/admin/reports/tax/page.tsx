@@ -25,6 +25,18 @@ type TaxReport = {
     adminFeeTax: number;
     total: number;
   }>;
+  configuredRates: Array<{
+    countryCode: "CA" | "US";
+    regionCode: string;
+    regionName: string;
+    rateBps: number;
+    label: string;
+    orderCount: number;
+    ticketSubtotal: number;
+    adminFee: number;
+    adminFeeTax: number;
+    total: number;
+  }>;
   orders: Array<{
     id: string;
     createdAt: string;
@@ -102,6 +114,7 @@ export default function AdminTaxReportPage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — Admin Fee Tax Report</h1>
+          <div style={{ marginTop: 4, opacity: 0.72 }}>Configured province/state rates with collected admin-fee tax for the selected time frame.</div>
           <Link href="/admin" style={{ textDecoration: "underline", opacity: 0.8 }}>Back to Admin</Link>
         </div>
       </div>
@@ -147,6 +160,38 @@ export default function AdminTaxReportPage() {
                 <div style={{ fontSize: 24, fontWeight: 950 }}>{value}</div>
               </div>
             ))}
+          </section>
+
+          <section style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 8, background: "white", padding: 16 }}>
+            <h2 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 950 }}>Configured Rates & Collected Tax</h2>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
+                    <th style={{ padding: 8 }}>Province / State</th>
+                    <th style={{ padding: 8 }}>Country</th>
+                    <th style={{ padding: 8 }}>Rate</th>
+                    <th style={{ padding: 8 }}>Orders</th>
+                    <th style={{ padding: 8 }}>Admin Fees</th>
+                    <th style={{ padding: 8 }}>Tax Collected</th>
+                    <th style={{ padding: 8 }}>Total Paid</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.configuredRates.map((row) => (
+                    <tr key={`${row.countryCode}-${row.regionCode}`} style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                      <td style={{ padding: 8 }}>{row.regionName} ({row.regionCode})</td>
+                      <td style={{ padding: 8 }}>{row.countryCode}</td>
+                      <td style={{ padding: 8 }}>{row.label} {rate(row.rateBps)}</td>
+                      <td style={{ padding: 8 }}>{row.orderCount}</td>
+                      <td style={{ padding: 8 }}>{money(row.adminFee)}</td>
+                      <td style={{ padding: 8 }}>{money(row.adminFeeTax)}</td>
+                      <td style={{ padding: 8 }}>{money(row.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
 
           <section style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 8, background: "white", padding: 16 }}>
