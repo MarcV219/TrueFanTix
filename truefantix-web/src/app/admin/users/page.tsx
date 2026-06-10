@@ -36,19 +36,29 @@ type AdminUser = {
   _count: { sessions: number; notificationPreferences: number };
 };
 
+const FILTER_LABELS: Record<string, string> = {
+  all: "Users & Sellers",
+  sellers: "Sellers",
+  "seller-stripe-attention": "Seller/Stripe Attention",
+  "pending-payouts": "Pending Payouts",
+};
+
 function AdminUsersContent() {
   const params = useSearchParams();
   const initialQ = params.get("q") || "";
+  const initialFilter = params.get("filter") || "all";
   const [q, setQ] = React.useState(initialQ);
+  const [filter, setFilter] = React.useState(initialFilter);
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  const load = React.useCallback(async (query = q) => {
+  const load = React.useCallback(async (query: string, nextFilter: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}&take=50`, { cache: "no-store" });
+      const queryParams = new URLSearchParams({ q: query, filter: nextFilter, take: "50" });
+      const res = await fetch(`/api/admin/users?${queryParams.toString()}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.message || json?.error || "Failed to load users.");
       setUsers(Array.isArray(json.users) ? json.users : []);
@@ -57,17 +67,21 @@ function AdminUsersContent() {
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, []);
 
   React.useEffect(() => {
-    load(initialQ);
-  }, [initialQ, load]);
+    setQ(initialQ);
+    setFilter(initialFilter);
+    load(initialQ, initialFilter);
+  }, [initialQ, initialFilter, load]);
+
+  const title = FILTER_LABELS[filter] || FILTER_LABELS.all;
 
   return (
     <main style={{ maxWidth: 1180, margin: "40px auto", padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — Users & Sellers</h1>
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — {title}</h1>
           <Link href="/admin" style={{ textDecoration: "underline", opacity: 0.8 }}>Back to Admin</Link>
         </div>
       </div>
@@ -75,10 +89,24 @@ function AdminUsersContent() {
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          load(q);
+          load(q, filter);
         }}
         style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}
       >
+        <select
+          value={filter}
+          onChange={(event) => {
+            const nextFilter = event.target.value;
+            setFilter(nextFilter);
+            load(q, nextFilter);
+          }}
+          style={{ flex: "0 1 230px", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)", background: "white" }}
+        >
+          <option value="all">All users</option>
+          <option value="sellers">Sellers only</option>
+          <option value="seller-stripe-attention">Seller/Stripe attention</option>
+          <option value="pending-payouts">Pending payouts</option>
+        </select>
         <input
           value={q}
           onChange={(event) => setQ(event.target.value)}
@@ -88,6 +116,19 @@ function AdminUsersContent() {
         <button style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)", background: "white", fontWeight: 800 }}>
           Search
         </button>
+        {q || filter !== "all" ? (
+          <button
+            type="button"
+            onClick={() => {
+              setQ("");
+              setFilter("all");
+              load("", "all");
+            }}
+            style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)", background: "white", fontWeight: 800 }}
+          >
+            Clear
+          </button>
+        ) : null}
       </form>
 
       {error ? <div role="alert" style={{ padding: 12, borderRadius: 8, border: "1px solid rgba(239,68,68,0.35)", background: "rgba(254,242,242,1)", color: "rgba(153,27,27,1)", marginBottom: 12 }}>{error}</div> : null}
