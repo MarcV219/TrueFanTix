@@ -422,13 +422,17 @@ export const schemas = {
   // Used by PATCH /api/admin/catalog-requests/[id]
   catalogRequestReviewApi: z
     .object({
-      status: z.enum(["FULFILLED", "REJECTED"]),
+      status: z.enum(["FULFILLED", "REJECTED", "NEEDS_CLARIFICATION"]),
       catalogEntityId: z.string().trim().cuid().optional().nullable(),
       adminNotes: z.string().trim().max(1000).optional().nullable(),
     })
     .refine((v) => v.status !== "FULFILLED" || !!v.catalogEntityId, {
       message: "catalogEntityId is required when fulfilling a catalog request.",
       path: ["catalogEntityId"],
+    })
+    .refine((v) => v.status !== "NEEDS_CLARIFICATION" || !!v.adminNotes?.trim(), {
+      message: "adminNotes is required when requesting clarification.",
+      path: ["adminNotes"],
     }),
 
   // Used by PATCH /api/notifications

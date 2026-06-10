@@ -27,11 +27,14 @@ type CatalogRequest = {
 };
 
 type CatalogSuggestion = {
+  type?: string;
   catalogEntityId?: string;
   label: string;
   provider?: string;
   subtitle?: string;
 };
+
+type ReviewStatus = "FULFILLED" | "REJECTED" | "NEEDS_CLARIFICATION";
 
 export default function CatalogRequestsAdminPage() {
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
@@ -40,6 +43,8 @@ export default function CatalogRequestsAdminPage() {
   const [entityIds, setEntityIds] = React.useState<Record<string, string>>({});
   const [adminNotes, setAdminNotes] = React.useState<Record<string, string>>({});
   const [matchesById, setMatchesById] = React.useState<Record<string, CatalogSuggestion[]>>({});
+  const [searchQueries, setSearchQueries] = React.useState<Record<string, string>>({});
+  const [searchTypes, setSearchTypes] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(false);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -76,18 +81,23 @@ export default function CatalogRequestsAdminPage() {
     load();
   }, [load]);
 
-  async function reviewRequest(id: string, nextStatus: "FULFILLED" | "REJECTED") {
+  function defaultSearchType(request: CatalogRequest) {
+    return request.requestedType === "VENUE" ? "ALL" : request.requestedType;
+  }
+
+  async function reviewRequest(id: string, nextStatus: ReviewStatus, catalogEntityId?: string) {
     setBusyId(id);
     setError(null);
     setOk(null);
     try {
+      const note = adminNotes[id]?.trim() || null;
       const { res, data } = await fetchJson(`/api/admin/catalog-requests/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: nextStatus,
-          catalogEntityId: nextStatus === "FULFILLED" ? entityIds[id]?.trim() : null,
-          adminNotes: adminNotes[id]?.trim() || null,
+          catalogEntityId: nextStatus === "FULFILLED" ? (catalogEntityId || entityIds[id]?.trim()) : null,
+          adminNotes: note,
         }),
       });
 
@@ -95,7 +105,15 @@ export default function CatalogRequestsAdminPage() {
         throw new Error(data?.message || data?.error || "Could not update catalog request.");
       }
 
-      setOk(nextStatus === "FULFILLED" ? "Request fulfilled and favorite added." : "Request rejected.");
+      setOk(
+        nextStatus === "FULFILLED"
+          ? "Request fulfilled and favorite added."
+          : nextStatus === "NEEDS_CLARIFICATION"
+            ? data?.emailSent === false
+              ? "Clarification saved, but the email could not be sent."
+              : "Clarification requested from the user."
+            : "Request rejected."
+      );
       await load();
     } catch (e: any) {
       setError(e?.message || "Could not update catalog request.");
@@ -109,10 +127,12 @@ export default function CatalogRequestsAdminPage() {
     setError(null);
     setOk(null);
     try {
+      const query = (searchQueries[request.id] || request.requestedValue).trim();
+      const type = (searchTypes[request.id] || defaultSearchType(request)).trim();
       const params = new URLSearchParams({
-        q: request.requestedValue,
-        type: request.requestedType,
-        limit: "8",
+        q: query,
+        type,
+        limit: "12",
       });
       const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
       const data = await res.json();
@@ -120,6 +140,9 @@ export default function CatalogRequestsAdminPage() {
         throw new Error(data?.message || data?.error || "Could not find catalog matches.");
       }
       setMatchesById((prev) => ({ ...prev, [request.id]: Array.isArray(data.suggestions) ? data.suggestions : [] }));
+      if (!Array.isArray(data.suggestions) || data.suggestions.length === 0) {
+        setOk("No matches found. Add a clarification question if the request is ambiguous.");
+      }
     } catch (e: any) {
       setError(e?.message || "Could not find catalog matches.");
     } finally {
@@ -153,6 +176,7 @@ export default function CatalogRequestsAdminPage() {
           style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", background: "white" }}
         >
           <option value="PENDING">Pending</option>
+          <option value="NEEDS_CLARIFICATION">Needs clarification</option>
           <option value="FULFILLED">Fulfilled</option>
           <option value="REJECTED">Rejected</option>
           <option value="ALL">All</option>
@@ -184,7 +208,7 @@ export default function CatalogRequestsAdminPage() {
               {request.emailError ? <div style={{ fontSize: 13, color: "rgba(153,27,27,1)" }}>Admin email failed: {request.emailError}</div> : null}
               {request.resolvedCatalogEntity ? <div style={{ fontSize: 13 }}>Resolved to: {request.resolvedCatalogEntity.canonicalName} ({request.resolvedCatalogEntity.provider})</div> : null}
 
-              {request.status === "PENDING" ? (
+              {request.status === "PENDING" || request.status === "NEEDS_CLARIFICATION" ? (
                 <>
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
                     <input
@@ -194,9 +218,27 @@ export default function CatalogRequestsAdminPage() {
                       style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)" }}
                     />
                     <input
+                      value={searchQueries[request.id] ?? request.requestedValue}
+                      onChange={(e) => setSearchQueries((prev) => ({ ...prev, [request.id]: e.target.value }))}
+                      placeholder="Search term"
+                      style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)" }}
+                    />
+                    <select
+                      value={searchTypes[request.id] ?? defaultSearchType(request)}
+                      onChange={(e) => setSearchTypes((prev) => ({ ...prev, [request.id]: e.target.value }))}
+                      style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", background: "white" }}
+                    >
+                      <option value="ALL">All types</option>
+                      <option value="ARTIST">Artist</option>
+                      <option value="TEAM">Team</option>
+                      <option value="VENUE">Venue</option>
+                      <option value="CITY">City / town</option>
+                      <option value="SPORT">Sport</option>
+                    </select>
+                    <input
                       value={adminNotes[request.id] ?? ""}
                       onChange={(e) => setAdminNotes((prev) => ({ ...prev, [request.id]: e.target.value }))}
-                      placeholder="Admin notes"
+                      placeholder="Admin notes or clarification question"
                       style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)" }}
                     />
                     <button
@@ -223,21 +265,41 @@ export default function CatalogRequestsAdminPage() {
                     >
                       Reject
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => reviewRequest(request.id, "NEEDS_CLARIFICATION")}
+                      disabled={busyId === request.id}
+                      style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(245,158,11,0.45)", background: "rgba(255,251,235,1)", fontWeight: 900 }}
+                    >
+                      Ask user
+                    </button>
                   </div>
                   {matchesById[request.id]?.length ? (
                     <div style={{ display: "grid", gap: 6 }}>
                       {matchesById[request.id].map((match) => (
-                        <button
+                        <div
                           key={`${request.id}:${match.catalogEntityId ?? match.label}`}
-                          type="button"
-                          onClick={() => match.catalogEntityId && setEntityIds((prev) => ({ ...prev, [request.id]: match.catalogEntityId! }))}
-                          style={{ textAlign: "left", padding: 10, borderRadius: 8, border: "1px solid rgba(148,163,184,0.5)", background: "rgba(248,250,252,1)" }}
+                          style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr auto", alignItems: "center", padding: 10, borderRadius: 8, border: "1px solid rgba(148,163,184,0.5)", background: "rgba(248,250,252,1)" }}
                         >
-                          <span style={{ display: "block", fontWeight: 900 }}>{match.label}</span>
-                          <span style={{ display: "block", marginTop: 2, fontSize: 12, opacity: 0.72 }}>
-                            {[match.catalogEntityId, match.subtitle, match.provider].filter(Boolean).join(" - ")}
-                          </span>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => match.catalogEntityId && setEntityIds((prev) => ({ ...prev, [request.id]: match.catalogEntityId! }))}
+                            style={{ textAlign: "left", border: 0, background: "transparent", padding: 0, cursor: match.catalogEntityId ? "pointer" : "default" }}
+                          >
+                            <span style={{ display: "block", fontWeight: 900 }}>{match.label}</span>
+                            <span style={{ display: "block", marginTop: 2, fontSize: 12, opacity: 0.72 }}>
+                              {[match.type, match.catalogEntityId, match.subtitle, match.provider].filter(Boolean).join(" - ")}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => match.catalogEntityId && reviewRequest(request.id, "FULFILLED", match.catalogEntityId)}
+                            disabled={busyId === request.id || !match.catalogEntityId}
+                            style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(34,197,94,0.35)", background: "rgba(240,253,244,1)", fontWeight: 900 }}
+                          >
+                            Add
+                          </button>
+                        </div>
                       ))}
                     </div>
                   ) : null}

@@ -510,6 +510,93 @@ async function fetchGeoNamesCities(query: string, limit: number) {
   return cacheSuggestions(filterTypedMatches(items, query).slice(0, limit));
 }
 
+function osmPlaceName(address: Record<string, unknown>) {
+  return (
+    cleanText(address.city) ||
+    cleanText(address.town) ||
+    cleanText(address.village) ||
+    cleanText(address.hamlet) ||
+    cleanText(address.municipality) ||
+    cleanText(address.suburb)
+  );
+}
+
+function osmPlaceRegion(address: Record<string, unknown>) {
+  return cleanText(address.state) || cleanText(address.province) || cleanText(address.region) || cleanText(address.county);
+}
+
+async function fetchOpenStreetMapPlaces(query: string, limit: number) {
+  if (query.length < 5 || limit <= 0) return [];
+
+  const url = new URL("https://nominatim.openstreetmap.org/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("addressdetails", "1");
+  url.searchParams.set("limit", String(Math.min(limit, 10)));
+  url.searchParams.set("accept-language", "en");
+
+  const res = await fetch(url, {
+    headers: { "User-Agent": USER_AGENT },
+    signal: AbortSignal.timeout(5000),
+    next: { revalidate: 86400 },
+  });
+  if (!res.ok) return [];
+
+  const data = await res.json();
+  const rows = Array.isArray(data) ? data : [];
+  const placeTypes = new Set([
+    "city",
+    "town",
+    "village",
+    "hamlet",
+    "municipality",
+    "suburb",
+    "locality",
+    "administrative",
+  ]);
+
+  const items = rows
+    .map((row: any) => {
+      const address = row?.address && typeof row.address === "object" ? row.address as Record<string, unknown> : {};
+      const rawType = cleanText(row?.addresstype || row?.type).toLowerCase();
+      if (!placeTypes.has(rawType)) return null;
+
+      const name = cleanText(row?.name) || osmPlaceName(address);
+      const id = cleanText(row?.place_id ? String(row.place_id) : "");
+      if (!name || !id) return null;
+
+      const region = osmPlaceRegion(address);
+      const country = cleanText(address.country_code).toUpperCase() || cleanText(address.country);
+      const countryName = cleanText(address.country);
+      const osmType = cleanText(row?.osm_type);
+      const osmId = row?.osm_id == null ? "" : String(row.osm_id).trim();
+      return {
+        type: "CITY" as const,
+        value: name,
+        label: name,
+        canonicalName: name,
+        provider: "openstreetmap-place",
+        providerId: id,
+        subtitle: [region, country || countryName, `OpenStreetMap ${rawType || "place"}`].filter(Boolean).join(", "),
+        city: name,
+        region: region || undefined,
+        country: country || countryName || undefined,
+        aliases: cleanText(row?.display_name) ? [cleanText(row.display_name)] : [],
+        sourceUrl: osmType && osmId ? `https://www.openstreetmap.org/${osmType}/${osmId}` : undefined,
+        metadata: safeJson({
+          lat: cleanText(row?.lat) || null,
+          lon: cleanText(row?.lon) || null,
+          osmType: osmType || null,
+          osmId: osmId || null,
+          displayName: cleanText(row?.display_name) || null,
+        }),
+      };
+    })
+    .filter(Boolean) as ProviderCatalogSuggestion[];
+
+  return cacheSuggestions(filterTypedMatches(items, query).slice(0, limit));
+}
+
 function overpassRegexLiteral(value: string) {
   return normalizedDisplayName(value)
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -868,6 +955,14 @@ async function fetchProviderSuggestions(query: string, type: CatalogSuggestionTy
       out.push(...await fetchGeoNamesCities(query, limit - out.length));
     } catch {
       // Provider failures should not break autocomplete.
+    }
+  }
+
+  if (out.length < limit && type === "CITY") {
+    try {
+      out.push(...await fetchOpenStreetMapPlaces(query, limit - out.length));
+    } catch {
+      // Public place lookup is best-effort; local/static results remain acceptable fallback.
     }
   }
 
