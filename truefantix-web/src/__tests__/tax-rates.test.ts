@@ -25,8 +25,15 @@ describe("tax rates", () => {
   });
 
   it("resolves U.S. state rates", () => {
-    expect(getTaxRateForRegion("US", "CA")).toMatchObject({ regionName: "California", rateBps: 725 });
-    expect(getTaxRateForRegion("USA", "NY")).toMatchObject({ regionName: "New York", rateBps: 400 });
+    expect(getTaxRateForRegion("US", "CA")).toMatchObject({
+      regionName: "California",
+      rateBps: 725,
+      collectionRateBps: 0,
+      taxExempt: true,
+    });
+    expect(getTaxRateForRegion("US", "CA")?.taxExemptionReason).toContain("$500,000 in sales");
+    expect(getTaxRateForRegion("USA", "NY")?.taxExemptionReason).toContain("$500,000 in sales and 100 transactions");
+    expect(getTaxRateForRegion("US", "AK")?.taxExemptionReason).toContain("participating local jurisdictions");
     expect(getTaxRateForRegion("US", "OR")).toMatchObject({ regionName: "Oregon", rateBps: 0, taxExempt: true });
   });
 
@@ -36,8 +43,13 @@ describe("tax rates", () => {
   });
 
   it("calculates tax on the admin fee only", () => {
-    const rate = getTaxRateForRegion("US", "CA");
-    expect(calculateAdminFeeTax(875, rate).taxCents).toBe(63);
+    expect(calculateAdminFeeTax(875, {
+      countryCode: "US",
+      regionCode: "CA",
+      regionName: "California",
+      rateBps: 725,
+      label: "Sales tax",
+    }).taxCents).toBe(63);
   });
 
   it("does not collect tax for exempt regions", () => {

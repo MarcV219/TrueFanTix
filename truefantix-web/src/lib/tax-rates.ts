@@ -21,8 +21,6 @@ export type AdminFeeTax = TaxRegionRate & {
 const BPS_DENOMINATOR = 10_000;
 const CANADA_SMALL_SUPPLIER_EXEMPTION_REASON =
   "Canadian tax collection disabled while TrueFanTix is below the CRA GST/HST small-supplier threshold. Review PST/RST/QST registration before enabling collection.";
-const US_NO_STATE_SALES_TAX_EXEMPTION_REASON =
-  "No state-level sales tax configured; local taxes may still apply.";
 
 // Canada GST/PST/RST/QST/HST rates reviewed 2026-06-10.
 // Sources:
@@ -115,12 +113,70 @@ export const US_TAX_RATES: Record<string, TaxRegionRate> = {
   WY: { countryCode: "US", regionCode: "WY", regionName: "Wyoming", rateBps: 400, label: "Sales tax" },
 };
 
+// U.S. economic nexus thresholds reviewed 2026-06-10.
+// Source: https://taxcloud.com/wp-content/uploads/2026/03/2026_Sales_Tax_Nexus_Thresholds_TaxCloud.pdf
+const US_ECONOMIC_NEXUS_THRESHOLDS: Record<string, string> = {
+  AL: "$250,000 in sales, previous calendar year",
+  AK: "$100,000 in sales for participating local jurisdictions, current or previous calendar year",
+  AZ: "$100,000 in sales, current or previous calendar year",
+  AR: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  CA: "$500,000 in sales, current or previous calendar year",
+  CO: "$100,000 in sales, current or previous calendar year",
+  CT: "$100,000 in sales and 200 transactions, 12-month period ending September 30",
+  DC: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  DE: "N/A; no statewide sales tax",
+  FL: "$100,000 in sales, previous calendar year",
+  GA: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  HI: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  IA: "$100,000 in sales, current or previous calendar year",
+  ID: "$100,000 in sales, current or previous calendar year",
+  IL: "$100,000 in sales, 12-month period",
+  IN: "$100,000 in sales, current or previous calendar year",
+  KS: "$100,000 in sales, current or previous calendar year",
+  KY: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  LA: "$100,000 in sales, current or previous calendar year",
+  MA: "$100,000 in sales, current or previous calendar year",
+  MD: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  ME: "$100,000 in sales, current or previous calendar year",
+  MI: "$100,000 in sales or 200 transactions, previous calendar year",
+  MN: "$100,000 in sales or 200 transactions, 12-month period",
+  MO: "$100,000 in sales, 12-month period",
+  MS: "$250,000 in sales, 12-month period",
+  MT: "N/A; no statewide sales tax",
+  NC: "$100,000 in sales, current or previous calendar year",
+  ND: "$100,000 in sales, current or previous calendar year",
+  NE: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  NH: "N/A; no statewide sales tax",
+  NJ: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  NM: "$100,000 in sales, previous calendar year",
+  NV: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  NY: "$500,000 in sales and 100 transactions, previous four sales tax quarters",
+  OH: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  OK: "$100,000 in sales, current or previous calendar year",
+  OR: "N/A; no statewide sales tax",
+  PA: "$100,000 in sales, previous calendar year",
+  RI: "$100,000 in sales or 200 transactions, previous calendar year",
+  SC: "$100,000 in sales, current or previous calendar year",
+  SD: "$100,000 in sales, current or previous calendar year",
+  TN: "$100,000 in sales, 12-month period",
+  TX: "$500,000 in sales, 12-month period",
+  UT: "$100,000 in sales, current or previous calendar year",
+  VA: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  VT: "$100,000 in sales or 200 transactions, 12-month period",
+  WA: "$100,000 in sales, current or previous calendar year",
+  WI: "$100,000 in sales, current or previous calendar year",
+  WV: "$100,000 in sales or 200 transactions, current or previous calendar year",
+  WY: "$100,000 in sales, current or previous calendar year",
+};
+
 for (const rate of Object.values(US_TAX_RATES)) {
-  if (rate.rateBps === 0) {
-    rate.collectionRateBps = 0;
-    rate.taxExempt = true;
-    rate.taxExemptionReason = US_NO_STATE_SALES_TAX_EXEMPTION_REASON;
-  }
+  const threshold = US_ECONOMIC_NEXUS_THRESHOLDS[rate.regionCode] ?? "Nexus threshold not configured";
+  rate.collectionRateBps = 0;
+  rate.taxExempt = true;
+  rate.taxExemptionReason =
+    rate.rateBps === 0
+      ? `U.S. state-level tax collection disabled: ${threshold}. Local taxes may still apply.`
+      : `U.S. sales tax collection disabled until economic nexus is met: ${threshold}.`;
 }
 
 function normalizeCountry(value: string | null | undefined): "CA" | "US" | "" {
