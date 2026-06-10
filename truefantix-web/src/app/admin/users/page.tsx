@@ -42,11 +42,21 @@ const FILTER_LABELS: Record<string, string> = {
   "seller-stripe-attention": "Seller/Stripe Attention",
   "pending-payouts": "Pending Payouts",
 };
+const FILTER_DESCRIPTIONS: Record<string, string> = {
+  all: "Search accounts, seller status, restrictions, and Stripe readiness.",
+  sellers: "Showing accounts with seller profiles.",
+  "seller-stripe-attention": "Showing sellers with pending approval or incomplete Stripe details, charges, or payouts.",
+  "pending-payouts": "Showing sellers with pending payout records.",
+};
+
+function normalizeFilter(value: string) {
+  return Object.keys(FILTER_LABELS).includes(value) ? value : "all";
+}
 
 function AdminUsersContent() {
   const params = useSearchParams();
   const initialQ = params.get("q") || "";
-  const initialFilter = params.get("filter") || "all";
+  const initialFilter = normalizeFilter(params.get("filter") || "all");
   const [q, setQ] = React.useState(initialQ);
   const [filter, setFilter] = React.useState(initialFilter);
   const [users, setUsers] = React.useState<AdminUser[]>([]);
@@ -76,12 +86,14 @@ function AdminUsersContent() {
   }, [initialQ, initialFilter, load]);
 
   const title = FILTER_LABELS[filter] || FILTER_LABELS.all;
+  const description = FILTER_DESCRIPTIONS[filter] || FILTER_DESCRIPTIONS.all;
 
   return (
     <main style={{ maxWidth: 1180, margin: "40px auto", padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — {title}</h1>
+          <div style={{ marginTop: 4, opacity: 0.72 }}>{description}</div>
           <Link href="/admin" style={{ textDecoration: "underline", opacity: 0.8 }}>Back to Admin</Link>
         </div>
       </div>
