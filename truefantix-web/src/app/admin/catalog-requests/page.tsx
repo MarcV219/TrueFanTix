@@ -102,7 +102,8 @@ export default function CatalogRequestsAdminPage() {
       });
 
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.message || data?.error || "Could not update catalog request.");
+        const details = Array.isArray(data?.details) ? data.details : null;
+        throw new Error(details?.[0] || data?.message || data?.error || "Could not update catalog request.");
       }
 
       setOk(

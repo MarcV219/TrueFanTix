@@ -429,10 +429,6 @@ export const schemas = {
     .refine((v) => v.status !== "FULFILLED" || !!v.catalogEntityId, {
       message: "catalogEntityId is required when fulfilling a catalog request.",
       path: ["catalogEntityId"],
-    })
-    .refine((v) => v.status !== "NEEDS_CLARIFICATION" || !!v.adminNotes?.trim(), {
-      message: "adminNotes is required when requesting clarification.",
-      path: ["adminNotes"],
     }),
 
   // Used by PATCH /api/notifications
