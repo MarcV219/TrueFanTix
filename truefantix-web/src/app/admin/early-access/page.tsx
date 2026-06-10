@@ -85,7 +85,7 @@ export default function EarlyAccessAdminPage() {
         <div>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — Early Access Waitlist</h1>
           <div style={{ marginTop: 6, opacity: 0.8 }}>
-            <Link href="/account" style={{ textDecoration: "underline" }}>← Back to Account</Link>
+            <Link href="/admin" style={{ textDecoration: "underline" }}>← Back to Admin</Link>
           </div>
         </div>
 
