@@ -62,6 +62,7 @@ function AdminUsersContent() {
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const liveSearchReady = React.useRef(false);
 
   const load = React.useCallback(async (query: string, nextFilter: string) => {
     setLoading(true);
@@ -84,6 +85,19 @@ function AdminUsersContent() {
     setFilter(initialFilter);
     load(initialQ, initialFilter);
   }, [initialQ, initialFilter, load]);
+
+  React.useEffect(() => {
+    if (!liveSearchReady.current) {
+      liveSearchReady.current = true;
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      load(q, filter);
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [q, filter, load]);
 
   const title = FILTER_LABELS[filter] || FILTER_LABELS.all;
   const description = FILTER_DESCRIPTIONS[filter] || FILTER_DESCRIPTIONS.all;
@@ -110,7 +124,6 @@ function AdminUsersContent() {
           onChange={(event) => {
             const nextFilter = event.target.value;
             setFilter(nextFilter);
-            load(q, nextFilter);
           }}
           style={{ flex: "0 1 230px", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)", background: "white" }}
         >
@@ -134,7 +147,6 @@ function AdminUsersContent() {
             onClick={() => {
               setQ("");
               setFilter("all");
-              load("", "all");
             }}
             style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)", background: "white", fontWeight: 800 }}
           >
