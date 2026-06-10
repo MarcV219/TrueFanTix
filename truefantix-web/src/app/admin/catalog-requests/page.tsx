@@ -42,6 +42,7 @@ export default function CatalogRequestsAdminPage() {
   const [requests, setRequests] = React.useState<CatalogRequest[]>([]);
   const [entityIds, setEntityIds] = React.useState<Record<string, string>>({});
   const [adminNotes, setAdminNotes] = React.useState<Record<string, string>>({});
+  const [clarificationOpen, setClarificationOpen] = React.useState<Record<string, boolean>>({});
   const [matchesById, setMatchesById] = React.useState<Record<string, CatalogSuggestion[]>>({});
   const [searchQueries, setSearchQueries] = React.useState<Record<string, string>>({});
   const [searchTypes, setSearchTypes] = React.useState<Record<string, string>>({});
@@ -123,6 +124,31 @@ export default function CatalogRequestsAdminPage() {
     }
   }
 
+  function openClarification(request: CatalogRequest) {
+    setError(null);
+    setOk(null);
+    setClarificationOpen((prev) => ({ ...prev, [request.id]: true }));
+    setAdminNotes((prev) => {
+      if (prev[request.id] !== undefined) {
+        return prev;
+      }
+
+      return { ...prev, [request.id]: request.adminNotes || "" };
+    });
+  }
+
+  async function sendClarification(request: CatalogRequest) {
+    const question = adminNotes[request.id]?.trim();
+    if (!question) {
+      setError("Enter the question you want to send to the user.");
+      setOk(null);
+      setClarificationOpen((prev) => ({ ...prev, [request.id]: true }));
+      return;
+    }
+
+    await reviewRequest(request.id, "NEEDS_CLARIFICATION");
+  }
+
   async function findMatches(request: CatalogRequest) {
     setBusyId(request.id);
     setError(null);
@@ -143,6 +169,7 @@ export default function CatalogRequestsAdminPage() {
       setMatchesById((prev) => ({ ...prev, [request.id]: Array.isArray(data.suggestions) ? data.suggestions : [] }));
       if (!Array.isArray(data.suggestions) || data.suggestions.length === 0) {
         setOk("No matches found. Add a clarification question if the request is ambiguous.");
+        openClarification(request);
       }
     } catch (e: any) {
       setError(e?.message || "Could not find catalog matches.");
@@ -236,12 +263,6 @@ export default function CatalogRequestsAdminPage() {
                       <option value="CITY">City / town</option>
                       <option value="SPORT">Sport</option>
                     </select>
-                    <input
-                      value={adminNotes[request.id] ?? ""}
-                      onChange={(e) => setAdminNotes((prev) => ({ ...prev, [request.id]: e.target.value }))}
-                      placeholder="Admin notes or clarification question"
-                      style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)" }}
-                    />
                     <button
                       type="button"
                       onClick={() => findMatches(request)}
@@ -268,13 +289,42 @@ export default function CatalogRequestsAdminPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => reviewRequest(request.id, "NEEDS_CLARIFICATION")}
+                      onClick={() => openClarification(request)}
                       disabled={busyId === request.id}
                       style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(245,158,11,0.45)", background: "rgba(255,251,235,1)", fontWeight: 900 }}
                     >
                       Ask user
                     </button>
                   </div>
+                  {clarificationOpen[request.id] ? (
+                    <div style={{ display: "grid", gap: 8, padding: 10, borderRadius: 8, border: "1px solid rgba(245,158,11,0.35)", background: "rgba(255,251,235,0.72)" }}>
+                      <textarea
+                        value={adminNotes[request.id] ?? request.adminNotes ?? ""}
+                        onChange={(e) => setAdminNotes((prev) => ({ ...prev, [request.id]: e.target.value }))}
+                        placeholder="Question to send to the user"
+                        rows={3}
+                        style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", resize: "vertical" }}
+                      />
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          onClick={() => setClarificationOpen((prev) => ({ ...prev, [request.id]: false }))}
+                          disabled={busyId === request.id}
+                          style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.12)", background: "white", fontWeight: 800 }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => sendClarification(request)}
+                          disabled={busyId === request.id}
+                          style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(245,158,11,0.45)", background: "rgba(255,251,235,1)", fontWeight: 900 }}
+                        >
+                          Send question
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   {matchesById[request.id]?.length ? (
                     <div style={{ display: "grid", gap: 6 }}>
                       {matchesById[request.id].map((match) => (
