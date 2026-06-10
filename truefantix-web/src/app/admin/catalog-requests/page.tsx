@@ -35,6 +35,10 @@ type CatalogSuggestion = {
 };
 
 type ReviewStatus = "FULFILLED" | "REJECTED" | "NEEDS_CLARIFICATION";
+type RequestMessage = {
+  tone: "success" | "warning" | "error";
+  text: string;
+};
 
 export default function CatalogRequestsAdminPage() {
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
@@ -49,7 +53,7 @@ export default function CatalogRequestsAdminPage() {
   const [loading, setLoading] = React.useState(false);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [ok, setOk] = React.useState<string | null>(null);
+  const [requestMessages, setRequestMessages] = React.useState<Record<string, RequestMessage>>({});
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -70,7 +74,12 @@ export default function CatalogRequestsAdminPage() {
       if (!res.ok || !data?.ok) {
         throw new Error(data?.message || data?.error || "Could not load catalog requests.");
       }
-      setRequests(Array.isArray(data.requests) ? data.requests : []);
+      const nextRequests = Array.isArray(data.requests) ? data.requests : [];
+      setRequests(nextRequests);
+      setRequestMessages((prev) => {
+        const visibleIds = new Set(nextRequests.map((request: CatalogRequest) => request.id));
+        return Object.fromEntries(Object.entries(prev).filter(([id]) => visibleIds.has(id)));
+      });
     } catch (e: any) {
       setError(e?.message || "Could not load catalog requests.");
     } finally {
@@ -86,10 +95,18 @@ export default function CatalogRequestsAdminPage() {
     return request.requestedType === "VENUE" ? "ALL" : request.requestedType;
   }
 
+  function setRequestMessage(id: string, message: RequestMessage) {
+    setRequestMessages((prev) => ({ ...prev, [id]: message }));
+  }
+
   async function reviewRequest(id: string, nextStatus: ReviewStatus, catalogEntityId?: string) {
     setBusyId(id);
     setError(null);
-    setOk(null);
+    setRequestMessages((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     try {
       const note = adminNotes[id]?.trim() || null;
       const { res, data } = await fetchJson(`/api/admin/catalog-requests/${id}`, {
@@ -107,18 +124,20 @@ export default function CatalogRequestsAdminPage() {
         throw new Error(details?.[0] || data?.message || data?.error || "Could not update catalog request.");
       }
 
-      setOk(
-        nextStatus === "FULFILLED"
-          ? "Request fulfilled and favorite added."
-          : nextStatus === "NEEDS_CLARIFICATION"
-            ? data?.emailSent === false
-              ? "Clarification saved, but the email could not be sent."
-              : "Clarification requested from the user."
-            : "Request rejected."
-      );
+      setRequestMessage(id, {
+        tone: nextStatus === "NEEDS_CLARIFICATION" && data?.emailSent === false ? "warning" : "success",
+        text:
+          nextStatus === "FULFILLED"
+            ? "Request fulfilled and favorite added."
+            : nextStatus === "NEEDS_CLARIFICATION"
+              ? data?.emailSent === false
+                ? "Clarification saved, but the email could not be sent."
+                : "Clarification requested from the user."
+              : "Request rejected.",
+      });
       await load();
     } catch (e: any) {
-      setError(e?.message || "Could not update catalog request.");
+      setRequestMessage(id, { tone: "error", text: e?.message || "Could not update catalog request." });
     } finally {
       setBusyId(null);
     }
@@ -126,7 +145,6 @@ export default function CatalogRequestsAdminPage() {
 
   function openClarification(request: CatalogRequest) {
     setError(null);
-    setOk(null);
     setClarificationOpen((prev) => ({ ...prev, [request.id]: true }));
     setAdminNotes((prev) => {
       if (prev[request.id] !== undefined) {
@@ -140,8 +158,8 @@ export default function CatalogRequestsAdminPage() {
   async function sendClarification(request: CatalogRequest) {
     const question = adminNotes[request.id]?.trim();
     if (!question) {
-      setError("Enter the question you want to send to the user.");
-      setOk(null);
+      setError(null);
+      setRequestMessage(request.id, { tone: "error", text: "Enter the question you want to send to the user." });
       setClarificationOpen((prev) => ({ ...prev, [request.id]: true }));
       return;
     }
@@ -152,7 +170,11 @@ export default function CatalogRequestsAdminPage() {
   async function findMatches(request: CatalogRequest) {
     setBusyId(request.id);
     setError(null);
-    setOk(null);
+    setRequestMessages((prev) => {
+      const next = { ...prev };
+      delete next[request.id];
+      return next;
+    });
     try {
       const query = (searchQueries[request.id] || request.requestedValue).trim();
       const type = (searchTypes[request.id] || defaultSearchType(request)).trim();
@@ -168,11 +190,11 @@ export default function CatalogRequestsAdminPage() {
       }
       setMatchesById((prev) => ({ ...prev, [request.id]: Array.isArray(data.suggestions) ? data.suggestions : [] }));
       if (!Array.isArray(data.suggestions) || data.suggestions.length === 0) {
-        setOk("No matches found. Add a clarification question if the request is ambiguous.");
+        setRequestMessage(request.id, { tone: "warning", text: "No matches found. Add a clarification question if the request is ambiguous." });
         openClarification(request);
       }
     } catch (e: any) {
-      setError(e?.message || "Could not find catalog matches.");
+      setRequestMessage(request.id, { tone: "error", text: e?.message || "Could not find catalog matches." });
     } finally {
       setBusyId(null);
     }
@@ -212,7 +234,6 @@ export default function CatalogRequestsAdminPage() {
       </div>
 
       {error ? <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1px solid rgba(255,0,0,0.35)", background: "rgba(254,242,242,1)", color: "rgba(153,27,27,1)" }}>{error}</div> : null}
-      {ok ? <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1px solid rgba(34,197,94,0.35)", background: "rgba(240,253,244,1)", color: "rgba(22,101,52,1)", fontWeight: 800 }}>{ok}</div> : null}
       {loading ? <div style={{ marginTop: 12, opacity: 0.8 }}>Loading requests...</div> : null}
       {isAdmin === false ? <div style={{ marginTop: 12, opacity: 0.85 }}>You are not authorized to view this page.</div> : null}
 
@@ -235,6 +256,35 @@ export default function CatalogRequestsAdminPage() {
               {request.notes ? <div style={{ fontSize: 13 }}>User notes: {request.notes}</div> : null}
               {request.emailError ? <div style={{ fontSize: 13, color: "rgba(153,27,27,1)" }}>Admin email failed: {request.emailError}</div> : null}
               {request.resolvedCatalogEntity ? <div style={{ fontSize: 13 }}>Resolved to: {request.resolvedCatalogEntity.canonicalName} ({request.resolvedCatalogEntity.provider})</div> : null}
+              {requestMessages[request.id] ? (
+                <div
+                  style={{
+                    padding: 10,
+                    borderRadius: 8,
+                    border:
+                      requestMessages[request.id].tone === "error"
+                        ? "1px solid rgba(220,38,38,0.35)"
+                        : requestMessages[request.id].tone === "warning"
+                          ? "1px solid rgba(245,158,11,0.35)"
+                          : "1px solid rgba(34,197,94,0.35)",
+                    background:
+                      requestMessages[request.id].tone === "error"
+                        ? "rgba(254,242,242,1)"
+                        : requestMessages[request.id].tone === "warning"
+                          ? "rgba(255,251,235,1)"
+                          : "rgba(240,253,244,1)",
+                    color:
+                      requestMessages[request.id].tone === "error"
+                        ? "rgba(153,27,27,1)"
+                        : requestMessages[request.id].tone === "warning"
+                          ? "rgba(146,64,14,1)"
+                          : "rgba(22,101,52,1)",
+                    fontWeight: 800,
+                  }}
+                >
+                  {requestMessages[request.id].text}
+                </div>
+              ) : null}
 
               {request.status === "PENDING" || request.status === "NEEDS_CLARIFICATION" ? (
                 <>
