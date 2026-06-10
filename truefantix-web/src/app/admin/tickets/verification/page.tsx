@@ -98,7 +98,7 @@ export default function TicketVerificationAdminPage() {
         <div>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — Ticket Verification Queue</h1>
           <div style={{ marginTop: 6, opacity: 0.8 }}>
-            <Link href="/admin" style={{ textDecoration: "underline" }}>← Admin dashboard</Link>
+            <Link href="/admin" style={{ textDecoration: "underline" }}>← Back to Admin</Link>
           </div>
         </div>
         {canViewQueue ? (

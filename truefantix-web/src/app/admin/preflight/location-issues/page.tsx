@@ -64,7 +64,7 @@ export default function AdminLocationIssuesPage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — Location Preflight</h1>
-          <Link href="/admin" style={{ textDecoration: "underline", opacity: 0.8 }}>Admin dashboard</Link>
+          <Link href="/admin" style={{ textDecoration: "underline", opacity: 0.8 }}>Back to Admin</Link>
         </div>
         <button
           onClick={load}
