@@ -36,6 +36,9 @@ type TaxReport = {
     provincialTaxLabel?: "PST" | "RST" | "QST";
     hstRateBps?: number;
     totalRateBps?: number;
+    collectionRateBps?: number;
+    taxExempt?: boolean;
+    taxExemptionReason?: string;
     orderCount: number;
     ticketSubtotal: number;
     adminFee: number;
@@ -124,7 +127,9 @@ export default function AdminTaxReportPage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — Admin Fee Tax Report</h1>
-          <div style={{ marginTop: 4, opacity: 0.72 }}>Configured province/state rates with collected admin-fee tax for the selected time frame.</div>
+          <div style={{ marginTop: 4, opacity: 0.72 }}>
+            Configured province/state rates with exemption status and collected admin-fee tax for the selected time frame.
+          </div>
           <Link href="/admin" style={{ textDecoration: "underline", opacity: 0.8 }}>Back to Admin</Link>
         </div>
       </div>
@@ -184,6 +189,8 @@ export default function AdminTaxReportPage() {
                     <th style={{ padding: 8 }}>PST/RST/QST</th>
                     <th style={{ padding: 8 }}>HST</th>
                     <th style={{ padding: 8 }}>Total Rate</th>
+                    <th style={{ padding: 8 }}>Tax Exemption</th>
+                    <th style={{ padding: 8 }}>Exemption Reason</th>
                     <th style={{ padding: 8 }}>Orders</th>
                     <th style={{ padding: 8 }}>Admin Fees</th>
                     <th style={{ padding: 8 }}>Tax Collected</th>
@@ -201,6 +208,10 @@ export default function AdminTaxReportPage() {
                       </td>
                       <td style={{ padding: 8 }}>{componentRate(row.hstRateBps)}</td>
                       <td style={{ padding: 8 }}><strong>{row.label} {rate(row.totalRateBps ?? row.rateBps)}</strong></td>
+                      <td style={{ padding: 8, fontWeight: 900 }}>{row.taxExempt ? "Yes" : "No"}</td>
+                      <td style={{ padding: 8, minWidth: 260, opacity: row.taxExempt ? 0.86 : 0.55 }}>
+                        {row.taxExemptionReason || "-"}
+                      </td>
                       <td style={{ padding: 8 }}>{row.orderCount}</td>
                       <td style={{ padding: 8 }}>{money(row.adminFee)}</td>
                       <td style={{ padding: 8 }}>{money(row.adminFeeTax)}</td>

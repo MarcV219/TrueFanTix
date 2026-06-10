@@ -9,6 +9,9 @@ export type TaxRegionRate = {
   provincialTaxLabel?: "PST" | "RST" | "QST";
   hstRateBps?: number;
   totalRateBps?: number;
+  collectionRateBps?: number;
+  taxExempt?: boolean;
+  taxExemptionReason?: string;
 };
 
 export type AdminFeeTax = TaxRegionRate & {
@@ -16,6 +19,10 @@ export type AdminFeeTax = TaxRegionRate & {
 };
 
 const BPS_DENOMINATOR = 10_000;
+const CANADA_SMALL_SUPPLIER_EXEMPTION_REASON =
+  "Canadian tax collection disabled while TrueFanTix is below the CRA GST/HST small-supplier threshold. Review PST/RST/QST registration before enabling collection.";
+const US_NO_STATE_SALES_TAX_EXEMPTION_REASON =
+  "No state-level sales tax configured; local taxes may still apply.";
 
 // Canada GST/PST/RST/QST/HST rates reviewed 2026-06-10.
 // Sources:
@@ -44,6 +51,12 @@ export const CANADA_TAX_RATES: Record<string, TaxRegionRate> = {
   SK: { countryCode: "CA", regionCode: "SK", regionName: "Saskatchewan", rateBps: 1100, label: "GST/PST", gstRateBps: 500, provincialTaxRateBps: 600, provincialTaxLabel: "PST", totalRateBps: 1100 },
   YT: { countryCode: "CA", regionCode: "YT", regionName: "Yukon", rateBps: 500, label: "GST", gstRateBps: 500, totalRateBps: 500 },
 };
+
+for (const rate of Object.values(CANADA_TAX_RATES)) {
+  rate.collectionRateBps = 0;
+  rate.taxExempt = true;
+  rate.taxExemptionReason = CANADA_SMALL_SUPPLIER_EXEMPTION_REASON;
+}
 
 // U.S. standard state-level sales/use tax rates from Sales Tax Institute,
 // as of 2026-06-01, reviewed 2026-06-05. Local add-ons are intentionally excluded.
@@ -101,6 +114,14 @@ export const US_TAX_RATES: Record<string, TaxRegionRate> = {
   WV: { countryCode: "US", regionCode: "WV", regionName: "West Virginia", rateBps: 600, label: "Sales tax" },
   WY: { countryCode: "US", regionCode: "WY", regionName: "Wyoming", rateBps: 400, label: "Sales tax" },
 };
+
+for (const rate of Object.values(US_TAX_RATES)) {
+  if (rate.rateBps === 0) {
+    rate.collectionRateBps = 0;
+    rate.taxExempt = true;
+    rate.taxExemptionReason = US_NO_STATE_SALES_TAX_EXEMPTION_REASON;
+  }
+}
 
 function normalizeCountry(value: string | null | undefined): "CA" | "US" | "" {
   const upper = String(value ?? "").trim().toUpperCase();
@@ -198,9 +219,13 @@ export function calculateAdminFeeTax(adminFeeCents: number, rate: TaxRegionRate 
     };
   }
 
+  const collectionRateBps = rate.taxExempt ? 0 : rate.collectionRateBps ?? rate.rateBps;
+
   return {
     ...rate,
-    taxCents: Math.round((adminFeeCents * rate.rateBps) / BPS_DENOMINATOR),
+    rateBps: collectionRateBps,
+    label: rate.taxExempt ? "Tax exempt" : rate.label,
+    taxCents: Math.round((adminFeeCents * collectionRateBps) / BPS_DENOMINATOR),
   };
 }
 
