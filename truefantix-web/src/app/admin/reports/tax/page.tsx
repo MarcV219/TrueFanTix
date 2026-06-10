@@ -86,6 +86,11 @@ function componentRate(bps?: number) {
   return typeof bps === "number" ? rate(bps) : "-";
 }
 
+function appliedRate(row: TaxReport["configuredRates"][number]) {
+  const collectionRateBps = row.taxExempt ? 0 : row.collectionRateBps ?? row.totalRateBps ?? row.rateBps;
+  return rate(collectionRateBps);
+}
+
 function buildQuery(from: string, to: string, format = "json") {
   const qs = new URLSearchParams();
   if (from) qs.set("from", from);
@@ -188,7 +193,8 @@ export default function AdminTaxReportPage() {
                     <th style={{ padding: 8 }}>GST</th>
                     <th style={{ padding: 8 }}>PST/RST/QST</th>
                     <th style={{ padding: 8 }}>HST</th>
-                    <th style={{ padding: 8 }}>Total Rate</th>
+                    <th style={{ padding: 8 }}>Statutory Total Rate</th>
+                    <th style={{ padding: 8 }}>Total Rate to Apply</th>
                     <th style={{ padding: 8 }}>Tax Exemption</th>
                     <th style={{ padding: 8 }}>Exemption Reason</th>
                     <th style={{ padding: 8 }}>Orders</th>
@@ -208,6 +214,7 @@ export default function AdminTaxReportPage() {
                       </td>
                       <td style={{ padding: 8 }}>{componentRate(row.hstRateBps)}</td>
                       <td style={{ padding: 8 }}><strong>{row.label} {rate(row.totalRateBps ?? row.rateBps)}</strong></td>
+                      <td style={{ padding: 8, fontWeight: 950 }}>{appliedRate(row)}</td>
                       <td style={{ padding: 8, fontWeight: 900 }}>{row.taxExempt ? "Yes" : "No"}</td>
                       <td style={{ padding: 8, minWidth: 260, opacity: row.taxExempt ? 0.86 : 0.55 }}>
                         {row.taxExemptionReason || "-"}
