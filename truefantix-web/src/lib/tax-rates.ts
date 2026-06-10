@@ -4,6 +4,11 @@ export type TaxRegionRate = {
   regionName: string;
   rateBps: number;
   label: string;
+  gstRateBps?: number;
+  provincialTaxRateBps?: number;
+  provincialTaxLabel?: "PST" | "RST" | "QST";
+  hstRateBps?: number;
+  totalRateBps?: number;
 };
 
 export type AdminFeeTax = TaxRegionRate & {
@@ -12,22 +17,32 @@ export type AdminFeeTax = TaxRegionRate & {
 
 const BPS_DENOMINATOR = 10_000;
 
-// Canada GST/HST rates from CRA place-of-supply guidance, reviewed 2026-06-05.
-// Source: https://www.canada.ca/en/revenue-agency/services/forms-publications/publications/3-3-2/place-supply-province-overview.html
+// Canada GST/PST/RST/QST/HST rates reviewed 2026-06-10.
+// Sources:
+// - CRA GST/HST and PST rates by province:
+//   https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/gst-hst-businesses/charge-collect-which-rate/calculator.html
+// - Revenu Quebec QST rate:
+//   https://www.revenuquebec.ca/en/businesses/consumption-taxes/gsthst-and-qst/basic-rules-for-applying-the-gsthst-and-qst/
+// - BC PST rate:
+//   https://www2.gov.bc.ca/gov/content/taxes/sales-taxes/pst
+// - Manitoba RST rate:
+//   https://www.gov.mb.ca/finance/taxation/taxes/retail.html
+// - Saskatchewan PST rate:
+//   https://www.saskatchewan.ca/business/taxes-licensing-and-reporting/provincial-taxes-policies-and-bulletins/provincial-sales-tax
 export const CANADA_TAX_RATES: Record<string, TaxRegionRate> = {
-  AB: { countryCode: "CA", regionCode: "AB", regionName: "Alberta", rateBps: 500, label: "GST" },
-  BC: { countryCode: "CA", regionCode: "BC", regionName: "British Columbia", rateBps: 500, label: "GST" },
-  MB: { countryCode: "CA", regionCode: "MB", regionName: "Manitoba", rateBps: 500, label: "GST" },
-  NB: { countryCode: "CA", regionCode: "NB", regionName: "New Brunswick", rateBps: 1500, label: "HST" },
-  NL: { countryCode: "CA", regionCode: "NL", regionName: "Newfoundland and Labrador", rateBps: 1500, label: "HST" },
-  NS: { countryCode: "CA", regionCode: "NS", regionName: "Nova Scotia", rateBps: 1400, label: "HST" },
-  NT: { countryCode: "CA", regionCode: "NT", regionName: "Northwest Territories", rateBps: 500, label: "GST" },
-  NU: { countryCode: "CA", regionCode: "NU", regionName: "Nunavut", rateBps: 500, label: "GST" },
-  ON: { countryCode: "CA", regionCode: "ON", regionName: "Ontario", rateBps: 1300, label: "HST" },
-  PE: { countryCode: "CA", regionCode: "PE", regionName: "Prince Edward Island", rateBps: 1500, label: "HST" },
-  QC: { countryCode: "CA", regionCode: "QC", regionName: "Quebec", rateBps: 500, label: "GST" },
-  SK: { countryCode: "CA", regionCode: "SK", regionName: "Saskatchewan", rateBps: 500, label: "GST" },
-  YT: { countryCode: "CA", regionCode: "YT", regionName: "Yukon", rateBps: 500, label: "GST" },
+  AB: { countryCode: "CA", regionCode: "AB", regionName: "Alberta", rateBps: 500, label: "GST", gstRateBps: 500, totalRateBps: 500 },
+  BC: { countryCode: "CA", regionCode: "BC", regionName: "British Columbia", rateBps: 1200, label: "GST/PST", gstRateBps: 500, provincialTaxRateBps: 700, provincialTaxLabel: "PST", totalRateBps: 1200 },
+  MB: { countryCode: "CA", regionCode: "MB", regionName: "Manitoba", rateBps: 1200, label: "GST/RST", gstRateBps: 500, provincialTaxRateBps: 700, provincialTaxLabel: "RST", totalRateBps: 1200 },
+  NB: { countryCode: "CA", regionCode: "NB", regionName: "New Brunswick", rateBps: 1500, label: "HST", hstRateBps: 1500, totalRateBps: 1500 },
+  NL: { countryCode: "CA", regionCode: "NL", regionName: "Newfoundland and Labrador", rateBps: 1500, label: "HST", hstRateBps: 1500, totalRateBps: 1500 },
+  NS: { countryCode: "CA", regionCode: "NS", regionName: "Nova Scotia", rateBps: 1400, label: "HST", hstRateBps: 1400, totalRateBps: 1400 },
+  NT: { countryCode: "CA", regionCode: "NT", regionName: "Northwest Territories", rateBps: 500, label: "GST", gstRateBps: 500, totalRateBps: 500 },
+  NU: { countryCode: "CA", regionCode: "NU", regionName: "Nunavut", rateBps: 500, label: "GST", gstRateBps: 500, totalRateBps: 500 },
+  ON: { countryCode: "CA", regionCode: "ON", regionName: "Ontario", rateBps: 1300, label: "HST", hstRateBps: 1300, totalRateBps: 1300 },
+  PE: { countryCode: "CA", regionCode: "PE", regionName: "Prince Edward Island", rateBps: 1500, label: "HST", hstRateBps: 1500, totalRateBps: 1500 },
+  QC: { countryCode: "CA", regionCode: "QC", regionName: "Quebec", rateBps: 1498, label: "GST/QST", gstRateBps: 500, provincialTaxRateBps: 997.5, provincialTaxLabel: "QST", totalRateBps: 1497.5 },
+  SK: { countryCode: "CA", regionCode: "SK", regionName: "Saskatchewan", rateBps: 1100, label: "GST/PST", gstRateBps: 500, provincialTaxRateBps: 600, provincialTaxLabel: "PST", totalRateBps: 1100 },
+  YT: { countryCode: "CA", regionCode: "YT", regionName: "Yukon", rateBps: 500, label: "GST", gstRateBps: 500, totalRateBps: 500 },
 };
 
 // U.S. standard state-level sales/use tax rates from Sales Tax Institute,
@@ -191,5 +206,6 @@ export function calculateAdminFeeTax(adminFeeCents: number, rate: TaxRegionRate 
 
 export function formatTaxRate(rateBps: number): string {
   const percent = rateBps / 100;
-  return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(2)}%`;
+  if (Number.isInteger(percent)) return `${percent}%`;
+  return `${percent.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}%`;
 }

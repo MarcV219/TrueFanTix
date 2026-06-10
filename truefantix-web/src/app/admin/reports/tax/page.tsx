@@ -31,6 +31,11 @@ type TaxReport = {
     regionName: string;
     rateBps: number;
     label: string;
+    gstRateBps?: number;
+    provincialTaxRateBps?: number;
+    provincialTaxLabel?: "PST" | "RST" | "QST";
+    hstRateBps?: number;
+    totalRateBps?: number;
     orderCount: number;
     ticketSubtotal: number;
     adminFee: number;
@@ -70,7 +75,12 @@ function money(value: number) {
 
 function rate(bps: number) {
   const percent = Number(bps || 0) / 100;
-  return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(2)}%`;
+  if (Number.isInteger(percent)) return `${percent}%`;
+  return `${percent.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}%`;
+}
+
+function componentRate(bps?: number) {
+  return typeof bps === "number" ? rate(bps) : "-";
 }
 
 function buildQuery(from: string, to: string, format = "json") {
@@ -170,7 +180,10 @@ export default function AdminTaxReportPage() {
                   <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
                     <th style={{ padding: 8 }}>Province / State</th>
                     <th style={{ padding: 8 }}>Country</th>
-                    <th style={{ padding: 8 }}>Rate</th>
+                    <th style={{ padding: 8 }}>GST</th>
+                    <th style={{ padding: 8 }}>PST/RST/QST</th>
+                    <th style={{ padding: 8 }}>HST</th>
+                    <th style={{ padding: 8 }}>Total Rate</th>
                     <th style={{ padding: 8 }}>Orders</th>
                     <th style={{ padding: 8 }}>Admin Fees</th>
                     <th style={{ padding: 8 }}>Tax Collected</th>
@@ -182,7 +195,12 @@ export default function AdminTaxReportPage() {
                     <tr key={`${row.countryCode}-${row.regionCode}`} style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
                       <td style={{ padding: 8 }}>{row.regionName} ({row.regionCode})</td>
                       <td style={{ padding: 8 }}>{row.countryCode}</td>
-                      <td style={{ padding: 8 }}>{row.label} {rate(row.rateBps)}</td>
+                      <td style={{ padding: 8 }}>{componentRate(row.gstRateBps)}</td>
+                      <td style={{ padding: 8 }}>
+                        {row.provincialTaxRateBps ? `${row.provincialTaxLabel || "PST"} ${rate(row.provincialTaxRateBps)}` : "-"}
+                      </td>
+                      <td style={{ padding: 8 }}>{componentRate(row.hstRateBps)}</td>
+                      <td style={{ padding: 8 }}><strong>{row.label} {rate(row.totalRateBps ?? row.rateBps)}</strong></td>
                       <td style={{ padding: 8 }}>{row.orderCount}</td>
                       <td style={{ padding: 8 }}>{money(row.adminFee)}</td>
                       <td style={{ padding: 8 }}>{money(row.adminFeeTax)}</td>

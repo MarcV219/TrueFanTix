@@ -9,7 +9,17 @@ describe("tax rates", () => {
   it("resolves Canadian GST/HST rates by province", () => {
     expect(getTaxRateForRegion("CA", "ON")).toMatchObject({ label: "HST", rateBps: 1300 });
     expect(getTaxRateForRegion("Canada", "NS")).toMatchObject({ label: "HST", rateBps: 1400 });
-    expect(getTaxRateForRegion("CA", "BC")).toMatchObject({ label: "GST", rateBps: 500 });
+    expect(getTaxRateForRegion("CA", "BC")).toMatchObject({
+      label: "GST/PST",
+      rateBps: 1200,
+      gstRateBps: 500,
+      provincialTaxRateBps: 700,
+      provincialTaxLabel: "PST",
+      totalRateBps: 1200,
+    });
+    expect(getTaxRateForRegion("CA", "MB")).toMatchObject({ label: "GST/RST", provincialTaxLabel: "RST", totalRateBps: 1200 });
+    expect(getTaxRateForRegion("CA", "QC")).toMatchObject({ label: "GST/QST", provincialTaxLabel: "QST", totalRateBps: 1497.5 });
+    expect(getTaxRateForRegion("CA", "SK")).toMatchObject({ label: "GST/PST", provincialTaxLabel: "PST", totalRateBps: 1100 });
   });
 
   it("resolves U.S. state rates", () => {
@@ -31,5 +41,7 @@ describe("tax rates", () => {
   it("formats tax rates for display", () => {
     expect(formatTaxRate(1300)).toBe("13%");
     expect(formatTaxRate(725)).toBe("7.25%");
+    expect(formatTaxRate(997.5)).toBe("9.975%");
+    expect(formatTaxRate(1497.5)).toBe("14.975%");
   });
 });
