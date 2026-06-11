@@ -381,6 +381,7 @@ function Body({ me }: { me: MeUser }) {
   const [venue, setVenue] = React.useState("");
   const [venueSuggestions, setVenueSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [ticketQuantity, setTicketQuantity] = React.useState("1");
+  const [isGeneralAdmission, setIsGeneralAdmission] = React.useState(false);
   const [seating, setSeating] = React.useState<SeatingInfo[]>([{ row: "", seat: "" }]);
   const [date, setDate] = React.useState("");
   const [price, setPrice] = React.useState("");
@@ -474,17 +475,21 @@ function Body({ me }: { me: MeUser }) {
     const quantity = normalizeTicketQuantity(ticketQuantity);
     const d = formatTicketDateTime(date);
     const img = image.trim();
-    const seatingForSubmit = seating.slice(0, quantity).map((item) => ({
-      row: item.row.trim(),
-      seat: item.seat.trim(),
-    }));
+    const seatingForSubmit = isGeneralAdmission
+      ? Array.from({ length: quantity }, () => ({ row: "General Admission", seat: "" }))
+      : seating.slice(0, quantity).map((item) => ({
+          row: item.row.trim(),
+          seat: item.seat.trim(),
+        }));
 
     if (!t) return setError("Title is required.");
     if (!v) return setError("Venue is required.");
     if (String(quantity) !== ticketQuantity.trim()) return setError("Ticket quantity must be a whole number from 1 to 20.");
-    const missingSeatIndex = seatingForSubmit.findIndex((item) => !item.row || !item.seat);
-    if (missingSeatIndex !== -1) {
-      return setError(`Row and seat are required for ticket ${missingSeatIndex + 1}.`);
+    if (!isGeneralAdmission) {
+      const missingSeatIndex = seatingForSubmit.findIndex((item) => !item.row || !item.seat);
+      if (missingSeatIndex !== -1) {
+        return setError(`Row and seat are required for ticket ${missingSeatIndex + 1}.`);
+      }
     }
     if (!d) return setError("Date is required.");
     if (!img) return setError("Image URL/path is required.");
@@ -538,6 +543,7 @@ function Body({ me }: { me: MeUser }) {
       setVenue("");
       setVenueSuggestions([]);
       setTicketQuantity("1");
+      setIsGeneralAdmission(false);
       setSeating([{ row: "", seat: "" }]);
       setDate("");
       setPrice("");
@@ -817,56 +823,93 @@ function Body({ me }: { me: MeUser }) {
             />
           </label>
 
+          <label
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              padding: 10,
+              border: "1px solid rgba(148, 163, 184, 0.45)",
+              borderRadius: 10,
+              background: "rgba(248, 250, 252, 1)",
+              fontWeight: 900,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={isGeneralAdmission}
+              onChange={(e) => setIsGeneralAdmission(e.target.checked)}
+              disabled={busy}
+              style={{ width: 18, height: 18 }}
+            />
+            General Admission tickets
+          </label>
+
           <div style={{ display: "grid", gap: 10 }}>
             <span style={{ fontWeight: 900 }}>Seating information</span>
-            {seating.map((seatInfo, index) => (
+            {isGeneralAdmission ? (
               <div
-                key={index}
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-                  gap: 10,
                   padding: 10,
                   border: "1px solid rgba(148, 163, 184, 0.45)",
                   borderRadius: 10,
                   background: "rgba(248, 250, 252, 1)",
+                  opacity: 0.82,
+                  fontWeight: 800,
                 }}
               >
-                <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} row</span>
-                  <input
-                    value={seatInfo.row}
-                    onChange={(e) =>
-                      setSeating((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, row: e.target.value } : item
-                        )
-                      )
-                    }
-                    disabled={busy}
-                    placeholder="e.g., 12"
-                    style={inputStyle(false)}
-                  />
-                </label>
-
-                <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} seat</span>
-                  <input
-                    value={seatInfo.seat}
-                    onChange={(e) =>
-                      setSeating((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, seat: e.target.value } : item
-                        )
-                      )
-                    }
-                    disabled={busy}
-                    placeholder="e.g., 8"
-                    style={inputStyle(false)}
-                  />
-                </label>
+                These listings will be marked as General Admission. No row or seat numbers are required.
               </div>
-            ))}
+            ) : (
+              seating.map((seatInfo, index) => (
+                <div
+                  key={index}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                    gap: 10,
+                    padding: 10,
+                    border: "1px solid rgba(148, 163, 184, 0.45)",
+                    borderRadius: 10,
+                    background: "rgba(248, 250, 252, 1)",
+                  }}
+                >
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} row</span>
+                    <input
+                      value={seatInfo.row}
+                      onChange={(e) =>
+                        setSeating((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, row: e.target.value } : item
+                          )
+                        )
+                      }
+                      disabled={busy}
+                      placeholder="e.g., 12"
+                      style={inputStyle(false)}
+                    />
+                  </label>
+
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} seat</span>
+                    <input
+                      value={seatInfo.seat}
+                      onChange={(e) =>
+                        setSeating((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, seat: e.target.value } : item
+                          )
+                        )
+                      }
+                      disabled={busy}
+                      placeholder="e.g., 8"
+                      style={inputStyle(false)}
+                    />
+                  </label>
+                </div>
+              ))
+            )}
           </div>
 
           <label style={{ display: "grid", gap: 6 }}>
