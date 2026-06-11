@@ -9,7 +9,7 @@ type CreateTicketBody = {
   title: string;
   priceCents: number;
   faceValueCents?: number | null;
-  image: string;
+  image?: string | null;
   venue: string;
   date: string; // keep string for now (matches schema)
   row?: string | null;
@@ -428,7 +428,6 @@ function Body({ me }: { me: MeUser }) {
   const [date, setDate] = React.useState("");
   const [price, setPrice] = React.useState("");
   const [faceValue, setFaceValue] = React.useState("");
-  const [image, setImage] = React.useState("");
   const [barcodeData, setBarcodeData] = React.useState("");
   const [barcodeType, setBarcodeType] = React.useState("");
 
@@ -444,7 +443,6 @@ function Body({ me }: { me: MeUser }) {
   const [fDate, setFDate] = React.useState(false);
   const [fPrice, setFPrice] = React.useState(false);
   const [fFace, setFFace] = React.useState(false);
-  const [fImage, setFImage] = React.useState(false);
 
   React.useEffect(() => {
     const q = title.trim();
@@ -587,7 +585,6 @@ function Body({ me }: { me: MeUser }) {
     const v = venue.trim();
     const quantity = normalizeTicketQuantity(ticketQuantity);
     const d = formatTicketDateTime(date);
-    const img = image.trim();
     const seatingForSubmit = isGeneralAdmission
       ? Array.from({ length: quantity }, () => ({ row: "General Admission", seat: "" }))
       : seating.slice(0, quantity).map((item) => ({
@@ -607,7 +604,6 @@ function Body({ me }: { me: MeUser }) {
       }
     }
     if (!d) return setError("Date is required.");
-    if (!img) return setError("Image URL/path is required.");
 
     const priceCents = parseDollarsToCents(price);
     if (priceCents == null) return setError("Price must be a number greater than 0.");
@@ -625,7 +621,6 @@ function Body({ me }: { me: MeUser }) {
           title: t,
           venue: v,
           date: d,
-          image: img,
           row: seatInfo.row,
           seat: seatInfo.seat,
           priceCents,
@@ -665,7 +660,6 @@ function Body({ me }: { me: MeUser }) {
       setDate("");
       setPrice("");
       setFaceValue("");
-      setImage("");
       setBarcodeData("");
       setBarcodeType("");
 
@@ -1196,22 +1190,6 @@ function Body({ me }: { me: MeUser }) {
               style={inputStyle(fFace)}
               onFocus={() => setFFace(true)}
               onBlur={() => setFFace(false)}
-            />
-          </label>
-
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Image URL/path</span>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>
-              For now: a public URL or an existing /public path (example: /tickets/sample.jpg)
-            </div>
-            <input
-              value={image}
-              onChange={(e) => setImage(e.target.value)}
-              disabled={busy}
-              placeholder="https://... or /tickets/..."
-              style={inputStyle(fImage)}
-              onFocus={() => setFImage(true)}
-              onBlur={() => setFImage(false)}
             />
           </label>
 
