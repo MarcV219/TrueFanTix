@@ -183,6 +183,18 @@ function suggestionMatchesTypedValue(suggestion: CatalogSuggestion, typedValue: 
   return queryWords.every((queryWord) => candidateWords.some((candidateWord) => candidateWord.startsWith(queryWord)));
 }
 
+function uniqueCatalogSuggestions(items: CatalogSuggestion[]) {
+  const seen = new Set<string>();
+  const unique: CatalogSuggestion[] = [];
+  for (const item of items) {
+    const key = `${item.type}:${item.value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
 function normalizeTicketQuantity(v: string) {
   const parsed = Number(v);
   if (!Number.isInteger(parsed)) return 1;
@@ -444,12 +456,16 @@ function Body({ me }: { me: MeUser }) {
     let alive = true;
     const timer = window.setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ q, type: "ALL", limit: "50", providers: "0" });
-        const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
-        const data = await res.json();
+        const results = await Promise.all(
+          ["ARTIST", "TEAM", "SPORT"].map(async (type) => {
+            const params = new URLSearchParams({ q, type, limit: "50", providers: "0" });
+            const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
+            const data = await res.json();
+            return Array.isArray(data?.suggestions) ? (data.suggestions as CatalogSuggestion[]) : [];
+          })
+        );
         if (alive) {
-          const suggestions = Array.isArray(data?.suggestions) ? (data.suggestions as CatalogSuggestion[]) : [];
-          setTitleSuggestions(suggestions.filter((suggestion) => suggestion.type === "ARTIST" || suggestion.type === "TEAM" || suggestion.type === "SPORT"));
+          setTitleSuggestions(uniqueCatalogSuggestions(results.flat()));
         }
       } catch {
         if (alive) setTitleSuggestions([]);
@@ -479,7 +495,7 @@ function Body({ me }: { me: MeUser }) {
     let alive = true;
     const timer = window.setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ q, type: "VENUE", limit: "12" });
+        const params = new URLSearchParams({ q, type: "VENUE", limit: "50" });
         const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
         const data = await res.json();
         if (alive) setVenueSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
@@ -853,6 +869,17 @@ function Body({ me }: { me: MeUser }) {
                   boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
                 }}
               >
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    fontSize: 12,
+                    fontWeight: 900,
+                    opacity: 0.72,
+                    borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
+                  }}
+                >
+                  {visibleTitleSuggestions.length} possible match{visibleTitleSuggestions.length === 1 ? "" : "es"}
+                </div>
                 {visibleTitleSuggestions.length > 0 ? (
                   visibleTitleSuggestions.map((suggestion) => (
                     <button
@@ -948,6 +975,17 @@ function Body({ me }: { me: MeUser }) {
                   boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
                 }}
               >
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    fontSize: 12,
+                    fontWeight: 900,
+                    opacity: 0.72,
+                    borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
+                  }}
+                >
+                  {visibleVenueSuggestions.length} possible match{visibleVenueSuggestions.length === 1 ? "" : "es"}
+                </div>
                 {visibleVenueSuggestions.length > 0 ? (
                   visibleVenueSuggestions.map((suggestion) => (
                     <button
