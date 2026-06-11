@@ -405,6 +405,49 @@ export async function POST(req: Request) {
       barcodeType,
     });
 
+    const official = await fetchOfficialSnapshot({
+      title,
+      date,
+      venue,
+      primaryVendor,
+    });
+
+    if (!official.found) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "OFFICIAL_EVENT_NOT_CONFIRMED",
+          message: "We could not confirm this event with an official primary-market source. Please request the event be added or try again with the official event details.",
+          official,
+        },
+        { status: 422 }
+      );
+    }
+
+    if (official.officialFaceValueCents == null) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
+          message: "We confirmed the event, but could not confirm its official face value. Listings must have a confirmed face value before they can go live.",
+          official,
+        },
+        { status: 422 }
+      );
+    }
+
+    if (priceCentsRaw > official.officialFaceValueCents) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "PRICE_ABOVE_FACE_VALUE",
+          message: `This listing is above the confirmed face value of ${centsToDollars(official.officialFaceValueCents)}. Lower the price to list this ticket.`,
+          official,
+        },
+        { status: 422 }
+      );
+    }
+
     // Auto image pipeline: always attempt event-relevant fetch server-side.
     const inferredEventType = eventTypeOverride ?? getEventType(title).type;
     let imageSource: "brave" | "client-fallback" | "placeholder" = "placeholder";
@@ -461,15 +504,6 @@ export async function POST(req: Request) {
         event: true,
         seller: { include: { badges: true } },
       },
-    });
-
-    // Immediate (on-create) official-market sync so tags/pricing are auto-corrected
-    // right when a listing is created (no scheduled wait required).
-    const official = await fetchOfficialSnapshot({
-      title,
-      date,
-      venue,
-      primaryVendor,
     });
 
     let linkedEventId = created.eventId;
