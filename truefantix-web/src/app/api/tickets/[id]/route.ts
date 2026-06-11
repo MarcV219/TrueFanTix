@@ -3,6 +3,9 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSellerApproved } from "@/lib/auth/guards";
+import { fetchOfficialSnapshot } from "@/lib/officialPricing";
+import { getTicketImage } from "@/lib/imageSearch";
+import { getEventType } from "@/lib/ticketsView";
 
 function normalizeId(value: unknown) {
   try {
@@ -21,6 +24,18 @@ function parseTicketIdFromUrl(req: Request): string {
     return normalizeId(parts[ticketsIndex + 1]);
   }
   return "";
+}
+
+function safeInt(v: unknown, fallback = 0) {
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+function centsToDollars(cents: number) {
+  return Number((cents / 100).toFixed(2));
+}
+
+function badRequest(message: string) {
+  return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message }, { status: 400 });
 }
 
 export async function GET(req: Request) {
@@ -99,6 +114,280 @@ export async function GET(req: Request) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
       { ok: false, error: "Ticket lookup failed", details: message },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(req: Request) {
+  const gate = await requireSellerApproved(req);
+  if (!gate.ok) return gate.res;
+
+  try {
+    const ticketId = parseTicketIdFromUrl(req);
+    const sellerId = gate.user.sellerId;
+
+    if (!ticketId) {
+      return NextResponse.json(
+        { ok: false, error: "Missing ticket id", debug: { url: req.url } },
+        { status: 400 }
+      );
+    }
+
+    if (!sellerId) {
+      return NextResponse.json(
+        { ok: false, error: "SELLER_LINK_MISSING", message: "Seller profile is missing." },
+        { status: 409 }
+      );
+    }
+
+    const existing = await prisma.ticket.findUnique({
+      where: { id: ticketId },
+      select: {
+        id: true,
+        sellerId: true,
+        title: true,
+        venue: true,
+        date: true,
+        row: true,
+        seat: true,
+        priceCents: true,
+        faceValueCents: true,
+        status: true,
+        reservedUntil: true,
+        reservedByOrderId: true,
+        eventId: true,
+        primaryVendor: true,
+        verificationEvidence: true,
+      },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ ok: false, error: "Ticket not found" }, { status: 404 });
+    }
+
+    if (existing.sellerId !== sellerId) {
+      return NextResponse.json(
+        { ok: false, error: "Not authorized to edit this ticket" },
+        { status: 403 }
+      );
+    }
+
+    if (existing.status === "SOLD") {
+      return NextResponse.json(
+        { ok: false, error: "Cannot edit a SOLD ticket" },
+        { status: 400 }
+      );
+    }
+
+    if (existing.status === "WITHDRAWN") {
+      return NextResponse.json(
+        { ok: false, error: "Cannot edit a WITHDRAWN ticket" },
+        { status: 400 }
+      );
+    }
+
+    const now = new Date();
+    const isActivelyReserved =
+      existing.status === "RESERVED" &&
+      existing.reservedUntil != null &&
+      existing.reservedUntil > now;
+
+    if (isActivelyReserved) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Cannot edit: ticket is currently reserved",
+          debug: {
+            reservedUntil: existing.reservedUntil,
+            reservedByOrderId: existing.reservedByOrderId,
+          },
+        },
+        { status: 409 }
+      );
+    }
+
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") return badRequest("Invalid JSON body.");
+
+    const title = typeof body.title === "string" ? body.title.trim() : existing.title;
+    const venue = typeof body.venue === "string" ? body.venue.trim() : existing.venue;
+    const date = typeof body.date === "string" ? body.date.trim() : existing.date;
+    const row = typeof body.row === "string" ? body.row.trim() || null : existing.row;
+    const seat = typeof body.seat === "string" ? body.seat.trim() || null : existing.seat;
+    const primaryVendor = typeof body.primaryVendor === "string" ? body.primaryVendor.trim() || null : existing.primaryVendor;
+    const priceCents =
+      typeof body.priceCents === "number" && Number.isInteger(body.priceCents)
+        ? body.priceCents
+        : existing.priceCents;
+    const faceValueCents =
+      body.faceValueCents === null
+        ? null
+        : typeof body.faceValueCents === "number" && Number.isInteger(body.faceValueCents)
+        ? body.faceValueCents
+        : existing.faceValueCents;
+
+    if (title.length < 1 || title.length > 120) return badRequest("Title is required.");
+    if (venue.length < 1 || venue.length > 200) return badRequest("Venue is required.");
+    if (date.length < 1 || date.length > 100) return badRequest("Date is required.");
+    if (row && row.length > 80) return badRequest("Row must be 80 characters or less.");
+    if (seat && seat.length > 80) return badRequest("Seat must be 80 characters or less.");
+    if (!Number.isInteger(priceCents) || priceCents <= 0 || priceCents > 10_000_000) {
+      return badRequest("Price must be greater than 0.");
+    }
+    if (faceValueCents != null && (!Number.isInteger(faceValueCents) || faceValueCents < 0)) {
+      return badRequest("Face value must be 0 or greater.");
+    }
+
+    const official = await fetchOfficialSnapshot({
+      title,
+      date,
+      venue,
+      primaryVendor,
+    });
+
+    if (!official.found) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "OFFICIAL_EVENT_NOT_CONFIRMED",
+          message: "We could not confirm this event with an official primary-market source. The listing was not updated.",
+          official,
+        },
+        { status: 422 }
+      );
+    }
+
+    if (official.officialFaceValueCents == null) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
+          message: "We confirmed the event, but could not confirm its official face value. The listing was not updated.",
+          official,
+        },
+        { status: 422 }
+      );
+    }
+
+    if (priceCents > official.officialFaceValueCents) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "PRICE_ABOVE_FACE_VALUE",
+          message: `This listing is above the confirmed face value of ${centsToDollars(official.officialFaceValueCents)}. Lower the price to update this ticket.`,
+          official,
+        },
+        { status: 422 }
+      );
+    }
+
+    let linkedEventId = existing.eventId;
+    if (typeof official.soldOut === "boolean") {
+      const selloutStatus = official.soldOut ? "SOLD_OUT" : "NOT_SOLD_OUT";
+      if (linkedEventId) {
+        await prisma.event.update({
+          where: { id: linkedEventId },
+          data: { title, date, venue, selloutStatus },
+        });
+      } else {
+        const matchedEvent = await prisma.event.findFirst({
+          where: { title, date },
+          select: { id: true },
+        });
+        if (matchedEvent) {
+          linkedEventId = matchedEvent.id;
+          await prisma.event.update({
+            where: { id: matchedEvent.id },
+            data: { venue, selloutStatus },
+          });
+        } else {
+          const createdEvent = await prisma.event.create({
+            data: { title, date, venue, selloutStatus },
+            select: { id: true },
+          });
+          linkedEventId = createdEvent.id;
+        }
+      }
+    }
+
+    let existingEvidence: any = {};
+    try {
+      existingEvidence = existing.verificationEvidence ? JSON.parse(existing.verificationEvidence as any) : {};
+    } catch {
+      existingEvidence = {};
+    }
+
+    const image = await getTicketImage(title, getEventType(title).type);
+    const updated = await prisma.ticket.update({
+      where: { id: ticketId },
+      data: {
+        title,
+        venue,
+        date,
+        row,
+        seat,
+        priceCents,
+        faceValueCents: official.officialFaceValueCents ?? faceValueCents,
+        image,
+        primaryVendor,
+        ...(linkedEventId ? { eventId: linkedEventId } : {}),
+        verificationStatus: "PENDING",
+        verificationScore: null,
+        verificationReason: null,
+        verificationProvider: null,
+        verifiedAt: null,
+        verificationEvidence: JSON.stringify({
+          ...existingEvidence,
+          officialPricingSync: {
+            syncedAt: new Date().toISOString(),
+            vendor: official.vendor,
+            sourceUrl: official.sourceUrl,
+            found: official.found,
+            officialFaceValueCents: official.officialFaceValueCents,
+            soldOut: official.soldOut,
+            reason: official.reason ?? null,
+          },
+          sellerEditedAt: new Date().toISOString(),
+        }),
+      },
+      include: { event: true },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      message: "Ticket updated",
+      ticket: {
+        id: updated.id,
+        title: updated.title,
+        priceCents: safeInt(updated.priceCents),
+        faceValueCents: updated.faceValueCents,
+        price: centsToDollars(safeInt(updated.priceCents)),
+        faceValue: updated.faceValueCents == null ? null : centsToDollars(updated.faceValueCents),
+        image: updated.image,
+        venue: updated.venue,
+        date: updated.date,
+        row: updated.row,
+        seat: updated.seat,
+        status: updated.status,
+        verificationStatus: updated.verificationStatus,
+        verificationScore: updated.verificationScore,
+        verificationReason: updated.verificationReason,
+        event: updated.event
+          ? {
+              id: updated.event.id,
+              title: updated.event.title,
+              venue: updated.event.venue,
+              date: updated.event.date,
+              selloutStatus: updated.event.selloutStatus,
+            }
+          : null,
+      },
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json(
+      { ok: false, error: "Ticket update failed", details: message },
       { status: 500 }
     );
   }

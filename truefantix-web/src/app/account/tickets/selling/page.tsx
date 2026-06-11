@@ -51,6 +51,16 @@ type SeatingInfo = {
   seat: string;
 };
 
+type ListingEditForm = {
+  title: string;
+  venue: string;
+  date: string;
+  price: string;
+  faceValue: string;
+  row: string;
+  seat: string;
+};
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 920, margin: "40px auto", padding: 16 }}>
@@ -150,6 +160,20 @@ function formatTicketDateTime(v: string): string {
   return `${datePart} ${hour12}:${minutePart} ${period}`;
 }
 
+function parseListingDateTimeToPicker(v: string): string {
+  const raw = String(v ?? "").trim();
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return raw.includes("T") ? raw.slice(0, 16) : "";
+
+  const [, datePart, hourPart, minutePart, periodPart] = match;
+  const period = periodPart.toUpperCase();
+  let hour = Number(hourPart);
+  if (period === "PM" && hour < 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+
+  return `${datePart}T${String(hour).padStart(2, "0")}:${minutePart}`;
+}
+
 function formatMoney(n: number) {
   // no Intl needed for MVP; keep stable formatting
   return `$${Number(n).toFixed(2)}`;
@@ -201,7 +225,19 @@ function normalizeTicketQuantity(v: string) {
   return Math.min(Math.max(parsed, 1), 20);
 }
 
-function ListingRow({ t }: { t: TicketRow }) {
+function ListingRow({
+  t,
+  onEdit,
+  onWithdraw,
+  actionBusy,
+}: {
+  t: TicketRow;
+  onEdit: (ticket: TicketRow) => void;
+  onWithdraw: (ticket: TicketRow) => void;
+  actionBusy: boolean;
+}) {
+  const canChange = t.status === "AVAILABLE" || t.status === "RESERVED";
+
   return (
     <div
       style={{
@@ -293,6 +329,41 @@ function ListingRow({ t }: { t: TicketRow }) {
           Verify: {t.verificationStatus ?? "PENDING"}
           {typeof t.verificationScore === "number" ? ` (${t.verificationScore})` : ""}
         </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={() => onEdit(t)}
+            disabled={!canChange || actionBusy}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "1px solid rgba(37, 99, 235, 0.35)",
+              background: !canChange || actionBusy ? "rgba(148, 163, 184, 0.18)" : "rgba(239, 246, 255, 1)",
+              color: !canChange || actionBusy ? "rgba(15,23,42,0.55)" : "rgba(30, 64, 175, 1)",
+              fontWeight: 900,
+              cursor: !canChange || actionBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={() => onWithdraw(t)}
+            disabled={!canChange || actionBusy}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "1px solid rgba(220, 38, 38, 0.35)",
+              background: !canChange || actionBusy ? "rgba(148, 163, 184, 0.18)" : "rgba(254, 242, 242, 1)",
+              color: !canChange || actionBusy ? "rgba(15,23,42,0.55)" : "rgba(153, 27, 27, 1)",
+              fontWeight: 900,
+              cursor: !canChange || actionBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            Withdraw
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -309,7 +380,11 @@ function ActiveListings({
 }) {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [ok, setOk] = React.useState<string | null>(null);
   const [tickets, setTickets] = React.useState<TicketRow[]>([]);
+  const [actionBusyId, setActionBusyId] = React.useState<string | null>(null);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [editForm, setEditForm] = React.useState<ListingEditForm | null>(null);
 
   const sellerId = (me as any)?.sellerId as string | null | undefined;
 
@@ -359,6 +434,130 @@ function ActiveListings({
     };
   }, [sellerApproved, sellerId, refreshKey]);
 
+  function startEdit(ticket: TicketRow) {
+    setError(null);
+    setOk(null);
+    setEditingId(ticket.id);
+    setEditForm({
+      title: ticket.title,
+      venue: ticket.venue,
+      date: parseListingDateTimeToPicker(ticket.date),
+      price: String(ticket.price ?? ""),
+      faceValue: ticket.faceValue == null ? "" : String(ticket.faceValue),
+      row: ticket.row ?? "",
+      seat: ticket.seat ?? "",
+    });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditForm(null);
+  }
+
+  async function saveEdit(ticket: TicketRow) {
+    if (!editForm) return;
+
+    const priceCents = parseDollarsToCents(editForm.price);
+    if (priceCents == null) {
+      setError("Price must be a number greater than 0.");
+      setOk(null);
+      return;
+    }
+
+    const faceValueCents = parseOptionalDollarsToCents(editForm.faceValue);
+    if (editForm.faceValue.trim() && faceValueCents == null) {
+      setError("Face value must be a number greater than 0 (or leave blank).");
+      setOk(null);
+      return;
+    }
+
+    const formattedDate = formatTicketDateTime(editForm.date);
+    if (!formattedDate) {
+      setError("Date is required.");
+      setOk(null);
+      return;
+    }
+
+    setActionBusyId(ticket.id);
+    setError(null);
+    setOk(null);
+    try {
+      const { res, data } = await fetchJson(`/api/tickets/${encodeURIComponent(ticket.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          title: editForm.title.trim(),
+          venue: editForm.venue.trim(),
+          date: formattedDate,
+          row: editForm.row.trim() || null,
+          seat: editForm.seat.trim() || null,
+          priceCents,
+          faceValueCents: faceValueCents ?? null,
+        }),
+      });
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(String(data?.message || data?.error || `Update failed (${res.status}).`));
+      }
+
+      setOk("Ticket updated.");
+      cancelEdit();
+      setTickets((current) =>
+        current.map((item) => {
+          if (item.id !== ticket.id) return item;
+          const updated = data.ticket ?? {};
+          return {
+            ...item,
+            title: updated.title ?? item.title,
+            venue: updated.venue ?? item.venue,
+            date: updated.date ?? item.date,
+            row: updated.row ?? null,
+            seat: updated.seat ?? null,
+            price: typeof updated.price === "number" ? updated.price : item.price,
+            faceValue: typeof updated.faceValue === "number" || updated.faceValue === null ? updated.faceValue : item.faceValue,
+            image: updated.image ?? item.image,
+            status: updated.status ?? item.status,
+            verificationStatus: updated.verificationStatus ?? item.verificationStatus,
+            verificationScore: updated.verificationScore ?? item.verificationScore,
+            verificationReason: updated.verificationReason ?? item.verificationReason,
+          };
+        })
+      );
+    } catch (e: any) {
+      setError(e?.message ?? "Update failed.");
+    } finally {
+      setActionBusyId(null);
+    }
+  }
+
+  async function withdrawTicket(ticket: TicketRow) {
+    const confirmed = window.confirm(`Withdraw ${ticket.title}? This removes it from sale.`);
+    if (!confirmed) return;
+
+    setActionBusyId(ticket.id);
+    setError(null);
+    setOk(null);
+    try {
+      const { res, data } = await fetchJson(`/api/tickets/${encodeURIComponent(ticket.id)}`, {
+        method: "DELETE",
+        cache: "no-store",
+      });
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(String(data?.message || data?.error || `Withdraw failed (${res.status}).`));
+      }
+
+      setOk("Ticket withdrawn.");
+      if (editingId === ticket.id) cancelEdit();
+      setTickets((current) => current.filter((item) => item.id !== ticket.id));
+    } catch (e: any) {
+      setError(e?.message ?? "Withdraw failed.");
+    } finally {
+      setActionBusyId(null);
+    }
+  }
+
   if (!sellerApproved) {
     return (
       <div style={{ opacity: 0.85 }}>
@@ -395,8 +594,195 @@ function ActiveListings({
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
+      {error ? (
+        <div
+          role="alert"
+          style={{
+            padding: 12,
+            borderRadius: 10,
+            border: "1px solid rgba(255,0,0,0.35)",
+            background: "rgba(254, 242, 242, 1)",
+            color: "rgba(153, 27, 27, 1)",
+            fontWeight: 700,
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
+
+      {ok ? (
+        <div
+          style={{
+            padding: 12,
+            borderRadius: 10,
+            border: "1px solid rgba(34, 197, 94, 0.35)",
+            background: "rgba(240, 253, 244, 1)",
+            color: "rgba(22, 101, 52, 1)",
+            fontWeight: 800,
+          }}
+        >
+          {ok}
+        </div>
+      ) : null}
+
       {tickets.map((t) => (
-        <ListingRow key={t.id} t={t} />
+        <div key={t.id} style={{ display: "grid", gap: 8 }}>
+          <ListingRow
+            t={t}
+            onEdit={startEdit}
+            onWithdraw={withdrawTicket}
+            actionBusy={actionBusyId === t.id}
+          />
+
+          {editingId === t.id && editForm ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                saveEdit(t);
+              }}
+              style={{
+                display: "grid",
+                gap: 10,
+                padding: 12,
+                borderRadius: 12,
+                border: "1px solid rgba(37, 99, 235, 0.22)",
+                background: "rgba(248, 250, 252, 1)",
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                  gap: 10,
+                }}
+              >
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Artist, team, or sport</span>
+                  <input
+                    value={editForm.title}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, title: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    style={inputStyle(false)}
+                  />
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Venue</span>
+                  <input
+                    value={editForm.venue}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, venue: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    style={inputStyle(false)}
+                  />
+                </label>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                  gap: 10,
+                }}
+              >
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Date and time</span>
+                  <input
+                    type="datetime-local"
+                    value={editForm.date}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, date: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    step={60}
+                    style={inputStyle(false)}
+                  />
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Price</span>
+                  <input
+                    value={editForm.price}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, price: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    inputMode="decimal"
+                    style={inputStyle(false)}
+                  />
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Face value</span>
+                  <input
+                    value={editForm.faceValue}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, faceValue: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    inputMode="decimal"
+                    style={inputStyle(false)}
+                  />
+                </label>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+                  gap: 10,
+                }}
+              >
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Row</span>
+                  <input
+                    value={editForm.row}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, row: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    style={inputStyle(false)}
+                  />
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Seat</span>
+                  <input
+                    value={editForm.seat}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, seat: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    style={inputStyle(false)}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="submit"
+                  disabled={!!actionBusyId}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(0,0,0,0.12)",
+                    background: actionBusyId ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.92)",
+                    color: actionBusyId ? "rgba(15,23,42,0.55)" : "white",
+                    fontWeight: 950,
+                    cursor: actionBusyId ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {actionBusyId === t.id ? "Saving..." : "Save changes"}
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  disabled={!!actionBusyId}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(0,0,0,0.12)",
+                    background: "white",
+                    color: "rgba(15, 23, 42, 1)",
+                    fontWeight: 900,
+                    cursor: actionBusyId ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </div>
       ))}
     </div>
   );
@@ -775,7 +1161,7 @@ function Body({ me }: { me: MeUser }) {
       {/* ✅ NEW: Active listings */}
       <Card
         title="My active listings"
-        description="These are your current tickets (pulled from GET /api/tickets?sellerId=...). Verification states: PENDING, VERIFIED, NEEDS_REVIEW, REJECTED. Public marketplace only shows VERIFIED."
+        description="Edit available listings or withdraw tickets that should no longer be for sale. Public marketplace only shows VERIFIED tickets."
       >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
           <button
@@ -1240,16 +1626,6 @@ function Body({ me }: { me: MeUser }) {
         </form>
       </Card>
 
-      <Card title="Coming next" description="Next we’ll add edit + withdraw actions (real backend).">
-        <div style={{ opacity: 0.85 }}>
-          Next we’ll add:
-          <ul style={{ marginTop: 8 }}>
-            <li>Withdraw listing (AVAILABLE → WITHDRAWN)</li>
-            <li>Edit listing (price/title/image)</li>
-            <li>Seller dashboard metrics</li>
-          </ul>
-        </div>
-      </Card>
     </div>
   );
 }
