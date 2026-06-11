@@ -12,6 +12,8 @@ type CreateTicketBody = {
   image: string;
   venue: string;
   date: string; // keep string for now (matches schema)
+  row?: string | null;
+  seat?: string | null;
   eventId?: string | null;
   barcodeData?: string | null;
   barcodeType?: string | null;
@@ -25,6 +27,8 @@ type TicketRow = {
   image: string;
   venue: string;
   date: string;
+  row?: string | null;
+  seat?: string | null;
   status: string;
   verificationStatus?: "PENDING" | "VERIFIED" | "REJECTED" | "NEEDS_REVIEW" | string;
   verificationScore?: number | null;
@@ -37,6 +41,11 @@ type CatalogSuggestion = {
   label: string;
   canonicalName?: string;
   subtitle?: string;
+};
+
+type SeatingInfo = {
+  row: string;
+  seat: string;
 };
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
@@ -147,6 +156,12 @@ function catalogSuggestionMeta(suggestion: CatalogSuggestion) {
   return [suggestion.type, suggestion.subtitle].filter(Boolean).join(" • ");
 }
 
+function normalizeTicketQuantity(v: string) {
+  const parsed = Number(v);
+  if (!Number.isInteger(parsed)) return 1;
+  return Math.min(Math.max(parsed, 1), 20);
+}
+
 function ListingRow({ t }: { t: TicketRow }) {
   return (
     <div
@@ -179,6 +194,11 @@ function ListingRow({ t }: { t: TicketRow }) {
         <div style={{ fontSize: 13, opacity: 0.78 }}>
           {t.venue} • {t.date}
         </div>
+        {(t.row || t.seat) ? (
+          <div style={{ fontSize: 13, opacity: 0.78 }}>
+            {[t.row ? `Row ${t.row}` : null, t.seat ? `Seat ${t.seat}` : null].filter(Boolean).join(" • ")}
+          </div>
+        ) : null}
         <div style={{ fontSize: 13 }}>
           <span style={{ fontWeight: 900 }}>{formatMoney(t.price)}</span>
           {t.faceValue != null ? (
@@ -360,6 +380,8 @@ function Body({ me }: { me: MeUser }) {
   const [titleSuggestions, setTitleSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [venue, setVenue] = React.useState("");
   const [venueSuggestions, setVenueSuggestions] = React.useState<CatalogSuggestion[]>([]);
+  const [ticketQuantity, setTicketQuantity] = React.useState("1");
+  const [seating, setSeating] = React.useState<SeatingInfo[]>([{ row: "", seat: "" }]);
   const [date, setDate] = React.useState("");
   const [price, setPrice] = React.useState("");
   const [faceValue, setFaceValue] = React.useState("");
@@ -374,6 +396,7 @@ function Body({ me }: { me: MeUser }) {
   // focus state (obvious boxes)
   const [fTitle, setFTitle] = React.useState(false);
   const [fVenue, setFVenue] = React.useState(false);
+  const [fQuantity, setFQuantity] = React.useState(false);
   const [fDate, setFDate] = React.useState(false);
   const [fPrice, setFPrice] = React.useState(false);
   const [fFace, setFFace] = React.useState(false);
@@ -403,6 +426,13 @@ function Body({ me }: { me: MeUser }) {
       window.clearTimeout(timer);
     };
   }, [title]);
+
+  React.useEffect(() => {
+    const nextQuantity = normalizeTicketQuantity(ticketQuantity);
+    setSeating((current) =>
+      Array.from({ length: nextQuantity }, (_, index) => current[index] ?? { row: "", seat: "" })
+    );
+  }, [ticketQuantity]);
 
   React.useEffect(() => {
     const q = venue.trim();
@@ -441,11 +471,21 @@ function Body({ me }: { me: MeUser }) {
 
     const t = title.trim();
     const v = venue.trim();
+    const quantity = normalizeTicketQuantity(ticketQuantity);
     const d = formatTicketDateTime(date);
     const img = image.trim();
+    const seatingForSubmit = seating.slice(0, quantity).map((item) => ({
+      row: item.row.trim(),
+      seat: item.seat.trim(),
+    }));
 
     if (!t) return setError("Title is required.");
     if (!v) return setError("Venue is required.");
+    if (String(quantity) !== ticketQuantity.trim()) return setError("Ticket quantity must be a whole number from 1 to 20.");
+    const missingSeatIndex = seatingForSubmit.findIndex((item) => !item.row || !item.seat);
+    if (missingSeatIndex !== -1) {
+      return setError(`Row and seat are required for ticket ${missingSeatIndex + 1}.`);
+    }
     if (!d) return setError("Date is required.");
     if (!img) return setError("Image URL/path is required.");
 
@@ -457,42 +497,48 @@ function Body({ me }: { me: MeUser }) {
       return setError("Face value must be a number greater than 0 (or leave blank).");
     }
 
-    const body: CreateTicketBody = {
-      title: t,
-      venue: v,
-      date: d,
-      image: img,
-      priceCents,
-      faceValueCents: faceValueCents ?? null,
-      barcodeData: barcodeData.trim() || null,
-      barcodeType: barcodeType.trim() || null,
-    };
-
     setBusy(true);
     try {
-      // ✅ Use your existing backend route
-      const { res, data } = await fetchJson("/api/tickets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify(body),
-      });
+      for (let i = 0; i < quantity; i += 1) {
+        const seatInfo = seatingForSubmit[i];
+        const body: CreateTicketBody = {
+          title: t,
+          venue: v,
+          date: d,
+          image: img,
+          row: seatInfo.row,
+          seat: seatInfo.seat,
+          priceCents,
+          faceValueCents: faceValueCents ?? null,
+          barcodeData: i === 0 ? barcodeData.trim() || null : null,
+          barcodeType: i === 0 ? barcodeType.trim() || null : null,
+        };
 
-      if (!res.ok) {
-        const details = Array.isArray(data?.details) ? data.details : null;
-        const msg =
-          (data && (data.message || data.error)) ||
-          (details && details.length ? details[0] : null) ||
-          `Create listing failed (${res.status}).`;
-        setError(String(msg));
-        return;
+        const { res, data } = await fetchJson("/api/tickets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          const details = Array.isArray(data?.details) ? data.details : null;
+          const msg =
+            (data && (data.message || data.error)) ||
+            (details && details.length ? details[0] : null) ||
+            `Create listing ${i + 1} of ${quantity} failed (${res.status}).`;
+          setError(String(msg));
+          return;
+        }
       }
 
-      setOk("Ticket listed successfully.");
+      setOk(quantity === 1 ? "Ticket listed successfully." : `${quantity} tickets listed successfully.`);
       setTitle("");
       setTitleSuggestions([]);
       setVenue("");
       setVenueSuggestions([]);
+      setTicketQuantity("1");
+      setSeating([{ row: "", seat: "" }]);
       setDate("");
       setPrice("");
       setFaceValue("");
@@ -751,6 +797,77 @@ function Body({ me }: { me: MeUser }) {
               ))}
             </datalist>
           </label>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontWeight: 900 }}>How many tickets?</span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              value={ticketQuantity}
+              onChange={(e) => setTicketQuantity(e.target.value)}
+              disabled={busy}
+              style={inputStyle(fQuantity)}
+              onFocus={() => setFQuantity(true)}
+              onBlur={() => {
+                setFQuantity(false);
+                setTicketQuantity(String(normalizeTicketQuantity(ticketQuantity)));
+              }}
+            />
+          </label>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            <span style={{ fontWeight: 900 }}>Seating information</span>
+            {seating.map((seatInfo, index) => (
+              <div
+                key={index}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                  gap: 10,
+                  padding: 10,
+                  border: "1px solid rgba(148, 163, 184, 0.45)",
+                  borderRadius: 10,
+                  background: "rgba(248, 250, 252, 1)",
+                }}
+              >
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} row</span>
+                  <input
+                    value={seatInfo.row}
+                    onChange={(e) =>
+                      setSeating((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, row: e.target.value } : item
+                        )
+                      )
+                    }
+                    disabled={busy}
+                    placeholder="e.g., 12"
+                    style={inputStyle(false)}
+                  />
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} seat</span>
+                  <input
+                    value={seatInfo.seat}
+                    onChange={(e) =>
+                      setSeating((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, seat: e.target.value } : item
+                        )
+                      )
+                    }
+                    disabled={busy}
+                    placeholder="e.g., 8"
+                    style={inputStyle(false)}
+                  />
+                </label>
+              </div>
+            ))}
+          </div>
 
           <label style={{ display: "grid", gap: 6 }}>
             <span style={{ fontWeight: 900 }}>Date and time</span>

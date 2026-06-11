@@ -30,6 +30,8 @@ export const schemas = {
 
     venue: z.string().trim().min(1).max(200),
     date: z.string().trim().min(1).max(100),
+    row: z.string().trim().max(80).optional().nullable(),
+    seat: z.string().trim().max(80).optional().nullable(),
 
     // Seller override for event type when auto-tagging is incorrect
     eventTypeOverride: z.string().trim().max(80).optional().nullable(),

@@ -28,6 +28,8 @@ type CreateTicketBody = {
   image?: string;
   venue?: string;
   date?: string;
+  row?: string | null;
+  seat?: string | null;
 
   // Optional event linking (future use)
   eventId?: string | null;
@@ -316,6 +318,8 @@ export async function POST(req: Request) {
   const requestedImage = (body.image ?? "").trim();
   const venue = body.venue;
   const date = body.date;
+  const row = (body.row ?? "").trim() || null;
+  const seat = (body.seat ?? "").trim() || null;
 
   // New fields from process flow
   const primaryVendor = body.primaryVendor ?? null;
@@ -434,6 +438,8 @@ export async function POST(req: Request) {
         image: resolvedImage,
         venue,
         date,
+        row,
+        seat,
         primaryVendor,
         transferMethod,
         barcodeText,
@@ -554,6 +560,8 @@ export async function POST(req: Request) {
           imageReason,
           venue: finalTicket?.venue ?? created.venue,
           date: finalTicket?.date ?? created.date,
+          row: (finalTicket as any)?.row ?? created.row ?? null,
+          seat: (finalTicket as any)?.seat ?? created.seat ?? null,
           status: finalTicket?.status ?? created.status,
           verificationStatus: (verified as any)?.verificationStatus ?? (finalTicket as any)?.verificationStatus ?? "PENDING",
           verificationScore: (verified as any)?.verificationScore ?? (finalTicket as any)?.verificationScore ?? null,
