@@ -230,6 +230,7 @@ const BRAND = {
   subtle: "text-gray-600 dark:text-gray-300",
   link: "text-[var(--tft-teal)] hover:text-[var(--tft-teal-dark)]",
   btnPrimary: "button-primary px-6 py-3 rounded-lg shadow-sm hover:shadow transition disabled:opacity-50",
+  btnSecondary: "px-6 py-3 rounded-lg border border-[var(--tft-navy)] text-[var(--tft-navy)] hover:bg-[rgba(6,74,147,0.06)] transition disabled:opacity-50",
   btnPrimarySm: "button-primary px-4 py-2 rounded-lg shadow-sm hover:shadow transition disabled:opacity-50",
   btnOutline: "px-4 py-2 rounded-lg border border-[var(--tft-navy)] text-[var(--tft-navy)] hover:bg-[rgba(6,74,147,0.06)] transition",
   pillBrand: "bg-[rgba(6,74,147,0.10)] text-[var(--tft-navy)]",
@@ -385,6 +386,7 @@ export default function Page() {
           <p className={`text-lg mb-6 ${BRAND.subtle}`}>Buy and sell tickets at or below face value. Secure, fair, and fan-first.</p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
             <Link href="/tickets" className={BRAND.btnPrimary}>Browse Tickets</Link>
+            <Link href="/account/tickets/selling" className={BRAND.btnSecondary}>List Tickets for Sale</Link>
           </div>
         </div>
       </section>
