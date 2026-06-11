@@ -32,9 +32,10 @@ type TicketRow = {
 };
 
 type CatalogSuggestion = {
-  type: "VENUE";
+  type: "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT";
   value: string;
   label: string;
+  canonicalName?: string;
   subtitle?: string;
 };
 
@@ -352,6 +353,7 @@ function Body({ me }: { me: MeUser }) {
 
   // form state
   const [title, setTitle] = React.useState("");
+  const [titleSuggestions, setTitleSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [venue, setVenue] = React.useState("");
   const [venueSuggestions, setVenueSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [date, setDate] = React.useState("");
@@ -372,6 +374,31 @@ function Body({ me }: { me: MeUser }) {
   const [fPrice, setFPrice] = React.useState(false);
   const [fFace, setFFace] = React.useState(false);
   const [fImage, setFImage] = React.useState(false);
+
+  React.useEffect(() => {
+    const q = title.trim();
+    if (q.length < 2) {
+      setTitleSuggestions([]);
+      return;
+    }
+
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ q, type: "ALL", limit: "12" });
+        const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
+        const data = await res.json();
+        if (alive) setTitleSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+      } catch {
+        if (alive) setTitleSuggestions([]);
+      }
+    }, 160);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [title]);
 
   React.useEffect(() => {
     const q = venue.trim();
@@ -459,7 +486,9 @@ function Body({ me }: { me: MeUser }) {
 
       setOk("Ticket listed successfully.");
       setTitle("");
+      setTitleSuggestions([]);
       setVenue("");
+      setVenueSuggestions([]);
       setDate("");
       setPrice("");
       setFaceValue("");
@@ -648,10 +677,20 @@ function Body({ me }: { me: MeUser }) {
               onChange={(e) => setTitle(e.target.value)}
               disabled={busy}
               placeholder='e.g., "Taylor Swift — Floor Seat"'
+              list="seller-title-suggestions"
               style={inputStyle(fTitle)}
               onFocus={() => setFTitle(true)}
               onBlur={() => setFTitle(false)}
             />
+            <datalist id="seller-title-suggestions">
+              {titleSuggestions.map((suggestion) => (
+                <option
+                  key={`${suggestion.type}:${suggestion.value}`}
+                  value={suggestion.label}
+                  label={[suggestion.type, suggestion.subtitle].filter(Boolean).join(" • ")}
+                />
+              ))}
+            </datalist>
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
