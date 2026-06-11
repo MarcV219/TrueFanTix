@@ -143,6 +143,10 @@ function formatMoney(n: number) {
   return `$${Number(n).toFixed(2)}`;
 }
 
+function catalogSuggestionMeta(suggestion: CatalogSuggestion) {
+  return [suggestion.type, suggestion.subtitle].filter(Boolean).join(" • ");
+}
+
 function ListingRow({ t }: { t: TicketRow }) {
   return (
     <div
@@ -385,7 +389,7 @@ function Body({ me }: { me: MeUser }) {
     let alive = true;
     const timer = window.setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ q, type: "ALL", limit: "12" });
+        const params = new URLSearchParams({ q, type: "ALL", limit: "50", providers: "0" });
         const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
         const data = await res.json();
         if (alive) setTitleSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
@@ -677,20 +681,52 @@ function Body({ me }: { me: MeUser }) {
               onChange={(e) => setTitle(e.target.value)}
               disabled={busy}
               placeholder='e.g., "Taylor Swift — Floor Seat"'
-              list="seller-title-suggestions"
               style={inputStyle(fTitle)}
               onFocus={() => setFTitle(true)}
               onBlur={() => setFTitle(false)}
             />
-            <datalist id="seller-title-suggestions">
-              {titleSuggestions.map((suggestion) => (
-                <option
-                  key={`${suggestion.type}:${suggestion.value}`}
-                  value={suggestion.label}
-                  label={[suggestion.type, suggestion.subtitle].filter(Boolean).join(" • ")}
-                />
-              ))}
-            </datalist>
+            {fTitle && title.trim().length >= 2 ? (
+              <div
+                style={{
+                  display: "grid",
+                  maxHeight: 280,
+                  overflowY: "auto",
+                  border: "1px solid rgba(148, 163, 184, 0.45)",
+                  borderRadius: 10,
+                  background: "white",
+                  boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
+                }}
+              >
+                {titleSuggestions.length > 0 ? (
+                  titleSuggestions.map((suggestion) => (
+                    <button
+                      key={`${suggestion.type}:${suggestion.value}`}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setTitle(suggestion.label)}
+                      style={{
+                        display: "grid",
+                        gap: 3,
+                        padding: "10px 12px",
+                        border: 0,
+                        borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
+                        background: "white",
+                        color: "rgba(15, 23, 42, 1)",
+                        textAlign: "left",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ fontWeight: 900 }}>{suggestion.label}</span>
+                      <span style={{ fontSize: 12, opacity: 0.72 }}>{catalogSuggestionMeta(suggestion)}</span>
+                    </button>
+                  ))
+                ) : (
+                  <div style={{ padding: "10px 12px", fontSize: 13, opacity: 0.72 }}>
+                    No catalog matches.
+                  </div>
+                )}
+              </div>
+            ) : null}
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
