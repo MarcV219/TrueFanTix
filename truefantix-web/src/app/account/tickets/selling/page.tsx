@@ -124,6 +124,19 @@ function parseOptionalDollarsToCents(v: string): number | null {
   return Math.round(n * 100);
 }
 
+function formatTicketDateTime(v: string): string {
+  const raw = String(v ?? "").trim();
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) return raw;
+
+  const [, datePart, hourPart, minutePart] = match;
+  const hour24 = Number(hourPart);
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+
+  return `${datePart} ${hour12}:${minutePart} ${period}`;
+}
+
 function formatMoney(n: number) {
   // no Intl needed for MVP; keep stable formatting
   return `$${Number(n).toFixed(2)}`;
@@ -397,7 +410,7 @@ function Body({ me }: { me: MeUser }) {
 
     const t = title.trim();
     const v = venue.trim();
-    const d = date.trim();
+    const d = formatTicketDateTime(date);
     const img = image.trim();
 
     if (!t) return setError("Title is required.");
@@ -665,15 +678,16 @@ function Body({ me }: { me: MeUser }) {
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Date</span>
+            <span style={{ fontWeight: 900 }}>Date and time</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Use your current string format (example: 2026-08-14 7:30 PM)
+              Pick the event date and start time.
             </div>
             <input
+              type="datetime-local"
               value={date}
               onChange={(e) => setDate(e.target.value)}
               disabled={busy}
-              placeholder="YYYY-MM-DD 7:30 PM"
+              step={60}
               style={inputStyle(fDate)}
               onFocus={() => setFDate(true)}
               onBlur={() => setFDate(false)}
