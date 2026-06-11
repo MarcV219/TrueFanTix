@@ -39,8 +39,11 @@ type CatalogSuggestion = {
   type: "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT";
   value: string;
   label: string;
+  catalogEntityId?: string;
   canonicalName?: string;
+  provider?: string;
   subtitle?: string;
+  aliases?: string[];
 };
 
 type SeatingInfo = {
@@ -153,7 +156,31 @@ function formatMoney(n: number) {
 }
 
 function catalogSuggestionMeta(suggestion: CatalogSuggestion) {
-  return [suggestion.type, suggestion.subtitle].filter(Boolean).join(" • ");
+  return [suggestion.type, suggestion.subtitle, suggestion.provider].filter(Boolean).join(" • ");
+}
+
+function wordsForSearch(text: string) {
+  return text
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function suggestionMatchesTypedValue(suggestion: CatalogSuggestion, typedValue: string) {
+  const queryWords = wordsForSearch(typedValue);
+  if (queryWords.length === 0) return true;
+
+  const candidateWords = [
+    suggestion.label,
+    suggestion.value,
+    suggestion.canonicalName,
+    suggestion.subtitle,
+    ...(suggestion.aliases ?? []),
+  ].flatMap((part) => wordsForSearch(part ?? ""));
+
+  return queryWords.every((queryWord) => candidateWords.some((candidateWord) => candidateWord.startsWith(queryWord)));
 }
 
 function normalizeTicketQuantity(v: string) {
@@ -377,8 +404,11 @@ function Body({ me }: { me: MeUser }) {
 
   // form state
   const [title, setTitle] = React.useState("");
+  const [selectedTitleSuggestion, setSelectedTitleSuggestion] = React.useState<CatalogSuggestion | null>(null);
   const [titleSuggestions, setTitleSuggestions] = React.useState<CatalogSuggestion[]>([]);
+  const [titleRequestType, setTitleRequestType] = React.useState<"ARTIST" | "TEAM" | "SPORT">("ARTIST");
   const [venue, setVenue] = React.useState("");
+  const [selectedVenueSuggestion, setSelectedVenueSuggestion] = React.useState<CatalogSuggestion | null>(null);
   const [venueSuggestions, setVenueSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [ticketQuantity, setTicketQuantity] = React.useState("1");
   const [isGeneralAdmission, setIsGeneralAdmission] = React.useState(false);
@@ -391,6 +421,7 @@ function Body({ me }: { me: MeUser }) {
   const [barcodeType, setBarcodeType] = React.useState("");
 
   const [busy, setBusy] = React.useState(false);
+  const [requestBusy, setRequestBusy] = React.useState<"title" | "venue" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
 
@@ -416,7 +447,10 @@ function Body({ me }: { me: MeUser }) {
         const params = new URLSearchParams({ q, type: "ALL", limit: "50", providers: "0" });
         const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
         const data = await res.json();
-        if (alive) setTitleSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+        if (alive) {
+          const suggestions = Array.isArray(data?.suggestions) ? (data.suggestions as CatalogSuggestion[]) : [];
+          setTitleSuggestions(suggestions.filter((suggestion) => suggestion.type === "ARTIST" || suggestion.type === "TEAM" || suggestion.type === "SPORT"));
+        }
       } catch {
         if (alive) setTitleSuggestions([]);
       }
@@ -460,6 +494,69 @@ function Body({ me }: { me: MeUser }) {
     };
   }, [venue]);
 
+  const trimmedTitle = title.trim();
+  const trimmedVenue = venue.trim();
+  const visibleTitleSuggestions = React.useMemo(
+    () => titleSuggestions.filter((suggestion) => suggestionMatchesTypedValue(suggestion, trimmedTitle)),
+    [titleSuggestions, trimmedTitle]
+  );
+  const visibleVenueSuggestions = React.useMemo(
+    () => venueSuggestions.filter((suggestion) => suggestionMatchesTypedValue(suggestion, trimmedVenue)),
+    [venueSuggestions, trimmedVenue]
+  );
+  const validTitleSuggestion =
+    !!selectedTitleSuggestion &&
+    selectedTitleSuggestion.label === trimmedTitle &&
+    suggestionMatchesTypedValue(selectedTitleSuggestion, trimmedTitle);
+  const validVenueSuggestion =
+    !!selectedVenueSuggestion &&
+    selectedVenueSuggestion.type === "VENUE" &&
+    selectedVenueSuggestion.label === trimmedVenue &&
+    suggestionMatchesTypedValue(selectedVenueSuggestion, trimmedVenue);
+
+  async function requestCatalogAddition(kind: "title" | "venue") {
+    const requestValue = (kind === "title" ? title : venue).trim();
+    if (requestValue.length < 2) {
+      setError(kind === "title" ? "Type the missing artist, team, or sport before requesting an addition." : "Type the missing venue before requesting an addition.");
+      setOk(null);
+      return;
+    }
+
+    setRequestBusy(kind);
+    setError(null);
+    setOk(null);
+    try {
+      const { res, data } = await fetchJson("/api/catalog/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: kind === "title" ? titleRequestType : "VENUE",
+          value: requestValue,
+          notes: "Requested from the List Tickets form.",
+        }),
+      });
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(String(data?.message || data?.error || "Could not submit catalog request."));
+      }
+
+      setOk("Request sent. TrueFanTix will research it and add it to the catalog when it is verified.");
+      if (kind === "title") {
+        setTitle("");
+        setSelectedTitleSuggestion(null);
+        setTitleSuggestions([]);
+      } else {
+        setVenue("");
+        setSelectedVenueSuggestion(null);
+        setVenueSuggestions([]);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "Could not submit catalog request.");
+    } finally {
+      setRequestBusy(null);
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -480,10 +577,12 @@ function Body({ me }: { me: MeUser }) {
       : seating.slice(0, quantity).map((item) => ({
           row: item.row.trim(),
           seat: item.seat.trim(),
-        }));
+    }));
 
     if (!t) return setError("Title is required.");
     if (!v) return setError("Venue is required.");
+    if (!validTitleSuggestion) return setError("Choose a verified artist, team, or sport from the list before listing tickets.");
+    if (!validVenueSuggestion) return setError("Choose a verified venue from the list before listing tickets.");
     if (String(quantity) !== ticketQuantity.trim()) return setError("Ticket quantity must be a whole number from 1 to 20.");
     if (!isGeneralAdmission) {
       const missingSeatIndex = seatingForSubmit.findIndex((item) => !item.row || !item.seat);
@@ -539,8 +638,10 @@ function Body({ me }: { me: MeUser }) {
 
       setOk(quantity === 1 ? "Ticket listed successfully." : `${quantity} tickets listed successfully.`);
       setTitle("");
+      setSelectedTitleSuggestion(null);
       setTitleSuggestions([]);
       setVenue("");
+      setSelectedVenueSuggestion(null);
       setVenueSuggestions([]);
       setTicketQuantity("1");
       setIsGeneralAdmission(false);
@@ -727,12 +828,15 @@ function Body({ me }: { me: MeUser }) {
 
         <form onSubmit={submit} style={{ display: "grid", gap: 12 }}>
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Title</span>
+            <span style={{ fontWeight: 900 }}>Artist, team, or sport</span>
             <input
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={busy}
-              placeholder='e.g., "Taylor Swift — Floor Seat"'
+              onChange={(e) => {
+                setTitle(e.target.value);
+                setSelectedTitleSuggestion(null);
+              }}
+              disabled={busy || !!requestBusy}
+              placeholder='Start typing an artist, team, or sport...'
               style={inputStyle(fTitle)}
               onFocus={() => setFTitle(true)}
               onBlur={() => setFTitle(false)}
@@ -749,32 +853,69 @@ function Body({ me }: { me: MeUser }) {
                   boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
                 }}
               >
-                {titleSuggestions.length > 0 ? (
-                  titleSuggestions.map((suggestion) => (
+                {visibleTitleSuggestions.length > 0 ? (
+                  visibleTitleSuggestions.map((suggestion) => (
                     <button
                       key={`${suggestion.type}:${suggestion.value}`}
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => setTitle(suggestion.label)}
+                      onClick={() => {
+                        setSelectedTitleSuggestion(suggestion);
+                        setTitle(suggestion.label);
+                        setTitleSuggestions([]);
+                        setError(null);
+                        setOk(null);
+                      }}
+                      disabled={busy || !!requestBusy}
                       style={{
                         display: "grid",
                         gap: 3,
                         padding: "10px 12px",
                         border: 0,
                         borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
-                        background: "white",
+                        background: selectedTitleSuggestion?.type === suggestion.type && selectedTitleSuggestion.value === suggestion.value ? "rgba(239, 246, 255, 1)" : "white",
                         color: "rgba(15, 23, 42, 1)",
                         textAlign: "left",
-                        cursor: "pointer",
+                        cursor: busy || requestBusy ? "not-allowed" : "pointer",
                       }}
                     >
                       <span style={{ fontWeight: 900 }}>{suggestion.label}</span>
                       <span style={{ fontSize: 12, opacity: 0.72 }}>{catalogSuggestionMeta(suggestion)}</span>
                     </button>
                   ))
-                ) : (
-                  <div style={{ padding: "10px 12px", fontSize: 13, opacity: 0.72 }}>
-                    No catalog matches.
+                ) : selectedTitleSuggestion ? null : (
+                  <div style={{ display: "grid", gap: 8, padding: "10px 12px", fontSize: 13 }}>
+                    <div style={{ opacity: 0.72 }}>No verified artist, team, or sport match found.</div>
+                    <label style={{ display: "grid", gap: 4, fontWeight: 800 }}>
+                      Request as
+                      <select
+                        value={titleRequestType}
+                        onChange={(e) => setTitleRequestType(e.target.value as "ARTIST" | "TEAM" | "SPORT")}
+                        disabled={busy || !!requestBusy}
+                        style={{ ...inputStyle(false), padding: 8 }}
+                      >
+                        <option value="ARTIST">Artist</option>
+                        <option value="TEAM">Team</option>
+                        <option value="SPORT">Sport</option>
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => requestCatalogAddition("title")}
+                      disabled={busy || !!requestBusy}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid rgba(37, 99, 235, 0.35)",
+                        background: busy || requestBusy ? "rgba(148, 163, 184, 0.18)" : "rgba(239, 246, 255, 1)",
+                        color: "rgba(30, 64, 175, 1)",
+                        fontWeight: 900,
+                        cursor: busy || requestBusy ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {requestBusy === "title" ? "Sending request..." : `Request this ${titleRequestType.toLowerCase()}`}
+                    </button>
                   </div>
                 )}
               </div>
@@ -785,23 +926,82 @@ function Body({ me }: { me: MeUser }) {
             <span style={{ fontWeight: 900 }}>Venue</span>
             <input
               value={venue}
-              onChange={(e) => setVenue(e.target.value)}
-              disabled={busy}
-              placeholder='e.g., "Rogers Centre"'
-              list="seller-venue-suggestions"
+              onChange={(e) => {
+                setVenue(e.target.value);
+                setSelectedVenueSuggestion(null);
+              }}
+              disabled={busy || !!requestBusy}
+              placeholder='Start typing a venue...'
               style={inputStyle(fVenue)}
               onFocus={() => setFVenue(true)}
               onBlur={() => setFVenue(false)}
             />
-            <datalist id="seller-venue-suggestions">
-              {venueSuggestions.map((suggestion) => (
-                <option
-                  key={`${suggestion.type}:${suggestion.value}`}
-                  value={suggestion.label}
-                  label={suggestion.subtitle ?? suggestion.type}
-                />
-              ))}
-            </datalist>
+            {fVenue && venue.trim().length >= 2 ? (
+              <div
+                style={{
+                  display: "grid",
+                  maxHeight: 280,
+                  overflowY: "auto",
+                  border: "1px solid rgba(148, 163, 184, 0.45)",
+                  borderRadius: 10,
+                  background: "white",
+                  boxShadow: "0 10px 24px rgba(15, 23, 42, 0.10)",
+                }}
+              >
+                {visibleVenueSuggestions.length > 0 ? (
+                  visibleVenueSuggestions.map((suggestion) => (
+                    <button
+                      key={`${suggestion.type}:${suggestion.value}`}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSelectedVenueSuggestion(suggestion);
+                        setVenue(suggestion.label);
+                        setVenueSuggestions([]);
+                        setError(null);
+                        setOk(null);
+                      }}
+                      disabled={busy || !!requestBusy}
+                      style={{
+                        display: "grid",
+                        gap: 3,
+                        padding: "10px 12px",
+                        border: 0,
+                        borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
+                        background: selectedVenueSuggestion?.value === suggestion.value ? "rgba(239, 246, 255, 1)" : "white",
+                        color: "rgba(15, 23, 42, 1)",
+                        textAlign: "left",
+                        cursor: busy || requestBusy ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <span style={{ fontWeight: 900 }}>{suggestion.label}</span>
+                      <span style={{ fontSize: 12, opacity: 0.72 }}>{catalogSuggestionMeta(suggestion)}</span>
+                    </button>
+                  ))
+                ) : selectedVenueSuggestion ? null : (
+                  <div style={{ display: "grid", gap: 8, padding: "10px 12px", fontSize: 13 }}>
+                    <div style={{ opacity: 0.72 }}>No verified venue match found.</div>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => requestCatalogAddition("venue")}
+                      disabled={busy || !!requestBusy}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid rgba(37, 99, 235, 0.35)",
+                        background: busy || requestBusy ? "rgba(148, 163, 184, 0.18)" : "rgba(239, 246, 255, 1)",
+                        color: "rgba(30, 64, 175, 1)",
+                        fontWeight: 900,
+                        cursor: busy || requestBusy ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {requestBusy === "venue" ? "Sending request..." : "Request this venue"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
