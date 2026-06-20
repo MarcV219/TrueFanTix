@@ -186,11 +186,14 @@ export async function GET(req: Request) {
       const eventTypeOverride = inferEvidenceEventType(t.title, parsedEvidence);
       const confirmedFaceValueCents =
         typeof officialSync?.officialFaceValueCents === "number" ? officialSync.officialFaceValueCents : null;
+      const receiptConfirmedFaceValueCents =
+        officialSync?.faceValueSource === "receipt" && faceValueCents != null ? faceValueCents : null;
+      const displayedConfirmedFaceValueCents = confirmedFaceValueCents ?? receiptConfirmedFaceValueCents;
       const confirmedMaxListPriceCents =
-        confirmedFaceValueCents == null ? null : confirmedFaceValueCents + Math.max(0, adminFeePaidCents);
+        displayedConfirmedFaceValueCents == null ? null : displayedConfirmedFaceValueCents + Math.max(0, adminFeePaidCents);
       const isAboveConfirmedFaceValue =
         confirmedMaxListPriceCents != null ? priceCents > confirmedMaxListPriceCents : false;
-      const isPriceUnconfirmed = confirmedFaceValueCents == null;
+      const isPriceUnconfirmed = displayedConfirmedFaceValueCents == null;
       const isValidationMismatch = officialSync ? (!!officialSync.found && !!officialSync.reason) : false;
 
       return {
@@ -213,7 +216,16 @@ export async function GET(req: Request) {
           date: { confirmed: !!officialSync?.found, source: officialSync?.sourceUrl ?? null, note: !!officialSync?.found ? "Matched via official provider event lookup" : "Not confirmed yet" },
           location: { confirmed: !!officialSync?.found, source: officialSync?.sourceUrl ?? null, note: !!officialSync?.found ? "Matched via official provider event lookup" : "Not confirmed yet" },
           seat: { confirmed: false, source: null, note: "Primary-market public API does not reliably expose seat/row-level confirmation" },
-          price: { confirmed: confirmedFaceValueCents != null, source: officialSync?.sourceUrl ?? null, note: confirmedFaceValueCents != null ? "Confirmed against official primary-market event price range" : "No official face value confirmed" },
+          price: {
+            confirmed: displayedConfirmedFaceValueCents != null,
+            source: confirmedFaceValueCents != null ? officialSync?.sourceUrl ?? null : receiptConfirmedFaceValueCents != null ? "receipt-ocr" : null,
+            note:
+              confirmedFaceValueCents != null
+                ? "Confirmed against official primary-market event price range"
+                : receiptConfirmedFaceValueCents != null
+                  ? "Confirmed via receipt OCR"
+                  : "No face value confirmed",
+          },
           serviceFees: {
             confirmed: typeof officialSync?.verifiedServiceFeesCents === "number",
             source: officialSync?.officialServiceFeeSource ?? (typeof officialSync?.verifiedServiceFeesCents === "number" ? "receipt-ocr" : null),
