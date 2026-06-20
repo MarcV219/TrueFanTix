@@ -59,7 +59,7 @@ function TicketCard({ ticket }: { ticket: Ticket }) {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch (err) {
+    } catch {
       alert("Failed to download QR code. Please try again.");
     }
   };
@@ -239,7 +239,7 @@ function Body() {
       >
         <h3 style={{ margin: "0 0 8px", fontSize: 20 }}>No tickets yet</h3>
         <p style={{ margin: 0, opacity: 0.7 }}>
-          Tickets you purchase will appear here. Browse available tickets on the{" "}
+          Completed purchases will appear here. Pending transfers are shown in Holding. Browse available tickets on the{" "}
           <Link href="/" style={{ textDecoration: "underline", color: "rgba(6, 74, 147, 1)" }}>
             homepage
           </Link>
@@ -263,7 +263,7 @@ function Body() {
 
 export default function BoughtTicketsPage() {
   return (
-    <Shell title="My Tickets">
+    <Shell title="Tickets — Bought">
       <AccountGate
         nextPath="/account/tickets/bought"
         loadingFallback={<p style={{ opacity: 0.8 }}>Loading…</p>}

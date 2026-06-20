@@ -9,12 +9,12 @@ export async function GET(req: Request) {
   if (!gate.ok) return gate.res;
 
   try {
-    const tickets = await getBuyerTickets(gate.user.id, ["COMPLETED"]);
+    const tickets = await getBuyerTickets(gate.user.id, ["PAID", "DELIVERED"]);
     return NextResponse.json({ ok: true, tickets }, { status: 200 });
   } catch (err: any) {
-    console.error("GET /api/account/tickets/bought error:", err);
+    console.error("GET /api/account/tickets/holding error:", err);
     return NextResponse.json(
-      { ok: false, error: "SERVER_ERROR", message: "Failed to load tickets." },
+      { ok: false, error: "SERVER_ERROR", message: "Failed to load holding tickets." },
       { status: 500 }
     );
   }

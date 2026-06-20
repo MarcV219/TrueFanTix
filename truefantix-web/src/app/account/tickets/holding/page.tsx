@@ -1,8 +1,23 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AccountGate from "@/app/account/_components/accountgate";
+
+type HoldingTicket = {
+  id: string;
+  title: string;
+  venue: string;
+  date: string;
+  price: number;
+  image: string;
+  status: string;
+  orderStatus: string;
+  transferVerificationStatus: string | null;
+  buyerConfirmationStatus: string | null;
+  orderId: string;
+  orderDate: string;
+};
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -16,11 +31,9 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
             </Link>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <Link href="/" style={{ textDecoration: "underline" }}>
-            Home
-          </Link>
-        </div>
+        <Link href="/" style={{ textDecoration: "underline" }}>
+          Home
+        </Link>
       </div>
 
       <div style={{ marginTop: 18 }}>{children}</div>
@@ -28,20 +41,154 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function Body() {
+function fulfillmentLabel(ticket: HoldingTicket) {
+  if (ticket.orderStatus === "PAID") return "Awaiting seller transfer";
+  if (ticket.orderStatus === "DELIVERED" && ticket.buyerConfirmationStatus === "CONFIRMED") return "Transfer confirmed";
+  if (ticket.orderStatus === "DELIVERED") return "Transferred - awaiting final completion";
+  return ticket.orderStatus;
+}
+
+function TicketCard({ ticket }: { ticket: HoldingTicket }) {
   return (
     <div
       style={{
-        padding: 14,
+        padding: 16,
         borderRadius: 12,
         border: "1px solid rgba(0,0,0,0.10)",
         background: "white",
+        marginBottom: 16,
       }}
     >
-      <div style={{ fontWeight: 950, fontSize: 18 }}>Coming next</div>
-      <div style={{ marginTop: 8, opacity: 0.85 }}>
-        We’ll list tickets you bought (pending delivery / delivered) with event info + receipt links.
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        {ticket.image ? (
+          <img
+            src={ticket.image}
+            alt={ticket.title}
+            style={{ width: 120, height: 80, objectFit: "cover", borderRadius: 8 }}
+          />
+        ) : null}
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 900 }}>{ticket.title}</h3>
+          <p style={{ margin: "4px 0", opacity: 0.72 }}>{ticket.venue}</p>
+          <p style={{ margin: "4px 0", opacity: 0.62, fontSize: 14 }}>{ticket.date}</p>
+          <p style={{ margin: "8px 0 0", fontWeight: 800, color: "rgba(6, 74, 147, 1)" }}>
+            ${ticket.price.toFixed(2)}
+          </p>
+        </div>
+        <div style={{ display: "grid", gap: 8, alignContent: "center", minWidth: 180 }}>
+          <span
+            style={{
+              padding: "6px 12px",
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 900,
+              background: "rgba(219, 234, 254, 1)",
+              color: "rgba(30, 64, 175, 1)",
+              textAlign: "center",
+            }}
+          >
+            {fulfillmentLabel(ticket)}
+          </span>
+          <span
+            style={{
+              padding: "6px 12px",
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 900,
+              background: "rgba(240, 253, 244, 1)",
+              color: "rgba(22, 101, 52, 1)",
+              textAlign: "center",
+            }}
+          >
+            Payment held in escrow
+          </span>
+          <p style={{ margin: 0, fontSize: 12, opacity: 0.62, textAlign: "center" }}>
+            Purchased {new Date(ticket.orderDate).toLocaleDateString()}
+          </p>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function Body() {
+  const [tickets, setTickets] = useState<HoldingTicket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchTickets() {
+      try {
+        const res = await fetch("/api/account/tickets/holding", { cache: "no-store" });
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || "Failed to load holding tickets");
+        }
+
+        setTickets(data.tickets || []);
+      } catch (err: any) {
+        setError(err.message || "Failed to load holding tickets");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchTickets();
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={{ textAlign: "center", padding: 40 }}>
+        <div style={{ opacity: 0.7 }}>Loading holding tickets...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div
+        role="alert"
+        style={{
+          padding: 12,
+          borderRadius: 10,
+          border: "1px solid rgba(255,0,0,0.35)",
+          background: "rgba(254, 242, 242, 1)",
+          color: "rgba(153, 27, 27, 1)",
+        }}
+      >
+        {error}
+      </div>
+    );
+  }
+
+  if (!tickets.length) {
+    return (
+      <div
+        style={{
+          padding: 40,
+          borderRadius: 12,
+          border: "1px solid rgba(0,0,0,0.10)",
+          background: "white",
+          textAlign: "center",
+        }}
+      >
+        <h3 style={{ margin: "0 0 8px", fontSize: 20 }}>No holding tickets</h3>
+        <p style={{ margin: 0, opacity: 0.7 }}>
+          Tickets you have paid for will appear here until transfer and receipt are confirmed.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p style={{ marginBottom: 16, opacity: 0.8 }}>
+        {tickets.length} ticket{tickets.length !== 1 ? "s" : ""} pending transfer or final completion.
+      </p>
+      {tickets.map((ticket) => (
+        <TicketCard key={`${ticket.orderId}-${ticket.id}`} ticket={ticket} />
+      ))}
     </div>
   );
 }
