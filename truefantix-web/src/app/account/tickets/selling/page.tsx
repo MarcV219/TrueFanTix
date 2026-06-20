@@ -10,6 +10,7 @@ type CreateTicketBody = {
   priceCents: number;
   faceValueCents?: number | null;
   adminFeePaidCents?: number;
+  purchaseQuantity?: number;
   image?: string | null;
   venue: string;
   date: string; // keep string for now (matches schema)
@@ -37,7 +38,7 @@ type PricingConfirmation = {
 
 type PricingSourceIssue = {
   code: string;
-  field: "title" | "venue" | "date" | "faceValue" | "serviceFees" | "listPrice" | "receipt";
+  field: "title" | "venue" | "date" | "time" | "faceValue" | "serviceFees" | "listPrice" | "receipt" | "quantity" | "seating";
   source: "Ticketmaster" | "Receipt";
   entered: string | null;
   found: string | null;
@@ -1099,12 +1100,12 @@ function Body({ me }: { me: MeUser }) {
       return;
     }
 
-    const allowed = file.type.startsWith("image/") || file.type === "application/pdf";
+    const allowed = file.type.startsWith("image/");
     if (!allowed) {
       setReceiptProofDataUrl("");
       setReceiptFileName("");
       setSellerConfirmedReceiptValues(false);
-      setError("Upload a receipt image or PDF.");
+      setError("Upload a receipt image or screenshot so automated OCR can review it.");
       return;
     }
 
@@ -1160,7 +1161,14 @@ function Body({ me }: { me: MeUser }) {
     }
 
     if (issue.field === "serviceFees") {
-      setAdminFeePaid("0");
+      setAdminFeePaid(issue.found ? moneyTextToDollars(issue.found) : "0");
+      setPricingConfirmation(null);
+      setError(null);
+      return;
+    }
+
+    if (issue.field === "quantity" && issue.found) {
+      setTicketQuantity(String(normalizeTicketQuantity(issue.found)));
       setPricingConfirmation(null);
       setError(null);
       return;
@@ -1189,7 +1197,8 @@ function Body({ me }: { me: MeUser }) {
   }
 
   function actionLabelForSourceIssue(issue: PricingSourceIssue) {
-    if (issue.field === "serviceFees") return "Set fees to $0";
+    if (issue.field === "serviceFees") return issue.found ? "Use receipt fees" : "Set fees to $0";
+    if (issue.field === "quantity") return "Use quantity";
     if (issue.field === "faceValue") return "Use face value";
     if (issue.field === "listPrice") return "Use max price";
     if (issue.field === "venue") return "Use venue";
@@ -1265,6 +1274,7 @@ function Body({ me }: { me: MeUser }) {
           priceCents,
           faceValueCents,
           adminFeePaidCents,
+          purchaseQuantity: quantity,
           verificationImage: receiptProofDataUrl,
           receiptFileName,
           sellerConfirmedReceiptValues,
@@ -2025,11 +2035,11 @@ function Body({ me }: { me: MeUser }) {
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontWeight: 900 }}>Purchase receipt proof</span>
               <div style={{ fontSize: 12, opacity: 0.7 }}>
-                Required. Upload the original receipt showing the event, tickets, face value, and service fees paid.
+                Required. Upload an image or screenshot of the original receipt showing the event, tickets, face value, and service fees paid.
               </div>
               <input
                 type="file"
-                accept="image/*,application/pdf"
+                accept="image/*"
                 onChange={handleReceiptProofChange}
                 disabled={busy}
                 style={inputStyle(false)}

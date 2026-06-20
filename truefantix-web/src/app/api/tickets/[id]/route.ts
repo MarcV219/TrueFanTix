@@ -7,6 +7,7 @@ import { fetchOfficialSnapshot } from "@/lib/officialPricing";
 import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
 import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
+import { analyzeReceiptProof, type ReceiptOcrReview } from "@/lib/tickets/receiptOcr";
 
 function normalizeId(value: unknown) {
   try {
@@ -37,6 +38,16 @@ function centsToDollars(cents: number) {
 
 function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message }, { status: 400 });
+}
+
+function receiptReviewFromEvidence(value: unknown): ReceiptOcrReview | null {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    const ocr = parsed?.receiptProof?.ocr;
+    return ocr && typeof ocr === "object" ? ocr as ReceiptOcrReview : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function GET(req: Request) {
@@ -257,16 +268,28 @@ export async function PATCH(req: Request) {
       primaryVendor,
     });
 
+    const existingReceiptReview = receiptReviewFromEvidence(existing.verificationEvidence);
+    const receiptReview =
+      existingReceiptReview ??
+      await analyzeReceiptProof({
+        receiptDataUrl: existing.verificationImage,
+        receiptFileName: null,
+      });
+
     const listingCheck = validateListingPriceAgainstOfficial({
       official,
       sellerTitle: title,
       sellerDate: date,
       sellerVenue: venue,
+      sellerRow: row,
+      sellerSeat: seat,
+      purchaseQuantity: 1,
       priceCents,
       sellerFaceValueCents: faceValueCents,
       adminFeePaidCents,
       hasReceiptProof: !!existing.verificationImage,
       sellerConfirmedReceiptValues: true,
+      receiptReview,
       action: "update",
     });
 
@@ -353,6 +376,10 @@ export async function PATCH(req: Request) {
             maxListPriceCents: listingCheck.maxListPriceCents,
             soldOut: official.soldOut,
             reason: official.reason ?? null,
+          },
+          receiptProof: {
+            ...(existingEvidence.receiptProof ?? {}),
+            ocr: receiptReview,
           },
           sellerEditedAt: new Date().toISOString(),
         }),

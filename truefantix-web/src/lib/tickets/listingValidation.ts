@@ -1,15 +1,20 @@
 import type { OfficialSnapshot } from "@/lib/officialPricing";
+import type { ReceiptOcrReview } from "@/lib/tickets/receiptOcr";
 
 type ListingValidationInput = {
   official: OfficialSnapshot;
   sellerTitle: string;
   sellerDate: string;
   sellerVenue: string;
+  sellerRow: string | null;
+  sellerSeat: string | null;
+  purchaseQuantity: number;
   priceCents: number;
   sellerFaceValueCents: number | null;
   adminFeePaidCents: number;
   hasReceiptProof: boolean;
   sellerConfirmedReceiptValues: boolean;
+  receiptReview: ReceiptOcrReview | null;
   action: "list" | "update";
 };
 
@@ -33,7 +38,7 @@ export type ListingPricingDetails = {
 
 export type ListingSourceIssue = {
   code: string;
-  field: "title" | "venue" | "date" | "faceValue" | "serviceFees" | "listPrice" | "receipt";
+  field: "title" | "venue" | "date" | "time" | "faceValue" | "serviceFees" | "listPrice" | "receipt" | "quantity" | "seating";
   source: "Ticketmaster" | "Receipt";
   entered: string | null;
   found: string | null;
@@ -44,20 +49,90 @@ export function centsToDisplay(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+function tokenize(value: string): string[] {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => !new Set(["the", "and", "vs", "at", "tickets", "ticket", "receipt"]).has(token));
+}
+
+function overlap(a: string | null | undefined, b: string | null | undefined): number {
+  const aa = Array.from(new Set(tokenize(a ?? "")));
+  const bb = new Set(tokenize(b ?? ""));
+  if (!aa.length || !bb.size) return 0;
+  let hits = 0;
+  for (const token of aa) if (bb.has(token)) hits += 1;
+  return hits / aa.length;
+}
+
+function ymd(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const direct = value.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  if (direct) return direct;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function timeMinutes(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const match = value.trim().match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const period = match[3]?.toUpperCase();
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (period === "PM" && hour < 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+  return hour * 60 + minute;
+}
+
+function sellerTimeFromDate(value: string): string | null {
+  return value.match(/\d{1,2}:\d{2}\s*(AM|PM)/i)?.[0] ?? null;
+}
+
+function sameMoney(a: number | null | undefined, b: number | null | undefined) {
+  return typeof a === "number" && typeof b === "number" && Math.abs(a - b) <= 1;
+}
+
+function seatText(row: string | null | undefined, seat: string | null | undefined) {
+  return [row ? `Row ${row}` : null, seat ? `Seat ${seat}` : null].filter(Boolean).join(" ");
+}
+
+function receiptHasSeat(receipt: ReceiptOcrReview, sellerRow: string | null, sellerSeat: string | null) {
+  const row = String(sellerRow ?? "").trim().toLowerCase();
+  const seat = String(sellerSeat ?? "").trim().toLowerCase();
+  if (!row && !seat) return true;
+  return receipt.seats.some((item) => {
+    const receiptRow = String(item.row ?? "").trim().toLowerCase();
+    const receiptSeat = String(item.seat ?? "").trim().toLowerCase();
+    return (!row || receiptRow === row) && (!seat || receiptSeat === seat);
+  });
+}
+
 export function validateListingPriceAgainstOfficial({
   official,
   sellerTitle,
   sellerDate,
   sellerVenue,
+  sellerRow,
+  sellerSeat,
+  purchaseQuantity,
   priceCents,
   sellerFaceValueCents,
   adminFeePaidCents,
   hasReceiptProof,
   sellerConfirmedReceiptValues,
+  receiptReview,
   action,
 }: ListingValidationInput): ListingValidationResult {
   const notChanged = action === "list" ? "The tickets were not listed." : "The listing was not updated.";
   const normalizedAdminFeePaidCents = Math.max(0, adminFeePaidCents);
+  let verifiedServiceFeesCents = 0;
 
   const details = (officialFaceValueCents: number | null, sourceIssues: ListingSourceIssue[] = []): ListingPricingDetails => ({
     officialFaceValueCents,
@@ -67,7 +142,7 @@ export function validateListingPriceAgainstOfficial({
     sourceUrl: official.sourceUrl ?? null,
     sellerFaceValueCents,
     adminFeePaidCents: normalizedAdminFeePaidCents,
-    maxListPriceCents: officialFaceValueCents,
+    maxListPriceCents: officialFaceValueCents == null ? null : officialFaceValueCents + verifiedServiceFeesCents,
     receiptRequired: !hasReceiptProof,
     sellerConfirmationRequired: !sellerConfirmedReceiptValues,
     sourceIssues,
@@ -85,15 +160,154 @@ export function validateListingPriceAgainstOfficial({
     });
   }
 
-  if (normalizedAdminFeePaidCents > 0) {
-    receiptIssues.push({
-      code: "SERVICE_FEES_NOT_VERIFIED",
-      field: "serviceFees",
-      source: "Receipt",
-      entered: centsToDisplay(normalizedAdminFeePaidCents),
-      found: null,
-      message: "Service fees paid above face value must be verified from the uploaded receipt before they can increase the allowed list price.",
-    });
+  if (hasReceiptProof && sellerConfirmedReceiptValues) {
+    if (!receiptReview || receiptReview.status === "unavailable") {
+      receiptIssues.push({
+        code: "RECEIPT_OCR_UNAVAILABLE",
+        field: "receipt",
+        source: "Receipt",
+        entered: "Uploaded",
+        found: null,
+        message: "Automated receipt review is unavailable, so the receipt cannot be confirmed yet.",
+      });
+    } else if (receiptReview.status === "unsupported") {
+      receiptIssues.push({
+        code: "RECEIPT_OCR_UNSUPPORTED",
+        field: "receipt",
+        source: "Receipt",
+        entered: "Uploaded",
+        found: null,
+        message: "Automated receipt review currently requires an image receipt upload.",
+      });
+    } else {
+      if (!receiptReview.hasPurchaseReceipt) {
+        receiptIssues.push({
+          code: "RECEIPT_PURCHASE_NOT_CONFIRMED",
+          field: "receipt",
+          source: "Receipt",
+          entered: "Uploaded",
+          found: receiptReview.rawTextSummary,
+          message: "The uploaded receipt does not clearly show a ticket purchase receipt.",
+        });
+      }
+
+      if (!receiptReview.hasTickets) {
+        receiptIssues.push({
+          code: "RECEIPT_TICKETS_NOT_CONFIRMED",
+          field: "receipt",
+          source: "Receipt",
+          entered: "Tickets purchased",
+          found: receiptReview.rawTextSummary,
+          message: "The uploaded receipt does not clearly confirm tickets were purchased.",
+        });
+      }
+
+      if (!receiptReview.eventTitle || overlap(sellerTitle, receiptReview.eventTitle) < 0.45) {
+        receiptIssues.push({
+          code: "RECEIPT_EVENT_MISMATCH",
+          field: "title",
+          source: "Receipt",
+          entered: sellerTitle || null,
+          found: receiptReview.eventTitle,
+          message: "Receipt event does not match the event entered.",
+        });
+      }
+
+      if (!receiptReview.venue || overlap(sellerVenue, receiptReview.venue) < 0.45) {
+        receiptIssues.push({
+          code: "RECEIPT_VENUE_MISMATCH",
+          field: "venue",
+          source: "Receipt",
+          entered: sellerVenue || null,
+          found: receiptReview.venue,
+          message: "Receipt venue does not match the venue entered.",
+        });
+      }
+
+      const sellerYmd = ymd(sellerDate);
+      const receiptYmd = ymd(receiptReview.eventDate);
+      if (!receiptYmd || sellerYmd !== receiptYmd) {
+        receiptIssues.push({
+          code: "RECEIPT_DATE_MISMATCH",
+          field: "date",
+          source: "Receipt",
+          entered: sellerYmd,
+          found: receiptYmd,
+          message: "Receipt date does not match the event date entered.",
+        });
+      }
+
+      const sellerMinutes = timeMinutes(sellerTimeFromDate(sellerDate));
+      const receiptMinutes = timeMinutes(receiptReview.eventTime);
+      if (receiptMinutes == null || sellerMinutes == null || Math.abs(sellerMinutes - receiptMinutes) > 15) {
+        receiptIssues.push({
+          code: "RECEIPT_TIME_MISMATCH",
+          field: "time",
+          source: "Receipt",
+          entered: sellerTimeFromDate(sellerDate),
+          found: receiptReview.eventTime,
+          message: "Receipt time does not match the event time entered.",
+        });
+      }
+
+      if (receiptReview.ticketQuantity == null || receiptReview.ticketQuantity !== purchaseQuantity) {
+        receiptIssues.push({
+          code: "RECEIPT_QUANTITY_MISMATCH",
+          field: "quantity",
+          source: "Receipt",
+          entered: String(purchaseQuantity),
+          found: receiptReview.ticketQuantity == null ? null : String(receiptReview.ticketQuantity),
+          message: "Receipt ticket quantity does not match the number of tickets being listed.",
+        });
+      }
+
+      if (!receiptHasSeat(receiptReview, sellerRow, sellerSeat)) {
+        const receiptSeats = receiptReview.seats.map((seat) => seatText(seat.row, seat.seat)).filter(Boolean).join("; ");
+        receiptIssues.push({
+          code: "RECEIPT_SEATING_MISMATCH",
+          field: "seating",
+          source: "Receipt",
+          entered: seatText(sellerRow, sellerSeat) || null,
+          found: receiptSeats || null,
+          message: "Receipt seating does not match the row/seat entered.",
+        });
+      }
+
+      const receiptFaceValueCents =
+        receiptReview.faceValueCents ??
+        (receiptReview.totalFaceValueCents != null && receiptReview.ticketQuantity
+          ? Math.round(receiptReview.totalFaceValueCents / receiptReview.ticketQuantity)
+          : null);
+      const receiptServiceFeesCents =
+        receiptReview.serviceFeesCents ??
+        (receiptReview.totalServiceFeesCents != null && receiptReview.ticketQuantity
+          ? Math.round(receiptReview.totalServiceFeesCents / receiptReview.ticketQuantity)
+          : null);
+
+      if (!sameMoney(receiptFaceValueCents, sellerFaceValueCents)) {
+        receiptIssues.push({
+          code: "RECEIPT_FACE_VALUE_MISMATCH",
+          field: "faceValue",
+          source: "Receipt",
+          entered: sellerFaceValueCents == null ? null : centsToDisplay(sellerFaceValueCents),
+          found: receiptFaceValueCents == null ? null : centsToDisplay(receiptFaceValueCents),
+          message: "Receipt face value does not match the face value entered.",
+        });
+      }
+
+      if (!sameMoney(receiptServiceFeesCents, normalizedAdminFeePaidCents)) {
+        receiptIssues.push({
+          code: "RECEIPT_SERVICE_FEES_MISMATCH",
+          field: "serviceFees",
+          source: "Receipt",
+          entered: centsToDisplay(normalizedAdminFeePaidCents),
+          found: receiptServiceFeesCents == null ? null : centsToDisplay(receiptServiceFeesCents),
+          message: "Receipt service fees do not match the service fees entered.",
+        });
+      } else {
+        verifiedServiceFeesCents = normalizedAdminFeePaidCents;
+      }
+    }
   }
 
   if (!hasReceiptProof || !sellerConfirmedReceiptValues) {
@@ -212,7 +426,7 @@ export function validateListingPriceAgainstOfficial({
     });
   }
 
-  const maxListPriceCents = official.officialFaceValueCents;
+  const maxListPriceCents = official.officialFaceValueCents + verifiedServiceFeesCents;
 
   if (priceCents > maxListPriceCents) {
     issues.push({

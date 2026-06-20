@@ -25,6 +25,7 @@ export const schemas = {
     priceCents: z.number().int().positive().max(10_000_000),
     faceValueCents: z.number().int().nonnegative().optional().nullable(),
     adminFeePaidCents: z.number().int().nonnegative().max(10_000_000).optional(),
+    purchaseQuantity: z.number().int().positive().max(20).optional(),
 
     // Optional client-provided image (server will try to auto-fetch a relevant one first)
     image: z.string().trim().url().max(2048).optional().nullable(),
@@ -50,7 +51,7 @@ export const schemas = {
       .trim()
       .max(2_000_000)
       .refine((value) => !value || value.startsWith("data:image/") || value.startsWith("data:application/pdf;") || /^https?:\/\//i.test(value), {
-        message: "verificationImage must be an image/PDF receipt upload or URL.",
+        message: "verificationImage must be an image receipt upload, PDF receipt upload, or URL.",
       })
       .optional()
       .nullable(),

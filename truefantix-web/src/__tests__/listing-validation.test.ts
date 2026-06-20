@@ -1,5 +1,6 @@
 import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
 import type { OfficialSnapshot } from "@/lib/officialPricing";
+import type { ReceiptOcrReview } from "@/lib/tickets/receiptOcr";
 
 function official(overrides: Partial<OfficialSnapshot> = {}): OfficialSnapshot {
   return {
@@ -12,6 +13,33 @@ function official(overrides: Partial<OfficialSnapshot> = {}): OfficialSnapshot {
   };
 }
 
+function receipt(overrides: Partial<ReceiptOcrReview> = {}): ReceiptOcrReview {
+  return {
+    ok: true,
+    status: "verified",
+    provider: "openai",
+    model: "test-model",
+    reason: null,
+    hasPurchaseReceipt: true,
+    hasTickets: true,
+    eventTitle: "Example Event",
+    artistOrTeam: "Example Event",
+    venue: "Example Venue",
+    eventDate: "2026-10-20",
+    eventTime: "7:00 PM",
+    ticketQuantity: 1,
+    seats: [{ section: null, row: "12", seat: "8" }],
+    faceValueCents: 10000,
+    totalFaceValueCents: 10000,
+    serviceFeesCents: 0,
+    totalServiceFeesCents: 0,
+    currency: "USD",
+    confidence: 0.9,
+    rawTextSummary: "Example Event receipt",
+    ...overrides,
+  };
+}
+
 describe("listing validation", () => {
   it("allows listings at official face value", () => {
     const result = validateListingPriceAgainstOfficial({
@@ -19,11 +47,15 @@ describe("listing validation", () => {
       sellerTitle: "Example Event",
       sellerDate: "2026-10-20 7:00 PM",
       sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
       priceCents: 10000,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
+      receiptReview: receipt(),
       action: "list",
     });
 
@@ -37,11 +69,15 @@ describe("listing validation", () => {
       sellerTitle: "Example Event",
       sellerDate: "2026-10-20 7:00 PM",
       sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
       priceCents: 9500,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
+      receiptReview: receipt(),
       action: "list",
     });
 
@@ -54,11 +90,15 @@ describe("listing validation", () => {
       sellerTitle: "Example Event",
       sellerDate: "2026-10-20 7:00 PM",
       sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
       priceCents: 9500,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
+      receiptReview: receipt(),
       action: "list",
     });
 
@@ -88,11 +128,18 @@ describe("listing validation", () => {
       sellerTitle: "Toronto Raptors vs Boston Celtics",
       sellerDate: "2026-10-20 7:00 PM",
       sellerVenue: "Wrong Venue, Toronto",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
       priceCents: 10000,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventTitle: "Toronto Raptors vs Boston Celtics",
+        venue: "Wrong Venue, Toronto",
+      }),
       action: "list",
     });
 
@@ -113,11 +160,15 @@ describe("listing validation", () => {
       sellerTitle: "Example Event",
       sellerDate: "2026-10-21 7:00 PM",
       sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
       priceCents: 10000,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({ eventDate: "2026-10-21" }),
       action: "list",
     });
 
@@ -134,11 +185,15 @@ describe("listing validation", () => {
       sellerTitle: "Example Event",
       sellerDate: "2026-10-20 7:00 PM",
       sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
       priceCents: 10000,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
+      receiptReview: receipt(),
       action: "list",
     });
 
@@ -146,22 +201,51 @@ describe("listing validation", () => {
     if (!result.ok) expect(result.error).toBe("OFFICIAL_FACE_VALUE_NOT_CONFIRMED");
   });
 
-  it("rejects service fees until receipt fee verification exists", () => {
+  it("allows service fees when receipt OCR verifies the same fees", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),
       sellerTitle: "Example Event",
       sellerDate: "2026-10-20 7:00 PM",
       sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
       priceCents: 11250,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 1250,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        serviceFeesCents: 1250,
+        totalServiceFeesCents: 1250,
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.maxListPriceCents).toBe(11250);
+  });
+
+  it("rejects service fees when receipt OCR cannot verify the same fees", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 11250,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 1250,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt(),
       action: "list",
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBe("SERVICE_FEES_NOT_VERIFIED");
+    if (!result.ok) expect(result.error).toBe("RECEIPT_SERVICE_FEES_MISMATCH");
   });
 
   it("requires receipt proof and seller confirmation", () => {
@@ -170,11 +254,15 @@ describe("listing validation", () => {
       sellerTitle: "Example Event",
       sellerDate: "2026-10-20 7:00 PM",
       sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
       priceCents: 10000,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 0,
       hasReceiptProof: false,
       sellerConfirmedReceiptValues: false,
+      receiptReview: null,
       action: "list",
     });
 
