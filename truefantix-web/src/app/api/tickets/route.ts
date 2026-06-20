@@ -26,6 +26,29 @@ function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message }, { status: 400 });
 }
 
+function inferEvidenceEventType(title: string, parsedEvidence: any): string | null {
+  const manualEventType = typeof parsedEvidence?.manualEventType === "string" ? parsedEvidence.manualEventType.trim().toLowerCase() : "";
+  if (manualEventType) return manualEventType;
+
+  const storedInferred = typeof parsedEvidence?.inferredEventType === "string" ? parsedEvidence.inferredEventType.trim().toLowerCase() : "";
+  if (storedInferred) return storedInferred;
+
+  const receiptOcr = parsedEvidence?.receiptProof?.ocr ?? null;
+  const officialSync = parsedEvidence?.officialPricingSync ?? null;
+  const evidenceText = [
+    title,
+    receiptOcr?.eventTitle,
+    receiptOcr?.artistOrTeam,
+    receiptOcr?.rawTextSummary,
+    officialSync?.sourceUrl,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const inferred = getEventType(evidenceText).type;
+  return inferred === "other" ? null : inferred;
+}
+
 export async function GET(req: Request) {
   const rlResult = await applyRateLimit(req, "DEFAULT_UNAUTH_READ");
   if (!rlResult.ok) return rlResult.response;
@@ -155,7 +178,7 @@ export async function GET(req: Request) {
       }
 
       const officialSync = parsedEvidence?.officialPricingSync ?? null;
-      const eventTypeOverride = typeof parsedEvidence?.manualEventType === "string" ? parsedEvidence.manualEventType : null;
+      const eventTypeOverride = inferEvidenceEventType(t.title, parsedEvidence);
       const confirmedFaceValueCents =
         typeof officialSync?.officialFaceValueCents === "number" ? officialSync.officialFaceValueCents : null;
       const confirmedMaxListPriceCents =
@@ -440,7 +463,11 @@ export async function POST(req: Request) {
     }
 
     // Auto image pipeline: always attempt event-relevant fetch server-side.
-    const inferredEventType = eventTypeOverride ?? getEventType(title).type;
+    const evidenceEventType = inferEvidenceEventType(title, {
+      manualEventType: eventTypeOverride,
+      receiptProof: { ocr: receiptReview },
+    });
+    const inferredEventType = evidenceEventType ?? getEventType(title).type;
     let imageSource: "brave" | "client-fallback" | "placeholder" = "placeholder";
     let imageReason = "no-usable-auto-image";
 
@@ -487,6 +514,7 @@ export async function POST(req: Request) {
           providerConfirmed: providerCheck.confirmed,
           providerReason: providerCheck.reason,
           manualEventType: eventTypeOverride,
+          inferredEventType,
           receiptProof: {
             provided: !!verificationImage,
             fileName: receiptFileName,
