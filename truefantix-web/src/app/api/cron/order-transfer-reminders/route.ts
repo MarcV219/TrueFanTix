@@ -11,13 +11,7 @@ export async function POST(req: Request) {
   }
 
   const result = await runTransferReminderWorkflow(new Date());
-
-  return NextResponse.json({
-    ok: true,
-    deprecated: true,
-    message: "Escrow timeout cancellation is disabled. Paid orders now use transfer reminders and buyer confirmation windows.",
-    ...result,
-  });
+  return NextResponse.json({ ok: true, ...result });
 }
 
 export async function GET(req: Request) {

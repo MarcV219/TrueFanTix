@@ -668,6 +668,16 @@ function AccountHub({ me }: { me: MeUser }) {
               disabled={!sellerEligible}
             />
             <ToolLink
+              label="Seller holding (transfer required)"
+              hint={
+                sellerEligible
+                  ? "Sold tickets awaiting transfer or buyer confirmation."
+                  : "Locked until seller verification is complete (email + phone + Stripe)."
+              }
+              href="/account/tickets/seller-holding"
+              disabled={!sellerEligible}
+            />
+            <ToolLink
               label="Bought (completed)"
               hint="Your past purchases and receipts."
               href="/account/tickets/bought"

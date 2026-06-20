@@ -42,6 +42,7 @@ export async function getBuyerTickets(userId: string, statuses: OrderStatus[]) {
       orderStatus: order.status,
       transferVerificationStatus: order.transferVerificationStatus,
       buyerConfirmationStatus: order.buyerConfirmationStatus,
+      buyerConfirmationDeadline: order.disputeWindowEndsAt?.toISOString() ?? null,
       orderId: order.id,
       orderDate: order.createdAt.toISOString(),
       qrCodeUrl: `/api/tickets/${item.ticket.id}/qr`,

@@ -4,6 +4,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards"; // requireUser instead of requireSellerApproved for general access
 import { schemas, validateRequest } from "@/lib/validation";
+import {
+  BUYER_CONFIRMATION_DEADLINE_HOURS,
+  addHours,
+  notifyBuyerTransferConfirmationRequired,
+} from "@/lib/orders/transferWorkflow";
 
 // POST /api/orders/transfer-proof
 // Allows a seller to submit proof of ticket transfer for a specific order.
@@ -32,6 +37,8 @@ export async function POST(req: Request) {
         sellerId: true,
         status: true,
         buyerConfirmationStatus: true,
+        items: { select: { id: true } },
+        buyerSeller: { include: { user: true } },
       },
     });
 
@@ -62,8 +69,8 @@ export async function POST(req: Request) {
     }
 
     // Update the order with transfer proof and set dispute window
-    const disputeWindowEndsAt = new Date();
-    disputeWindowEndsAt.setDate(disputeWindowEndsAt.getDate() + 2); // 2-day dispute window (48 hours)
+    const submittedAt = new Date();
+    const disputeWindowEndsAt = addHours(submittedAt, BUYER_CONFIRMATION_DEADLINE_HOURS);
 
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
@@ -82,7 +89,15 @@ export async function POST(req: Request) {
       },
     });
 
-    // TODO: Trigger notification to buyer that transfer proof has been submitted
+    if (order.buyerSeller.user?.id) {
+      await notifyBuyerTransferConfirmationRequired({
+        buyerUserId: order.buyerSeller.user.id,
+        orderId,
+        ticketCount: order.items.length,
+        deadline: disputeWindowEndsAt,
+        now: submittedAt,
+      });
+    }
     // TODO: Trigger automated transfer verification (AI image analysis)
 
     return NextResponse.json(

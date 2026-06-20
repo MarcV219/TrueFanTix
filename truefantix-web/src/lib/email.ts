@@ -218,7 +218,13 @@ Total: $${total}
 Tickets:
 ${ticketList}
 
-You can view your tickets in your account at any time.
+What happens next:
+1. Your payment is being held by TrueFanTix while the seller transfers the tickets.
+2. The seller has 24 hours to transfer the tickets to you and confirm the transfer.
+3. After the seller confirms transfer, you will be notified right away and will have 24 hours to confirm that you received the tickets.
+4. If you do not confirm or open a dispute within that 24-hour confirmation period, the seller payout will be released automatically.
+
+You can track these tickets in Account > Holding.
 
 Thanks,
 The TrueFanTix Team`;
@@ -234,6 +240,7 @@ The TrueFanTix Team`;
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
     .order-info { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
     .button { display: inline-block; background: #064a93; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
+    .process { background: #eff6ff; border: 1px solid #bfdbfe; padding: 18px; border-radius: 8px; margin: 20px 0; }
     .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
     .total { font-size: 24px; font-weight: bold; color: #064a93; }
   </style>
@@ -256,9 +263,19 @@ The TrueFanTix Team`;
           ${ticketListHtml}
         </ul>
       </div>
+
+      <div class="process">
+        <h3 style="margin-top: 0;">What happens next</h3>
+        <ol style="padding-left: 20px; margin-bottom: 0;">
+          <li>Your payment is held by TrueFanTix while the seller transfers the tickets.</li>
+          <li>The seller has <strong>24 hours</strong> to transfer the tickets and confirm the transfer.</li>
+          <li>After that, you will be notified right away and will have <strong>24 hours</strong> to confirm you received the tickets.</li>
+          <li>If you do not confirm or open a dispute within that 24-hour period, the seller payout will be released automatically.</li>
+        </ol>
+      </div>
       
       <div style="text-align: center;">
-        <a href="${process.env.NEXT_PUBLIC_APP_URL}/account/orders" class="button">View My Tickets</a>
+        <a href="${process.env.NEXT_PUBLIC_APP_URL}/account/tickets/holding" class="button">View Holding Tickets</a>
       </div>
       
       <p>Thanks,<br>The TrueFanTix Team</p>
@@ -289,7 +306,13 @@ Order ID: ${orderId}
 Ticket: ${ticketTitle}
 Sale Amount: $${amount}
 
-The buyer's payment is being held in escrow. It will not be released for seller payout until the ticket transfer is confirmed.
+What happens next:
+1. The buyer's payment is being held by TrueFanTix.
+2. You have 24 hours to transfer the ticket to the buyer and confirm the transfer in your seller holding page.
+3. After you confirm transfer, the buyer will be notified right away and will have 24 hours to confirm receipt.
+4. If the buyer confirms receipt, seller payout becomes eligible. If the buyer does not confirm or open a dispute within 24 hours, seller payout is released automatically.
+
+You will receive reminders right away and every 6 hours until you confirm transfer.
 
 Thanks,
 The TrueFanTix Team`;
@@ -304,6 +327,8 @@ The TrueFanTix Team`;
     .header { background: #22c55e; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
     .sale-info { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+    .process { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 18px; border-radius: 8px; margin: 20px 0; }
+    .button { display: inline-block; background: #16a34a; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
     .amount { font-size: 28px; font-weight: bold; color: #22c55e; }
     .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
   </style>
@@ -324,7 +349,20 @@ The TrueFanTix Team`;
         <p class="amount">$${amount}</p>
       </div>
       
-      <p>The buyer's payment is being held in escrow. It will not be released for seller payout until the ticket transfer is confirmed.</p>
+      <div class="process">
+        <h3 style="margin-top: 0;">What happens next</h3>
+        <ol style="padding-left: 20px; margin-bottom: 0;">
+          <li>The buyer's payment is held by TrueFanTix.</li>
+          <li>You have <strong>24 hours</strong> to transfer the ticket to the buyer and confirm the transfer.</li>
+          <li>After you confirm transfer, the buyer is notified right away and has <strong>24 hours</strong> to confirm receipt.</li>
+          <li>If the buyer confirms receipt, seller payout becomes eligible. If the buyer does not confirm or open a dispute within 24 hours, seller payout is released automatically.</li>
+        </ol>
+        <p style="margin-bottom: 0;">You will receive reminders right away and every 6 hours until you confirm transfer.</p>
+      </div>
+
+      <div style="text-align: center;">
+        <a href="${process.env.NEXT_PUBLIC_APP_URL}/account/tickets/seller-holding" class="button">Open Seller Holding</a>
+      </div>
       
       <p>Thanks,<br>The TrueFanTix Team</p>
     </div>

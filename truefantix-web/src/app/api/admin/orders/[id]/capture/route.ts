@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { auditLog, createAuditContext } from "@/lib/audit";
+import { notifySellerTransferRequired, sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
 
 function normalizeId(value: unknown) {
   try {
@@ -128,7 +129,11 @@ export async function POST(req: Request) {
       const updatedOrder = await tx.order.update({
         where: { id: orderId },
         data: { status: "PAID" },
-        include: { items: true, payment: true },
+        include: {
+          items: true,
+          payment: true,
+          seller: { include: { user: true } },
+        },
       });
 
       return {
@@ -146,6 +151,20 @@ export async function POST(req: Request) {
       metadata: { operation: "CAPTURE", outcome: result.ok ? "SUCCESS" : "FAIL", status: result.status },
       ...createAuditContext(req),
     });
+
+    if (result.ok) {
+      const order: any = result.body.order;
+      const sellerUserId = order.seller?.user?.id;
+      if (sellerUserId) {
+        await notifySellerTransferRequired({
+          sellerUserId,
+          orderId: order.id,
+          ticketCount: order.items.length,
+          deadline: sellerTransferDeadline(order),
+          now,
+        });
+      }
+    }
 
     return NextResponse.json(result.body, { status: result.status });
   } catch (err: unknown) {

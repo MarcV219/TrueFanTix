@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
+import { notifySellerBuyerConfirmed } from "@/lib/orders/transferWorkflow";
 
 // POST /api/orders/confirm-receipt
 // Allows a buyer to confirm receipt of tickets for a specific order.
@@ -33,6 +34,10 @@ export async function POST(req: Request) {
         status: true,
         transferVerificationStatus: true,
         buyerConfirmationStatus: true,
+        seller: { include: { user: true } },
+        items: { select: { ticketId: true } },
+        amountCents: true,
+        sellerId: true,
       },
     });
 
@@ -63,24 +68,77 @@ export async function POST(req: Request) {
     }
 
     // Update the order to confirmed status and record confirmation time
-    const updatedOrder = await prisma.order.update({
-      where: { id: orderId },
-      data: {
-        buyerConfirmationStatus: "CONFIRMED",
-        buyerConfirmationAt: new Date(),
-        status: "DELIVERED", // Progress order to DELIVERED status
-      },
-      select: {
-        id: true,
-        status: true,
-        buyerConfirmationStatus: true,
-        buyerConfirmationAt: true,
-      },
+    const now = new Date();
+    const updatedOrder = await prisma.$transaction(async (tx: any) => {
+      await tx.ticket.updateMany({
+        where: { id: { in: order.items.map((item) => item.ticketId) } },
+        data: {
+          status: "SOLD",
+          soldAt: now,
+          reservedByOrderId: null,
+          reservedUntil: null,
+        },
+      });
+
+      await tx.sellerMetrics.upsert({
+        where: { sellerId: order.sellerId },
+        create: {
+          sellerId: order.sellerId,
+          lifetimeSalesCents: order.amountCents,
+          lifetimeOrders: 1,
+          lifetimeTicketsSold: order.items.length,
+        },
+        update: {
+          lifetimeSalesCents: { increment: order.amountCents },
+          lifetimeOrders: { increment: 1 },
+          lifetimeTicketsSold: { increment: order.items.length },
+        },
+      });
+
+      const providerRef = `order:${order.id}`;
+      const existingPayout = await tx.payout.findFirst({
+        where: { sellerId: order.sellerId, provider: "ESCROW_INTERNAL", providerRef },
+        select: { id: true },
+      });
+
+      if (!existingPayout) {
+        await tx.payout.create({
+          data: {
+            sellerId: order.sellerId,
+            amountCents: order.amountCents,
+            feeCents: 0,
+            netCents: order.amountCents,
+            status: "PENDING",
+            provider: "ESCROW_INTERNAL",
+            providerRef,
+          },
+        });
+      }
+
+      return tx.order.update({
+        where: { id: orderId },
+        data: {
+          buyerConfirmationStatus: "CONFIRMED",
+          buyerConfirmationAt: now,
+          status: "COMPLETED",
+        },
+        select: {
+          id: true,
+          status: true,
+          buyerConfirmationStatus: true,
+          buyerConfirmationAt: true,
+        },
+      });
     });
 
-    // Payout remains gated by the admin completion route, which requires
-    // buyerConfirmationStatus=CONFIRMED before creating a payout record.
-    // TODO: Trigger notification to seller that buyer has confirmed receipt
+    // Buyer confirmation releases escrow into the pending payout queue.
+    if (order.seller.user?.id) {
+      await notifySellerBuyerConfirmed({
+        sellerUserId: order.seller.user.id,
+        orderId,
+        ticketCount: order.items.length,
+      });
+    }
 
     return NextResponse.json(
       {

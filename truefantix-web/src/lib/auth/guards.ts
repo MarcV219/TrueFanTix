@@ -103,5 +103,6 @@ export function hasInternalCronAuth(req: Request): boolean {
   const configured = process.env.CRON_SECRET?.trim();
   if (!configured) return false;
   const provided = req.headers.get("x-cron-secret")?.trim();
-  return !!provided && provided === configured;
+  const bearer = req.headers.get("authorization")?.trim().replace(/^Bearer\s+/i, "");
+  return (!!provided && provided === configured) || (!!bearer && bearer === configured);
 }

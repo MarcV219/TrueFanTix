@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sendEmail, generatePurchaseConfirmationEmail, generateSaleNotificationEmail } from "@/lib/email";
 import { notifyTicketSold, notifyPurchaseConfirmed } from "@/lib/notifications/service";
+import { notifySellerTransferRequired, sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -120,6 +121,7 @@ export async function POST(req: Request) {
             data: { status: "PAID" },
             include: {
               items: { include: { ticket: true } },
+              payment: true,
               buyerSeller: { include: { user: true } },
               seller: { include: { user: true } },
             },
@@ -229,6 +231,13 @@ export async function POST(req: Request) {
               ticketTitle: firstTicket?.title || "Ticket",
               orderId: updatedOrder.id,
               amount: updatedOrder.amountCents,
+            });
+            await notifySellerTransferRequired({
+              sellerUserId: updatedOrder.seller.user.id,
+              orderId: updatedOrder.id,
+              ticketCount: updatedOrder.items.length,
+              deadline: sellerTransferDeadline(updatedOrder),
+              now: new Date(),
             });
           }
         } catch (notifyErr) {

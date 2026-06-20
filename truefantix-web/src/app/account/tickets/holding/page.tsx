@@ -15,6 +15,7 @@ type HoldingTicket = {
   orderStatus: string;
   transferVerificationStatus: string | null;
   buyerConfirmationStatus: string | null;
+  buyerConfirmationDeadline: string | null;
   orderId: string;
   orderDate: string;
 };
@@ -42,13 +43,42 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
 }
 
 function fulfillmentLabel(ticket: HoldingTicket) {
+  if (ticket.orderStatus === "PAID" && ticket.transferVerificationStatus === "PENDING") return "Confirm receipt";
   if (ticket.orderStatus === "PAID") return "Awaiting seller transfer";
   if (ticket.orderStatus === "DELIVERED" && ticket.buyerConfirmationStatus === "CONFIRMED") return "Transfer confirmed";
   if (ticket.orderStatus === "DELIVERED") return "Transferred - awaiting final completion";
   return ticket.orderStatus;
 }
 
-function TicketCard({ ticket }: { ticket: HoldingTicket }) {
+function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirmed: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canConfirm =
+    ticket.orderStatus === "PAID" &&
+    ticket.transferVerificationStatus === "PENDING" &&
+    ticket.buyerConfirmationStatus === "PENDING";
+
+  async function confirmReceipt() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/orders/confirm-receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: ticket.orderId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || data?.error || "Could not confirm ticket receipt.");
+      }
+      onConfirmed();
+    } catch (err: any) {
+      setError(err.message || "Could not confirm ticket receipt.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div
       style={{
@@ -105,6 +135,43 @@ function TicketCard({ ticket }: { ticket: HoldingTicket }) {
           <p style={{ margin: 0, fontSize: 12, opacity: 0.62, textAlign: "center" }}>
             Purchased {new Date(ticket.orderDate).toLocaleDateString()}
           </p>
+          {ticket.buyerConfirmationDeadline ? (
+            <p style={{ margin: 0, fontSize: 12, opacity: 0.72, textAlign: "center" }}>
+              Confirm by {new Date(ticket.buyerConfirmationDeadline).toLocaleString()}
+            </p>
+          ) : null}
+          {canConfirm ? (
+            <button
+              type="button"
+              onClick={confirmReceipt}
+              disabled={busy}
+              style={{
+                minHeight: 38,
+                border: 0,
+                borderRadius: 8,
+                background: "rgba(6, 74, 147, 1)",
+                color: "white",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              {busy ? "Confirming..." : "Confirm received"}
+            </button>
+          ) : null}
+          {error ? (
+            <div
+              role="alert"
+              style={{
+                padding: 8,
+                borderRadius: 8,
+                background: "rgba(254, 242, 242, 1)",
+                color: "rgba(153, 27, 27, 1)",
+                fontSize: 12,
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -136,6 +203,23 @@ function Body() {
 
     fetchTickets();
   }, []);
+
+  async function refetchTickets() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/account/tickets/holding", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to load holding tickets");
+      }
+      setTickets(data.tickets || []);
+    } catch (err: any) {
+      setError(err.message || "Failed to load holding tickets");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -187,7 +271,7 @@ function Body() {
         {tickets.length} ticket{tickets.length !== 1 ? "s" : ""} pending transfer or final completion.
       </p>
       {tickets.map((ticket) => (
-        <TicketCard key={`${ticket.orderId}-${ticket.id}`} ticket={ticket} />
+        <TicketCard key={`${ticket.orderId}-${ticket.id}`} ticket={ticket} onConfirmed={refetchTickets} />
       ))}
     </div>
   );

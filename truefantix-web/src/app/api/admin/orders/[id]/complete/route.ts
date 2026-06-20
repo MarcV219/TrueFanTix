@@ -96,13 +96,17 @@ export async function POST(req: Request) {
         };
       }
 
-      if (order.buyerConfirmationStatus !== "CONFIRMED" || !order.buyerConfirmationAt) {
+      const receiptConfirmed =
+        order.buyerConfirmationStatus === "CONFIRMED" ||
+        order.buyerConfirmationStatus === "AUTO_CONFIRMED";
+
+      if (!receiptConfirmed || !order.buyerConfirmationAt) {
         return {
           ok: false as const,
           status: 409 as const,
           body: {
             ok: false,
-            error: "Cannot complete: buyer has not confirmed ticket receipt",
+            error: "Cannot complete: buyer has not confirmed ticket receipt and the 24-hour confirmation window has not expired",
             debug: {
               orderId,
               buyerConfirmationStatus: order.buyerConfirmationStatus ?? null,

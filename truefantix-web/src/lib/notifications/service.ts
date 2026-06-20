@@ -7,7 +7,9 @@ export type NotificationType =
   | "TICKET_SOLD"         // Your ticket was sold
   | "TICKET_PRICE_DROP"   // Price dropped on ticket you're watching
   | "ORDER_CONFIRMED"     // Purchase confirmed
+  | "TRANSFER_REQUIRED"   // Seller needs to transfer tickets
   | "TRANSFER_RECEIVED"   // Tickets transferred to you
+  | "TRANSFER_CONFIRMATION_REQUIRED" // Buyer needs to confirm received tickets
   | "ESCROW_RELEASED"     // Funds released from escrow
   | "VERIFICATION_NEEDED" // Ticket needs verification
   | "PAYOUT_PROCESSED"    // Payout completed
@@ -49,6 +51,36 @@ export async function createNotification({
     return { ok: true, notification };
   } catch (err) {
     console.error("Failed to create notification:", err);
+    return { ok: false, error: err };
+  }
+}
+
+export async function createNotificationOncePerWindow({
+  userId,
+  type,
+  message,
+  link,
+  windowStart,
+}: CreateNotificationParams & { windowStart: Date }) {
+  try {
+    const existing = await prisma.notification.findFirst({
+      where: {
+        userId,
+        type,
+        message,
+        link,
+        createdAt: { gte: windowStart },
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      return { ok: true, skipped: true };
+    }
+
+    return createNotification({ userId, type, message, link });
+  } catch (err) {
+    console.error("Failed to create deduped notification:", err);
     return { ok: false, error: err };
   }
 }
