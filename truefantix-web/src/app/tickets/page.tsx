@@ -544,20 +544,35 @@ export default function TicketsPage() {
 
           {!loading && !error && sortedFilteredTickets.length > 0 && (
             <div className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory sm:grid sm:grid-cols-2 sm:gap-6 sm:overflow-visible sm:pb-0 lg:grid-cols-3 xl:grid-cols-4">
-              {sortedFilteredTickets.map((ticket) => (
-                <div key={ticket.id} className="relative min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
-                  <label className="absolute left-3 top-3 z-10 inline-flex items-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-sm font-bold text-gray-900 shadow ring-1 ring-gray-200 dark:bg-gray-900/95 dark:text-white dark:ring-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={selectedTicketIds.includes(ticket.id)}
-                      onChange={() => toggleTicketSelection(ticket)}
-                      className="h-5 w-5 rounded border-gray-300"
-                    />
-                    Select
-                  </label>
-                  <TicketCard ticket={ticket} />
-                </div>
-              ))}
+              {sortedFilteredTickets.map((ticket) => {
+                const selected = selectedTicketIds.includes(ticket.id);
+
+                return (
+                  <div key={ticket.id} className="relative min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
+                    <label className="absolute left-3 top-3 z-10 inline-flex items-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-sm font-bold text-gray-900 shadow ring-1 ring-gray-200 dark:bg-gray-900/95 dark:text-white dark:ring-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleTicketSelection(ticket)}
+                        className="h-5 w-5 rounded border-gray-300"
+                      />
+                      Select
+                    </label>
+                    <TicketCard ticket={ticket} />
+                    <button
+                      type="button"
+                      onClick={() => toggleTicketSelection(ticket)}
+                      className={`mt-2 w-full rounded-lg border px-4 py-2 text-sm font-bold transition ${
+                        selected
+                          ? "border-[#064a93] bg-[#064a93] text-white hover:bg-blue-900"
+                          : "border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700"
+                      }`}
+                    >
+                      {selected ? "Selected" : "Select ticket"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
