@@ -28,8 +28,10 @@ export async function GET(req: Request) {
     const official = ev?.officialPricingSync ?? null;
     const confirmedFaceValueCents =
       typeof official?.officialFaceValueCents === "number" ? official.officialFaceValueCents : null;
+    const maxListPriceCents =
+      confirmedFaceValueCents == null ? null : confirmedFaceValueCents + Math.max(0, t.adminFeePaidCents ?? 0);
     const aboveConfirmedFaceValue =
-      confirmedFaceValueCents != null ? t.priceCents > confirmedFaceValueCents : false;
+      maxListPriceCents != null ? t.priceCents > maxListPriceCents : false;
 
     return {
       id: t.id,
@@ -40,7 +42,9 @@ export async function GET(req: Request) {
       seat: t.seat,
       priceCents: t.priceCents,
       faceValueCents: t.faceValueCents,
+      adminFeePaidCents: t.adminFeePaidCents ?? 0,
       confirmedFaceValueCents,
+      maxListPriceCents,
       aboveConfirmedFaceValue,
       eventSelloutStatus: t.event?.selloutStatus ?? null,
       confirmation: {

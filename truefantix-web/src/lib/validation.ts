@@ -24,6 +24,7 @@ export const schemas = {
     title: z.string().trim().min(1).max(120),
     priceCents: z.number().int().positive().max(10_000_000),
     faceValueCents: z.number().int().nonnegative().optional().nullable(),
+    adminFeePaidCents: z.number().int().nonnegative().max(10_000_000).optional(),
 
     // Optional client-provided image (server will try to auto-fetch a relevant one first)
     image: z.string().trim().url().max(2048).optional().nullable(),

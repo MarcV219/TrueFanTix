@@ -41,8 +41,9 @@ export async function POST(req: Request) {
 
     if (snap.officialFaceValueCents != null) {
       nextFaceValue = snap.officialFaceValueCents;
-      if (enforceCap && nextPrice > snap.officialFaceValueCents) {
-        nextPrice = snap.officialFaceValueCents;
+      const maxListPriceCents = snap.officialFaceValueCents + Math.max(0, t.adminFeePaidCents ?? 0);
+      if (enforceCap && nextPrice > maxListPriceCents) {
+        nextPrice = maxListPriceCents;
       }
     }
 
@@ -72,6 +73,11 @@ export async function POST(req: Request) {
             syncedAt: new Date().toISOString(),
             found: snap.found,
             officialFaceValueCents: snap.officialFaceValueCents,
+            adminFeePaidCents: t.adminFeePaidCents ?? 0,
+            maxListPriceCents:
+              snap.officialFaceValueCents == null
+                ? null
+                : snap.officialFaceValueCents + Math.max(0, t.adminFeePaidCents ?? 0),
             soldOut: snap.soldOut,
             reason: snap.reason ?? null,
           },
@@ -131,7 +137,7 @@ export async function POST(req: Request) {
     notes: [
       "Below Face Value tag is computed in UI as price < faceValue.",
       "Face Value tag is shown when price >= faceValue or event sold out.",
-      "By default this sync does NOT auto-cap ticket price; pass ?enforceCap=1 to clamp price to official face value.",
+      "By default this sync does NOT auto-cap ticket price; pass ?enforceCap=1 to clamp price to official face value plus seller-entered admin fees paid.",
       "This sync uses official primary-market (Ticketmaster Discovery API) only; no reseller sources.",
       "Exact row/seat-level primary market pricing is not generally exposed via public API; sync uses best available event-level price ranges.",
     ],

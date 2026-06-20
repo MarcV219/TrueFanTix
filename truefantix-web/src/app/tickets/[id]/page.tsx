@@ -18,6 +18,7 @@ async function getTicket(id: string) {
       title: true,
       priceCents: true,
       faceValueCents: true,
+      adminFeePaidCents: true,
       image: true,
       venue: true,
       row: true,
@@ -73,6 +74,7 @@ async function getTicket(id: string) {
     } : null,
     priceCents: Number(ticket.priceCents),
     faceValueCents: ticket.faceValueCents ? Number(ticket.faceValueCents) : null,
+    adminFeePaidCents: Number(ticket.adminFeePaidCents ?? 0),
     createdAt: ticket.createdAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
   };
@@ -116,8 +118,10 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   // Calculate price display
   const price = ticket.priceCents / 100;
   const faceValue = ticket.faceValueCents ? ticket.faceValueCents / 100 : price;
-  const isBelowFaceValue = faceValue && price < faceValue;
-  const isFaceValue = faceValue && price === faceValue;
+  const adminFeePaid = ticket.adminFeePaidCents / 100;
+  const maxFairListPrice = faceValue + adminFeePaid;
+  const isBelowFaceValue = maxFairListPrice && price < maxFairListPrice;
+  const isFaceValue = maxFairListPrice && price === maxFairListPrice;
   const isSoldOut = event?.selloutStatus === "SOLD_OUT";
 
   // Get event type info
@@ -226,10 +230,22 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                         <span className="font-medium text-gray-900 dark:text-white">${faceValue.toFixed(2)}</span>
                       </div>
                     )}
-                    {isBelowFaceValue && faceValue > 0 && (
+                    {adminFeePaid > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Original Admin Fees Paid:</span>
+                        <span className="font-medium text-gray-900 dark:text-white">${adminFeePaid.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {adminFeePaid > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Max Fair List Price:</span>
+                        <span className="font-medium text-gray-900 dark:text-white">${maxFairListPrice.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {isBelowFaceValue && maxFairListPrice > 0 && (
                       <div className="flex justify-between text-green-600">
                         <span>You Save:</span>
-                        <span className="font-bold">${(faceValue - price).toFixed(2)}</span>
+                        <span className="font-bold">${(maxFairListPrice - price).toFixed(2)}</span>
                       </div>
                     )}
                   </div>

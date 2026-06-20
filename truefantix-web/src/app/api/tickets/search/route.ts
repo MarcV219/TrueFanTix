@@ -70,6 +70,7 @@ function normalizeTicket(ticket: any, query: string) {
     ...ticket,
     price: centsToDollars(ticket.priceCents),
     faceValue: ticket.faceValueCents == null ? null : centsToDollars(ticket.faceValueCents),
+    adminFeePaid: centsToDollars(ticket.adminFeePaidCents ?? 0),
     seller: {
       ...ticket.seller,
       badges: ticket.seller?.badges?.map((badge: any) => badge.name) ?? [],
@@ -176,6 +177,7 @@ export async function GET(req: Request) {
           title: true,
           priceCents: true,
           faceValueCents: true,
+          adminFeePaidCents: true,
           image: true,
           venue: true,
           date: true,

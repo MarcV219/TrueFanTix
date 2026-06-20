@@ -5,6 +5,7 @@ type TicketForVerification = {
   title: string;
   priceCents: number;
   faceValueCents: number | null;
+  adminFeePaidCents?: number | null;
   image: string;
   venue: string;
   date: string;
@@ -55,10 +56,13 @@ export function scoreTicket(ticket: TicketForVerification): VerificationDecision
     reasons.push("Invalid price");
   }
 
-  if (ticket.faceValueCents == null || ticket.faceValueCents >= ticket.priceCents) {
+  const allowedPriceCents =
+    ticket.faceValueCents == null ? null : ticket.faceValueCents + Math.max(0, ticket.adminFeePaidCents ?? 0);
+
+  if (allowedPriceCents == null || allowedPriceCents >= ticket.priceCents) {
     score += 10;
   } else {
-    reasons.push("Face value lower than listing price");
+    reasons.push("Listing price exceeds face value plus admin fees paid");
   }
 
   if (ticket.barcodeHash) {
@@ -100,6 +104,7 @@ export async function autoVerifyTicketById(prisma: PrismaClient, ticketId: strin
       title: true,
       priceCents: true,
       faceValueCents: true,
+      adminFeePaidCents: true,
       image: true,
       venue: true,
       date: true,

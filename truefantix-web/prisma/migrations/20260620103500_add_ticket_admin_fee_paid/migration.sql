@@ -1,0 +1,2 @@
+ALTER TABLE "Ticket"
+ADD COLUMN "adminFeePaidCents" INTEGER NOT NULL DEFAULT 0;

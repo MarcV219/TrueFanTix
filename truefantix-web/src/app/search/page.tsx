@@ -11,6 +11,7 @@ type Ticket = {
   date: string;
   price: number;
   faceValue: number | null;
+  adminFeePaid?: number | null;
   image: string;
   seller: {
     id: string;
@@ -61,7 +62,7 @@ function resolveTicketImageSrc(raw: unknown) {
 
 function computePriceTag(price: number, faceValue: number | null): string {
   if (faceValue == null) return "Face Value";
-  return price <= faceValue ? "Below Face Value" : "Face Value";
+  return price < faceValue ? "Below Face Value" : "Face Value";
 }
 
 function SearchContent() {

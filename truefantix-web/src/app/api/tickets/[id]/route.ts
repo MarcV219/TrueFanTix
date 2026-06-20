@@ -6,6 +6,7 @@ import { requireSellerApproved } from "@/lib/auth/guards";
 import { fetchOfficialSnapshot } from "@/lib/officialPricing";
 import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
+import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
 
 function normalizeId(value: unknown) {
   try {
@@ -56,6 +57,7 @@ export async function GET(req: Request) {
         title: true,
         priceCents: true,
         faceValueCents: true,
+        adminFeePaidCents: true,
         image: true,
         venue: true,
         row: true,
@@ -153,6 +155,7 @@ export async function PATCH(req: Request) {
         seat: true,
         priceCents: true,
         faceValueCents: true,
+        adminFeePaidCents: true,
         status: true,
         reservedUntil: true,
         reservedByOrderId: true,
@@ -226,6 +229,10 @@ export async function PATCH(req: Request) {
         : typeof body.faceValueCents === "number" && Number.isInteger(body.faceValueCents)
         ? body.faceValueCents
         : existing.faceValueCents;
+    const adminFeePaidCents =
+      typeof body.adminFeePaidCents === "number" && Number.isInteger(body.adminFeePaidCents)
+        ? body.adminFeePaidCents
+        : existing.adminFeePaidCents;
 
     if (title.length < 1 || title.length > 120) return badRequest("Title is required.");
     if (venue.length < 1 || venue.length > 200) return badRequest("Venue is required.");
@@ -238,6 +245,9 @@ export async function PATCH(req: Request) {
     if (faceValueCents != null && (!Number.isInteger(faceValueCents) || faceValueCents < 0)) {
       return badRequest("Face value must be 0 or greater.");
     }
+    if (!Number.isInteger(adminFeePaidCents) || adminFeePaidCents < 0 || adminFeePaidCents > 10_000_000) {
+      return badRequest("Admin fees paid must be 0 or greater.");
+    }
 
     const official = await fetchOfficialSnapshot({
       title,
@@ -246,36 +256,20 @@ export async function PATCH(req: Request) {
       primaryVendor,
     });
 
-    if (!official.found) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "OFFICIAL_EVENT_NOT_CONFIRMED",
-          message: "We could not confirm this event with an official primary-market source. The listing was not updated.",
-          official,
-        },
-        { status: 422 }
-      );
-    }
+    const listingCheck = validateListingPriceAgainstOfficial({
+      official,
+      priceCents,
+      sellerFaceValueCents: faceValueCents,
+      adminFeePaidCents,
+      action: "update",
+    });
 
-    if (official.officialFaceValueCents == null) {
+    if (!listingCheck.ok) {
       return NextResponse.json(
         {
           ok: false,
-          error: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
-          message: "We confirmed the event, but could not confirm its official face value. The listing was not updated.",
-          official,
-        },
-        { status: 422 }
-      );
-    }
-
-    if (priceCents > official.officialFaceValueCents) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "PRICE_ABOVE_FACE_VALUE",
-          message: `This listing is above the confirmed face value of ${centsToDollars(official.officialFaceValueCents)}. Lower the price to update this ticket.`,
+          error: listingCheck.error,
+          message: listingCheck.message,
           official,
         },
         { status: 422 }
@@ -328,7 +322,8 @@ export async function PATCH(req: Request) {
         row,
         seat,
         priceCents,
-        faceValueCents: official.officialFaceValueCents ?? faceValueCents,
+        faceValueCents: listingCheck.officialFaceValueCents,
+        adminFeePaidCents,
         image,
         primaryVendor,
         ...(linkedEventId ? { eventId: linkedEventId } : {}),
@@ -345,6 +340,8 @@ export async function PATCH(req: Request) {
             sourceUrl: official.sourceUrl,
             found: official.found,
             officialFaceValueCents: official.officialFaceValueCents,
+            adminFeePaidCents,
+            maxListPriceCents: listingCheck.maxListPriceCents,
             soldOut: official.soldOut,
             reason: official.reason ?? null,
           },
@@ -362,8 +359,10 @@ export async function PATCH(req: Request) {
         title: updated.title,
         priceCents: safeInt(updated.priceCents),
         faceValueCents: updated.faceValueCents,
+        adminFeePaidCents: (updated as any).adminFeePaidCents ?? 0,
         price: centsToDollars(safeInt(updated.priceCents)),
         faceValue: updated.faceValueCents == null ? null : centsToDollars(updated.faceValueCents),
+        adminFeePaid: centsToDollars((updated as any).adminFeePaidCents ?? 0),
         image: updated.image,
         venue: updated.venue,
         date: updated.date,

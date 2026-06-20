@@ -6,11 +6,12 @@ import { prisma } from "@/lib/prisma";
 import { requireSellerApproved } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
 import { verifyWithProvider } from "@/lib/tickets/provider";
-import { applyRateLimit, rateLimitError } from "@/lib/rate-limit";
+import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
 import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
 import { fetchOfficialSnapshot } from "@/lib/officialPricing";
+import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -19,34 +20,6 @@ function safeInt(v: unknown, fallback = 0) {
 function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));
 }
-
-type CreateTicketBody = {
-  title?: string;
-  priceCents?: number;
-  faceValueCents?: number | null;
-
-  image?: string;
-  venue?: string;
-  date?: string;
-  row?: string | null;
-  seat?: string | null;
-
-  // Optional event linking (future use)
-  eventId?: string | null;
-
-  // Optional barcode evidence for anti-duplicate and legitimacy checks
-  barcodeData?: string | null;
-  barcodeType?: string | null;
-
-  // New fields for escrow and verification
-  primaryVendor?: string | null;
-  transferMethod?: string | null;
-  barcodeText?: string | null; // Extracted text from barcode image
-  verificationImage?: string | null; // URL/path to verification image
-
-  // Seller override for event type when auto-tagging is incorrect
-  eventTypeOverride?: string | null;
-};
 
 function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message }, { status: 400 });
@@ -109,6 +82,7 @@ export async function GET(req: Request) {
         title: true,
         priceCents: true,
         faceValueCents: true,
+        adminFeePaidCents: true,
         image: true,
         venue: true,
         row: true,
@@ -165,6 +139,7 @@ export async function GET(req: Request) {
       const priceCents = safeInt((t as any).priceCents);
       const faceValueCents =
         (t as any).faceValueCents == null ? null : safeInt((t as any).faceValueCents);
+      const adminFeePaidCents = safeInt((t as any).adminFeePaidCents);
 
       const sellerAccessTokenBalance =
         t.seller ? safeInt((t.seller as any).accessTokenBalance) : 0;
@@ -182,8 +157,10 @@ export async function GET(req: Request) {
       const eventTypeOverride = typeof parsedEvidence?.manualEventType === "string" ? parsedEvidence.manualEventType : null;
       const confirmedFaceValueCents =
         typeof officialSync?.officialFaceValueCents === "number" ? officialSync.officialFaceValueCents : null;
+      const confirmedMaxListPriceCents =
+        confirmedFaceValueCents == null ? null : confirmedFaceValueCents + Math.max(0, adminFeePaidCents);
       const isAboveConfirmedFaceValue =
-        confirmedFaceValueCents != null ? priceCents > confirmedFaceValueCents : false;
+        confirmedMaxListPriceCents != null ? priceCents > confirmedMaxListPriceCents : false;
       const isPriceUnconfirmed = confirmedFaceValueCents == null;
       const isValidationMismatch = officialSync ? (!!officialSync.found && !!officialSync.reason) : false;
 
@@ -193,9 +170,11 @@ export async function GET(req: Request) {
 
         priceCents,
         faceValueCents,
+        adminFeePaidCents,
 
         price: centsToDollars(priceCents),
         faceValue: faceValueCents != null ? centsToDollars(faceValueCents) : null,
+        adminFeePaid: centsToDollars(adminFeePaidCents),
         eventTypeOverride,
         isAboveConfirmedFaceValue,
         isPriceUnconfirmed,
@@ -331,6 +310,7 @@ export async function POST(req: Request) {
   // We store cents.
   const priceCentsRaw = body.priceCents;
   const faceValueCents: number | null = body.faceValueCents ?? null;
+  const adminFeePaidCents = body.adminFeePaidCents ?? 0;
 
   // Image is now auto-fetched server-side for consistency/relevance.
   // Optional client-provided image can be used only as fallback if auto-fetch fails.
@@ -353,13 +333,11 @@ export async function POST(req: Request) {
   const barcodeType = (body.barcodeType ?? "").toString().trim() || null;
 
   let barcodeHash: string | null = null;
-  let barcodeLast4: string | null = null;
   if (barcodeDataRaw) {
     if (barcodeDataRaw.length < 8) return badRequest("Barcode data is too short.");
     if (barcodeDataRaw.length > 8192) return badRequest("Barcode data is too long.");
 
     barcodeHash = createHash("sha256").update(barcodeDataRaw).digest("hex");
-    barcodeLast4 = barcodeDataRaw.slice(-4);
   }
 
   // ✅ Prevent impersonation: the sellerId must come from the logged-in user
@@ -412,36 +390,20 @@ export async function POST(req: Request) {
       primaryVendor,
     });
 
-    if (!official.found) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "OFFICIAL_EVENT_NOT_CONFIRMED",
-          message: "We could not confirm this event with an official primary-market source. Please request the event be added or try again with the official event details.",
-          official,
-        },
-        { status: 422 }
-      );
-    }
+    const listingCheck = validateListingPriceAgainstOfficial({
+      official,
+      priceCents: priceCentsRaw,
+      sellerFaceValueCents: faceValueCents,
+      adminFeePaidCents,
+      action: "list",
+    });
 
-    if (official.officialFaceValueCents == null) {
+    if (!listingCheck.ok) {
       return NextResponse.json(
         {
           ok: false,
-          error: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
-          message: "We confirmed the event, but could not confirm its official face value. Listings must have a confirmed face value before they can go live.",
-          official,
-        },
-        { status: 422 }
-      );
-    }
-
-    if (priceCentsRaw > official.officialFaceValueCents) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "PRICE_ABOVE_FACE_VALUE",
-          message: `This listing is above the confirmed face value of ${centsToDollars(official.officialFaceValueCents)}. Lower the price to list this ticket.`,
+          error: listingCheck.error,
+          message: listingCheck.message,
           official,
         },
         { status: 422 }
@@ -478,6 +440,7 @@ export async function POST(req: Request) {
         title,
         priceCents: priceCentsRaw,
         faceValueCents,
+        adminFeePaidCents,
         image: resolvedImage,
         venue,
         date,
@@ -538,7 +501,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const syncedFaceValueCents = official.officialFaceValueCents ?? faceValueCents;
+    const syncedFaceValueCents = listingCheck.officialFaceValueCents;
     const syncedPriceCents = priceCentsRaw;
 
     let existingEvidence: any = {};
@@ -553,6 +516,7 @@ export async function POST(req: Request) {
       data: {
         priceCents: syncedPriceCents,
         faceValueCents: syncedFaceValueCents,
+        adminFeePaidCents,
         ...(linkedEventId ? { eventId: linkedEventId } : {}),
         verificationEvidence: JSON.stringify({
           ...existingEvidence,
@@ -562,6 +526,8 @@ export async function POST(req: Request) {
             sourceUrl: official.sourceUrl,
             found: official.found,
             officialFaceValueCents: official.officialFaceValueCents,
+            adminFeePaidCents,
+            maxListPriceCents: listingCheck.maxListPriceCents,
             soldOut: official.soldOut,
             reason: official.reason ?? null,
           },
@@ -584,11 +550,13 @@ export async function POST(req: Request) {
           title: finalTicket?.title ?? created.title,
           priceCents: finalTicket?.priceCents ?? created.priceCents,
           faceValueCents: finalTicket?.faceValueCents ?? created.faceValueCents,
+          adminFeePaidCents: (finalTicket as any)?.adminFeePaidCents ?? (created as any).adminFeePaidCents ?? 0,
           price: centsToDollars(finalTicket?.priceCents ?? created.priceCents),
           faceValue:
             (finalTicket?.faceValueCents ?? created.faceValueCents) != null
               ? centsToDollars((finalTicket?.faceValueCents ?? created.faceValueCents) as number)
               : null,
+          adminFeePaid: centsToDollars((finalTicket as any)?.adminFeePaidCents ?? (created as any).adminFeePaidCents ?? 0),
           image: finalTicket?.image ?? created.image,
           imageSource,
           imageReason,

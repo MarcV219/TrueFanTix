@@ -9,6 +9,7 @@ type CreateTicketBody = {
   title: string;
   priceCents: number;
   faceValueCents?: number | null;
+  adminFeePaidCents?: number;
   image?: string | null;
   venue: string;
   date: string; // keep string for now (matches schema)
@@ -24,6 +25,7 @@ type TicketRow = {
   title: string;
   price: number;
   faceValue: number | null;
+  adminFeePaid?: number | null;
   image: string;
   venue: string;
   date: string;
@@ -57,6 +59,7 @@ type ListingEditForm = {
   date: string;
   price: string;
   faceValue: string;
+  adminFeePaid: string;
   row: string;
   seat: string;
 };
@@ -143,6 +146,17 @@ function parseOptionalDollarsToCents(v: string): number | null {
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
   if (n <= 0) return null;
+
+  return Math.round(n * 100);
+}
+
+function parseOptionalNonnegativeDollarsToCents(v: string): number | null {
+  const raw = String(v ?? "").trim();
+  if (!raw) return 0;
+
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (n < 0) return null;
 
   return Math.round(n * 100);
 }
@@ -278,6 +292,9 @@ function ListingRow({
           <span style={{ fontWeight: 900 }}>{formatMoney(t.price)}</span>
           {t.faceValue != null ? (
             <span style={{ opacity: 0.7 }}> (Face {formatMoney(t.faceValue)})</span>
+          ) : null}
+          {t.adminFeePaid ? (
+            <span style={{ opacity: 0.7 }}> + {formatMoney(t.adminFeePaid)} admin fees paid</span>
           ) : null}
         </div>
       </div>
@@ -444,6 +461,7 @@ function ActiveListings({
       date: parseListingDateTimeToPicker(ticket.date),
       price: String(ticket.price ?? ""),
       faceValue: ticket.faceValue == null ? "" : String(ticket.faceValue),
+      adminFeePaid: ticket.adminFeePaid == null ? "0" : String(ticket.adminFeePaid),
       row: ticket.row ?? "",
       seat: ticket.seat ?? "",
     });
@@ -471,6 +489,18 @@ function ActiveListings({
       return;
     }
 
+    const adminFeePaidCents = parseOptionalNonnegativeDollarsToCents(editForm.adminFeePaid);
+    if (adminFeePaidCents == null) {
+      setError("Admin fees paid must be a number 0 or greater.");
+      setOk(null);
+      return;
+    }
+    if (faceValueCents != null && priceCents > faceValueCents + adminFeePaidCents) {
+      setError(`List price cannot exceed ${formatMoney((faceValueCents + adminFeePaidCents) / 100)}.`);
+      setOk(null);
+      return;
+    }
+
     const formattedDate = formatTicketDateTime(editForm.date);
     if (!formattedDate) {
       setError("Date is required.");
@@ -494,6 +524,7 @@ function ActiveListings({
           seat: editForm.seat.trim() || null,
           priceCents,
           faceValueCents: faceValueCents ?? null,
+          adminFeePaidCents,
         }),
       });
 
@@ -516,6 +547,7 @@ function ActiveListings({
             seat: updated.seat ?? null,
             price: typeof updated.price === "number" ? updated.price : item.price,
             faceValue: typeof updated.faceValue === "number" || updated.faceValue === null ? updated.faceValue : item.faceValue,
+            adminFeePaid: typeof updated.adminFeePaid === "number" || updated.adminFeePaid === null ? updated.adminFeePaid : item.adminFeePaid,
             image: updated.image ?? item.image,
             status: updated.status ?? item.status,
             verificationStatus: updated.verificationStatus ?? item.verificationStatus,
@@ -717,6 +749,17 @@ function ActiveListings({
                     style={inputStyle(false)}
                   />
                 </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Admin fees paid</span>
+                  <input
+                    value={editForm.adminFeePaid}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, adminFeePaid: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    inputMode="decimal"
+                    style={inputStyle(false)}
+                  />
+                </label>
               </div>
 
               <div
@@ -814,6 +857,7 @@ function Body({ me }: { me: MeUser }) {
   const [date, setDate] = React.useState("");
   const [price, setPrice] = React.useState("");
   const [faceValue, setFaceValue] = React.useState("");
+  const [adminFeePaid, setAdminFeePaid] = React.useState("0");
   const [barcodeData, setBarcodeData] = React.useState("");
   const [barcodeType, setBarcodeType] = React.useState("");
 
@@ -829,6 +873,7 @@ function Body({ me }: { me: MeUser }) {
   const [fDate, setFDate] = React.useState(false);
   const [fPrice, setFPrice] = React.useState(false);
   const [fFace, setFFace] = React.useState(false);
+  const [fAdminFeePaid, setFAdminFeePaid] = React.useState(false);
 
   React.useEffect(() => {
     const q = title.trim();
@@ -913,6 +958,13 @@ function Body({ me }: { me: MeUser }) {
     selectedVenueSuggestion.type === "VENUE" &&
     selectedVenueSuggestion.label === trimmedVenue &&
     suggestionMatchesTypedValue(selectedVenueSuggestion, trimmedVenue);
+  const previewFaceValueCents = parseOptionalDollarsToCents(faceValue);
+  const previewAdminFeePaidCents = parseOptionalNonnegativeDollarsToCents(adminFeePaid);
+  const previewListPriceCents =
+    previewFaceValueCents != null && previewAdminFeePaidCents != null
+      ? previewFaceValueCents + previewAdminFeePaidCents
+      : null;
+  const previewPriceCents = parseDollarsToCents(price);
 
   async function requestCatalogAddition(kind: "title" | "venue") {
     const requestValue = (kind === "title" ? title : venue).trim();
@@ -992,11 +1044,19 @@ function Body({ me }: { me: MeUser }) {
     if (!d) return setError("Date is required.");
 
     const priceCents = parseDollarsToCents(price);
-    if (priceCents == null) return setError("Price must be a number greater than 0.");
+    if (priceCents == null) return setError("List price must be a number greater than 0.");
 
     const faceValueCents = parseOptionalDollarsToCents(faceValue);
-    if (faceValue.trim() && faceValueCents == null) {
-      return setError("Face value must be a number greater than 0 (or leave blank).");
+    if (faceValueCents == null) {
+      return setError("Face value must be a number greater than 0.");
+    }
+
+    const adminFeePaidCents = parseOptionalNonnegativeDollarsToCents(adminFeePaid);
+    if (adminFeePaidCents == null) {
+      return setError("Admin fees paid must be a number 0 or greater.");
+    }
+    if (priceCents > faceValueCents + adminFeePaidCents) {
+      return setError(`List price cannot exceed ${formatMoney((faceValueCents + adminFeePaidCents) / 100)}.`);
     }
 
     setBusy(true);
@@ -1010,7 +1070,8 @@ function Body({ me }: { me: MeUser }) {
           row: seatInfo.row,
           seat: seatInfo.seat,
           priceCents,
-          faceValueCents: faceValueCents ?? null,
+          faceValueCents,
+          adminFeePaidCents,
           barcodeData: i === 0 ? barcodeData.trim() || null : null,
           barcodeType: i === 0 ? barcodeType.trim() || null : null,
         };
@@ -1046,6 +1107,7 @@ function Body({ me }: { me: MeUser }) {
       setDate("");
       setPrice("");
       setFaceValue("");
+      setAdminFeePaid("0");
       setBarcodeData("");
       setBarcodeType("");
 
@@ -1548,9 +1610,9 @@ function Body({ me }: { me: MeUser }) {
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Price (dollars)</span>
+            <span style={{ fontWeight: 900 }}>List price (dollars)</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Enter dollars (we convert to cents automatically)
+              Enter the price you want buyers to see. It cannot exceed face value plus admin fees paid.
             </div>
             <input
               value={price}
@@ -1565,8 +1627,8 @@ function Body({ me }: { me: MeUser }) {
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Face value (optional, dollars)</span>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>Enter dollars, or leave blank</div>
+            <span style={{ fontWeight: 900 }}>Face value (dollars)</span>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Enter the ticket face value before fees.</div>
             <input
               value={faceValue}
               onChange={(e) => setFaceValue(e.target.value)}
@@ -1578,6 +1640,44 @@ function Body({ me }: { me: MeUser }) {
               onBlur={() => setFFace(false)}
             />
           </label>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontWeight: 900 }}>Admin fees paid above face value (dollars)</span>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Enter original checkout/admin fees you paid on top of face value. Use 0 if none.
+            </div>
+            <input
+              value={adminFeePaid}
+              onChange={(e) => setAdminFeePaid(e.target.value)}
+              disabled={busy}
+              inputMode="decimal"
+              placeholder="0"
+              style={inputStyle(fAdminFeePaid)}
+              onFocus={() => setFAdminFeePaid(true)}
+              onBlur={() => setFAdminFeePaid(false)}
+            />
+          </label>
+
+          <div
+            style={{
+              display: "grid",
+              gap: 4,
+              padding: 12,
+              borderRadius: 10,
+              border: "1px solid rgba(148, 163, 184, 0.45)",
+              background: "rgba(248, 250, 252, 1)",
+            }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 900, opacity: 0.76 }}>List price</span>
+            <span style={{ fontSize: 20, fontWeight: 950 }}>
+              {previewPriceCents == null ? "Enter a list price" : formatMoney(previewPriceCents / 100)}
+            </span>
+            <span style={{ fontSize: 12, opacity: 0.7 }}>
+              {previewListPriceCents == null
+                ? "Maximum allowed price appears after face value and admin fees are entered."
+                : `Maximum allowed: ${formatMoney(previewListPriceCents / 100)}`}
+            </span>
+          </div>
 
           <label style={{ display: "grid", gap: 6 }}>
             <span style={{ fontWeight: 900 }}>Barcode payload (optional)</span>

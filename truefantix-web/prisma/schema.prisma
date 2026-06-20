@@ -323,8 +323,9 @@ model Ticket {
   title String
 
   // price stored as integer cents
-  priceCents     Int
-  faceValueCents Int?
+  priceCents        Int
+  faceValueCents    Int?
+  adminFeePaidCents Int @default(0)
 
   image String
   venue String
