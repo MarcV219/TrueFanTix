@@ -1157,6 +1157,24 @@ function Body({ me }: { me: MeUser }) {
     }
   }
 
+  function clearSourceIssuesFor(fields: PricingSourceIssue["field"][]) {
+    setPricingConfirmation((current) => {
+      if (!current) return current;
+      const fieldSet = new Set(fields);
+      const remainingIssues = (current.sourceIssues ?? []).filter((issue) => !fieldSet.has(issue.field));
+
+      if (!remainingIssues.length && !current.receiptRequired && !current.sellerConfirmationRequired) {
+        return null;
+      }
+
+      return {
+        ...current,
+        sourceIssues: remainingIssues,
+      };
+    });
+    setError(null);
+  }
+
   function applySourceIssue(issue: PricingSourceIssue) {
     const clearAppliedIssue = () => {
       setPricingConfirmation((current) => {
@@ -1627,6 +1645,7 @@ function Body({ me }: { me: MeUser }) {
               onChange={(e) => {
                 setTitle(e.target.value);
                 setSelectedTitleSuggestion(null);
+                clearSourceIssuesFor(["title"]);
               }}
               disabled={busy || !!requestBusy}
               placeholder='Start typing an artist, team, or sport...'
@@ -1667,6 +1686,7 @@ function Body({ me }: { me: MeUser }) {
                         setSelectedTitleSuggestion(suggestion);
                         setTitle(suggestion.label);
                         setTitleSuggestions([]);
+                        clearSourceIssuesFor(["title"]);
                         setError(null);
                         setOk(null);
                       }}
@@ -1733,6 +1753,7 @@ function Body({ me }: { me: MeUser }) {
               onChange={(e) => {
                 setVenue(e.target.value);
                 setSelectedVenueSuggestion(null);
+                clearSourceIssuesFor(["venue"]);
               }}
               disabled={busy || !!requestBusy}
               placeholder='Start typing a venue...'
@@ -1773,6 +1794,7 @@ function Body({ me }: { me: MeUser }) {
                         setSelectedVenueSuggestion(suggestion);
                         setVenue(suggestion.label);
                         setVenueSuggestions([]);
+                        clearSourceIssuesFor(["venue"]);
                         setError(null);
                         setOk(null);
                       }}
@@ -1827,7 +1849,10 @@ function Body({ me }: { me: MeUser }) {
               max={20}
               step={1}
               value={ticketQuantity}
-              onChange={(e) => setTicketQuantity(e.target.value)}
+              onChange={(e) => {
+                setTicketQuantity(e.target.value);
+                clearSourceIssuesFor(["quantity"]);
+              }}
               disabled={busy}
               style={inputStyle(fQuantity)}
               onFocus={() => setFQuantity(true)}
@@ -1853,7 +1878,10 @@ function Body({ me }: { me: MeUser }) {
             <input
               type="checkbox"
               checked={isGeneralAdmission}
-              onChange={(e) => setIsGeneralAdmission(e.target.checked)}
+              onChange={(e) => {
+                setIsGeneralAdmission(e.target.checked);
+                clearSourceIssuesFor(["seating"]);
+              }}
               disabled={busy}
               style={{ width: 18, height: 18 }}
             />
@@ -1893,13 +1921,14 @@ function Body({ me }: { me: MeUser }) {
                     <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} row</span>
                     <input
                       value={seatInfo.row}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        clearSourceIssuesFor(["seating"]);
                         setSeating((current) =>
                           current.map((item, itemIndex) =>
                             itemIndex === index ? { ...item, row: e.target.value } : item
                           )
-                        )
-                      }
+                        );
+                      }}
                       disabled={busy}
                       placeholder="e.g., 12"
                       style={inputStyle(false)}
@@ -1910,13 +1939,14 @@ function Body({ me }: { me: MeUser }) {
                     <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} seat</span>
                     <input
                       value={seatInfo.seat}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        clearSourceIssuesFor(["seating"]);
                         setSeating((current) =>
                           current.map((item, itemIndex) =>
                             itemIndex === index ? { ...item, seat: e.target.value } : item
                           )
-                        )
-                      }
+                        );
+                      }}
                       disabled={busy}
                       placeholder="e.g., 8"
                       style={inputStyle(false)}
@@ -1943,7 +1973,10 @@ function Body({ me }: { me: MeUser }) {
                 <input
                   type="date"
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
+                  onChange={(e) => {
+                    setDate(e.target.value);
+                    clearSourceIssuesFor(["date"]);
+                  }}
                   disabled={busy}
                   style={inputStyle(fDate)}
                   onFocus={() => setFDate(true)}
@@ -1962,7 +1995,10 @@ function Body({ me }: { me: MeUser }) {
                   <span style={{ fontSize: 12, fontWeight: 900 }}>Hour</span>
                   <select
                     value={eventHour}
-                    onChange={(e) => setEventHour(e.target.value)}
+                    onChange={(e) => {
+                      setEventHour(e.target.value);
+                      clearSourceIssuesFor(["time"]);
+                    }}
                     disabled={busy}
                     style={inputStyle(false)}
                   >
@@ -1976,7 +2012,10 @@ function Body({ me }: { me: MeUser }) {
                   <span style={{ fontSize: 12, fontWeight: 900 }}>Minutes</span>
                   <select
                     value={eventMinute}
-                    onChange={(e) => setEventMinute(e.target.value)}
+                    onChange={(e) => {
+                      setEventMinute(e.target.value);
+                      clearSourceIssuesFor(["time"]);
+                    }}
                     disabled={busy}
                     style={inputStyle(false)}
                   >
@@ -1990,7 +2029,10 @@ function Body({ me }: { me: MeUser }) {
                   <span style={{ fontSize: 12, fontWeight: 900 }}>AM/PM</span>
                   <select
                     value={eventPeriod}
-                    onChange={(e) => setEventPeriod(e.target.value as "AM" | "PM")}
+                    onChange={(e) => {
+                      setEventPeriod(e.target.value as "AM" | "PM");
+                      clearSourceIssuesFor(["time"]);
+                    }}
                     disabled={busy}
                     style={inputStyle(false)}
                   >
@@ -2009,7 +2051,10 @@ function Body({ me }: { me: MeUser }) {
             </div>
             <input
               value={price}
-              onChange={(e) => setPrice(e.target.value)}
+              onChange={(e) => {
+                setPrice(e.target.value);
+                clearSourceIssuesFor(["listPrice"]);
+              }}
               disabled={busy}
               inputMode="decimal"
               placeholder="150"
@@ -2024,7 +2069,10 @@ function Body({ me }: { me: MeUser }) {
             <div style={{ fontSize: 12, opacity: 0.7 }}>Enter the ticket face value before fees.</div>
             <input
               value={faceValue}
-              onChange={(e) => setFaceValue(e.target.value)}
+              onChange={(e) => {
+                setFaceValue(e.target.value);
+                clearSourceIssuesFor(["faceValue", "listPrice"]);
+              }}
               disabled={busy}
               inputMode="decimal"
               placeholder="150"
@@ -2041,7 +2089,10 @@ function Body({ me }: { me: MeUser }) {
             </div>
             <input
               value={adminFeePaid}
-              onChange={(e) => setAdminFeePaid(e.target.value)}
+              onChange={(e) => {
+                setAdminFeePaid(e.target.value);
+                clearSourceIssuesFor(["serviceFees", "listPrice"]);
+              }}
               disabled={busy}
               inputMode="decimal"
               placeholder="0"

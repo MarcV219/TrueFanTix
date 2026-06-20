@@ -326,6 +326,27 @@ export function validateListingPriceAgainstOfficial({
     }
   }
 
+  const receiptVerifiedMaxListPriceCents =
+    receiptFaceValueCents != null &&
+    sameMoney(receiptFaceValueCents, sellerFaceValueCents) &&
+    sameMoney(receiptServiceFeesCents, normalizedAdminFeePaidCents)
+      ? receiptFaceValueCents + normalizedAdminFeePaidCents
+      : null;
+
+  const receiptPriceIssues: ListingSourceIssue[] =
+    receiptVerifiedMaxListPriceCents != null && priceCents > receiptVerifiedMaxListPriceCents
+      ? [
+          {
+            code: "PRICE_ABOVE_RECEIPT_FACE_VALUE_WITH_FEES",
+            field: "listPrice",
+            source: "Receipt",
+            entered: centsToDisplay(priceCents),
+            found: centsToDisplay(receiptVerifiedMaxListPriceCents),
+            message: "List price is above the face value plus service fees found on the receipt.",
+          },
+        ]
+      : [];
+
   if (!hasReceiptProof || !sellerConfirmedReceiptValues) {
     return {
       ok: false,
@@ -347,6 +368,7 @@ export function validateListingPriceAgainstOfficial({
           message: "Ticketmaster found a possible event, but not for the date entered.",
         } satisfies ListingSourceIssue,
         ...receiptIssues,
+        ...receiptPriceIssues,
       ];
 
       return {
@@ -368,6 +390,7 @@ export function validateListingPriceAgainstOfficial({
           message: "Ticketmaster found official event data, but the title/teams did not match what was entered.",
         } satisfies ListingSourceIssue,
         ...receiptIssues,
+        ...receiptPriceIssues,
       ];
 
       return {
@@ -390,6 +413,7 @@ export function validateListingPriceAgainstOfficial({
           message: "Ticketmaster found a possible event, but not for the venue entered.",
         } satisfies ListingSourceIssue,
         ...receiptIssues,
+        ...receiptPriceIssues,
       ];
 
       return {
@@ -404,7 +428,7 @@ export function validateListingPriceAgainstOfficial({
       ok: false,
       error: "OFFICIAL_EVENT_NOT_CONFIRMED",
       message: `We could not confirm this event with an official primary-market source. ${notChanged} Please request the event be added or try again with the official event details.`,
-      details: details(official.officialFaceValueCents, receiptIssues),
+      details: details(official.officialFaceValueCents, [...receiptIssues, ...receiptPriceIssues]),
     };
   }
 
@@ -419,6 +443,7 @@ export function validateListingPriceAgainstOfficial({
         message: "Ticketmaster confirmed the event but did not provide official face value.",
       } satisfies ListingSourceIssue,
       ...receiptIssues,
+      ...receiptPriceIssues,
     ];
 
     return {

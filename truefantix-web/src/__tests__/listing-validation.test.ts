@@ -201,6 +201,45 @@ describe("listing validation", () => {
     if (!result.ok) expect(result.error).toBe("OFFICIAL_FACE_VALUE_NOT_CONFIRMED");
   });
 
+  it("shows receipt price cap warnings when official face value is unavailable", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ officialFaceValueCents: null }),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 12500,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 1250,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        serviceFeesCents: 1250,
+        totalServiceFeesCents: 1250,
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("OFFICIAL_FACE_VALUE_NOT_CONFIRMED");
+      expect(result.details?.sourceIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
+          }),
+          expect.objectContaining({
+            code: "PRICE_ABOVE_RECEIPT_FACE_VALUE_WITH_FEES",
+            entered: "$125.00",
+            found: "$112.50",
+          }),
+        ])
+      );
+    }
+  });
+
   it("allows service fees when receipt OCR verifies the same fees", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),
