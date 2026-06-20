@@ -112,7 +112,7 @@ function CheckoutContent() {
           }}
         >
           <div style={{ fontWeight: 800, fontSize: 24, marginBottom: 8 }}>Payment Successful! 🎉</div>
-          <div>Your order has been confirmed.</div>
+          <div>Payment is held in escrow until ticket transfer is confirmed.</div>
           <div style={{ marginTop: 8, opacity: 0.8 }}>Redirecting to your tickets...</div>
         </div>
       </div>

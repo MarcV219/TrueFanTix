@@ -78,14 +78,15 @@ export async function POST(req: Request) {
       },
     });
 
-    // TODO: Trigger release of funds to seller (Step 6)
+    // Payout remains gated by the admin completion route, which requires
+    // buyerConfirmationStatus=CONFIRMED before creating a payout record.
     // TODO: Trigger notification to seller that buyer has confirmed receipt
 
     return NextResponse.json(
       {
         ok: true,
         order: updatedOrder,
-        message: "Ticket receipt confirmed. Funds will be released to seller.",
+        message: "Ticket receipt confirmed. Seller payout is now eligible for completion.",
       },
       { status: 200 }
     );

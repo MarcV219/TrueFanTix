@@ -96,6 +96,22 @@ export async function POST(req: Request) {
         };
       }
 
+      if (order.buyerConfirmationStatus !== "CONFIRMED" || !order.buyerConfirmationAt) {
+        return {
+          ok: false as const,
+          status: 409 as const,
+          body: {
+            ok: false,
+            error: "Cannot complete: buyer has not confirmed ticket receipt",
+            debug: {
+              orderId,
+              buyerConfirmationStatus: order.buyerConfirmationStatus ?? null,
+              buyerConfirmationAt: order.buyerConfirmationAt ?? null,
+            },
+          },
+        };
+      }
+
       if (!order.payment || order.payment.status !== "SUCCEEDED") {
         return {
           ok: false as const,

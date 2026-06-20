@@ -289,7 +289,7 @@ Order ID: ${orderId}
 Ticket: ${ticketTitle}
 Sale Amount: $${amount}
 
-The payment is being processed and will be transferred to your account soon.
+The buyer's payment is being held in escrow. It will not be released for seller payout until the ticket transfer is confirmed.
 
 Thanks,
 The TrueFanTix Team`;
@@ -324,7 +324,7 @@ The TrueFanTix Team`;
         <p class="amount">$${amount}</p>
       </div>
       
-      <p>The payment is being processed and will be transferred to your account soon.</p>
+      <p>The buyer's payment is being held in escrow. It will not be released for seller payout until the ticket transfer is confirmed.</p>
       
       <p>Thanks,<br>The TrueFanTix Team</p>
     </div>

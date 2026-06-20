@@ -104,7 +104,9 @@ function SuccessContent() {
       >
         <div style={{ fontSize: 48, marginBottom: 8 }}>🎉</div>
         <div style={{ fontWeight: 800, fontSize: 28, marginBottom: 8 }}>Payment Successful!</div>
-        <div style={{ opacity: 0.9 }}>Your order has been confirmed and payment received.</div>
+        <div style={{ opacity: 0.9 }}>
+          Payment is being held in escrow until your tickets are transferred and receipt is confirmed.
+        </div>
       </div>
 
       {order && (
@@ -128,6 +130,13 @@ function SuccessContent() {
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
               <span style={{ opacity: 0.7 }}>Status:</span>
               <span style={{ fontWeight: 600 }}>{order.status}</span>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, fontSize: 14 }}>
+              <span style={{ opacity: 0.7 }}>Seller payout:</span>
+              <span style={{ fontWeight: 600, textAlign: "right" }}>
+                Held until ticket transfer is confirmed
+              </span>
             </div>
 
             <div style={{ height: 1, background: "rgba(0,0,0,0.08)", margin: "4px 0" }} />
