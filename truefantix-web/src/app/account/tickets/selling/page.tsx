@@ -1158,6 +1158,31 @@ function Body({ me }: { me: MeUser }) {
   }
 
   function applySourceIssue(issue: PricingSourceIssue) {
+    const clearAppliedIssue = () => {
+      setPricingConfirmation((current) => {
+        if (!current) return current;
+        const remainingIssues = (current.sourceIssues ?? []).filter((candidate) => {
+          return !(
+            candidate.code === issue.code &&
+            candidate.field === issue.field &&
+            candidate.source === issue.source &&
+            candidate.entered === issue.entered &&
+            candidate.found === issue.found
+          );
+        });
+
+        if (!remainingIssues.length && !current.receiptRequired && !current.sellerConfirmationRequired) {
+          return null;
+        }
+
+        return {
+          ...current,
+          sourceIssues: remainingIssues,
+        };
+      });
+      setError(null);
+    };
+
     if (issue.field === "venue" && issue.found) {
       const nextVenue = issue.found;
       setVenue(nextVenue);
@@ -1168,43 +1193,37 @@ function Body({ me }: { me: MeUser }) {
         canonicalName: nextVenue,
         provider: issue.source,
       });
-      setPricingConfirmation(null);
-      setError(null);
+      clearAppliedIssue();
       return;
     }
 
     if (issue.field === "faceValue" && issue.found) {
       setFaceValue(moneyTextToDollars(issue.found));
-      setPricingConfirmation(null);
-      setError(null);
+      clearAppliedIssue();
       return;
     }
 
     if (issue.field === "listPrice" && issue.found) {
       setPrice(moneyTextToDollars(issue.found));
-      setPricingConfirmation(null);
-      setError(null);
+      clearAppliedIssue();
       return;
     }
 
     if (issue.field === "serviceFees") {
       setAdminFeePaid(issue.found ? moneyTextToDollars(issue.found) : "0");
-      setPricingConfirmation(null);
-      setError(null);
+      clearAppliedIssue();
       return;
     }
 
     if (issue.field === "quantity" && issue.found) {
       setTicketQuantity(String(normalizeTicketQuantity(issue.found)));
-      setPricingConfirmation(null);
-      setError(null);
+      clearAppliedIssue();
       return;
     }
 
     if (issue.field === "date" && issue.found) {
       setDate(issue.found);
-      setPricingConfirmation(null);
-      setError(null);
+      clearAppliedIssue();
       return;
     }
 
@@ -1218,8 +1237,7 @@ function Body({ me }: { me: MeUser }) {
         canonicalName: nextTitle,
         provider: issue.source,
       });
-      setPricingConfirmation(null);
-      setError(null);
+      clearAppliedIssue();
     }
   }
 
@@ -1487,7 +1505,7 @@ function Body({ me }: { me: MeUser }) {
         title="List a ticket"
         description="This creates a real Ticket record via POST /api/tickets (in cents)."
       >
-        {error ? (
+        {(error || pricingConfirmation) ? (
           <div
             role="alert"
             style={{
@@ -1500,7 +1518,7 @@ function Body({ me }: { me: MeUser }) {
               fontWeight: 700,
             }}
           >
-            {error}
+            {error ?? "One source value was updated. Review the remaining warnings before listing."}
             {pricingConfirmation ? (
               <div
                 style={{
