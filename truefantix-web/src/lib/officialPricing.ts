@@ -14,6 +14,7 @@ export type OfficialSnapshot = {
   soldOut: boolean | null;
   sourceUrl: string | null;
   reason?: string;
+  officialVenueName?: string | null;
 };
 
 function normalizeTitle(title: string): string {
@@ -25,16 +26,13 @@ function normalizeTitle(title: string): string {
 
 function venueCity(venue: string): string {
   const parts = (venue || "").split(",").map(p => p.trim()).filter(Boolean);
+  if (parts.length >= 3) return parts[parts.length - 2];
   return parts.length >= 2 ? parts[parts.length - 1] : "";
 }
 
-function dateWindow(dateStr: string): { startISO: string; endISO: string } | null {
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return null;
-
-  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0));
-  const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59));
-  return { startISO: start.toISOString(), endISO: end.toISOString() };
+function venueName(venue: string): string {
+  const parts = (venue || "").split(",").map(p => p.trim()).filter(Boolean);
+  return parts[0] ?? "";
 }
 
 function toYmd(input: string | null | undefined): string | null {
@@ -109,6 +107,7 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
   const results: any[] = data?.web?.results ?? [];
   const ymd = toYmd(ticket.date);
   const city = venueCity(ticket.venue).toLowerCase();
+  const requestedVenueName = venueName(ticket.venue);
 
   for (const r of results) {
     const url = String(r?.url || "");
@@ -118,8 +117,9 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
     const score = overlap(normalizeTitle(ticket.title), text);
     const hasDate = !!(ymd && text.includes(ymd));
     const hasCity = !city || text.toLowerCase().includes(city);
+    const hasVenue = !requestedVenueName || overlap(requestedVenueName, text) >= 0.6;
 
-    if (score >= 0.6 && hasDate && hasCity) {
+    if (score >= 0.6 && hasDate && hasCity && hasVenue) {
       return {
         found: true,
         vendor: "primary-web",
@@ -150,6 +150,7 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
   const normalizedTitle = normalizeTitle(ticket.title);
   const query = normalizedTitle;
   const city = venueCity(ticket.venue);
+  const requestedVenueName = venueName(ticket.venue);
 
   // Never treat TBD-opponent games as confirmed event matches for testing.
   if (/\b(vs|v)\s*tbd\b/i.test(normalizedTitle)) {
@@ -215,6 +216,7 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
       const evYmd = toYmd(ev?.dates?.start?.dateTime || ev?.dates?.start?.localDate || null);
       const dateMatch = !!targetYmd && !!evYmd && targetYmd === evYmd;
       const textScore = overlap(normalizeTitle(ticket.title), evName);
+      const tmVenueName = String(ev?._embedded?.venues?.[0]?.name || "");
 
       let teamsMatch = true;
       if (vsTeams) {
@@ -224,8 +226,12 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
       }
 
       const cityOk = !city || String(ev?._embedded?.venues?.[0]?.city?.name || "").toLowerCase().includes(city.toLowerCase());
+      const venueOk =
+        !requestedVenueName ||
+        overlap(requestedVenueName, tmVenueName) >= 0.6 ||
+        overlap(tmVenueName, requestedVenueName) >= 0.6;
 
-      return { ev, dateMatch, textScore, teamsMatch, cityOk };
+      return { ev, dateMatch, textScore, teamsMatch, cityOk, venueOk, tmVenueName };
     })
     .filter((x: any) => x.cityOk)
     .sort((a: any, b: any) => {
@@ -244,6 +250,18 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
     const fb = await fallbackPrimaryWebConfirm(ticket);
     if (fb) return fb;
     return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "date-not-confirmed" };
+  }
+
+  if (!best.venueOk) {
+    return {
+      found: false,
+      vendor: "ticketmaster",
+      officialFaceValueCents: null,
+      soldOut: null,
+      sourceUrl: best.ev?.url ?? null,
+      reason: "venue-not-confirmed",
+      officialVenueName: best.tmVenueName || null,
+    };
   }
 
   if (best.textScore < 0.55) {
@@ -273,5 +291,6 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
     officialFaceValueCents: face == null ? null : Math.round(Number(face) * 100),
     soldOut,
     sourceUrl: ev?.url ?? null,
+    officialVenueName: best.tmVenueName || null,
   };
 }

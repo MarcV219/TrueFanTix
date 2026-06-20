@@ -1025,11 +1025,7 @@ function Body({ me }: { me: MeUser }) {
     selectedVenueSuggestion.label === trimmedVenue &&
     suggestionMatchesTypedValue(selectedVenueSuggestion, trimmedVenue);
   const previewFaceValueCents = parseOptionalDollarsToCents(faceValue);
-  const previewAdminFeePaidCents = parseOptionalNonnegativeDollarsToCents(adminFeePaid);
-  const previewListPriceCents =
-    previewFaceValueCents != null && previewAdminFeePaidCents != null
-      ? previewFaceValueCents + previewAdminFeePaidCents
-      : null;
+  const previewListPriceCents = previewFaceValueCents;
   const previewPriceCents = parseDollarsToCents(price);
 
   async function requestCatalogAddition(kind: "title" | "venue") {
@@ -1165,8 +1161,11 @@ function Body({ me }: { me: MeUser }) {
     if (adminFeePaidCents == null) {
       return setError("Admin fees paid must be a number 0 or greater.");
     }
-    if (priceCents > faceValueCents + adminFeePaidCents) {
-      return setError(`List price cannot exceed ${formatMoney((faceValueCents + adminFeePaidCents) / 100)}.`);
+    if (adminFeePaidCents > 0) {
+      return setError("Service fees paid above face value need receipt verification before they can increase the allowed list price. For now, set service fees paid to $0 and list at or below official face value.");
+    }
+    if (priceCents > faceValueCents) {
+      return setError(`List price cannot exceed ${formatMoney(faceValueCents / 100)} until service fees are verified.`);
     }
     if (!receiptProofDataUrl) {
       return setError("Upload the original purchase receipt before listing tickets.");
@@ -1848,7 +1847,7 @@ function Body({ me }: { me: MeUser }) {
           <label style={{ display: "grid", gap: 6 }}>
             <span style={{ fontWeight: 900 }}>Admin fees paid above face value (dollars)</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Enter original checkout/admin fees you paid on top of face value. Use 0 if none.
+              Enter 0 for now. Fees above face value must be verified from the receipt before they can raise the list price.
             </div>
             <input
               value={adminFeePaid}
@@ -1878,8 +1877,8 @@ function Body({ me }: { me: MeUser }) {
             </span>
             <span style={{ fontSize: 12, opacity: 0.7 }}>
               {previewListPriceCents == null
-                ? "Maximum allowed price appears after face value and admin fees are entered."
-                : `Maximum allowed: ${formatMoney(previewListPriceCents / 100)}`}
+                ? "Maximum allowed price appears after face value is entered."
+                : `Maximum allowed before fee verification: ${formatMoney(previewListPriceCents / 100)}`}
             </span>
           </div>
 

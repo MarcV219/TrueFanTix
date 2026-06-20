@@ -1,0 +1,75 @@
+import { fetchOfficialSnapshot } from "@/lib/officialPricing";
+
+const ticketmasterEvent = {
+  name: "Toronto Raptors vs Boston Celtics",
+  url: "https://www.ticketmaster.ca/event/example",
+  dates: {
+    start: {
+      localDate: "2026-10-20",
+      dateTime: "2026-10-20T23:00:00Z",
+    },
+    status: { code: "onsale" },
+  },
+  priceRanges: [{ min: 80, max: 120 }],
+  _embedded: {
+    venues: [
+      {
+        name: "Scotiabank Arena",
+        city: { name: "Toronto" },
+      },
+    ],
+  },
+};
+
+type TicketmasterEventFixture = typeof ticketmasterEvent;
+
+function mockTicketmasterResponse(events: TicketmasterEventFixture[]) {
+  jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ _embedded: { events } }),
+  } as Response);
+}
+
+describe("official pricing lookup", () => {
+  const originalTicketmasterKey = process.env.TICKETMASTER_API_KEY;
+
+  beforeEach(() => {
+    process.env.TICKETMASTER_API_KEY = "test-ticketmaster-key";
+    jest.restoreAllMocks();
+  });
+
+  afterAll(() => {
+    process.env.TICKETMASTER_API_KEY = originalTicketmasterKey;
+  });
+
+  it("rejects Ticketmaster matches when the submitted venue name is wrong", async () => {
+    mockTicketmasterResponse([ticketmasterEvent]);
+
+    const result = await fetchOfficialSnapshot({
+      title: "Toronto Raptors vs Boston Celtics",
+      date: "2026-10-20 7:00 PM",
+      venue: "Wrong Venue, Toronto",
+      primaryVendor: "Ticketmaster",
+    });
+
+    expect(result.found).toBe(false);
+    expect(result.reason).toBe("venue-not-confirmed");
+    expect(result.officialVenueName).toBe("Scotiabank Arena");
+  });
+
+  it("accepts Ticketmaster matches when the submitted venue name matches", async () => {
+    mockTicketmasterResponse([ticketmasterEvent]);
+
+    const result = await fetchOfficialSnapshot({
+      title: "Toronto Raptors vs Boston Celtics",
+      date: "2026-10-20 7:00 PM",
+      venue: "Scotiabank Arena, Toronto",
+      primaryVendor: "Ticketmaster",
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.officialFaceValueCents).toBe(12000);
+    expect(result.officialVenueName).toBe("Scotiabank Arena");
+  });
+});

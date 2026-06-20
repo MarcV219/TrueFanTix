@@ -536,6 +536,7 @@ export async function POST(req: Request) {
             vendor: official.vendor,
             sourceUrl: official.sourceUrl,
             found: official.found,
+            officialVenueName: official.officialVenueName ?? null,
             officialFaceValueCents: official.officialFaceValueCents,
             faceValueSource: listingCheck.faceValueSource,
             adminFeePaidCents,

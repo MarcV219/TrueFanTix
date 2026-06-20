@@ -13,27 +13,27 @@ function official(overrides: Partial<OfficialSnapshot> = {}): OfficialSnapshot {
 }
 
 describe("listing validation", () => {
-  it("allows face value plus admin fees paid", () => {
+  it("allows listings at official face value", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),
-      priceCents: 11250,
+      priceCents: 10000,
       sellerFaceValueCents: 10000,
-      adminFeePaidCents: 1250,
+      adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
       action: "list",
     });
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.maxListPriceCents).toBe(11250);
+    if (result.ok) expect(result.maxListPriceCents).toBe(10000);
   });
 
-  it("allows listings below face value plus admin fees paid", () => {
+  it("allows listings below official face value", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),
       priceCents: 9500,
       sellerFaceValueCents: 10000,
-      adminFeePaidCents: 1250,
+      adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
       action: "list",
@@ -60,6 +60,29 @@ describe("listing validation", () => {
     }
   });
 
+  it("returns a venue-specific error when the official match has a different venue", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({
+        found: false,
+        officialFaceValueCents: null,
+        reason: "venue-not-confirmed",
+        officialVenueName: "Scotiabank Arena",
+      }),
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      action: "list",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("OFFICIAL_EVENT_VENUE_MISMATCH");
+      expect(result.message).toContain("Official venue found: Scotiabank Arena");
+    }
+  });
+
   it("returns a date-specific error when the official match has a different date", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({
@@ -82,9 +105,24 @@ describe("listing validation", () => {
     }
   });
 
-  it("allows receipt-confirmed face value when provider has no official face value", () => {
+  it("rejects receipt-entered face value when official face value is unavailable", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({ officialFaceValueCents: null }),
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      action: "list",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("OFFICIAL_FACE_VALUE_NOT_CONFIRMED");
+  });
+
+  it("rejects service fees until receipt fee verification exists", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
       priceCents: 11250,
       sellerFaceValueCents: 10000,
       adminFeePaidCents: 1250,
@@ -93,11 +131,8 @@ describe("listing validation", () => {
       action: "list",
     });
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.faceValueCents).toBe(10000);
-      expect(result.faceValueSource).toBe("seller-receipt");
-    }
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("SERVICE_FEES_NOT_VERIFIED");
   });
 
   it("requires receipt proof and seller confirmation", () => {

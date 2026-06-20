@@ -11,7 +11,7 @@ type ListingValidationInput = {
 };
 
 type ListingValidationResult =
-  | { ok: true; faceValueCents: number; faceValueSource: "official" | "seller-receipt"; maxListPriceCents: number }
+  | { ok: true; faceValueCents: number; faceValueSource: "official"; maxListPriceCents: number }
   | { ok: false; error: string; message: string; details?: ListingPricingDetails };
 
 export type ListingPricingDetails = {
@@ -46,7 +46,7 @@ export function validateListingPriceAgainstOfficial({
     adminFeePaidCents: normalizedAdminFeePaidCents,
     maxListPriceCents:
       officialFaceValueCents != null
-        ? officialFaceValueCents + normalizedAdminFeePaidCents
+        ? officialFaceValueCents
         : sellerFaceValueCents != null
         ? sellerFaceValueCents + normalizedAdminFeePaidCents
         : null,
@@ -82,6 +82,16 @@ export function validateListingPriceAgainstOfficial({
       };
     }
 
+    if (official.reason === "venue-not-confirmed") {
+      const officialVenue = official.officialVenueName ? ` Official venue found: ${official.officialVenueName}.` : "";
+      return {
+        ok: false,
+        error: "OFFICIAL_EVENT_VENUE_MISMATCH",
+        message: `We found a possible official event match, but not for the venue you entered.${officialVenue} ${notChanged} Update the venue to match the official ticketing source.`,
+        details: details(official.officialFaceValueCents),
+      };
+    }
+
     return {
       ok: false,
       error: "OFFICIAL_EVENT_NOT_CONFIRMED",
@@ -91,30 +101,11 @@ export function validateListingPriceAgainstOfficial({
   }
 
   if (official.officialFaceValueCents == null) {
-    if (sellerFaceValueCents == null) {
-      return {
-        ok: false,
-        error: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
-        message: `We confirmed the event, but could not confirm its official face value. ${notChanged} Enter the face value shown on the purchase receipt and confirm the receipt proof.`,
-        details: details(null),
-      };
-    }
-
-    const maxListPriceCents = sellerFaceValueCents + normalizedAdminFeePaidCents;
-    if (priceCents > maxListPriceCents) {
-      return {
-        ok: false,
-        error: "PRICE_ABOVE_FACE_VALUE_WITH_FEES",
-        message: `This listing is above the allowed maximum from your confirmed receipt values. Face value is ${centsToDisplay(sellerFaceValueCents)} plus ${centsToDisplay(normalizedAdminFeePaidCents)} in service fees paid, so the highest list price is ${centsToDisplay(maxListPriceCents)}. Lower the price to ${verb}.`,
-        details: details(null),
-      };
-    }
-
     return {
-      ok: true,
-      faceValueCents: sellerFaceValueCents,
-      faceValueSource: "seller-receipt",
-      maxListPriceCents,
+      ok: false,
+      error: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
+      message: `We confirmed the event, but could not confirm its official face value from the official ticketing source. ${notChanged} Seller-entered receipt values cannot be used to override official pricing.`,
+      details: details(null),
     };
   }
 
@@ -127,13 +118,22 @@ export function validateListingPriceAgainstOfficial({
     };
   }
 
-  const maxListPriceCents = official.officialFaceValueCents + normalizedAdminFeePaidCents;
+  if (normalizedAdminFeePaidCents > 0) {
+    return {
+      ok: false,
+      error: "SERVICE_FEES_NOT_VERIFIED",
+      message: `${notChanged} Service fees paid above face value must be verified from the uploaded receipt before they can increase the allowed list price. Set service fees paid to $0 to list at or below the official face value, or wait for receipt review support.`,
+      details: details(official.officialFaceValueCents),
+    };
+  }
+
+  const maxListPriceCents = official.officialFaceValueCents;
 
   if (priceCents > maxListPriceCents) {
     return {
       ok: false,
       error: "PRICE_ABOVE_FACE_VALUE_WITH_FEES",
-      message: `This listing is above the allowed maximum. Confirmed face value is ${centsToDisplay(official.officialFaceValueCents)} plus ${centsToDisplay(normalizedAdminFeePaidCents)} in service fees paid, so the highest list price is ${centsToDisplay(maxListPriceCents)}. Lower the price to ${verb}.`,
+      message: `This listing is above the allowed maximum. Confirmed face value is ${centsToDisplay(official.officialFaceValueCents)}. Service fees have not been verified, so the highest list price is ${centsToDisplay(maxListPriceCents)}. Lower the price to ${verb}.`,
       details: details(official.officialFaceValueCents),
     };
   }
