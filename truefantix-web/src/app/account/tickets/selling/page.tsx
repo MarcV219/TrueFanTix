@@ -833,7 +833,7 @@ function ActiveListings({
                 </label>
 
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 900 }}>Price</span>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Price per ticket</span>
                   <input
                     value={editForm.price}
                     onChange={(e) => setEditForm((current) => current ? { ...current, price: e.target.value } : current)}
@@ -844,7 +844,7 @@ function ActiveListings({
                 </label>
 
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 900 }}>Face value</span>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Face value per ticket</span>
                   <input
                     value={editForm.faceValue}
                     onChange={(e) => setEditForm((current) => current ? { ...current, faceValue: e.target.value } : current)}
@@ -855,7 +855,7 @@ function ActiveListings({
                 </label>
 
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 900 }}>Admin fees paid</span>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Admin fees paid per ticket</span>
                   <input
                     value={editForm.adminFeePaid}
                     onChange={(e) => setEditForm((current) => current ? { ...current, adminFeePaid: e.target.value } : current)}
@@ -2045,7 +2045,7 @@ function Body({ me }: { me: MeUser }) {
           </div>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>List price (dollars)</span>
+            <span style={{ fontWeight: 900 }}>List price per ticket (dollars)</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
               Enter the price you want buyers to see. It cannot exceed face value plus admin fees paid.
             </div>
@@ -2065,7 +2065,7 @@ function Body({ me }: { me: MeUser }) {
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Face value (dollars)</span>
+            <span style={{ fontWeight: 900 }}>Face value per ticket (dollars)</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>Enter the ticket face value before fees.</div>
             <input
               value={faceValue}
@@ -2083,7 +2083,7 @@ function Body({ me }: { me: MeUser }) {
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Admin fees paid above face value (dollars)</span>
+            <span style={{ fontWeight: 900 }}>Admin fees paid per ticket above face value (dollars)</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
               Enter 0 for now. Fees above face value must be verified from the receipt before they can raise the list price.
             </div>
@@ -2112,7 +2112,7 @@ function Body({ me }: { me: MeUser }) {
               background: "rgba(248, 250, 252, 1)",
             }}
           >
-            <span style={{ fontSize: 12, fontWeight: 900, opacity: 0.76 }}>List price</span>
+            <span style={{ fontSize: 12, fontWeight: 900, opacity: 0.76 }}>List price per ticket</span>
             <span style={{ fontSize: 20, fontWeight: 950 }}>
               {previewPriceCents == null ? "Enter a list price" : formatMoney(previewPriceCents / 100)}
             </span>
