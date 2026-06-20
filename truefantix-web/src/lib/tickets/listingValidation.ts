@@ -24,6 +24,13 @@ type ListingValidationResult =
 
 export type ListingPricingDetails = {
   officialFaceValueCents: number | null;
+  officialPriceRangeMinCents: number | null;
+  officialPriceRangeMaxCents: number | null;
+  officialServiceFeesCents: number | null;
+  officialServiceFeeSource: string | null;
+  officialStatusCode: string | null;
+  soldOut: boolean | null;
+  soldOutSource: string | null;
   officialEventTitle: string | null;
   officialEventDate: string | null;
   officialVenueName: string | null;
@@ -133,9 +140,18 @@ export function validateListingPriceAgainstOfficial({
   const notChanged = action === "list" ? "The tickets were not listed." : "The listing was not updated.";
   const normalizedAdminFeePaidCents = Math.max(0, adminFeePaidCents);
   let verifiedServiceFeesCents = 0;
+  let receiptFaceValueCents: number | null = null;
+  let receiptServiceFeesCents: number | null = null;
 
   const details = (officialFaceValueCents: number | null, sourceIssues: ListingSourceIssue[] = []): ListingPricingDetails => ({
     officialFaceValueCents,
+    officialPriceRangeMinCents: official.officialPriceRangeMinCents ?? null,
+    officialPriceRangeMaxCents: official.officialPriceRangeMaxCents ?? null,
+    officialServiceFeesCents: official.officialServiceFeesCents ?? null,
+    officialServiceFeeSource: official.officialServiceFeeSource ?? null,
+    officialStatusCode: official.officialStatusCode ?? null,
+    soldOut: official.soldOut ?? null,
+    soldOutSource: official.soldOutSource ?? null,
     officialEventTitle: official.officialEventTitle ?? null,
     officialEventDate: official.officialEventDate ?? null,
     officialVenueName: official.officialVenueName ?? null,
@@ -273,12 +289,12 @@ export function validateListingPriceAgainstOfficial({
         });
       }
 
-      const receiptFaceValueCents =
+      receiptFaceValueCents =
         receiptReview.faceValueCents ??
         (receiptReview.totalFaceValueCents != null && receiptReview.ticketQuantity
           ? Math.round(receiptReview.totalFaceValueCents / receiptReview.ticketQuantity)
           : null);
-      const receiptServiceFeesCents =
+      receiptServiceFeesCents =
         receiptReview.serviceFeesCents ??
         (receiptReview.totalServiceFeesCents != null && receiptReview.ticketQuantity
           ? Math.round(receiptReview.totalServiceFeesCents / receiptReview.ticketQuantity)
@@ -414,6 +430,7 @@ export function validateListingPriceAgainstOfficial({
   }
 
   const issues: ListingSourceIssue[] = [...receiptIssues];
+  const officialServiceFeesCents = official.officialServiceFeesCents ?? null;
 
   if (sellerFaceValueCents != null && sellerFaceValueCents !== official.officialFaceValueCents) {
     issues.push({
@@ -423,6 +440,17 @@ export function validateListingPriceAgainstOfficial({
       entered: centsToDisplay(sellerFaceValueCents),
       found: centsToDisplay(official.officialFaceValueCents),
       message: "Ticketmaster official face value differs from the face value entered.",
+    });
+  }
+
+  if (officialServiceFeesCents != null && !sameMoney(officialServiceFeesCents, normalizedAdminFeePaidCents)) {
+    issues.push({
+      code: "OFFICIAL_SERVICE_FEES_MISMATCH",
+      field: "serviceFees",
+      source: "Ticketmaster",
+      entered: centsToDisplay(normalizedAdminFeePaidCents),
+      found: centsToDisplay(officialServiceFeesCents),
+      message: "Ticketmaster official service fees differ from the service fees entered.",
     });
   }
 

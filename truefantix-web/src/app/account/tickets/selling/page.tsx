@@ -24,6 +24,13 @@ type CreateTicketBody = {
 
 type PricingConfirmation = {
   officialFaceValueCents: number | null;
+  officialPriceRangeMinCents?: number | null;
+  officialPriceRangeMaxCents?: number | null;
+  officialServiceFeesCents?: number | null;
+  officialServiceFeeSource?: string | null;
+  officialStatusCode?: string | null;
+  soldOut?: boolean | null;
+  soldOutSource?: string | null;
   officialEventTitle?: string | null;
   officialEventDate?: string | null;
   officialVenueName?: string | null;
@@ -237,6 +244,26 @@ function formatMoney(n: number) {
 
 function centsToMoney(cents: number | null | undefined) {
   return typeof cents === "number" ? formatMoney(cents / 100) : "Not found";
+}
+
+function centsRangeToMoney(minCents: number | null | undefined, maxCents: number | null | undefined) {
+  if (typeof minCents !== "number" && typeof maxCents !== "number") return "Not found";
+  if (typeof minCents === "number" && typeof maxCents === "number") {
+    if (minCents === maxCents) return centsToMoney(minCents);
+    return `${centsToMoney(minCents)}-${centsToMoney(maxCents)}`;
+  }
+  return centsToMoney(maxCents ?? minCents);
+}
+
+function officialServiceFeesLabel(pricing: NonNullable<PricingConfirmation>) {
+  if (typeof pricing.officialServiceFeesCents === "number") return centsToMoney(pricing.officialServiceFeesCents);
+  return "Not provided by Ticketmaster";
+}
+
+function soldOutLabel(pricing: NonNullable<PricingConfirmation>) {
+  if (pricing.soldOut === true) return "Sold out / offsale";
+  if (pricing.soldOut === false) return pricing.officialStatusCode ? `Not sold out (${pricing.officialStatusCode})` : "Not sold out";
+  return "Not found";
 }
 
 function readReceiptProof(file: File): Promise<string> {
@@ -1197,7 +1224,7 @@ function Body({ me }: { me: MeUser }) {
   }
 
   function actionLabelForSourceIssue(issue: PricingSourceIssue) {
-    if (issue.field === "serviceFees") return issue.found ? "Use receipt fees" : "Set fees to $0";
+    if (issue.field === "serviceFees") return issue.found ? `Use ${issue.source} fees` : "Set fees to $0";
     if (issue.field === "quantity") return "Use quantity";
     if (issue.field === "faceValue") return "Use face value";
     if (issue.field === "listPrice") return "Use max price";
@@ -1487,9 +1514,14 @@ function Body({ me }: { me: MeUser }) {
               >
                 <div style={{ display: "grid", gap: 4 }}>
                   <div>Ticketmaster face value: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
+                  <div>
+                    Ticketmaster price range:{" "}
+                    {centsRangeToMoney(pricingConfirmation.officialPriceRangeMinCents, pricingConfirmation.officialPriceRangeMaxCents)}
+                  </div>
+                  <div>Ticketmaster service fees: {officialServiceFeesLabel(pricingConfirmation)}</div>
+                  <div>Ticketmaster sold-out status: {soldOutLabel(pricingConfirmation)}</div>
                   <div>Ticketmaster venue: {pricingConfirmation.officialVenueName || "Not found"}</div>
                   <div>Ticketmaster event date: {pricingConfirmation.officialEventDate || "Not found"}</div>
-                  <div>Receipt service fees verified: Not automated yet</div>
                   <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
                   {pricingConfirmation.sourceUrl ? (
                     <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>

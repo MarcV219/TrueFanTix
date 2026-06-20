@@ -5,6 +5,26 @@ import { prisma } from "@/lib/prisma";
 import { hasInternalCronAuth } from "@/lib/auth/guards";
 import { fetchOfficialSnapshot } from "@/lib/officialPricing";
 
+function sameMoney(a: number | null | undefined, b: number | null | undefined) {
+  return typeof a === "number" && typeof b === "number" && Math.abs(a - b) <= 1;
+}
+
+function verifiedAdminFeesCents(adminFeePaidCents: number, snap: Awaited<ReturnType<typeof fetchOfficialSnapshot>>, evidence: any) {
+  if (adminFeePaidCents <= 0) return 0;
+  if (sameMoney(snap.officialServiceFeesCents, adminFeePaidCents)) return adminFeePaidCents;
+
+  const ocr = evidence?.receiptProof?.ocr;
+  const receiptQuantity = typeof ocr?.ticketQuantity === "number" && ocr.ticketQuantity > 0 ? ocr.ticketQuantity : null;
+  const receiptServiceFeesCents =
+    typeof ocr?.serviceFeesCents === "number"
+      ? ocr.serviceFeesCents
+      : typeof ocr?.totalServiceFeesCents === "number" && receiptQuantity
+        ? Math.round(ocr.totalServiceFeesCents / receiptQuantity)
+        : null;
+
+  return sameMoney(receiptServiceFeesCents, adminFeePaidCents) ? adminFeePaidCents : 0;
+}
+
 export async function POST(req: Request) {
   if (!hasInternalCronAuth(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -39,9 +59,19 @@ export async function POST(req: Request) {
     let nextPrice = t.priceCents;
     let nextSellout: "SOLD_OUT" | "NOT_SOLD_OUT" | null = null;
 
+    let existingEvidence: any = {};
+    try {
+      existingEvidence = t.verificationEvidence ? JSON.parse(t.verificationEvidence) : {};
+    } catch {
+      existingEvidence = {};
+    }
+
+    const adminFeePaidCents = Math.max(0, t.adminFeePaidCents ?? 0);
+    const verifiedServiceFeesCents = verifiedAdminFeesCents(adminFeePaidCents, snap, existingEvidence);
+
     if (snap.officialFaceValueCents != null) {
       nextFaceValue = snap.officialFaceValueCents;
-      const maxListPriceCents = snap.officialFaceValueCents + Math.max(0, t.adminFeePaidCents ?? 0);
+      const maxListPriceCents = snap.officialFaceValueCents + verifiedServiceFeesCents;
       if (enforceCap && nextPrice > maxListPriceCents) {
         nextPrice = maxListPriceCents;
       }
@@ -52,13 +82,6 @@ export async function POST(req: Request) {
     }
 
     const ticketChanged = nextFaceValue !== t.faceValueCents || nextPrice !== t.priceCents;
-
-    let existingEvidence: any = {};
-    try {
-      existingEvidence = t.verificationEvidence ? JSON.parse(t.verificationEvidence) : {};
-    } catch {
-      existingEvidence = {};
-    }
 
     await prisma.ticket.update({
       where: { id: t.id },
@@ -72,13 +95,21 @@ export async function POST(req: Request) {
             sourceUrl: snap.sourceUrl,
             syncedAt: new Date().toISOString(),
             found: snap.found,
+            officialVenueName: snap.officialVenueName ?? null,
+            officialPriceRangeMinCents: snap.officialPriceRangeMinCents ?? null,
+            officialPriceRangeMaxCents: snap.officialPriceRangeMaxCents ?? null,
             officialFaceValueCents: snap.officialFaceValueCents,
-            adminFeePaidCents: t.adminFeePaidCents ?? 0,
+            officialServiceFeesCents: snap.officialServiceFeesCents ?? null,
+            officialServiceFeeSource: snap.officialServiceFeeSource ?? null,
+            adminFeePaidCents,
+            verifiedServiceFeesCents,
             maxListPriceCents:
               snap.officialFaceValueCents == null
                 ? null
-                : snap.officialFaceValueCents + Math.max(0, t.adminFeePaidCents ?? 0),
+                : snap.officialFaceValueCents + verifiedServiceFeesCents,
+            officialStatusCode: snap.officialStatusCode ?? null,
             soldOut: snap.soldOut,
+            soldOutSource: snap.soldOutSource ?? null,
             reason: snap.reason ?? null,
           },
         }),
@@ -121,6 +152,7 @@ export async function POST(req: Request) {
       newFaceValueCents: nextFaceValue,
       vendor: snap.vendor,
       soldOut: snap.soldOut,
+      officialStatusCode: snap.officialStatusCode ?? null,
       sourceUrl: snap.sourceUrl,
       found: snap.found,
       reason: snap.reason ?? null,
@@ -137,7 +169,7 @@ export async function POST(req: Request) {
     notes: [
       "Below Face Value tag is computed in UI as price < faceValue.",
       "Face Value tag is shown when price >= faceValue or event sold out.",
-      "By default this sync does NOT auto-cap ticket price; pass ?enforceCap=1 to clamp price to official face value plus seller-entered admin fees paid.",
+      "By default this sync does NOT auto-cap ticket price; pass ?enforceCap=1 to clamp price to official face value plus source- or receipt-verified admin fees paid.",
       "This sync uses official primary-market (Ticketmaster Discovery API) only; no reseller sources.",
       "Exact row/seat-level primary market pricing is not generally exposed via public API; sync uses best available event-level price ranges.",
     ],

@@ -226,6 +226,43 @@ describe("listing validation", () => {
     if (result.ok) expect(result.maxListPriceCents).toBe(11250);
   });
 
+  it("shows source-provided service fee differences when available", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ officialServiceFeesCents: 900, officialServiceFeeSource: "ticketmaster-checkout" }),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 11250,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 1250,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        serviceFeesCents: 1250,
+        totalServiceFeesCents: 1250,
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("OFFICIAL_SERVICE_FEES_MISMATCH");
+      expect(result.details?.officialServiceFeesCents).toBe(900);
+      expect(result.details?.sourceIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "OFFICIAL_SERVICE_FEES_MISMATCH",
+            entered: "$12.50",
+            found: "$9.00",
+          }),
+        ])
+      );
+    }
+  });
+
   it("rejects service fees when receipt OCR cannot verify the same fees", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),

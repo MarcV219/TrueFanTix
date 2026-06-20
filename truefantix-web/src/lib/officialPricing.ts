@@ -11,7 +11,13 @@ export type OfficialSnapshot = {
   found: boolean;
   vendor: "ticketmaster" | "primary-web" | "none";
   officialFaceValueCents: number | null;
+  officialPriceRangeMinCents?: number | null;
+  officialPriceRangeMaxCents?: number | null;
+  officialServiceFeesCents?: number | null;
+  officialServiceFeeSource?: string | null;
+  officialStatusCode?: string | null;
   soldOut: boolean | null;
+  soldOutSource?: string | null;
   sourceUrl: string | null;
   reason?: string;
   officialEventTitle?: string | null;
@@ -126,7 +132,13 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
         found: true,
         vendor: "primary-web",
         officialFaceValueCents: null,
+        officialPriceRangeMinCents: null,
+        officialPriceRangeMaxCents: null,
+        officialServiceFeesCents: null,
+        officialServiceFeeSource: null,
+        officialStatusCode: null,
         soldOut: null,
+        soldOutSource: null,
         sourceUrl: url,
         reason: "confirmed-primary-web-fallback",
       };
@@ -314,16 +326,25 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
 
   const min = typeof ev?.priceRanges?.[0]?.min === "number" ? ev.priceRanges[0].min : null;
   const max = typeof ev?.priceRanges?.[0]?.max === "number" ? ev.priceRanges[0].max : null;
+  const minCents = min == null ? null : Math.round(Number(min) * 100);
+  const maxCents = max == null ? null : Math.round(Number(max) * 100);
   // conservative face value estimate for primary market: max advertised face range if available, else min.
   const face = max ?? min;
 
-  const soldOut = (ev?.dates?.status?.code || "").toLowerCase() === "offsale";
+  const statusCode = String(ev?.dates?.status?.code || "").toLowerCase() || null;
+  const soldOut = statusCode === "offsale";
 
   return {
     found: true,
     vendor: "ticketmaster",
     officialFaceValueCents: face == null ? null : Math.round(Number(face) * 100),
+    officialPriceRangeMinCents: minCents,
+    officialPriceRangeMaxCents: maxCents,
+    officialServiceFeesCents: null,
+    officialServiceFeeSource: null,
+    officialStatusCode: statusCode,
     soldOut,
+    soldOutSource: statusCode ? "ticketmaster-event-status" : null,
     sourceUrl: ev?.url ?? null,
     officialEventTitle: String(ev?.name || "") || null,
     officialEventDate: toYmd(ev?.dates?.start?.dateTime || ev?.dates?.start?.localDate || null),

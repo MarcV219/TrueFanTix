@@ -70,6 +70,35 @@ describe("official pricing lookup", () => {
 
     expect(result.found).toBe(true);
     expect(result.officialFaceValueCents).toBe(12000);
+    expect(result.officialPriceRangeMinCents).toBe(8000);
+    expect(result.officialPriceRangeMaxCents).toBe(12000);
+    expect(result.officialServiceFeesCents).toBeNull();
+    expect(result.officialStatusCode).toBe("onsale");
+    expect(result.soldOut).toBe(false);
     expect(result.officialVenueName).toBe("Scotiabank Arena");
+  });
+
+  it("marks Ticketmaster offsale events as sold out source status", async () => {
+    mockTicketmasterResponse([
+      {
+        ...ticketmasterEvent,
+        dates: {
+          ...ticketmasterEvent.dates,
+          status: { code: "offsale" },
+        },
+      },
+    ]);
+
+    const result = await fetchOfficialSnapshot({
+      title: "Toronto Raptors vs Boston Celtics",
+      date: "2026-10-20 7:00 PM",
+      venue: "Scotiabank Arena, Toronto",
+      primaryVendor: "Ticketmaster",
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.officialStatusCode).toBe("offsale");
+    expect(result.soldOut).toBe(true);
+    expect(result.soldOutSource).toBe("ticketmaster-event-status");
   });
 });

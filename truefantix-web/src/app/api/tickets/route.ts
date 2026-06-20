@@ -186,7 +186,17 @@ export async function GET(req: Request) {
           location: { confirmed: !!officialSync?.found, source: officialSync?.sourceUrl ?? null, note: !!officialSync?.found ? "Matched via official provider event lookup" : "Not confirmed yet" },
           seat: { confirmed: false, source: null, note: "Primary-market public API does not reliably expose seat/row-level confirmation" },
           price: { confirmed: confirmedFaceValueCents != null, source: officialSync?.sourceUrl ?? null, note: confirmedFaceValueCents != null ? "Confirmed against official primary-market event price range" : "No official face value confirmed" },
-          soldOut: { confirmed: typeof officialSync?.soldOut === "boolean", source: officialSync?.sourceUrl ?? null, note: typeof officialSync?.soldOut === "boolean" ? "Confirmed via official event status" : "No official sold-out status confirmed" },
+          serviceFees: {
+            confirmed: typeof officialSync?.verifiedServiceFeesCents === "number",
+            source: officialSync?.officialServiceFeeSource ?? (typeof officialSync?.verifiedServiceFeesCents === "number" ? "receipt-ocr" : null),
+            note:
+              typeof officialSync?.officialServiceFeesCents === "number"
+                ? "Confirmed via official source service fees"
+                : typeof officialSync?.verifiedServiceFeesCents === "number"
+                  ? "Confirmed via receipt OCR"
+                  : "Official source did not provide service fees",
+          },
+          soldOut: { confirmed: typeof officialSync?.soldOut === "boolean", source: officialSync?.sourceUrl ?? null, note: typeof officialSync?.soldOut === "boolean" ? `Confirmed via official event status${officialSync?.officialStatusCode ? ` (${officialSync.officialStatusCode})` : ""}` : "No official sold-out status confirmed" },
           provider: officialSync?.vendor ?? null,
           syncedAt: officialSync?.syncedAt ?? null,
         },
@@ -552,12 +562,18 @@ export async function POST(req: Request) {
             sourceUrl: official.sourceUrl,
             found: official.found,
             officialVenueName: official.officialVenueName ?? null,
+            officialPriceRangeMinCents: official.officialPriceRangeMinCents ?? null,
+            officialPriceRangeMaxCents: official.officialPriceRangeMaxCents ?? null,
             officialFaceValueCents: official.officialFaceValueCents,
+            officialServiceFeesCents: official.officialServiceFeesCents ?? null,
+            officialServiceFeeSource: official.officialServiceFeeSource ?? null,
             faceValueSource: listingCheck.faceValueSource,
             adminFeePaidCents,
             verifiedServiceFeesCents: listingCheck.maxListPriceCents - listingCheck.faceValueCents,
             maxListPriceCents: listingCheck.maxListPriceCents,
+            officialStatusCode: official.officialStatusCode ?? null,
             soldOut: official.soldOut,
+            soldOutSource: official.soldOutSource ?? null,
             reason: official.reason ?? null,
           },
         }),
