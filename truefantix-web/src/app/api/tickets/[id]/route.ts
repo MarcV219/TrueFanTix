@@ -161,6 +161,7 @@ export async function PATCH(req: Request) {
         reservedByOrderId: true,
         eventId: true,
         primaryVendor: true,
+        verificationImage: true,
         verificationEvidence: true,
       },
     });
@@ -261,6 +262,8 @@ export async function PATCH(req: Request) {
       priceCents,
       sellerFaceValueCents: faceValueCents,
       adminFeePaidCents,
+      hasReceiptProof: !!existing.verificationImage,
+      sellerConfirmedReceiptValues: true,
       action: "update",
     });
 
@@ -271,6 +274,7 @@ export async function PATCH(req: Request) {
           error: listingCheck.error,
           message: listingCheck.message,
           official,
+          pricingConfirmation: listingCheck.details ?? null,
         },
         { status: 422 }
       );
@@ -322,7 +326,7 @@ export async function PATCH(req: Request) {
         row,
         seat,
         priceCents,
-        faceValueCents: listingCheck.officialFaceValueCents,
+        faceValueCents: listingCheck.faceValueCents,
         adminFeePaidCents,
         image,
         primaryVendor,
@@ -340,6 +344,7 @@ export async function PATCH(req: Request) {
             sourceUrl: official.sourceUrl,
             found: official.found,
             officialFaceValueCents: official.officialFaceValueCents,
+            faceValueSource: listingCheck.faceValueSource,
             adminFeePaidCents,
             maxListPriceCents: listingCheck.maxListPriceCents,
             soldOut: official.soldOut,

@@ -18,7 +18,19 @@ type CreateTicketBody = {
   eventId?: string | null;
   barcodeData?: string | null;
   barcodeType?: string | null;
+  verificationImage?: string | null;
+  receiptFileName?: string | null;
+  sellerConfirmedReceiptValues?: boolean;
 };
+
+type PricingConfirmation = {
+  officialFaceValueCents: number | null;
+  sellerFaceValueCents: number | null;
+  adminFeePaidCents: number;
+  maxListPriceCents: number | null;
+  receiptRequired: boolean;
+  sellerConfirmationRequired: boolean;
+} | null;
 
 type TicketRow = {
   id: string;
@@ -208,6 +220,19 @@ function setDateTimePickerMinutes(v: string, minute: string): string {
 function formatMoney(n: number) {
   // no Intl needed for MVP; keep stable formatting
   return `$${Number(n).toFixed(2)}`;
+}
+
+function centsToMoney(cents: number | null | undefined) {
+  return typeof cents === "number" ? formatMoney(cents / 100) : "Not found";
+}
+
+function readReceiptProof(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error("Could not read receipt file."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function catalogSuggestionMeta(suggestion: CatalogSuggestion) {
@@ -895,6 +920,9 @@ function Body({ me }: { me: MeUser }) {
   const [price, setPrice] = React.useState("");
   const [faceValue, setFaceValue] = React.useState("");
   const [adminFeePaid, setAdminFeePaid] = React.useState("0");
+  const [receiptProofDataUrl, setReceiptProofDataUrl] = React.useState("");
+  const [receiptFileName, setReceiptFileName] = React.useState("");
+  const [sellerConfirmedReceiptValues, setSellerConfirmedReceiptValues] = React.useState(false);
   const [barcodeData, setBarcodeData] = React.useState("");
   const [barcodeType, setBarcodeType] = React.useState("");
 
@@ -902,6 +930,7 @@ function Body({ me }: { me: MeUser }) {
   const [requestBusy, setRequestBusy] = React.useState<"title" | "venue" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
+  const [pricingConfirmation, setPricingConfirmation] = React.useState<PricingConfirmation>(null);
 
   // focus state (obvious boxes)
   const [fTitle, setFTitle] = React.useState(false);
@@ -1046,10 +1075,54 @@ function Body({ me }: { me: MeUser }) {
     }
   }
 
+  async function handleReceiptProofChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    setError(null);
+    setOk(null);
+    setPricingConfirmation(null);
+
+    if (!file) {
+      setReceiptProofDataUrl("");
+      setReceiptFileName("");
+      setSellerConfirmedReceiptValues(false);
+      return;
+    }
+
+    const allowed = file.type.startsWith("image/") || file.type === "application/pdf";
+    if (!allowed) {
+      setReceiptProofDataUrl("");
+      setReceiptFileName("");
+      setSellerConfirmedReceiptValues(false);
+      setError("Upload a receipt image or PDF.");
+      return;
+    }
+
+    if (file.size > 650_000) {
+      setReceiptProofDataUrl("");
+      setReceiptFileName("");
+      setSellerConfirmedReceiptValues(false);
+      setError("Receipt file must be 650 KB or smaller.");
+      return;
+    }
+
+    try {
+      const dataUrl = await readReceiptProof(file);
+      setReceiptProofDataUrl(dataUrl);
+      setReceiptFileName(file.name);
+      setSellerConfirmedReceiptValues(false);
+    } catch (err: any) {
+      setReceiptProofDataUrl("");
+      setReceiptFileName("");
+      setSellerConfirmedReceiptValues(false);
+      setError(err?.message ?? "Could not read receipt file.");
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setOk(null);
+    setPricingConfirmation(null);
 
     if (!sellerApproved) {
       setError("Seller verification is required before listing tickets.");
@@ -1095,6 +1168,12 @@ function Body({ me }: { me: MeUser }) {
     if (priceCents > faceValueCents + adminFeePaidCents) {
       return setError(`List price cannot exceed ${formatMoney((faceValueCents + adminFeePaidCents) / 100)}.`);
     }
+    if (!receiptProofDataUrl) {
+      return setError("Upload the original purchase receipt before listing tickets.");
+    }
+    if (!sellerConfirmedReceiptValues) {
+      return setError("Confirm the receipt shows the event, tickets, face value, and service fees paid.");
+    }
 
     setBusy(true);
     try {
@@ -1109,6 +1188,9 @@ function Body({ me }: { me: MeUser }) {
           priceCents,
           faceValueCents,
           adminFeePaidCents,
+          verificationImage: receiptProofDataUrl,
+          receiptFileName,
+          sellerConfirmedReceiptValues,
           barcodeData: i === 0 ? barcodeData.trim() || null : null,
           barcodeType: i === 0 ? barcodeType.trim() || null : null,
         };
@@ -1121,6 +1203,7 @@ function Body({ me }: { me: MeUser }) {
         });
 
         if (!res.ok) {
+          setPricingConfirmation((data?.pricingConfirmation ?? null) as PricingConfirmation);
           const details = Array.isArray(data?.details) ? data.details : null;
           const msg =
             (data && (data.message || data.error)) ||
@@ -1148,6 +1231,9 @@ function Body({ me }: { me: MeUser }) {
       setPrice("");
       setFaceValue("");
       setAdminFeePaid("0");
+      setReceiptProofDataUrl("");
+      setReceiptFileName("");
+      setSellerConfirmedReceiptValues(false);
       setBarcodeData("");
       setBarcodeType("");
 
@@ -1305,6 +1391,26 @@ function Body({ me }: { me: MeUser }) {
             }}
           >
             {error}
+            {pricingConfirmation ? (
+              <div
+                style={{
+                  display: "grid",
+                  gap: 6,
+                  marginTop: 10,
+                  paddingTop: 10,
+                  borderTop: "1px solid rgba(153, 27, 27, 0.22)",
+                  fontWeight: 800,
+                }}
+              >
+                <div>Official face value found: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
+                <div>Face value from your receipt: {centsToMoney(pricingConfirmation.sellerFaceValueCents)}</div>
+                <div>Service fees from your receipt: {centsToMoney(pricingConfirmation.adminFeePaidCents)}</div>
+                <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
+                {(pricingConfirmation.receiptRequired || pricingConfirmation.sellerConfirmationRequired) ? (
+                  <div>Upload the purchase receipt and confirm the receipt values before listing.</div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -1775,6 +1881,58 @@ function Body({ me }: { me: MeUser }) {
                 ? "Maximum allowed price appears after face value and admin fees are entered."
                 : `Maximum allowed: ${formatMoney(previewListPriceCents / 100)}`}
             </span>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              padding: 12,
+              borderRadius: 10,
+              border: "1px solid rgba(148, 163, 184, 0.45)",
+              background: "rgba(248, 250, 252, 1)",
+            }}
+          >
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontWeight: 900 }}>Purchase receipt proof</span>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>
+                Required. Upload the original receipt showing the event, tickets, face value, and service fees paid.
+              </div>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={handleReceiptProofChange}
+                disabled={busy}
+                style={inputStyle(false)}
+              />
+            </label>
+
+            {receiptFileName ? (
+              <div style={{ fontSize: 13, fontWeight: 850, color: "rgba(15, 23, 42, 0.82)" }}>
+                Uploaded: {receiptFileName}
+              </div>
+            ) : null}
+
+            <label
+              style={{
+                display: "flex",
+                gap: 10,
+                alignItems: "flex-start",
+                fontWeight: 850,
+                opacity: receiptProofDataUrl ? 1 : 0.65,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={sellerConfirmedReceiptValues}
+                onChange={(e) => setSellerConfirmedReceiptValues(e.target.checked)}
+                disabled={busy || !receiptProofDataUrl}
+                style={{ width: 18, height: 18, marginTop: 2 }}
+              />
+              <span>
+                I confirm this receipt shows the event, proves I have the tickets, and confirms the face value and service fees entered above.
+              </span>
+            </label>
           </div>
 
           <label style={{ display: "grid", gap: 6 }}>

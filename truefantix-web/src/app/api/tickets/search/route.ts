@@ -66,8 +66,11 @@ function calculateRelevanceScore(ticket: any, query: string): number {
 }
 
 function normalizeTicket(ticket: any, query: string) {
+  const safeTicket = { ...ticket };
+  delete safeTicket.verificationImage;
+
   return {
-    ...ticket,
+    ...safeTicket,
     price: centsToDollars(ticket.priceCents),
     faceValue: ticket.faceValueCents == null ? null : centsToDollars(ticket.faceValueCents),
     adminFeePaid: centsToDollars(ticket.adminFeePaidCents ?? 0),

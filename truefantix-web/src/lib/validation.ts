@@ -45,7 +45,17 @@ export const schemas = {
     primaryVendor: z.string().trim().max(80).optional().nullable(),
     transferMethod: z.string().trim().max(80).optional().nullable(),
     barcodeText: z.string().trim().max(255).optional().nullable(),
-    verificationImage: z.string().trim().url().max(2048).optional().nullable(),
+    verificationImage: z
+      .string()
+      .trim()
+      .max(2_000_000)
+      .refine((value) => !value || value.startsWith("data:image/") || value.startsWith("data:application/pdf;") || /^https?:\/\//i.test(value), {
+        message: "verificationImage must be an image/PDF receipt upload or URL.",
+      })
+      .optional()
+      .nullable(),
+    receiptFileName: z.string().trim().max(255).optional().nullable(),
+    sellerConfirmedReceiptValues: z.boolean().optional(),
   }),
 
   // Order schemas

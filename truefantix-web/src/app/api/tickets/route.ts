@@ -305,6 +305,8 @@ export async function POST(req: Request) {
   const transferMethod = body.transferMethod ?? null;
   const barcodeText = body.barcodeText ?? null;
   const verificationImage = body.verificationImage ?? null;
+  const receiptFileName = body.receiptFileName ?? null;
+  const sellerConfirmedReceiptValues = body.sellerConfirmedReceiptValues === true;
   const eventTypeOverride = (body.eventTypeOverride ?? "").trim().toLowerCase() || null;
 
   // We store cents.
@@ -395,6 +397,8 @@ export async function POST(req: Request) {
       priceCents: priceCentsRaw,
       sellerFaceValueCents: faceValueCents,
       adminFeePaidCents,
+      hasReceiptProof: !!verificationImage,
+      sellerConfirmedReceiptValues,
       action: "list",
     });
 
@@ -405,6 +409,7 @@ export async function POST(req: Request) {
           error: listingCheck.error,
           message: listingCheck.message,
           official,
+          pricingConfirmation: listingCheck.details ?? null,
         },
         { status: 422 }
       );
@@ -458,6 +463,12 @@ export async function POST(req: Request) {
           providerConfirmed: providerCheck.confirmed,
           providerReason: providerCheck.reason,
           manualEventType: eventTypeOverride,
+          receiptProof: {
+            provided: !!verificationImage,
+            fileName: receiptFileName,
+            sellerConfirmedReceiptValues,
+            confirmedAt: sellerConfirmedReceiptValues ? new Date().toISOString() : null,
+          },
         }),
         barcodeHash,
         sellerId,
@@ -501,7 +512,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const syncedFaceValueCents = listingCheck.officialFaceValueCents;
+    const syncedFaceValueCents = listingCheck.faceValueCents;
     const syncedPriceCents = priceCentsRaw;
 
     let existingEvidence: any = {};
@@ -526,6 +537,7 @@ export async function POST(req: Request) {
             sourceUrl: official.sourceUrl,
             found: official.found,
             officialFaceValueCents: official.officialFaceValueCents,
+            faceValueSource: listingCheck.faceValueSource,
             adminFeePaidCents,
             maxListPriceCents: listingCheck.maxListPriceCents,
             soldOut: official.soldOut,
