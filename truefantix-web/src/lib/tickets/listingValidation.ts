@@ -19,7 +19,7 @@ type ListingValidationInput = {
 };
 
 type ListingValidationResult =
-  | { ok: true; faceValueCents: number; faceValueSource: "official"; maxListPriceCents: number }
+  | { ok: true; faceValueCents: number; faceValueSource: "official" | "receipt"; maxListPriceCents: number }
   | { ok: false; error: string; message: string; details?: ListingPricingDetails };
 
 export type ListingPricingDetails = {
@@ -104,6 +104,13 @@ function sellerTimeFromDate(value: string): string | null {
 
 function sameMoney(a: number | null | undefined, b: number | null | undefined) {
   return typeof a === "number" && typeof b === "number" && Math.abs(a - b) <= 1;
+}
+
+function isBlockingOfficialConflict(reason: string | null | undefined) {
+  return reason === "date-not-confirmed" ||
+    reason === "title-not-confirmed" ||
+    reason === "teams-not-confirmed" ||
+    reason === "venue-not-confirmed";
 }
 
 function seatText(row: string | null | undefined, seat: string | null | undefined) {
@@ -374,7 +381,7 @@ export function validateListingPriceAgainstOfficial({
     };
   }
 
-  if (!official.found) {
+  if (!official.found && isBlockingOfficialConflict(official.reason)) {
     if (official.reason === "date-not-confirmed") {
       const issues = [
         {
@@ -441,34 +448,47 @@ export function validateListingPriceAgainstOfficial({
         details: details(official.officialFaceValueCents, issues),
       };
     }
+  }
+
+  if (!official.found) {
+    const issues = [...receiptIssues, ...receiptPriceIssues];
+    if (!issues.length && receiptVerifiedMaxListPriceCents != null && receiptFaceValueCents != null) {
+      return {
+        ok: true,
+        faceValueCents: receiptFaceValueCents,
+        faceValueSource: "receipt",
+        maxListPriceCents: receiptVerifiedMaxListPriceCents,
+      };
+    }
 
     return {
       ok: false,
-      error: "OFFICIAL_EVENT_NOT_CONFIRMED",
-      message: `We could not confirm this event with an official primary-market source. ${notChanged} Please request the event be added or try again with the official event details.`,
-      details: details(official.officialFaceValueCents, [...receiptIssues, ...receiptPriceIssues]),
+      error: issues[0]?.code ?? "RECEIPT_PRICING_NOT_CONFIRMED",
+      message: issues.length
+        ? `${notChanged} We found ${issues.length} receipt difference${issues.length === 1 ? "" : "s"} to review before this listing can go live.`
+        : `${notChanged} We could not confirm price and service fees from Ticketmaster or the receipt.`,
+      details: details(receiptFaceValueCents, issues),
     };
   }
 
   if (official.officialFaceValueCents == null) {
-    const issues = [
-      {
-        code: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
-        field: "faceValue",
-        source: "Ticketmaster",
-        entered: sellerFaceValueCents == null ? null : centsToDisplay(sellerFaceValueCents),
-        found: null,
-        message: "Ticketmaster confirmed the event but did not provide official face value.",
-      } satisfies ListingSourceIssue,
-      ...receiptIssues,
-      ...receiptPriceIssues,
-    ];
+    const issues = [...receiptIssues, ...receiptPriceIssues];
+    if (!issues.length && receiptVerifiedMaxListPriceCents != null && receiptFaceValueCents != null) {
+      return {
+        ok: true,
+        faceValueCents: receiptFaceValueCents,
+        faceValueSource: "receipt",
+        maxListPriceCents: receiptVerifiedMaxListPriceCents,
+      };
+    }
 
     return {
       ok: false,
-      error: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
-      message: `We confirmed the event, but could not confirm its official face value from the official ticketing source. ${notChanged} Seller-entered receipt values cannot be used to override official pricing.`,
-      details: details(null, issues),
+      error: issues[0]?.code ?? "RECEIPT_PRICING_NOT_CONFIRMED",
+      message: issues.length
+        ? `${notChanged} We found ${issues.length} receipt difference${issues.length === 1 ? "" : "s"} to review before this listing can go live.`
+        : `${notChanged} Ticketmaster did not provide price data, and the receipt did not confirm face value and service fees.`,
+      details: details(receiptFaceValueCents, issues),
     };
   }
 

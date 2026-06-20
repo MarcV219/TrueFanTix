@@ -179,7 +179,7 @@ describe("listing validation", () => {
     }
   });
 
-  it("rejects receipt-entered face value when official face value is unavailable", () => {
+  it("allows receipt-confirmed face value when official face value is unavailable", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({ officialFaceValueCents: null }),
       sellerTitle: "Example Event",
@@ -197,8 +197,61 @@ describe("listing validation", () => {
       action: "list",
     });
 
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.faceValueCents).toBe(10000);
+      expect(result.faceValueSource).toBe("receipt");
+      expect(result.maxListPriceCents).toBe(10000);
+    }
+  });
+
+  it("allows receipt-confirmed pricing when Ticketmaster has no event match", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ found: false, officialFaceValueCents: null, reason: "no-event-match" }),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt(),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.faceValueSource).toBe("receipt");
+  });
+
+  it("still blocks when Ticketmaster finds a conflicting event detail", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({
+        found: false,
+        officialFaceValueCents: null,
+        reason: "date-not-confirmed",
+        officialEventDate: "2026-10-21",
+      }),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt(),
+      action: "list",
+    });
+
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBe("OFFICIAL_FACE_VALUE_NOT_CONFIRMED");
+    if (!result.ok) expect(result.error).toBe("OFFICIAL_EVENT_DATE_MISMATCH");
   });
 
   it("shows receipt price cap warnings when official face value is unavailable", () => {
@@ -224,12 +277,9 @@ describe("listing validation", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toBe("OFFICIAL_FACE_VALUE_NOT_CONFIRMED");
+      expect(result.error).toBe("PRICE_ABOVE_RECEIPT_FACE_VALUE_WITH_FEES");
       expect(result.details?.sourceIssues).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({
-            code: "OFFICIAL_FACE_VALUE_NOT_CONFIRMED",
-          }),
           expect.objectContaining({
             code: "PRICE_ABOVE_RECEIPT_FACE_VALUE_WITH_FEES",
             entered: "$125.00",
