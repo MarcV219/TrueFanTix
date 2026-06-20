@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import Footer from "@/components/Footer";
 import TicketCard from "@/components/tickets/TicketCard";
 import { inferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
@@ -188,11 +189,19 @@ export default function TicketsPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       {/* Hero */}
       <section className="bg-[#064a93] py-12">
-        <div className="max-w-7xl mx-auto px-4">
-          <h1 className="text-4xl font-bold mb-4" style={{ color: "#e6edf5" }}>Browse Tickets</h1>
-          <p className="text-xl" style={{ color: "#e6edf5" }}>
-            Find tickets at or below face value for your favorite events
-          </p>
+        <div className="max-w-7xl mx-auto px-4 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-4xl font-bold mb-4" style={{ color: "#e6edf5" }}>Browse Tickets</h1>
+            <p className="text-xl" style={{ color: "#e6edf5" }}>
+              Find tickets at or below face value for your favorite events
+            </p>
+          </div>
+          <Link
+            href="/account/tickets/selling"
+            className="inline-flex w-full items-center justify-center rounded-lg bg-white px-6 py-3 text-base font-bold text-[#064a93] shadow-sm transition hover:bg-blue-50 sm:w-auto"
+          >
+            List Tickets
+          </Link>
         </div>
       </section>
 
