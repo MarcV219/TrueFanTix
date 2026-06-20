@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit } from "@/lib/rate-limit";
+import { withdrawExpiredAvailableTickets } from "@/lib/tickets/expireListings";
 
 const VALID_STATUSES = new Set(["AVAILABLE", "SOLD", "WITHDRAWN"]);
 const VALID_SORTS = new Set(["relevance", "price_asc", "price_desc", "date_asc", "date_desc", "newest"]);
@@ -120,6 +121,10 @@ export async function GET(req: Request) {
     const venue = (searchParams.get("venue") || "").trim();
     const requestedStatus = searchParams.get("status") || "AVAILABLE";
     const status = VALID_STATUSES.has(requestedStatus) ? requestedStatus : "AVAILABLE";
+
+    if (status === "AVAILABLE") {
+      await withdrawExpiredAvailableTickets();
+    }
 
     if (!query && minPriceCents == null && maxPriceCents == null && !dateFrom && !dateTo && !venue) {
       return NextResponse.json(

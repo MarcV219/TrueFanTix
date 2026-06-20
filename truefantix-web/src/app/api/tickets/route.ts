@@ -13,6 +13,7 @@ import { getEventType } from "@/lib/ticketsView";
 import { fetchOfficialSnapshot } from "@/lib/officialPricing";
 import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
 import { analyzeReceiptProof } from "@/lib/tickets/receiptOcr";
+import { withdrawExpiredAvailableTickets } from "@/lib/tickets/expireListings";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -67,6 +68,10 @@ export async function GET(req: Request) {
 
     const take = Math.min(Math.max(Number(url.searchParams.get("take") || 50), 1), 500);
     const cursor = url.searchParams.get("cursor") || undefined;
+
+    if (status !== "SOLD" && status !== "WITHDRAWN") {
+      await withdrawExpiredAvailableTickets();
+    }
 
     const where: any = {};
     if (sellerId) where.sellerId = sellerId;

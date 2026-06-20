@@ -6,6 +6,7 @@ import { requireVerifiedUser } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
 import { calculateAdminFeeTax, getTaxRateForVenue } from "@/lib/tax-rates";
+import { isTicketEventExpired } from "@/lib/tickets/expiry";
 
 const ADMIN_FEE_BPS = 875;
 const BPS_DENOMINATOR = 10_000;
@@ -173,6 +174,42 @@ export async function POST(req: Request) {
           ok: false as const,
           status: 404 as const,
           body: { ok: false, error: "No tickets found" },
+        };
+      }
+
+      const expiredTickets = tickets.filter((ticket: any) =>
+        isTicketEventExpired(
+          {
+            date: ticket.date || ticket.event?.date,
+            venue: ticket.venue || ticket.event?.venue,
+          },
+          now
+        )
+      );
+
+      if (expiredTickets.length) {
+        await tx.ticket.updateMany({
+          where: {
+            id: { in: expiredTickets.map((ticket: any) => ticket.id) },
+            status: "AVAILABLE",
+          },
+          data: {
+            status: "WITHDRAWN",
+            withdrawnAt: now,
+            reservedByOrderId: null,
+            reservedUntil: null,
+          },
+        });
+
+        return {
+          ok: false as const,
+          status: 409 as const,
+          body: {
+            ok: false,
+            error: "TICKET_EVENT_EXPIRED",
+            message: "One or more selected tickets are for an event that has already started or passed.",
+            debug: { ticketIds: expiredTickets.map((ticket: any) => ticket.id) },
+          },
         };
       }
 

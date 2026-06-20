@@ -4,6 +4,7 @@ import TicketImage from "@/components/TicketImage";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import { getTicketImage, getPlaceholderImage } from "@/lib/imageSearch";
+import { isTicketEventExpired } from "@/lib/tickets/expiry";
 import PurchaseButton from "./PurchaseButton";
 
 interface TicketPageProps {
@@ -108,7 +109,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   const { id } = await params;
   const ticket = await getTicket(id);
 
-  if (!ticket || ticket.status !== "AVAILABLE") {
+  if (!ticket || ticket.status !== "AVAILABLE" || isTicketEventExpired({ date: ticket.date, venue: ticket.venue })) {
     notFound();
   }
 
