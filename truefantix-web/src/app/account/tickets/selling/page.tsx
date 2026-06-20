@@ -174,6 +174,16 @@ function formatTicketDateTime(v: string): string {
   return `${datePart} ${hour12}:${minutePart} ${period}`;
 }
 
+function formatEventDateTime(datePart: string, hour: string, minute: string, period: string): string {
+  const cleanDate = String(datePart ?? "").trim();
+  const cleanHour = String(hour ?? "").trim();
+  const cleanMinute = String(minute ?? "").trim();
+  const cleanPeriod = String(period ?? "").trim().toUpperCase();
+
+  if (!cleanDate || !cleanHour || !cleanMinute || !cleanPeriod) return "";
+  return `${cleanDate} ${Number(cleanHour)}:${cleanMinute.padStart(2, "0")} ${cleanPeriod}`;
+}
+
 function parseListingDateTimeToPicker(v: string): string {
   const raw = String(v ?? "").trim();
   const match = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
@@ -186,6 +196,13 @@ function parseListingDateTimeToPicker(v: string): string {
   if (period === "AM" && hour === 12) hour = 0;
 
   return `${datePart}T${String(hour).padStart(2, "0")}:${minutePart}`;
+}
+
+function setDateTimePickerMinutes(v: string, minute: string): string {
+  const raw = String(v ?? "").trim();
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}):\d{2}$/);
+  if (!match) return raw;
+  return `${match[1]}:${minute}`;
 }
 
 function formatMoney(n: number) {
@@ -726,6 +743,23 @@ function ActiveListings({
                     step={60}
                     style={inputStyle(false)}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setEditForm((current) => current ? { ...current, date: setDateTimePickerMinutes(current.date, "00") } : current)}
+                    disabled={!!actionBusyId || !editForm.date}
+                    style={{
+                      justifySelf: "start",
+                      padding: "7px 9px",
+                      borderRadius: 8,
+                      border: "1px solid rgba(37, 99, 235, 0.35)",
+                      background: actionBusyId || !editForm.date ? "rgba(148, 163, 184, 0.18)" : "rgba(239, 246, 255, 1)",
+                      color: actionBusyId || !editForm.date ? "rgba(15,23,42,0.55)" : "rgba(30, 64, 175, 1)",
+                      fontWeight: 900,
+                      cursor: actionBusyId || !editForm.date ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Set minutes to 00
+                  </button>
                 </label>
 
                 <label style={{ display: "grid", gap: 6 }}>
@@ -855,6 +889,9 @@ function Body({ me }: { me: MeUser }) {
   const [isGeneralAdmission, setIsGeneralAdmission] = React.useState(false);
   const [seating, setSeating] = React.useState<SeatingInfo[]>([{ row: "", seat: "" }]);
   const [date, setDate] = React.useState("");
+  const [eventHour, setEventHour] = React.useState("7");
+  const [eventMinute, setEventMinute] = React.useState("00");
+  const [eventPeriod, setEventPeriod] = React.useState<"AM" | "PM">("PM");
   const [price, setPrice] = React.useState("");
   const [faceValue, setFaceValue] = React.useState("");
   const [adminFeePaid, setAdminFeePaid] = React.useState("0");
@@ -1022,7 +1059,7 @@ function Body({ me }: { me: MeUser }) {
     const t = title.trim();
     const v = venue.trim();
     const quantity = normalizeTicketQuantity(ticketQuantity);
-    const d = formatTicketDateTime(date);
+    const d = formatEventDateTime(date, eventHour, eventMinute, eventPeriod);
     const seatingForSubmit = isGeneralAdmission
       ? Array.from({ length: quantity }, () => ({ row: "General Admission", seat: "" }))
       : seating.slice(0, quantity).map((item) => ({
@@ -1105,6 +1142,9 @@ function Body({ me }: { me: MeUser }) {
       setIsGeneralAdmission(false);
       setSeating([{ row: "", seat: "" }]);
       setDate("");
+      setEventHour("7");
+      setEventMinute("00");
+      setEventPeriod("PM");
       setPrice("");
       setFaceValue("");
       setAdminFeePaid("0");
@@ -1592,22 +1632,80 @@ function Body({ me }: { me: MeUser }) {
             )}
           </div>
 
-          <label style={{ display: "grid", gap: 6 }}>
+          <div style={{ display: "grid", gap: 8 }}>
             <span style={{ fontWeight: 900 }}>Date and time</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Pick the event date and start time.
+              Pick the event date and start time. Minutes default to 00.
             </div>
-            <input
-              type="datetime-local"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              disabled={busy}
-              step={60}
-              style={inputStyle(fDate)}
-              onFocus={() => setFDate(true)}
-              onBlur={() => setFDate(false)}
-            />
-          </label>
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 900 }}>Event date</span>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  disabled={busy}
+                  style={inputStyle(fDate)}
+                  onFocus={() => setFDate(true)}
+                  onBlur={() => setFDate(false)}
+                />
+              </label>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(86px, 1fr))",
+                  gap: 10,
+                }}
+              >
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Hour</span>
+                  <select
+                    value={eventHour}
+                    onChange={(e) => setEventHour(e.target.value)}
+                    disabled={busy}
+                    style={inputStyle(false)}
+                  >
+                    {Array.from({ length: 12 }, (_, index) => String(index + 1)).map((hour) => (
+                      <option key={hour} value={hour}>{hour}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Minutes</span>
+                  <select
+                    value={eventMinute}
+                    onChange={(e) => setEventMinute(e.target.value)}
+                    disabled={busy}
+                    style={inputStyle(false)}
+                  >
+                    {["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"].map((minute) => (
+                      <option key={minute} value={minute}>{minute}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>AM/PM</span>
+                  <select
+                    value={eventPeriod}
+                    onChange={(e) => setEventPeriod(e.target.value as "AM" | "PM")}
+                    disabled={busy}
+                    style={inputStyle(false)}
+                  >
+                    <option value="PM">PM</option>
+                    <option value="AM">AM</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+          </div>
 
           <label style={{ display: "grid", gap: 6 }}>
             <span style={{ fontWeight: 900 }}>List price (dollars)</span>
