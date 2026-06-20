@@ -78,6 +78,43 @@ describe("official pricing lookup", () => {
     expect(result.officialVenueName).toBe("Scotiabank Arena");
   });
 
+  it("accepts Ticketmaster matches when venue input includes a hyphenated city", async () => {
+    const modClubEvent = {
+      ...ticketmasterEvent,
+      name: "Daniela Andrade - Oda Tour",
+      url: "https://www.ticketmaster.ca/daniela-andrade-oda-tour-toronto-ontario-06-20-2026/event/example",
+      dates: {
+        start: {
+          localDate: "2026-06-20",
+          dateTime: "2026-06-20T23:00:00Z",
+        },
+        status: { code: "onsale" },
+      },
+      priceRanges: [],
+      _embedded: {
+        venues: [
+          {
+            name: "The Mod Club",
+            city: { name: "Toronto" },
+          },
+        ],
+      },
+    };
+    mockTicketmasterResponse([modClubEvent]);
+
+    const result = await fetchOfficialSnapshot({
+      title: "Daniela Andrade",
+      date: "2026-06-20 7:00 PM",
+      venue: "The Mod Club - Toronto, ON",
+      primaryVendor: "Ticketmaster",
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.officialEventTitle).toBe("Daniela Andrade - Oda Tour");
+    expect(result.officialEventDate).toBe("2026-06-20");
+    expect(result.officialVenueName).toBe("The Mod Club");
+  });
+
   it("marks Ticketmaster offsale events as sold out source status", async () => {
     mockTicketmasterResponse([
       {

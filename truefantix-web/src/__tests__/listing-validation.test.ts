@@ -240,6 +240,29 @@ describe("listing validation", () => {
     }
   });
 
+  it("accepts general admission seating when receipt has no row or seat details", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "General Admission",
+      sellerSeat: "",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        seats: [],
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("allows service fees when receipt OCR verifies the same fees", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),

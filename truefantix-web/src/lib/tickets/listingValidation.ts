@@ -110,10 +110,28 @@ function seatText(row: string | null | undefined, seat: string | null | undefine
   return [row ? `Row ${row}` : null, seat ? `Seat ${seat}` : null].filter(Boolean).join(" ");
 }
 
+function isGeneralAdmissionText(value: string | null | undefined) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  return /\b(ga|general admission|standing room|standing|floor)\b/.test(normalized);
+}
+
 function receiptHasSeat(receipt: ReceiptOcrReview, sellerRow: string | null, sellerSeat: string | null) {
   const row = String(sellerRow ?? "").trim().toLowerCase();
   const seat = String(sellerSeat ?? "").trim().toLowerCase();
   if (!row && !seat) return true;
+  if (isGeneralAdmissionText(row) && !seat) {
+    if (!receipt.seats.length) return true;
+    return receipt.seats.some((item) => {
+      return (
+        isGeneralAdmissionText(item.section) ||
+        isGeneralAdmissionText(item.row) ||
+        isGeneralAdmissionText(item.seat)
+      );
+    });
+  }
   return receipt.seats.some((item) => {
     const receiptRow = String(item.row ?? "").trim().toLowerCase();
     const receiptSeat = String(item.seat ?? "").trim().toLowerCase();

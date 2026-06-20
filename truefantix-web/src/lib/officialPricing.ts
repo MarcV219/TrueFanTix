@@ -34,13 +34,18 @@ function normalizeTitle(title: string): string {
 
 function venueCity(venue: string): string {
   const parts = (venue || "").split(",").map(p => p.trim()).filter(Boolean);
+  if (parts.length === 2) {
+    const hyphenParts = parts[0].split(/\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+    if (hyphenParts.length >= 2) return hyphenParts[hyphenParts.length - 1];
+  }
   if (parts.length >= 3) return parts[parts.length - 2];
   return parts.length >= 2 ? parts[parts.length - 1] : "";
 }
 
 function venueName(venue: string): string {
   const parts = (venue || "").split(",").map(p => p.trim()).filter(Boolean);
-  return parts[0] ?? "";
+  const first = parts[0] ?? "";
+  return first.split(/\s+-\s+/)[0]?.trim() || first;
 }
 
 function toYmd(input: string | null | undefined): string | null {
@@ -57,6 +62,29 @@ function tokenize(s: string): string[] {
     .split(/\s+/)
     .filter(Boolean)
     .filter((t) => !new Set(["the", "and", "vs", "at", "live", "event", "tickets", "pass", "day", "weekend", "conference"]).has(t));
+}
+
+function dateSearchTokens(input: string | null | undefined): string[] {
+  const ymd = toYmd(input);
+  if (!ymd) return [];
+  const [year, month, day] = ymd.split("-");
+  const d = new Date(`${ymd}T00:00:00Z`);
+  const monthShort = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  const monthLong = d.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  const dayNumber = String(Number(day));
+  return [
+    ymd,
+    `${Number(month)}/${dayNumber}/${year}`,
+    `${monthShort} ${dayNumber}, ${year}`,
+    `${monthLong} ${dayNumber}, ${year}`,
+    `${monthShort}${dayNumber}`,
+  ].map((token) => token.toLowerCase());
+}
+
+function textHasDate(text: string, input: string | null | undefined): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ");
+  const tokens = dateSearchTokens(input);
+  return tokens.length > 0 && tokens.some((token) => normalized.includes(token));
 }
 
 function overlap(a: string, b: string): number {
@@ -123,7 +151,7 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
 
     const text = `${r?.title || ""} ${r?.description || ""} ${url}`;
     const score = overlap(normalizeTitle(ticket.title), text);
-    const hasDate = !!(ymd && text.includes(ymd));
+    const hasDate = textHasDate(text, ymd);
     const hasCity = !city || text.toLowerCase().includes(city);
     const hasVenue = !requestedVenueName || overlap(requestedVenueName, text) >= 0.6;
 
