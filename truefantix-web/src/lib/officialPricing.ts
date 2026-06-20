@@ -14,6 +14,8 @@ export type OfficialSnapshot = {
   soldOut: boolean | null;
   sourceUrl: string | null;
   reason?: string;
+  officialEventTitle?: string | null;
+  officialEventDate?: string | null;
   officialVenueName?: string | null;
 };
 
@@ -249,7 +251,17 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
   if (!best.dateMatch) {
     const fb = await fallbackPrimaryWebConfirm(ticket);
     if (fb) return fb;
-    return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "date-not-confirmed" };
+    return {
+      found: false,
+      vendor: "ticketmaster",
+      officialFaceValueCents: null,
+      soldOut: null,
+      sourceUrl: best.ev?.url ?? null,
+      reason: "date-not-confirmed",
+      officialEventTitle: String(best.ev?.name || "") || null,
+      officialEventDate: toYmd(best.ev?.dates?.start?.dateTime || best.ev?.dates?.start?.localDate || null),
+      officialVenueName: best.tmVenueName || null,
+    };
   }
 
   if (!best.venueOk) {
@@ -260,6 +272,8 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
       soldOut: null,
       sourceUrl: best.ev?.url ?? null,
       reason: "venue-not-confirmed",
+      officialEventTitle: String(best.ev?.name || "") || null,
+      officialEventDate: toYmd(best.ev?.dates?.start?.dateTime || best.ev?.dates?.start?.localDate || null),
       officialVenueName: best.tmVenueName || null,
     };
   }
@@ -267,13 +281,33 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
   if (best.textScore < 0.55) {
     const fb = await fallbackPrimaryWebConfirm(ticket);
     if (fb) return fb;
-    return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "title-not-confirmed" };
+    return {
+      found: false,
+      vendor: "ticketmaster",
+      officialFaceValueCents: null,
+      soldOut: null,
+      sourceUrl: best.ev?.url ?? null,
+      reason: "title-not-confirmed",
+      officialEventTitle: String(best.ev?.name || "") || null,
+      officialEventDate: toYmd(best.ev?.dates?.start?.dateTime || best.ev?.dates?.start?.localDate || null),
+      officialVenueName: best.tmVenueName || null,
+    };
   }
 
   if (!best.teamsMatch) {
     const fb = await fallbackPrimaryWebConfirm(ticket);
     if (fb) return fb;
-    return { found: false, vendor: "ticketmaster", officialFaceValueCents: null, soldOut: null, sourceUrl: best.ev?.url ?? null, reason: "teams-not-confirmed" };
+    return {
+      found: false,
+      vendor: "ticketmaster",
+      officialFaceValueCents: null,
+      soldOut: null,
+      sourceUrl: best.ev?.url ?? null,
+      reason: "teams-not-confirmed",
+      officialEventTitle: String(best.ev?.name || "") || null,
+      officialEventDate: toYmd(best.ev?.dates?.start?.dateTime || best.ev?.dates?.start?.localDate || null),
+      officialVenueName: best.tmVenueName || null,
+    };
   }
 
   const ev = best.ev;
@@ -291,6 +325,8 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
     officialFaceValueCents: face == null ? null : Math.round(Number(face) * 100),
     soldOut,
     sourceUrl: ev?.url ?? null,
+    officialEventTitle: String(ev?.name || "") || null,
+    officialEventDate: toYmd(ev?.dates?.start?.dateTime || ev?.dates?.start?.localDate || null),
     officialVenueName: best.tmVenueName || null,
   };
 }

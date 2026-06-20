@@ -16,8 +16,6 @@ type CreateTicketBody = {
   row?: string | null;
   seat?: string | null;
   eventId?: string | null;
-  barcodeData?: string | null;
-  barcodeType?: string | null;
   verificationImage?: string | null;
   receiptFileName?: string | null;
   sellerConfirmedReceiptValues?: boolean;
@@ -25,12 +23,26 @@ type CreateTicketBody = {
 
 type PricingConfirmation = {
   officialFaceValueCents: number | null;
+  officialEventTitle?: string | null;
+  officialEventDate?: string | null;
+  officialVenueName?: string | null;
+  sourceUrl?: string | null;
   sellerFaceValueCents: number | null;
   adminFeePaidCents: number;
   maxListPriceCents: number | null;
   receiptRequired: boolean;
   sellerConfirmationRequired: boolean;
+  sourceIssues?: PricingSourceIssue[];
 } | null;
+
+type PricingSourceIssue = {
+  code: string;
+  field: "title" | "venue" | "date" | "faceValue" | "serviceFees" | "listPrice" | "receipt";
+  source: "Ticketmaster" | "Receipt";
+  entered: string | null;
+  found: string | null;
+  message: string;
+};
 
 type TicketRow = {
   id: string;
@@ -233,6 +245,11 @@ function readReceiptProof(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("Could not read receipt file."));
     reader.readAsDataURL(file);
   });
+}
+
+function moneyTextToDollars(value: string | null | undefined) {
+  if (!value) return "";
+  return value.replace(/^\$/, "").trim();
 }
 
 function catalogSuggestionMeta(suggestion: CatalogSuggestion) {
@@ -923,8 +940,6 @@ function Body({ me }: { me: MeUser }) {
   const [receiptProofDataUrl, setReceiptProofDataUrl] = React.useState("");
   const [receiptFileName, setReceiptFileName] = React.useState("");
   const [sellerConfirmedReceiptValues, setSellerConfirmedReceiptValues] = React.useState(false);
-  const [barcodeData, setBarcodeData] = React.useState("");
-  const [barcodeType, setBarcodeType] = React.useState("");
 
   const [busy, setBusy] = React.useState(false);
   const [requestBusy, setRequestBusy] = React.useState<"title" | "venue" | null>(null);
@@ -1114,6 +1129,75 @@ function Body({ me }: { me: MeUser }) {
     }
   }
 
+  function applySourceIssue(issue: PricingSourceIssue) {
+    if (issue.field === "venue" && issue.found) {
+      const nextVenue = issue.found;
+      setVenue(nextVenue);
+      setSelectedVenueSuggestion({
+        type: "VENUE",
+        value: nextVenue,
+        label: nextVenue,
+        canonicalName: nextVenue,
+        provider: issue.source,
+      });
+      setPricingConfirmation(null);
+      setError(null);
+      return;
+    }
+
+    if (issue.field === "faceValue" && issue.found) {
+      setFaceValue(moneyTextToDollars(issue.found));
+      setPricingConfirmation(null);
+      setError(null);
+      return;
+    }
+
+    if (issue.field === "listPrice" && issue.found) {
+      setPrice(moneyTextToDollars(issue.found));
+      setPricingConfirmation(null);
+      setError(null);
+      return;
+    }
+
+    if (issue.field === "serviceFees") {
+      setAdminFeePaid("0");
+      setPricingConfirmation(null);
+      setError(null);
+      return;
+    }
+
+    if (issue.field === "date" && issue.found) {
+      setDate(issue.found);
+      setPricingConfirmation(null);
+      setError(null);
+      return;
+    }
+
+    if (issue.field === "title" && issue.found) {
+      const nextTitle = issue.found;
+      setTitle(nextTitle);
+      setSelectedTitleSuggestion({
+        type: "ARTIST",
+        value: nextTitle,
+        label: nextTitle,
+        canonicalName: nextTitle,
+        provider: issue.source,
+      });
+      setPricingConfirmation(null);
+      setError(null);
+    }
+  }
+
+  function actionLabelForSourceIssue(issue: PricingSourceIssue) {
+    if (issue.field === "serviceFees") return "Set fees to $0";
+    if (issue.field === "faceValue") return "Use face value";
+    if (issue.field === "listPrice") return "Use max price";
+    if (issue.field === "venue") return "Use venue";
+    if (issue.field === "date") return "Use date";
+    if (issue.field === "title") return "Use event";
+    return "";
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -1161,12 +1245,6 @@ function Body({ me }: { me: MeUser }) {
     if (adminFeePaidCents == null) {
       return setError("Admin fees paid must be a number 0 or greater.");
     }
-    if (adminFeePaidCents > 0) {
-      return setError("Service fees paid above face value need receipt verification before they can increase the allowed list price. For now, set service fees paid to $0 and list at or below official face value.");
-    }
-    if (priceCents > faceValueCents) {
-      return setError(`List price cannot exceed ${formatMoney(faceValueCents / 100)} until service fees are verified.`);
-    }
     if (!receiptProofDataUrl) {
       return setError("Upload the original purchase receipt before listing tickets.");
     }
@@ -1190,8 +1268,6 @@ function Body({ me }: { me: MeUser }) {
           verificationImage: receiptProofDataUrl,
           receiptFileName,
           sellerConfirmedReceiptValues,
-          barcodeData: i === 0 ? barcodeData.trim() || null : null,
-          barcodeType: i === 0 ? barcodeType.trim() || null : null,
         };
 
         const { res, data } = await fetchJson("/api/tickets", {
@@ -1233,8 +1309,6 @@ function Body({ me }: { me: MeUser }) {
       setReceiptProofDataUrl("");
       setReceiptFileName("");
       setSellerConfirmedReceiptValues(false);
-      setBarcodeData("");
-      setBarcodeType("");
 
       // ✅ Refresh listings after create
       setRefreshKey((k) => k + 1);
@@ -1394,17 +1468,73 @@ function Body({ me }: { me: MeUser }) {
               <div
                 style={{
                   display: "grid",
-                  gap: 6,
+                  gap: 10,
                   marginTop: 10,
                   paddingTop: 10,
                   borderTop: "1px solid rgba(153, 27, 27, 0.22)",
                   fontWeight: 800,
                 }}
               >
-                <div>Official face value found: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
-                <div>Face value from your receipt: {centsToMoney(pricingConfirmation.sellerFaceValueCents)}</div>
-                <div>Service fees from your receipt: {centsToMoney(pricingConfirmation.adminFeePaidCents)}</div>
-                <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div>Ticketmaster face value: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
+                  <div>Ticketmaster venue: {pricingConfirmation.officialVenueName || "Not found"}</div>
+                  <div>Ticketmaster event date: {pricingConfirmation.officialEventDate || "Not found"}</div>
+                  <div>Receipt service fees verified: Not automated yet</div>
+                  <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
+                  {pricingConfirmation.sourceUrl ? (
+                    <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>
+                      Open Ticketmaster source
+                    </a>
+                  ) : null}
+                </div>
+
+                {pricingConfirmation.sourceIssues?.length ? (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {pricingConfirmation.sourceIssues.map((issue) => {
+                      const actionLabel = actionLabelForSourceIssue(issue);
+                      const canApply =
+                        actionLabel &&
+                        (issue.field === "serviceFees" || issue.found);
+
+                      return (
+                        <div
+                          key={`${issue.code}:${issue.field}:${issue.found ?? ""}`}
+                          style={{
+                            display: "grid",
+                            gap: 6,
+                            padding: 10,
+                            borderRadius: 8,
+                            border: "1px solid rgba(153, 27, 27, 0.18)",
+                            background: "rgba(255,255,255,0.55)",
+                          }}
+                        >
+                          <div>{issue.source}: {issue.message}</div>
+                          <div style={{ fontSize: 12, opacity: 0.82 }}>
+                            Entered: {issue.entered || "Not provided"} | Source found: {issue.found || "Not available"}
+                          </div>
+                          {canApply ? (
+                            <button
+                              type="button"
+                              onClick={() => applySourceIssue(issue)}
+                              style={{
+                                justifySelf: "start",
+                                padding: "7px 10px",
+                                borderRadius: 8,
+                                border: "1px solid rgba(153, 27, 27, 0.22)",
+                                background: "white",
+                                color: "rgba(153, 27, 27, 1)",
+                                fontWeight: 900,
+                              }}
+                            >
+                              {actionLabel}
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+
                 {(pricingConfirmation.receiptRequired || pricingConfirmation.sellerConfirmationRequired) ? (
                   <div>Upload the purchase receipt and confirm the receipt values before listing.</div>
                 ) : null}
@@ -1933,32 +2063,6 @@ function Body({ me }: { me: MeUser }) {
               </span>
             </label>
           </div>
-
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Barcode payload (optional)</span>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Paste decoded barcode/token text from your ticket proof for stronger authenticity checks.
-            </div>
-            <textarea
-              value={barcodeData}
-              onChange={(e) => setBarcodeData(e.target.value)}
-              disabled={busy}
-              placeholder="Paste barcode/QR payload"
-              rows={3}
-              style={{ ...inputStyle(false), resize: "vertical" }}
-            />
-          </label>
-
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Barcode type (optional)</span>
-            <input
-              value={barcodeType}
-              onChange={(e) => setBarcodeType(e.target.value)}
-              disabled={busy}
-              placeholder="e.g., QR, PDF417, AZTEC"
-              style={inputStyle(false)}
-            />
-          </label>
 
           <button
             type="submit"

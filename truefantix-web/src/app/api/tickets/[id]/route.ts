@@ -259,6 +259,9 @@ export async function PATCH(req: Request) {
 
     const listingCheck = validateListingPriceAgainstOfficial({
       official,
+      sellerTitle: title,
+      sellerDate: date,
+      sellerVenue: venue,
       priceCents,
       sellerFaceValueCents: faceValueCents,
       adminFeePaidCents,

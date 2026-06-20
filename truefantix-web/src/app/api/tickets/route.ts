@@ -394,6 +394,9 @@ export async function POST(req: Request) {
 
     const listingCheck = validateListingPriceAgainstOfficial({
       official,
+      sellerTitle: title,
+      sellerDate: date,
+      sellerVenue: venue,
       priceCents: priceCentsRaw,
       sellerFaceValueCents: faceValueCents,
       adminFeePaidCents,
