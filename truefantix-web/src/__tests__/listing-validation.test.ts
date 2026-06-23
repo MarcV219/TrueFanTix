@@ -313,6 +313,62 @@ describe("listing validation", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts seller row and seat when receipt OCR places them across section and row", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "N",
+      sellerSeat: "13",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        seats: [{ section: "N", row: "13", seat: null }],
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("reports missing receipt dates as not found instead of mismatched", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventDate: null,
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details?.sourceIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "RECEIPT_DATE_NOT_FOUND",
+            message: "Receipt date was not found on the uploaded proof.",
+          }),
+        ])
+      );
+    }
+  });
+
   it("allows service fees when receipt OCR verifies the same fees", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),

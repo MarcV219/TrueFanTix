@@ -117,6 +117,10 @@ function seatText(row: string | null | undefined, seat: string | null | undefine
   return [row ? `Row ${row}` : null, seat ? `Seat ${seat}` : null].filter(Boolean).join(" ");
 }
 
+function receiptSeatText(section: string | null | undefined, row: string | null | undefined, seat: string | null | undefined) {
+  return [section ? `Section ${section}` : null, row ? `Row ${row}` : null, seat ? `Seat ${seat}` : null].filter(Boolean).join(" ");
+}
+
 function isGeneralAdmissionText(value: string | null | undefined) {
   const normalized = String(value ?? "")
     .trim()
@@ -125,9 +129,13 @@ function isGeneralAdmissionText(value: string | null | undefined) {
   return /\b(ga|general admission|standing room|standing|floor)\b/.test(normalized);
 }
 
+function normalizeSeatPart(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
 function receiptHasSeat(receipt: ReceiptOcrReview, sellerRow: string | null, sellerSeat: string | null) {
-  const row = String(sellerRow ?? "").trim().toLowerCase();
-  const seat = String(sellerSeat ?? "").trim().toLowerCase();
+  const row = normalizeSeatPart(sellerRow);
+  const seat = normalizeSeatPart(sellerSeat);
   if (!row && !seat) return true;
   if (isGeneralAdmissionText(row) && !seat) {
     if (!receipt.seats.length) return true;
@@ -140,9 +148,8 @@ function receiptHasSeat(receipt: ReceiptOcrReview, sellerRow: string | null, sel
     });
   }
   return receipt.seats.some((item) => {
-    const receiptRow = String(item.row ?? "").trim().toLowerCase();
-    const receiptSeat = String(item.seat ?? "").trim().toLowerCase();
-    return (!row || receiptRow === row) && (!seat || receiptSeat === seat);
+    const receiptParts = [item.section, item.row, item.seat].map(normalizeSeatPart).filter(Boolean);
+    return (!row || receiptParts.includes(row)) && (!seat || receiptParts.includes(seat));
   });
 }
 
@@ -268,26 +275,32 @@ export function validateListingPriceAgainstOfficial({
       const sellerYmd = ymd(sellerDate);
       const receiptYmd = ymd(receiptReview.eventDate);
       if (!receiptYmd || sellerYmd !== receiptYmd) {
+        const missingDate = !receiptYmd;
         receiptIssues.push({
-          code: "RECEIPT_DATE_MISMATCH",
+          code: missingDate ? "RECEIPT_DATE_NOT_FOUND" : "RECEIPT_DATE_MISMATCH",
           field: "date",
           source: "Receipt",
           entered: sellerYmd,
           found: receiptYmd,
-          message: "Receipt date does not match the event date entered.",
+          message: missingDate
+            ? "Receipt date was not found on the uploaded proof."
+            : "Receipt date does not match the event date entered.",
         });
       }
 
       const sellerMinutes = timeMinutes(sellerTimeFromDate(sellerDate));
       const receiptMinutes = timeMinutes(receiptReview.eventTime);
       if (receiptMinutes == null || sellerMinutes == null || Math.abs(sellerMinutes - receiptMinutes) > 15) {
+        const missingTime = receiptMinutes == null;
         receiptIssues.push({
-          code: "RECEIPT_TIME_MISMATCH",
+          code: missingTime ? "RECEIPT_TIME_NOT_FOUND" : "RECEIPT_TIME_MISMATCH",
           field: "time",
           source: "Receipt",
           entered: sellerTimeFromDate(sellerDate),
           found: receiptReview.eventTime,
-          message: "Receipt time does not match the event time entered.",
+          message: missingTime
+            ? "Receipt time was not found on the uploaded proof."
+            : "Receipt time does not match the event time entered.",
         });
       }
 
@@ -303,7 +316,7 @@ export function validateListingPriceAgainstOfficial({
       }
 
       if (!receiptHasSeat(receiptReview, sellerRow, sellerSeat)) {
-        const receiptSeats = receiptReview.seats.map((seat) => seatText(seat.row, seat.seat)).filter(Boolean).join("; ");
+        const receiptSeats = receiptReview.seats.map((seat) => receiptSeatText(seat.section, seat.row, seat.seat)).filter(Boolean).join("; ");
         receiptIssues.push({
           code: "RECEIPT_SEATING_MISMATCH",
           field: "seating",
