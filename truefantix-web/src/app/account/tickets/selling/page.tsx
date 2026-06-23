@@ -1406,6 +1406,104 @@ function Body({ me }: { me: MeUser }) {
     }
   }
 
+  const warningPanel = (error || pricingConfirmation) ? (
+    <div
+      role="alert"
+      style={{
+        marginTop: 12,
+        padding: 12,
+        borderRadius: 10,
+        border: "1px solid rgba(255,0,0,0.35)",
+        background: "rgba(254, 242, 242, 1)",
+        color: "rgba(153, 27, 27, 1)",
+        fontWeight: 700,
+      }}
+    >
+      {error ?? "One source value was updated. Review the remaining warnings before listing."}
+      {pricingConfirmation ? (
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: "1px solid rgba(153, 27, 27, 0.22)",
+            fontWeight: 800,
+          }}
+        >
+          <div style={{ display: "grid", gap: 4 }}>
+            <div>Ticketmaster face value: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
+            <div>
+              Ticketmaster price range:{" "}
+              {centsRangeToMoney(pricingConfirmation.officialPriceRangeMinCents, pricingConfirmation.officialPriceRangeMaxCents)}
+            </div>
+            <div>Ticketmaster service fees: {officialServiceFeesLabel(pricingConfirmation)}</div>
+            <div>Ticketmaster sold-out status: {soldOutLabel(pricingConfirmation)}</div>
+            <div>Ticketmaster venue: {pricingConfirmation.officialVenueName || "Not found"}</div>
+            <div>Ticketmaster event date: {pricingConfirmation.officialEventDate || "Not found"}</div>
+            <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
+            {pricingConfirmation.sourceUrl ? (
+              <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>
+                Open Ticketmaster source
+              </a>
+            ) : null}
+          </div>
+
+          {pricingConfirmation.sourceIssues?.length ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {pricingConfirmation.sourceIssues.map((issue) => {
+                const actionLabel = actionLabelForSourceIssue(issue);
+                const canApply =
+                  actionLabel &&
+                  (issue.field === "serviceFees" || issue.found);
+
+                return (
+                  <div
+                    key={`${issue.code}:${issue.field}:${issue.found ?? ""}`}
+                    style={{
+                      display: "grid",
+                      gap: 6,
+                      padding: 10,
+                      borderRadius: 8,
+                      border: "1px solid rgba(153, 27, 27, 0.18)",
+                      background: "rgba(255,255,255,0.55)",
+                    }}
+                  >
+                    <div>{issue.source}: {issue.message}</div>
+                    <div style={{ fontSize: 12, opacity: 0.82 }}>
+                      Entered: {issue.entered || "Not provided"} | Source found: {issue.found || "Not available"}
+                    </div>
+                    {canApply ? (
+                      <button
+                        type="button"
+                        onClick={() => applySourceIssue(issue)}
+                        style={{
+                          justifySelf: "start",
+                          padding: "7px 10px",
+                          borderRadius: 8,
+                          border: "1px solid rgba(153, 27, 27, 0.22)",
+                          background: "white",
+                          color: "rgba(153, 27, 27, 1)",
+                          fontWeight: 900,
+                        }}
+                      >
+                        {actionLabel}
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {(pricingConfirmation.receiptRequired || pricingConfirmation.sellerConfirmationRequired) ? (
+            <div>Upload the purchase receipt and confirm the receipt values before listing.</div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Card title="Seller status" description="You must be fully verified (email + phone + Stripe) to list tickets.">
@@ -1537,104 +1635,6 @@ function Body({ me }: { me: MeUser }) {
         title="List a ticket"
         description="This creates a real Ticket record via POST /api/tickets (in cents)."
       >
-        {(error || pricingConfirmation) ? (
-          <div
-            role="alert"
-            style={{
-              marginBottom: 12,
-              padding: 12,
-              borderRadius: 10,
-              border: "1px solid rgba(255,0,0,0.35)",
-              background: "rgba(254, 242, 242, 1)",
-              color: "rgba(153, 27, 27, 1)",
-              fontWeight: 700,
-            }}
-          >
-            {error ?? "One source value was updated. Review the remaining warnings before listing."}
-            {pricingConfirmation ? (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  marginTop: 10,
-                  paddingTop: 10,
-                  borderTop: "1px solid rgba(153, 27, 27, 0.22)",
-                  fontWeight: 800,
-                }}
-              >
-                <div style={{ display: "grid", gap: 4 }}>
-                  <div>Ticketmaster face value: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
-                  <div>
-                    Ticketmaster price range:{" "}
-                    {centsRangeToMoney(pricingConfirmation.officialPriceRangeMinCents, pricingConfirmation.officialPriceRangeMaxCents)}
-                  </div>
-                  <div>Ticketmaster service fees: {officialServiceFeesLabel(pricingConfirmation)}</div>
-                  <div>Ticketmaster sold-out status: {soldOutLabel(pricingConfirmation)}</div>
-                  <div>Ticketmaster venue: {pricingConfirmation.officialVenueName || "Not found"}</div>
-                  <div>Ticketmaster event date: {pricingConfirmation.officialEventDate || "Not found"}</div>
-                  <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
-                  {pricingConfirmation.sourceUrl ? (
-                    <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>
-                      Open Ticketmaster source
-                    </a>
-                  ) : null}
-                </div>
-
-                {pricingConfirmation.sourceIssues?.length ? (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {pricingConfirmation.sourceIssues.map((issue) => {
-                      const actionLabel = actionLabelForSourceIssue(issue);
-                      const canApply =
-                        actionLabel &&
-                        (issue.field === "serviceFees" || issue.found);
-
-                      return (
-                        <div
-                          key={`${issue.code}:${issue.field}:${issue.found ?? ""}`}
-                          style={{
-                            display: "grid",
-                            gap: 6,
-                            padding: 10,
-                            borderRadius: 8,
-                            border: "1px solid rgba(153, 27, 27, 0.18)",
-                            background: "rgba(255,255,255,0.55)",
-                          }}
-                        >
-                          <div>{issue.source}: {issue.message}</div>
-                          <div style={{ fontSize: 12, opacity: 0.82 }}>
-                            Entered: {issue.entered || "Not provided"} | Source found: {issue.found || "Not available"}
-                          </div>
-                          {canApply ? (
-                            <button
-                              type="button"
-                              onClick={() => applySourceIssue(issue)}
-                              style={{
-                                justifySelf: "start",
-                                padding: "7px 10px",
-                                borderRadius: 8,
-                                border: "1px solid rgba(153, 27, 27, 0.22)",
-                                background: "white",
-                                color: "rgba(153, 27, 27, 1)",
-                                fontWeight: 900,
-                              }}
-                            >
-                              {actionLabel}
-                            </button>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-
-                {(pricingConfirmation.receiptRequired || pricingConfirmation.sellerConfirmationRequired) ? (
-                  <div>Upload the purchase receipt and confirm the receipt values before listing.</div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
         {ok ? (
           <div
             style={{
@@ -2208,6 +2208,8 @@ function Body({ me }: { me: MeUser }) {
           >
             {busy ? "Listing…" : !sellerApproved ? "Seller verification required" : "List ticket"}
           </button>
+
+          {warningPanel}
         </form>
       </Card>
 
