@@ -60,7 +60,23 @@ function unavailable(reason: string, status: ReceiptOcrReview["status"] = "unava
 }
 
 function isImageDataUrl(value: string) {
-  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(value);
+  return /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(value);
+}
+
+function isPdfDataUrl(value: string) {
+  return /^data:application\/pdf;base64,/i.test(value);
+}
+
+function receiptInputContent(receiptDataUrl: string, receiptFileName?: string | null) {
+  if (isPdfDataUrl(receiptDataUrl)) {
+    return {
+      type: "input_file",
+      filename: receiptFileName || "receipt.pdf",
+      file_data: receiptDataUrl,
+    };
+  }
+
+  return { type: "input_image", image_url: receiptDataUrl };
 }
 
 function normalizeCents(value: unknown): number | null {
@@ -149,8 +165,8 @@ export async function analyzeReceiptProof({
   receiptFileName,
 }: AnalyzeReceiptInput): Promise<ReceiptOcrReview> {
   if (!receiptDataUrl) return unavailable("missing-receipt");
-  if (!isImageDataUrl(receiptDataUrl)) {
-    return unavailable("receipt-ocr-currently-requires-image-upload", "unsupported");
+  if (!isImageDataUrl(receiptDataUrl) && !isPdfDataUrl(receiptDataUrl)) {
+    return unavailable("receipt-ocr-unsupported-file-type", "unsupported");
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
@@ -228,12 +244,12 @@ export async function analyzeReceiptProof({
               {
                 type: "input_text",
                 text:
-                  `Extract ticket purchase receipt data from this image. File name: ${receiptFileName || "receipt"}. ` +
+                  `Extract ticket purchase receipt data from this upload. File name: ${receiptFileName || "receipt"}. ` +
                   "Only report values visibly present on the receipt. Do not infer fees or seats. " +
                   "Return null for missing fields. Amounts must be integer cents. " +
                   "For faceValueCents and serviceFeesCents, prefer per-ticket values; also fill totals when visible.",
               },
-              { type: "input_image", image_url: receiptDataUrl },
+              receiptInputContent(receiptDataUrl, receiptFileName),
             ],
           },
         ],

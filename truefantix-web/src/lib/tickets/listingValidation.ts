@@ -218,7 +218,7 @@ export function validateListingPriceAgainstOfficial({
         source: "Receipt",
         entered: "Uploaded",
         found: null,
-        message: "Automated receipt review currently requires an image receipt upload.",
+        message: "Automated receipt review supports JPG, PNG, WebP, GIF, and PDF receipt uploads.",
       });
     } else {
       if (!receiptReview.hasPurchaseReceipt) {

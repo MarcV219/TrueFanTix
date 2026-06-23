@@ -49,10 +49,17 @@ export const schemas = {
     verificationImage: z
       .string()
       .trim()
-      .max(2_000_000)
-      .refine((value) => !value || value.startsWith("data:image/") || value.startsWith("data:application/pdf;") || /^https?:\/\//i.test(value), {
-        message: "verificationImage must be an image receipt upload, PDF receipt upload, or URL.",
-      })
+      .max(3_000_000)
+      .refine(
+        (value) =>
+          !value ||
+          /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(value) ||
+          /^data:application\/pdf;base64,/i.test(value) ||
+          /^https?:\/\//i.test(value),
+        {
+          message: "verificationImage must be a JPG, PNG, WebP, GIF, PDF receipt upload, or URL.",
+        }
+      )
       .optional()
       .nullable(),
     receiptFileName: z.string().trim().max(255).optional().nullable(),

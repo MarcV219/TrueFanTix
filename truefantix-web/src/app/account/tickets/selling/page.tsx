@@ -275,6 +275,20 @@ function readReceiptProof(file: File): Promise<string> {
   });
 }
 
+const RECEIPT_PROOF_ACCEPT = "image/jpeg,image/png,image/webp,image/gif,application/pdf";
+const RECEIPT_PROOF_TYPES = ["JPG", "PNG", "WebP", "GIF", "PDF"].join(", ");
+const RECEIPT_PROOF_MAX_BYTES = 2_000_000;
+const RECEIPT_PROOF_MAX_LABEL = "2 MB";
+
+function receiptProofFileAllowed(file: File) {
+  const type = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+  return (
+    ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"].includes(type) ||
+    /\.(jpe?g|png|webp|gif|pdf)$/.test(name)
+  );
+}
+
 function moneyTextToDollars(value: string | null | undefined) {
   if (!value) return "";
   return value.replace(/^\$/, "").trim();
@@ -1127,20 +1141,20 @@ function Body({ me }: { me: MeUser }) {
       return;
     }
 
-    const allowed = file.type.startsWith("image/");
+    const allowed = receiptProofFileAllowed(file);
     if (!allowed) {
       setReceiptProofDataUrl("");
       setReceiptFileName("");
       setSellerConfirmedReceiptValues(false);
-      setError("Upload a receipt image or screenshot so automated OCR can review it.");
+      setError(`Upload a supported receipt file: ${RECEIPT_PROOF_TYPES}.`);
       return;
     }
 
-    if (file.size > 650_000) {
+    if (file.size > RECEIPT_PROOF_MAX_BYTES) {
       setReceiptProofDataUrl("");
       setReceiptFileName("");
       setSellerConfirmedReceiptValues(false);
-      setError("Receipt file must be 650 KB or smaller.");
+      setError(`Receipt file must be ${RECEIPT_PROOF_MAX_LABEL} or smaller.`);
       return;
     }
 
@@ -2136,11 +2150,12 @@ function Body({ me }: { me: MeUser }) {
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontWeight: 900 }}>Purchase receipt proof</span>
               <div style={{ fontSize: 12, opacity: 0.7 }}>
-                Required. Upload an image or screenshot of the original receipt showing the event, tickets, face value, and service fees paid.
+                Required. Upload the original receipt as {RECEIPT_PROOF_TYPES}, up to {RECEIPT_PROOF_MAX_LABEL}. It must show the event,
+                tickets, face value, and service fees paid.
               </div>
               <input
                 type="file"
-                accept="image/*"
+                accept={RECEIPT_PROOF_ACCEPT}
                 onChange={handleReceiptProofChange}
                 disabled={busy}
                 style={inputStyle(false)}
