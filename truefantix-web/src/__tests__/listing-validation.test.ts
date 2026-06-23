@@ -275,6 +275,41 @@ describe("listing validation", () => {
     if (result.ok) expect(result.maxListPriceCents).toBe(9865);
   });
 
+  it("does not add parsed processing fees again when OCR already returned all fees", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ officialFaceValueCents: 8500 }),
+      sellerTitle: "Ice Cube",
+      sellerDate: "2026-06-26 9:00 PM",
+      sellerVenue: "Casino Rama Resort",
+      sellerRow: "N",
+      sellerSeat: "14",
+      purchaseQuantity: 3,
+      priceCents: 9865,
+      sellerFaceValueCents: 8500,
+      adminFeePaidCents: 1365,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventTitle: "Ice Cube",
+        venue: "Casino Rama Resort",
+        eventDate: "2026-06-26",
+        eventTime: "9:00 PM",
+        ticketQuantity: 3,
+        seats: [{ section: "N", row: "13", seat: null }],
+        faceValueCents: 8500,
+        totalFaceValueCents: 25500,
+        serviceFeesCents: 1365,
+        totalServiceFeesCents: 4095,
+        rawTextSummary:
+          "Tickets CA $291.45 + Order Processing Fee CA $4.50. Breakdown shows Face Value CA $255.00, Service Fee CA $36.45, Order Processing Fee CA $4.50.",
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.maxListPriceCents).toBe(9865);
+  });
+
   it("includes multiple receipt admin fee types in the max list price", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({ officialFaceValueCents: 8500 }),

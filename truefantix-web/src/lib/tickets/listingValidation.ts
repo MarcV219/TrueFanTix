@@ -193,18 +193,38 @@ function receiptAdditionalFeeTotalCents(receipt: ReceiptOcrReview): number {
   return Array.from(feeTotalsByLabel.values()).reduce((sum, cents) => sum + cents, 0);
 }
 
-function receiptServiceFeesWithProcessingCents(receipt: ReceiptOcrReview): number | null {
+function receiptServiceFeeLineTotalCents(receipt: ReceiptOcrReview): number | null {
+  const summary = receipt.rawTextSummary ?? "";
+  const matches = Array.from(
+    summary.matchAll(/\bservice\s+fee(?:s)?\b[^$A-Z0-9]*(?:CA|US|USD|CAD)?\s*\$?\s*(\d+(?:\.\d{1,2})?)/gi)
+  );
+  const cents = matches.map((match) => moneyTextToCents(match[1])).filter((value): value is number => value != null);
+  if (!cents.length) return null;
+  return Math.max(...cents);
+}
+
+function shouldAddParsedAdditionalFees(receiptFeeTotalCents: number, serviceFeeLineTotalCents: number | null) {
+  return serviceFeeLineTotalCents != null && sameMoney(receiptFeeTotalCents, serviceFeeLineTotalCents);
+}
+
+function receiptAdminFeesCents(receipt: ReceiptOcrReview): number | null {
   const quantity = typeof receipt.ticketQuantity === "number" && receipt.ticketQuantity > 0
     ? receipt.ticketQuantity
     : null;
   const additionalFeeTotal = receiptAdditionalFeeTotalCents(receipt);
+  const serviceFeeLineTotal = receiptServiceFeeLineTotalCents(receipt);
 
   if (receipt.totalServiceFeesCents != null && quantity) {
-    return Math.round((receipt.totalServiceFeesCents + additionalFeeTotal) / quantity);
+    const addParsedFees = shouldAddParsedAdditionalFees(receipt.totalServiceFeesCents, serviceFeeLineTotal);
+    return Math.round((receipt.totalServiceFeesCents + (addParsedFees ? additionalFeeTotal : 0)) / quantity);
   }
 
   if (receipt.serviceFeesCents != null) {
-    return receipt.serviceFeesCents + (quantity ? Math.round(additionalFeeTotal / quantity) : 0);
+    const serviceFeeLinePerTicket = serviceFeeLineTotal != null && quantity
+      ? Math.round(serviceFeeLineTotal / quantity)
+      : null;
+    const addParsedFees = serviceFeeLinePerTicket != null && sameMoney(receipt.serviceFeesCents, serviceFeeLinePerTicket);
+    return receipt.serviceFeesCents + (addParsedFees && quantity ? Math.round(additionalFeeTotal / quantity) : 0);
   }
 
   return null;
@@ -441,7 +461,7 @@ export function validateListingPriceAgainstOfficial({
           ? Math.round(receiptReview.totalFaceValueCents / receiptReview.ticketQuantity)
           : null);
       receiptServiceFeesCents =
-        receiptServiceFeesWithProcessingCents(receiptReview);
+        receiptAdminFeesCents(receiptReview);
 
       if (!sameMoney(receiptFaceValueCents, sellerFaceValueCents)) {
         receiptIssues.push({
