@@ -50,6 +50,16 @@ function inferEvidenceEventType(title: string, parsedEvidence: any): string | nu
   return inferred === "other" ? null : inferred;
 }
 
+function hasActionableValidationMismatch(ticket: any, officialSync: any) {
+  const verificationStatus = String(ticket?.verificationStatus ?? "").toUpperCase();
+  if (verificationStatus === "REJECTED" || verificationStatus === "NEEDS_REVIEW") return true;
+
+  if (officialSync?.validationMismatch === true || officialSync?.hasValidationMismatch === true) return true;
+  if (Array.isArray(officialSync?.sourceIssues) && officialSync.sourceIssues.length > 0) return true;
+
+  return false;
+}
+
 export async function GET(req: Request) {
   const rlResult = await applyRateLimit(req, "DEFAULT_UNAUTH_READ");
   if (!rlResult.ok) return rlResult.response;
@@ -194,7 +204,7 @@ export async function GET(req: Request) {
       const isAboveConfirmedFaceValue =
         confirmedMaxListPriceCents != null ? priceCents > confirmedMaxListPriceCents : false;
       const isPriceUnconfirmed = displayedConfirmedFaceValueCents == null;
-      const isValidationMismatch = officialSync ? (!!officialSync.found && !!officialSync.reason) : false;
+      const isValidationMismatch = hasActionableValidationMismatch(t, officialSync);
 
       return {
         id: t.id,
