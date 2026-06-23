@@ -157,8 +157,24 @@ function normalizeReceiptDate(value: unknown, expectedEventDate?: string | null)
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function extractReceiptDateText(value: string | null): string | null {
+  if (!value) return null;
+  return value.match(/\b(?:mon|tue|wed|thu|fri|sat|sun)?\.?\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}\b/i)?.[0]?.trim() ?? null;
+}
+
+function extractReceiptTimeText(value: string | null): string | null {
+  if (!value) return null;
+  return value.match(/\b\d{1,2}:\d{2}\s*(?:AM|PM)\b/i)?.[0]?.toUpperCase() ?? null;
+}
+
 function normalizeBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function confirmedByParsedOrEvidence(parsedValue: boolean | null, hasEvidence: boolean): boolean | null {
+  if (parsedValue === true) return true;
+  if (hasEvidence) return true;
+  return parsedValue;
 }
 
 function normalizeNumber(value: unknown): number | null {
@@ -180,10 +196,34 @@ function normalizeSeats(value: unknown): ReceiptSeat[] {
 
 function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string, expectedEventDate?: string | null): ReceiptOcrReview {
   const confidence = Math.max(0, Math.min(1, normalizeNumber(parsed.confidence) ?? 0));
-  const hasPurchaseReceipt = normalizeBoolean(parsed.hasPurchaseReceipt);
-  const hasTickets = normalizeBoolean(parsed.hasTickets);
   const faceValueCents = normalizeCents(parsed.faceValueCents);
+  const totalFaceValueCents = normalizeCents(parsed.totalFaceValueCents);
   const serviceFeesCents = normalizeCents(parsed.serviceFeesCents);
+  const totalServiceFeesCents = normalizeCents(parsed.totalServiceFeesCents);
+  const ticketQuantity = normalizeNumber(parsed.ticketQuantity);
+  const seats = normalizeSeats(parsed.seats);
+  const rawTextSummary = normalizeString(parsed.rawTextSummary);
+  const eventDate = normalizeReceiptDate(parsed.eventDate, expectedEventDate) ??
+    normalizeReceiptDate(extractReceiptDateText(rawTextSummary), expectedEventDate);
+  const eventTime = normalizeString(parsed.eventTime) ?? extractReceiptTimeText(rawTextSummary);
+
+  const ticketEvidence =
+    (typeof ticketQuantity === "number" && ticketQuantity > 0) ||
+    seats.length > 0 ||
+    faceValueCents != null ||
+    totalFaceValueCents != null ||
+    serviceFeesCents != null ||
+    totalServiceFeesCents != null ||
+    /\b(ticket|tickets|standard adult|quantity|face value|service fee)\b/i.test(rawTextSummary ?? "");
+
+  const receiptEvidence =
+    ticketEvidence &&
+    /\b(ticketmaster|receipt|order|subtotal|processing fee|face value|service fee|purchase)\b/i.test(rawTextSummary ?? "");
+
+  const parsedHasPurchaseReceipt = normalizeBoolean(parsed.hasPurchaseReceipt);
+  const parsedHasTickets = normalizeBoolean(parsed.hasTickets);
+  const hasPurchaseReceipt = confirmedByParsedOrEvidence(parsedHasPurchaseReceipt, receiptEvidence);
+  const hasTickets = confirmedByParsedOrEvidence(parsedHasTickets, ticketEvidence);
 
   return {
     ok: Boolean(hasPurchaseReceipt && hasTickets && confidence >= 0.55),
@@ -196,17 +236,17 @@ function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string,
     eventTitle: normalizeString(parsed.eventTitle),
     artistOrTeam: normalizeString(parsed.artistOrTeam),
     venue: normalizeString(parsed.venue),
-    eventDate: normalizeReceiptDate(parsed.eventDate, expectedEventDate),
-    eventTime: normalizeString(parsed.eventTime),
-    ticketQuantity: normalizeNumber(parsed.ticketQuantity),
-    seats: normalizeSeats(parsed.seats),
+    eventDate,
+    eventTime,
+    ticketQuantity,
+    seats,
     faceValueCents,
-    totalFaceValueCents: normalizeCents(parsed.totalFaceValueCents),
+    totalFaceValueCents,
     serviceFeesCents,
-    totalServiceFeesCents: normalizeCents(parsed.totalServiceFeesCents),
+    totalServiceFeesCents,
     currency: normalizeString(parsed.currency),
     confidence,
-    rawTextSummary: normalizeString(parsed.rawTextSummary),
+    rawTextSummary,
   };
 }
 

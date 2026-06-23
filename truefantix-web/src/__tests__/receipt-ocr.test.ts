@@ -124,6 +124,40 @@ describe("receipt OCR upload formats", () => {
     expect(result.eventDate).toBe("Fri Jun 26");
   });
 
+  it("uses raw summary date and ticket evidence when structured OCR fields are missing", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output_text: JSON.stringify({
+          ...JSON.parse(openAiResponse.output_text),
+          hasPurchaseReceipt: true,
+          hasTickets: false,
+          eventDate: null,
+          eventTime: null,
+          ticketQuantity: 3,
+          seats: [{ section: "N", row: "13", seat: null }],
+          faceValueCents: 8500,
+          totalFaceValueCents: 25500,
+          serviceFeesCents: 1215,
+          totalServiceFeesCents: 3645,
+          rawTextSummary:
+            "Ticketmaster page for Ice Cube at Casino Rama Resort, Rama, ON. Visible date/time: Fri Jun 26, 9:00 PM. Selected location Sec N, Row 13. Quantity 3 Standard Adult Tickets at CA $97.15 each. Face Value CA $255.00; Service Fee CA $36.45.",
+        }),
+      }),
+    } as Response);
+
+    const result = await analyzeReceiptProof({
+      receiptDataUrl: "data:application/pdf;base64,JVBERi0=",
+      receiptFileName: "ticketmaster-receipt.pdf",
+      expectedEventDate: "2026-06-26 9:00 PM",
+    });
+
+    expect(result.hasTickets).toBe(true);
+    expect(result.eventDate).toBe("2026-06-26");
+    expect(result.eventTime).toBe("9:00 PM");
+    expect(result.ok).toBe(true);
+  });
+
   it("rejects unsupported upload formats before OCR", async () => {
     const result = await analyzeReceiptProof({
       receiptDataUrl: "data:text/plain;base64,cmVjZWlwdA==",
