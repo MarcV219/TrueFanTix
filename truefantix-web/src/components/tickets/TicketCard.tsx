@@ -40,13 +40,6 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
               ⭐ Sold Out Event
             </span>
           )}
-          <span
-            className={`px-2 py-1 text-xs font-semibold rounded ${
-              ticket.priceTag === "Face Value" ? "bg-green-100 text-green-800" : "bg-blue-100 text-blue-800"
-            }`}
-          >
-            {ticket.priceTag}
-          </span>
         </div>
         <span className="absolute top-2 right-2 px-2 py-1 text-xs font-semibold rounded bg-gray-800 text-white">
           {ticket.eventTypeLabel}
@@ -78,9 +71,20 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
           <span className="text-sm text-gray-500 ml-2">({ticket.reviews})</span>
         </div>
 
-        <p className="font-bold text-lg text-gray-900 dark:text-white mb-3">
-          {formatMoney(ticket.price, ticket.currency)} {ticket.currency}
-        </p>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <p className="font-bold text-lg text-gray-900 dark:text-white">
+            {formatMoney(ticket.price, ticket.currency)} {ticket.currency}
+          </p>
+          <span
+            className={`rounded-md px-2.5 py-1 text-xs font-extrabold uppercase tracking-wide ring-1 ${
+              ticket.priceTag === "Face Value"
+                ? "bg-green-600 text-white ring-green-700"
+                : "bg-blue-600 text-white ring-blue-700"
+            }`}
+          >
+            {ticket.priceTag}
+          </span>
+        </div>
 
         <div className="mt-auto flex gap-2">
           <Link href={`/tickets/${ticket.id}`} className="flex-1 text-center bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
