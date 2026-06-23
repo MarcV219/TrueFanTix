@@ -165,6 +165,44 @@ function receiptHasPurchaseEvidence(receipt: ReceiptOcrReview) {
   );
 }
 
+function moneyTextToCents(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const normalized = value.replace(/,/g, "");
+  const match = normalized.match(/\$?\s*(\d+(?:\.\d{1,2})?)/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return null;
+  return Math.round(amount * 100);
+}
+
+function receiptOrderProcessingFeeTotalCents(receipt: ReceiptOcrReview): number | null {
+  const summary = receipt.rawTextSummary ?? "";
+  const matches = Array.from(
+    summary.matchAll(/\border\s+processing\s+fee\b[^$A-Z0-9]*(?:CA|US|USD|CAD)?\s*\$?\s*(\d+(?:\.\d{1,2})?)/gi)
+  );
+  if (!matches.length) return null;
+  const cents = matches.map((match) => moneyTextToCents(match[1])).filter((value): value is number => value != null);
+  if (!cents.length) return null;
+  return Math.max(...cents);
+}
+
+function receiptServiceFeesWithProcessingCents(receipt: ReceiptOcrReview): number | null {
+  const quantity = typeof receipt.ticketQuantity === "number" && receipt.ticketQuantity > 0
+    ? receipt.ticketQuantity
+    : null;
+  const processingTotal = receiptOrderProcessingFeeTotalCents(receipt) ?? 0;
+
+  if (receipt.totalServiceFeesCents != null && quantity) {
+    return Math.round((receipt.totalServiceFeesCents + processingTotal) / quantity);
+  }
+
+  if (receipt.serviceFeesCents != null) {
+    return receipt.serviceFeesCents + (quantity ? Math.round(processingTotal / quantity) : 0);
+  }
+
+  return null;
+}
+
 function receiptSeatingMismatchMessage(receipt: ReceiptOcrReview) {
   const hasExplicitSeat = receipt.seats.some((item) => !!normalizeSeatPart(item.seat));
   if (hasExplicitSeat) {
@@ -396,10 +434,7 @@ export function validateListingPriceAgainstOfficial({
           ? Math.round(receiptReview.totalFaceValueCents / receiptReview.ticketQuantity)
           : null);
       receiptServiceFeesCents =
-        receiptReview.serviceFeesCents ??
-        (receiptReview.totalServiceFeesCents != null && receiptReview.ticketQuantity
-          ? Math.round(receiptReview.totalServiceFeesCents / receiptReview.ticketQuantity)
-          : null);
+        receiptServiceFeesWithProcessingCents(receiptReview);
 
       if (!sameMoney(receiptFaceValueCents, sellerFaceValueCents)) {
         receiptIssues.push({

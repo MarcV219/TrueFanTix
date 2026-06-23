@@ -216,7 +216,7 @@ describe("listing validation", () => {
       purchaseQuantity: 3,
       priceCents: 9715,
       sellerFaceValueCents: 8500,
-      adminFeePaidCents: 1215,
+      adminFeePaidCents: 1365,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
       receiptReview: receipt({
@@ -238,6 +238,41 @@ describe("listing validation", () => {
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  it("includes order processing fees in receipt-confirmed service fees", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ officialFaceValueCents: 8500 }),
+      sellerTitle: "Ice Cube",
+      sellerDate: "2026-06-26 9:00 PM",
+      sellerVenue: "Casino Rama Resort",
+      sellerRow: "N",
+      sellerSeat: "14",
+      purchaseQuantity: 3,
+      priceCents: 9865,
+      sellerFaceValueCents: 8500,
+      adminFeePaidCents: 1365,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventTitle: "Ice Cube",
+        venue: "Casino Rama Resort",
+        eventDate: "2026-06-26",
+        eventTime: "9:00 PM",
+        ticketQuantity: 3,
+        seats: [{ section: "N", row: "13", seat: null }],
+        faceValueCents: 8500,
+        totalFaceValueCents: 25500,
+        serviceFeesCents: 1215,
+        totalServiceFeesCents: 3645,
+        rawTextSummary:
+          "Tickets CA $291.45 + Order Processing Fee CA $4.50. Breakdown shows Face Value CA $255.00, Service Fee CA $36.45, Order Processing Fee CA $4.50.",
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.maxListPriceCents).toBe(9865);
   });
 
   it("allows receipt-confirmed pricing when Ticketmaster has no event match", () => {
