@@ -273,6 +273,98 @@ describe("listing validation", () => {
     expect(result.ok).toBe(true);
   });
 
+  it.each([
+    { receiptQuantity: 1, listingQuantity: 1 },
+    { receiptQuantity: 2, listingQuantity: 1 },
+    { receiptQuantity: 5, listingQuantity: 3 },
+    { receiptQuantity: 12, listingQuantity: 11 },
+    { receiptQuantity: 20, listingQuantity: 20 },
+  ])(
+    "allows listing $listingQuantity ticket(s) when the receipt proves $receiptQuantity purchased",
+    ({ receiptQuantity, listingQuantity }) => {
+      const result = validateListingPriceAgainstOfficial({
+        official: official({ officialFaceValueCents: 8500 }),
+        sellerTitle: "Ice Cube",
+        sellerDate: "2026-06-26 9:00 PM",
+        sellerVenue: "Casino Rama Resort",
+        sellerRow: "N",
+        sellerSeat: "14",
+        purchaseQuantity: listingQuantity,
+        priceCents: 9865,
+        sellerFaceValueCents: 8500,
+        adminFeePaidCents: 1365,
+        hasReceiptProof: true,
+        sellerConfirmedReceiptValues: true,
+        receiptReview: receipt({
+          eventTitle: "Ice Cube",
+          venue: "Casino Rama Resort",
+          eventDate: "2026-06-26",
+          eventTime: "9:00 PM",
+          ticketQuantity: receiptQuantity,
+          seats: [{ section: "N", row: "13", seat: null }],
+          faceValueCents: 8500,
+          totalFaceValueCents: 8500 * receiptQuantity,
+          totalServiceFeesCents: 1365 * receiptQuantity,
+          currency: "CAD",
+        }),
+        sellerCurrency: "CAD",
+        action: "list",
+      });
+
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it.each([
+    { receiptQuantity: 1, listingQuantity: 2 },
+    { receiptQuantity: 4, listingQuantity: 5 },
+    { receiptQuantity: 10, listingQuantity: 12 },
+  ])(
+    "blocks listing $listingQuantity ticket(s) when the receipt only proves $receiptQuantity purchased",
+    ({ receiptQuantity, listingQuantity }) => {
+      const result = validateListingPriceAgainstOfficial({
+        official: official({ officialFaceValueCents: 8500 }),
+        sellerTitle: "Ice Cube",
+        sellerDate: "2026-06-26 9:00 PM",
+        sellerVenue: "Casino Rama Resort",
+        sellerRow: "N",
+        sellerSeat: "14",
+        purchaseQuantity: listingQuantity,
+        priceCents: 9865,
+        sellerFaceValueCents: 8500,
+        adminFeePaidCents: 1365,
+        hasReceiptProof: true,
+        sellerConfirmedReceiptValues: true,
+        receiptReview: receipt({
+          eventTitle: "Ice Cube",
+          venue: "Casino Rama Resort",
+          eventDate: "2026-06-26",
+          eventTime: "9:00 PM",
+          ticketQuantity: receiptQuantity,
+          seats: [{ section: "N", row: "13", seat: null }],
+          faceValueCents: 8500,
+          totalFaceValueCents: 8500 * receiptQuantity,
+          totalServiceFeesCents: 1365 * receiptQuantity,
+          currency: "CAD",
+        }),
+        sellerCurrency: "CAD",
+        action: "list",
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.details?.sourceIssues).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              code: "RECEIPT_QUANTITY_MISMATCH",
+              message: "Receipt confirms fewer tickets than the number being listed.",
+            }),
+          ]),
+        );
+      }
+    },
+  );
+
   it("blocks listing more tickets than the receipt quantity purchased", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({ officialFaceValueCents: 8500 }),
