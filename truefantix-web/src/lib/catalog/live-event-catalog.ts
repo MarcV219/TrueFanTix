@@ -61,6 +61,7 @@ const ARTISTS = [
   "Harry Styles",
   "Hozier",
   "Imagine Dragons",
+  "Ice Cube",
   "Janet Jackson",
   "Jelly Roll",
   "Jonas Brothers",

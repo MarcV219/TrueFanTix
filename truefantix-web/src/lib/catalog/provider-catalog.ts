@@ -92,7 +92,11 @@ function dedupeDisplaySuggestions(items: ProviderCatalogSuggestion[], query: str
   const bestByName = new Map<string, ProviderCatalogSuggestion>();
 
   for (const item of items) {
-    const key = `${item.type}:${normalizedDisplayName(item.canonicalName || item.label)}`;
+    const locationKey =
+      item.type === "VENUE" || item.type === "CITY"
+        ? [item.address, item.city, item.region, item.country].map((part) => normalizedDisplayName(part ?? "")).join(":")
+        : "";
+    const key = `${item.type}:${normalizedDisplayName(item.canonicalName || item.label)}:${locationKey}`;
     const existing = bestByName.get(key);
     if (!existing || suggestionRank(item, query) > suggestionRank(existing, query)) {
       bestByName.set(key, item);

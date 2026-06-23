@@ -360,13 +360,27 @@ function Body({ user }: { user: MeUser }) {
           return [...withoutDuplicate, existing].sort((a, b) => a.type.localeCompare(b.type) || a.value.localeCompare(b.value));
         });
         setOk("That notification preference is already in your list.");
+      } else if (data.autoFulfilled && data.preference) {
+        const added = data.preference as Preference;
+        setPreferences((prev) => {
+          const withoutDuplicate = prev.filter((item) => item.id !== added.id);
+          return [...withoutDuplicate, added].sort((a, b) => a.type.localeCompare(b.type) || a.value.localeCompare(b.value));
+        });
+        setOk(String(data.message || "Verified and added to your notifications."));
+      } else if (data.needsClarification) {
+        const clarification = String(data.message || "We need a little more information before adding this notification favorite.");
+        setError(clarification);
       } else {
         setOk("Request sent. TrueFanTix will research it and add it to your notifications when it is verified.");
       }
 
-      setValue("");
-      setSelectedSuggestion(null);
-      setSuggestions([]);
+      if (!data.needsClarification) {
+        setValue("");
+        setSelectedSuggestion(null);
+        setSuggestions([]);
+      } else if (Array.isArray(data.suggestions)) {
+        setSuggestions(data.suggestions);
+      }
     } catch (e: any) {
       setError(e?.message ?? "Could not submit catalog request.");
     } finally {

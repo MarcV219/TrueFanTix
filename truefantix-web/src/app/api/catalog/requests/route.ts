@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { sendEmail } from "@/lib/email";
 import { schemas, validateRequest } from "@/lib/validation";
+import { resolveCatalogRequest } from "@/lib/catalog/request-resolver";
 
 const ADMIN_EMAIL = "admin@truefantix.com";
 
@@ -86,6 +87,141 @@ export async function POST(req: Request) {
 
     if (existingPreference) {
       return NextResponse.json({ ok: true, preference: existingPreference, alreadyExists: true }, { status: 200 });
+    }
+
+    const resolution = await resolveCatalogRequest({ type, value });
+
+    if (resolution.status === "FOUND") {
+      const entityId = resolution.suggestion.catalogEntityId;
+      if (!entityId) {
+        return NextResponse.json(
+          { ok: false, error: "CATALOG_ENTITY_NOT_CACHED", message: "Could not save the verified catalog match." },
+          { status: 500 }
+        );
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const preference = await tx.notificationPreference.upsert({
+          where: {
+            userId_type_value: {
+              userId: gate.user.id,
+              type: resolution.suggestion.type,
+              value: resolution.suggestion.canonicalName,
+            },
+          },
+          create: {
+            userId: gate.user.id,
+            type: resolution.suggestion.type,
+            value: resolution.suggestion.canonicalName,
+            catalogEntityId: entityId,
+            status: "ACTIVE",
+          },
+          update: {
+            catalogEntityId: entityId,
+            status: "ACTIVE",
+          },
+          select: { id: true, type: true, value: true, status: true, catalogEntityId: true },
+        });
+
+        const request = await tx.catalogRequest.upsert({
+          where: {
+            userId_requestedType_requestedValue: {
+              userId: gate.user.id,
+              requestedType: type,
+              requestedValue: value,
+            },
+          },
+          create: {
+            userId: gate.user.id,
+            requestedType: type,
+            requestedValue: value,
+            notes,
+            status: "FULFILLED",
+            adminNotes: `Automatically matched via ${resolution.suggestion.provider}.`,
+            resolvedCatalogEntityId: entityId,
+            fulfilledPreferenceId: preference.id,
+            reviewedAt: new Date(),
+          },
+          update: {
+            notes,
+            status: "FULFILLED",
+            adminNotes: `Automatically matched via ${resolution.suggestion.provider}.`,
+            resolvedCatalogEntityId: entityId,
+            fulfilledPreferenceId: preference.id,
+            reviewedAt: new Date(),
+            emailError: null,
+          },
+          select: {
+            id: true,
+            requestedType: true,
+            requestedValue: true,
+            status: true,
+            resolvedCatalogEntityId: true,
+            fulfilledPreferenceId: true,
+            reviewedAt: true,
+          },
+        });
+
+        return { preference, request };
+      });
+
+      return NextResponse.json(
+        {
+          ok: true,
+          ...result,
+          autoFulfilled: true,
+          message: `Verified ${resolution.suggestion.canonicalName} and added it to your notifications.`,
+        },
+        { status: 201 }
+      );
+    }
+
+    if (resolution.status === "NEEDS_CLARIFICATION") {
+      const request = await prisma.catalogRequest.upsert({
+        where: {
+          userId_requestedType_requestedValue: {
+            userId: gate.user.id,
+            requestedType: type,
+            requestedValue: value,
+          },
+        },
+        create: {
+          userId: gate.user.id,
+          requestedType: type,
+          requestedValue: value,
+          notes,
+          status: "NEEDS_CLARIFICATION",
+          adminNotes: resolution.question,
+          reviewedAt: new Date(),
+        },
+        update: {
+          notes,
+          status: "NEEDS_CLARIFICATION",
+          adminNotes: resolution.question,
+          reviewedAt: new Date(),
+          resolvedCatalogEntityId: null,
+          fulfilledPreferenceId: null,
+        },
+        select: {
+          id: true,
+          requestedType: true,
+          requestedValue: true,
+          status: true,
+          adminNotes: true,
+          createdAt: true,
+        },
+      });
+
+      return NextResponse.json(
+        {
+          ok: true,
+          request,
+          needsClarification: true,
+          suggestions: resolution.suggestions,
+          message: resolution.question,
+        },
+        { status: 200 }
+      );
     }
 
     let request = await prisma.catalogRequest.upsert({
