@@ -1407,6 +1407,11 @@ function Body({ me }: { me: MeUser }) {
     }
   }
 
+  const eligibleFeesCents =
+    pricingConfirmation?.officialFaceValueCents != null && pricingConfirmation.maxListPriceCents != null
+      ? Math.max(0, pricingConfirmation.maxListPriceCents - pricingConfirmation.officialFaceValueCents)
+      : null;
+
   const warningPanel = (error || pricingConfirmation) ? (
     <div
       role="alert"
@@ -1433,7 +1438,10 @@ function Body({ me }: { me: MeUser }) {
           }}
         >
           <div style={{ display: "grid", gap: 4 }}>
-            <div>Ticketmaster face value: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
+            <div>Confirmed face value: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
+            {eligibleFeesCents != null ? (
+              <div>Verified eligible fees paid: {centsToMoney(eligibleFeesCents)}</div>
+            ) : null}
             {(pricingConfirmation.officialPriceRangeMinCents != null || pricingConfirmation.officialPriceRangeMaxCents != null) ? (
               <div>
                 Ticketmaster price range:{" "}
@@ -1455,7 +1463,12 @@ function Body({ me }: { me: MeUser }) {
             {pricingConfirmation.officialEventTime ? (
               <div>Ticketmaster event time: {pricingConfirmation.officialEventTime}</div>
             ) : null}
-            <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
+            <div>
+              Maximum list price:{" "}
+              {pricingConfirmation.officialFaceValueCents != null && eligibleFeesCents != null && pricingConfirmation.maxListPriceCents != null
+                ? `${centsToMoney(pricingConfirmation.officialFaceValueCents)} face value + ${centsToMoney(eligibleFeesCents)} eligible fees = ${centsToMoney(pricingConfirmation.maxListPriceCents)}`
+                : centsToMoney(pricingConfirmation.maxListPriceCents)}
+            </div>
             {pricingConfirmation.sourceUrl ? (
               <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>
                 Open Ticketmaster source
