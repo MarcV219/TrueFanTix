@@ -454,14 +454,17 @@ export function validateListingPriceAgainstOfficial({
         });
       }
 
-      if (receiptReview.ticketQuantity == null || receiptReview.ticketQuantity !== purchaseQuantity) {
+      if (receiptReview.ticketQuantity == null || receiptReview.ticketQuantity < purchaseQuantity) {
+        const missingQuantity = receiptReview.ticketQuantity == null;
         receiptIssues.push({
           code: "RECEIPT_QUANTITY_MISMATCH",
           field: "quantity",
           source: "Receipt",
           entered: String(purchaseQuantity),
           found: receiptReview.ticketQuantity == null ? null : String(receiptReview.ticketQuantity),
-          message: "Receipt ticket quantity does not match the number of tickets being listed.",
+          message: missingQuantity
+            ? "Receipt ticket quantity was not found on the uploaded proof."
+            : "Receipt confirms fewer tickets than the number being listed.",
         });
       }
 

@@ -240,6 +240,82 @@ describe("listing validation", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("allows listing fewer tickets than the receipt quantity purchased", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ officialFaceValueCents: 8500 }),
+      sellerTitle: "Ice Cube",
+      sellerDate: "2026-06-26 9:00 PM",
+      sellerVenue: "Casino Rama Resort",
+      sellerRow: "N",
+      sellerSeat: "14",
+      purchaseQuantity: 1,
+      priceCents: 9865,
+      sellerFaceValueCents: 8500,
+      adminFeePaidCents: 1365,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventTitle: "Ice Cube",
+        venue: "Casino Rama Resort",
+        eventDate: "2026-06-26",
+        eventTime: "9:00 PM",
+        ticketQuantity: 3,
+        seats: [{ section: "N", row: "13", seat: null }],
+        faceValueCents: 8500,
+        totalFaceValueCents: 25500,
+        totalServiceFeesCents: 4095,
+        currency: "CAD",
+      }),
+      sellerCurrency: "CAD",
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("blocks listing more tickets than the receipt quantity purchased", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ officialFaceValueCents: 8500 }),
+      sellerTitle: "Ice Cube",
+      sellerDate: "2026-06-26 9:00 PM",
+      sellerVenue: "Casino Rama Resort",
+      sellerRow: "N",
+      sellerSeat: "14",
+      purchaseQuantity: 4,
+      priceCents: 9865,
+      sellerFaceValueCents: 8500,
+      adminFeePaidCents: 1365,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventTitle: "Ice Cube",
+        venue: "Casino Rama Resort",
+        eventDate: "2026-06-26",
+        eventTime: "9:00 PM",
+        ticketQuantity: 3,
+        seats: [{ section: "N", row: "13", seat: null }],
+        faceValueCents: 8500,
+        totalFaceValueCents: 25500,
+        totalServiceFeesCents: 4095,
+        currency: "CAD",
+      }),
+      sellerCurrency: "CAD",
+      action: "list",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details?.sourceIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "RECEIPT_QUANTITY_MISMATCH",
+            message: "Receipt confirms fewer tickets than the number being listed.",
+          }),
+        ]),
+      );
+    }
+  });
+
   it("includes order processing fees in receipt-confirmed service fees", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({ officialFaceValueCents: 8500 }),
