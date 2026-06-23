@@ -22,6 +22,15 @@ function parseOrderIdFromUrl(req: Request): string {
   return "";
 }
 
+function parseJson(value: string | null) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const adminGate = await requireAdmin(req);
@@ -52,9 +61,17 @@ export async function GET(req: Request) {
         taxRegionName: true,
         taxCountryCode: true,
         taxLabel: true,
+        currency: true,
         totalCents: true,
+        transferProofType: true,
+        transferProofData: true,
+        transferVerificationStatus: true,
+        transferVerificationReason: true,
+        buyerConfirmationStatus: true,
+        buyerConfirmationAt: true,
+        disputeWindowEndsAt: true,
         seller: { select: { id: true, name: true } },
-        buyerSeller: { select: { id: true, name: true } },
+        buyerSeller: { select: { id: true, name: true, user: { select: { email: true, firstName: true, lastName: true } } } },
         payment: {
           select: {
             status: true,
@@ -72,13 +89,32 @@ export async function GET(req: Request) {
             id: true,
             ticketId: true,
             createdAt: true,
+            priceCents: true,
+            faceValueCents: true,
+            currency: true,
             ticket: {
               select: {
                 id: true,
+                title: true,
+                venue: true,
+                date: true,
+                row: true,
+                seat: true,
+                priceCents: true,
+                faceValueCents: true,
+                adminFeePaidCents: true,
+                currency: true,
                 status: true,
                 reservedByOrderId: true,
                 reservedUntil: true,
                 soldAt: true,
+                withdrawnAt: true,
+                verificationImage: true,
+                verificationStatus: true,
+                verificationScore: true,
+                verificationReason: true,
+                verificationProvider: true,
+                verificationEvidence: true,
                 eventId: true,
                 event: {
                   select: {
@@ -99,7 +135,26 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ ok: true, order });
+    return NextResponse.json({
+      ok: true,
+      order: {
+        ...order,
+        items: order.items.map((item: any) => {
+          const parsedEvidence = parseJson(item.ticket?.verificationEvidence ?? null);
+          return {
+            ...item,
+            ticket: item.ticket
+              ? {
+                  ...item.ticket,
+                  parsedEvidence,
+                  receiptReview: parsedEvidence?.receiptProof ?? null,
+                  officialPricingSync: parsedEvidence?.officialPricingSync ?? null,
+                }
+              : item.ticket,
+          };
+        }),
+      },
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(

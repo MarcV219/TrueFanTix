@@ -180,6 +180,7 @@ export default function AdminHomePage() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10 }}>
                 <Card title="Users & Sellers" href="/admin/users"><div style={{ opacity: 0.75, fontSize: 13 }}>Search accounts, seller status, restrictions, Stripe readiness.</div></Card>
                 <Card title="Orders" href="/admin/orders"><div style={{ opacity: 0.75, fontSize: 13 }}>Search payments, totals, tax, ticket details, and order state.</div></Card>
+                <Card title="Listings" href="/admin/tickets"><div style={{ opacity: 0.75, fontSize: 13 }}>Search listings, sellers, seats, verification evidence, and uploaded receipts.</div></Card>
                 <Card title="Tax Rates & Reports" href="/admin/reports/tax"><div style={{ opacity: 0.75, fontSize: 13 }}>Province/state rates and admin-fee tax collected by time frame.</div></Card>
                 <Card title="Location Preflight" href="/admin/preflight/location-issues"><div style={{ opacity: 0.75, fontSize: 13 }}>Find listings and orders with unresolved state/province tax locations.</div></Card>
                 <Card title="Audit Log" href="/admin/audit"><div style={{ opacity: 0.75, fontSize: 13 }}>Search security, user, order, and admin actions.</div></Card>

@@ -152,6 +152,7 @@ export default function TicketVerificationAdminPage() {
               {t.verificationReason ? <div style={{ fontSize: 12, opacity: 0.78 }}>Reason: {t.verificationReason}</div> : null}
             </div>
             <div style={{ display: "grid", gap: 8, alignContent: "start" }}>
+              <Link href={`/admin/tickets/${encodeURIComponent(t.id)}`} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(37,99,235,0.25)", background: "white", color: "inherit", textDecoration: "none", fontWeight: 800, textAlign: "center" }}>Details</Link>
               <button disabled={busyId === t.id} onClick={() => decide(t.id, "VERIFIED")} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(34,197,94,0.4)", background: "rgba(240,253,244,1)", fontWeight: 800 }}>Approve</button>
               <button disabled={busyId === t.id} onClick={() => decide(t.id, "NEEDS_REVIEW")} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(245,158,11,0.4)", background: "rgba(255,251,235,1)", fontWeight: 800 }}>Needs Review</button>
               <button disabled={busyId === t.id} onClick={() => decide(t.id, "REJECTED")} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(239,68,68,0.4)", background: "rgba(254,242,242,1)", fontWeight: 800 }}>Reject</button>

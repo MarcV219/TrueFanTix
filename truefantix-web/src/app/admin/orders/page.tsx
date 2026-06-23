@@ -125,7 +125,9 @@ function AdminOrdersContent() {
           <section key={order.id} style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 8, background: "white", padding: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div>
-                <div style={{ fontWeight: 950 }}>{order.status} | {order.id}</div>
+                <Link href={`/admin/orders/${encodeURIComponent(order.id)}`} style={{ color: "inherit", textDecoration: "none" }}>
+                  <div style={{ fontWeight: 950 }}>{order.status} | {order.id}</div>
+                </Link>
                 <div style={{ opacity: 0.75, fontSize: 13 }}>Created {new Date(order.createdAt).toLocaleString()}</div>
                 <div style={{ opacity: 0.75, fontSize: 13 }}>Seller: {order.seller?.name || order.sellerId} | Buyer: {order.buyerSeller?.name || order.buyerSellerId}</div>
               </div>
@@ -149,10 +151,16 @@ function AdminOrdersContent() {
             <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
               {order.items.map((item) => (
                 <div key={item.id} style={{ padding: 10, borderRadius: 8, background: "rgba(248,250,252,1)", fontSize: 13 }}>
-                  <strong>{item.ticket.title}</strong> | {item.ticket.venue} | {item.ticket.date}
+                  <Link href={`/admin/tickets/${encodeURIComponent(item.ticket.id)}`} style={{ color: "inherit", textDecoration: "none" }}>
+                    <strong>{item.ticket.title}</strong>
+                  </Link>
+                  {" | "}{item.ticket.venue} | {item.ticket.date}
                   <div style={{ opacity: 0.75 }}>Ticket {item.ticket.status} | Price {cents(item.priceCents)}{item.faceValueCents != null ? ` | Face ${cents(item.faceValueCents)}` : ""}</div>
                 </div>
               ))}
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <Link href={`/admin/orders/${encodeURIComponent(order.id)}`} style={{ textDecoration: "underline", fontWeight: 800 }}>Review full transaction details</Link>
             </div>
           </section>
         ))}
