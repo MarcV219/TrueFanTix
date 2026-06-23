@@ -1434,15 +1434,27 @@ function Body({ me }: { me: MeUser }) {
         >
           <div style={{ display: "grid", gap: 4 }}>
             <div>Ticketmaster face value: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
-            <div>
-              Ticketmaster price range:{" "}
-              {centsRangeToMoney(pricingConfirmation.officialPriceRangeMinCents, pricingConfirmation.officialPriceRangeMaxCents)}
-            </div>
-            <div>Ticketmaster service fees: {officialServiceFeesLabel(pricingConfirmation)}</div>
-            <div>Ticketmaster sold-out status: {soldOutLabel(pricingConfirmation)}</div>
-            <div>Ticketmaster venue: {pricingConfirmation.officialVenueName || "Not found"}</div>
-            <div>Ticketmaster event date: {pricingConfirmation.officialEventDate || "Not found"}</div>
-            <div>Ticketmaster event time: {pricingConfirmation.officialEventTime || "Not found"}</div>
+            {(pricingConfirmation.officialPriceRangeMinCents != null || pricingConfirmation.officialPriceRangeMaxCents != null) ? (
+              <div>
+                Ticketmaster price range:{" "}
+                {centsRangeToMoney(pricingConfirmation.officialPriceRangeMinCents, pricingConfirmation.officialPriceRangeMaxCents)}
+              </div>
+            ) : null}
+            {pricingConfirmation.officialServiceFeesCents != null ? (
+              <div>Ticketmaster service fees: {officialServiceFeesLabel(pricingConfirmation)}</div>
+            ) : null}
+            {pricingConfirmation.soldOut != null || pricingConfirmation.officialStatusCode ? (
+              <div>Ticketmaster sold-out status: {soldOutLabel(pricingConfirmation)}</div>
+            ) : null}
+            {pricingConfirmation.officialVenueName ? (
+              <div>Ticketmaster venue: {pricingConfirmation.officialVenueName}</div>
+            ) : null}
+            {pricingConfirmation.officialEventDate ? (
+              <div>Ticketmaster event date: {pricingConfirmation.officialEventDate}</div>
+            ) : null}
+            {pricingConfirmation.officialEventTime ? (
+              <div>Ticketmaster event time: {pricingConfirmation.officialEventTime}</div>
+            ) : null}
             <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
             {pricingConfirmation.sourceUrl ? (
               <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>
