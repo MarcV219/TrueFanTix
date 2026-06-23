@@ -65,6 +65,65 @@ describe("receipt OCR upload formats", () => {
     });
   });
 
+  it("sends listing context so screenshot PDF dates without years can be normalized", async () => {
+    await analyzeReceiptProof({
+      receiptDataUrl: "data:application/pdf;base64,JVBERi0=",
+      receiptFileName: "ticketmaster-receipt.pdf",
+      expectedEventTitle: "Ice Cube",
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26 9:00 PM",
+    });
+
+    const payload = JSON.parse(String((global.fetch as jest.Mock).mock.calls[0][1].body));
+    const prompt = payload.input[0].content[0].text;
+    expect(prompt).toContain('event title "Ice Cube"');
+    expect(prompt).toContain('venue "Casino Rama Resort"');
+    expect(prompt).toContain('date "2026-06-26 9:00 PM"');
+    expect(prompt).toContain("If a visible receipt date omits the year but its month/day matches the expected listing date");
+  });
+
+  it("normalizes visible month/day receipt dates to the expected event year when they match", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output_text: JSON.stringify({
+          ...JSON.parse(openAiResponse.output_text),
+          eventDate: "Fri Jun 26",
+          eventTime: "9:00 PM",
+        }),
+      }),
+    } as Response);
+
+    const result = await analyzeReceiptProof({
+      receiptDataUrl: "data:application/pdf;base64,JVBERi0=",
+      receiptFileName: "ticketmaster-receipt.pdf",
+      expectedEventDate: "2026-06-26 9:00 PM",
+    });
+
+    expect(result.eventDate).toBe("2026-06-26");
+    expect(result.eventTime).toBe("9:00 PM");
+  });
+
+  it("does not force a visible receipt month/day onto a conflicting expected date", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output_text: JSON.stringify({
+          ...JSON.parse(openAiResponse.output_text),
+          eventDate: "Fri Jun 26",
+        }),
+      }),
+    } as Response);
+
+    const result = await analyzeReceiptProof({
+      receiptDataUrl: "data:application/pdf;base64,JVBERi0=",
+      receiptFileName: "ticketmaster-receipt.pdf",
+      expectedEventDate: "2026-06-27 9:00 PM",
+    });
+
+    expect(result.eventDate).toBe("Fri Jun 26");
+  });
+
   it("rejects unsupported upload formats before OCR", async () => {
     const result = await analyzeReceiptProof({
       receiptDataUrl: "data:text/plain;base64,cmVjZWlwdA==",

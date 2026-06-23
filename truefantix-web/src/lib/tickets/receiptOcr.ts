@@ -31,6 +31,9 @@ export type ReceiptOcrReview = {
 type AnalyzeReceiptInput = {
   receiptDataUrl: string | null;
   receiptFileName?: string | null;
+  expectedEventTitle?: string | null;
+  expectedVenue?: string | null;
+  expectedEventDate?: string | null;
 };
 
 function unavailable(reason: string, status: ReceiptOcrReview["status"] = "unavailable"): ReceiptOcrReview {
@@ -90,6 +93,70 @@ function normalizeString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+function ymd(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const direct = value.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  if (direct) return direct;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function normalizeReceiptDate(value: unknown, expectedEventDate?: string | null): string | null {
+  const raw = normalizeString(value);
+  if (!raw) return null;
+
+  const direct = raw.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? null;
+  if (direct) return direct;
+
+  const expectedYmd = ymd(expectedEventDate);
+  if (!expectedYmd) return raw;
+
+  const expected = new Date(`${expectedYmd}T00:00:00Z`);
+  if (Number.isNaN(expected.getTime())) return raw;
+
+  const monthNames = new Map([
+    ["jan", 1],
+    ["january", 1],
+    ["feb", 2],
+    ["february", 2],
+    ["mar", 3],
+    ["march", 3],
+    ["apr", 4],
+    ["april", 4],
+    ["may", 5],
+    ["jun", 6],
+    ["june", 6],
+    ["jul", 7],
+    ["july", 7],
+    ["aug", 8],
+    ["august", 8],
+    ["sep", 9],
+    ["sept", 9],
+    ["september", 9],
+    ["oct", 10],
+    ["october", 10],
+    ["nov", 11],
+    ["november", 11],
+    ["dec", 12],
+    ["december", 12],
+  ]);
+
+  const match = raw.toLowerCase().match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})\b/);
+  if (!match) return raw;
+
+  const month = monthNames.get(match[1]);
+  const day = Number(match[2]);
+  if (!month || !Number.isInteger(day)) return raw;
+
+  const expectedMonth = expected.getUTCMonth() + 1;
+  const expectedDay = expected.getUTCDate();
+  if (month !== expectedMonth || day !== expectedDay) return raw;
+
+  const year = expected.getUTCFullYear();
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 function normalizeBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
@@ -111,7 +178,7 @@ function normalizeSeats(value: unknown): ReceiptSeat[] {
   });
 }
 
-function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string): ReceiptOcrReview {
+function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string, expectedEventDate?: string | null): ReceiptOcrReview {
   const confidence = Math.max(0, Math.min(1, normalizeNumber(parsed.confidence) ?? 0));
   const hasPurchaseReceipt = normalizeBoolean(parsed.hasPurchaseReceipt);
   const hasTickets = normalizeBoolean(parsed.hasTickets);
@@ -129,7 +196,7 @@ function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string)
     eventTitle: normalizeString(parsed.eventTitle),
     artistOrTeam: normalizeString(parsed.artistOrTeam),
     venue: normalizeString(parsed.venue),
-    eventDate: normalizeString(parsed.eventDate),
+    eventDate: normalizeReceiptDate(parsed.eventDate, expectedEventDate),
     eventTime: normalizeString(parsed.eventTime),
     ticketQuantity: normalizeNumber(parsed.ticketQuantity),
     seats: normalizeSeats(parsed.seats),
@@ -163,6 +230,9 @@ function outputText(data: unknown): string {
 export async function analyzeReceiptProof({
   receiptDataUrl,
   receiptFileName,
+  expectedEventTitle,
+  expectedVenue,
+  expectedEventDate,
 }: AnalyzeReceiptInput): Promise<ReceiptOcrReview> {
   if (!receiptDataUrl) return unavailable("missing-receipt");
   if (!isImageDataUrl(receiptDataUrl) && !isPdfDataUrl(receiptDataUrl)) {
@@ -245,7 +315,11 @@ export async function analyzeReceiptProof({
                 type: "input_text",
                 text:
                   `Extract ticket purchase receipt data from this upload. File name: ${receiptFileName || "receipt"}. ` +
+                  `Expected listing context: event title "${expectedEventTitle || "unknown"}", venue "${expectedVenue || "unknown"}", date "${expectedEventDate || "unknown"}". ` +
                   "Only report values visibly present on the receipt. Do not infer fees or seats. " +
+                  "For Ticketmaster receipts, the event date often appears near the event title like 'Fri Jun 26, 9:00 PM'. " +
+                  "If a visible receipt date omits the year but its month/day matches the expected listing date, return the expected YYYY-MM-DD date. " +
+                  "If the visible month/day conflicts with the expected date, return the visible date text rather than forcing a match. " +
                   "Return null for missing fields. Amounts must be integer cents. " +
                   "For faceValueCents and serviceFeesCents, prefer per-ticket values; also fill totals when visible.",
               },
@@ -274,7 +348,7 @@ export async function analyzeReceiptProof({
     if (!text) return unavailable("openai-empty-response");
 
     const parsed = JSON.parse(text) as Record<string, unknown>;
-    return receiptReviewFromParsed(parsed, model);
+    return receiptReviewFromParsed(parsed, model, expectedEventDate);
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown";
     return unavailable(`receipt-ocr-error:${message}`);

@@ -447,6 +447,9 @@ export async function POST(req: Request) {
     const receiptReview = await analyzeReceiptProof({
       receiptDataUrl: verificationImage,
       receiptFileName,
+      expectedEventTitle: title,
+      expectedVenue: venue,
+      expectedEventDate: date,
     });
 
     const listingCheck = validateListingPriceAgainstOfficial({

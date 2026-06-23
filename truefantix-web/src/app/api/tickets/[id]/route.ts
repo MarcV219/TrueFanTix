@@ -274,6 +274,9 @@ export async function PATCH(req: Request) {
       await analyzeReceiptProof({
         receiptDataUrl: existing.verificationImage,
         receiptFileName: null,
+        expectedEventTitle: title,
+        expectedVenue: venue,
+        expectedEventDate: date,
       });
 
     const listingCheck = validateListingPriceAgainstOfficial({
