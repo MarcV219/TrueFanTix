@@ -46,7 +46,7 @@ function inferEvidenceEventType(title: string, parsedEvidence: any): string | nu
   if (manualEventType) return manualEventType;
 
   const storedInferred = typeof parsedEvidence?.inferredEventType === "string" ? parsedEvidence.inferredEventType.trim().toLowerCase() : "";
-  if (storedInferred) return storedInferred;
+  if (storedInferred && storedInferred !== "other") return storedInferred;
 
   const receiptOcr = parsedEvidence?.receiptProof?.ocr ?? null;
   const officialSync = parsedEvidence?.officialPricingSync ?? null;
@@ -446,14 +446,12 @@ export async function POST(req: Request) {
   // Image is now auto-fetched server-side for consistency/relevance.
   // Optional client-provided image can be used only as fallback if auto-fetch fails.
 
-  if (eventTypeOverride) {
-    const allowed = new Set([
-      "concert", "theatre", "comedy", "conference", "festival", "gala", "opera", "workshop", "other",
-      "sports-basketball", "sports-hockey", "sports-baseball", "sports-football", "sports-soccer", "sports-lacrosse", "sports-other",
-    ]);
-    if (!allowed.has(eventTypeOverride)) {
-      return badRequest("Invalid eventTypeOverride.");
-    }
+  const allowed = new Set([
+    "concert", "theatre", "comedy", "conference", "festival", "gala", "opera", "workshop", "other",
+    "sports-basketball", "sports-hockey", "sports-baseball", "sports-football", "sports-soccer", "sports-lacrosse", "sports-other",
+  ]);
+  if (!eventTypeOverride || !allowed.has(eventTypeOverride)) {
+    return badRequest("Choose a valid ticket category.");
   }
 
   // Optional: event linking

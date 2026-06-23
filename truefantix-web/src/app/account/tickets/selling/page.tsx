@@ -9,6 +9,7 @@ type CreateTicketBody = {
   title: string;
   priceCents: number;
   currency: "CAD" | "USD";
+  eventTypeOverride: EventCategoryValue;
   faceValueCents?: number | null;
   adminFeePaidCents?: number;
   purchaseQuantity?: number;
@@ -87,6 +88,43 @@ type SeatingInfo = {
   row: string;
   seat: string;
 };
+
+type EventCategoryValue =
+  | "concert"
+  | "sports-basketball"
+  | "sports-hockey"
+  | "sports-baseball"
+  | "sports-football"
+  | "sports-soccer"
+  | "sports-lacrosse"
+  | "sports-other"
+  | "theatre"
+  | "comedy"
+  | "conference"
+  | "festival"
+  | "gala"
+  | "opera"
+  | "workshop"
+  | "other";
+
+const EVENT_CATEGORY_OPTIONS: Array<{ value: EventCategoryValue; label: string }> = [
+  { value: "concert", label: "Concert" },
+  { value: "sports-basketball", label: "Sports: Basketball" },
+  { value: "sports-hockey", label: "Sports: Hockey" },
+  { value: "sports-baseball", label: "Sports: Baseball" },
+  { value: "sports-football", label: "Sports: Football" },
+  { value: "sports-soccer", label: "Sports: Soccer" },
+  { value: "sports-lacrosse", label: "Sports: Lacrosse" },
+  { value: "sports-other", label: "Sports: Other" },
+  { value: "theatre", label: "Theatre" },
+  { value: "comedy", label: "Comedy" },
+  { value: "conference", label: "Conference" },
+  { value: "festival", label: "Festival" },
+  { value: "gala", label: "Gala" },
+  { value: "opera", label: "Opera" },
+  { value: "workshop", label: "Workshop" },
+  { value: "other", label: "Other" },
+];
 
 type ListingEditForm = {
   title: string;
@@ -976,6 +1014,7 @@ function Body({ me }: { me: MeUser }) {
   const [selectedTitleSuggestion, setSelectedTitleSuggestion] = React.useState<CatalogSuggestion | null>(null);
   const [titleSuggestions, setTitleSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [titleRequestType, setTitleRequestType] = React.useState<"ARTIST" | "TEAM" | "SPORT">("ARTIST");
+  const [eventCategory, setEventCategory] = React.useState<EventCategoryValue | "">("");
   const [venue, setVenue] = React.useState("");
   const [selectedVenueSuggestion, setSelectedVenueSuggestion] = React.useState<CatalogSuggestion | null>(null);
   const [venueSuggestions, setVenueSuggestions] = React.useState<CatalogSuggestion[]>([]);
@@ -1325,6 +1364,7 @@ function Body({ me }: { me: MeUser }) {
     }));
 
     if (!t) return setError("Title is required.");
+    if (!eventCategory) return setError("Choose the ticket category before listing tickets.");
     if (!v) return setError("Venue is required.");
     if (!validTitleSuggestion) return setError("Choose a verified artist, team, or sport from the list before listing tickets.");
     if (!validVenueSuggestion) return setError("Choose a verified venue from the list before listing tickets.");
@@ -1376,6 +1416,7 @@ function Body({ me }: { me: MeUser }) {
           venue: v,
           date: d,
           currency: listingCurrency,
+          eventTypeOverride: eventCategory,
           row: seatInfo.row,
           seat: seatInfo.seat,
           priceCents,
@@ -1410,6 +1451,7 @@ function Body({ me }: { me: MeUser }) {
       setTitle("");
       setSelectedTitleSuggestion(null);
       setTitleSuggestions([]);
+      setEventCategory("");
       setVenue("");
       setSelectedVenueSuggestion(null);
       setVenueSuggestions([]);
@@ -1815,6 +1857,30 @@ function Body({ me }: { me: MeUser }) {
                 )}
               </div>
             ) : null}
+          </label>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontWeight: 900 }}>Ticket category</span>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Choose the category shown on ticket cards and used for marketplace filters.
+            </div>
+            <select
+              value={eventCategory}
+              onChange={(e) => {
+                setEventCategory(e.target.value as EventCategoryValue | "");
+                setError(null);
+                setOk(null);
+              }}
+              disabled={busy}
+              style={inputStyle(false)}
+            >
+              <option value="">Select a category...</option>
+              {EVENT_CATEGORY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>

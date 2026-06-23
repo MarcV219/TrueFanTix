@@ -36,8 +36,25 @@ export const schemas = {
     row: z.string().trim().max(80).optional().nullable(),
     seat: z.string().trim().max(80).optional().nullable(),
 
-    // Seller override for event type when auto-tagging is incorrect
-    eventTypeOverride: z.string().trim().max(80).optional().nullable(),
+    // Seller-selected category for marketplace tags and filters
+    eventTypeOverride: z.enum([
+      "concert",
+      "theatre",
+      "comedy",
+      "conference",
+      "festival",
+      "gala",
+      "opera",
+      "workshop",
+      "other",
+      "sports-basketball",
+      "sports-hockey",
+      "sports-baseball",
+      "sports-football",
+      "sports-soccer",
+      "sports-lacrosse",
+      "sports-other",
+    ]),
 
     eventId: z.string().trim().cuid().optional().nullable(),
 
