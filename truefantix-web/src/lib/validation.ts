@@ -23,6 +23,7 @@ export const schemas = {
   ticketCreateApi: z.object({
     title: z.string().trim().min(1).max(120),
     priceCents: z.number().int().positive().max(10_000_000),
+    currency: z.enum(["CAD", "USD"]).default("CAD"),
     faceValueCents: z.number().int().nonnegative().optional().nullable(),
     adminFeePaidCents: z.number().int().nonnegative().max(10_000_000).optional(),
     purchaseQuantity: z.number().int().positive().max(20).optional(),

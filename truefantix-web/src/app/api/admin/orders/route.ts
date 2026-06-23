@@ -45,6 +45,7 @@ export async function GET(req: Request) {
       amountCents: true,
       adminFeeCents: true,
       adminFeeTaxCents: true,
+      currency: true,
       taxRateBps: true,
       taxRegionCode: true,
       taxCountryCode: true,
@@ -69,6 +70,7 @@ export async function GET(req: Request) {
           id: true,
           priceCents: true,
           faceValueCents: true,
+          currency: true,
           ticket: {
             select: {
               id: true,

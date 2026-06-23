@@ -704,6 +704,40 @@ describe("listing validation", () => {
     if (!result.ok) expect(result.error).toBe("RECEIPT_SERVICE_FEES_MISMATCH");
   });
 
+  it("rejects selected listing currency when the receipt shows a different currency", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerCurrency: "CAD",
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({ currency: "USD" }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("RECEIPT_CURRENCY_MISMATCH");
+      expect(result.details?.sourceIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "RECEIPT_CURRENCY_MISMATCH",
+            entered: "CAD",
+            found: "USD",
+          }),
+        ])
+      );
+    }
+  });
+
   it("requires receipt proof and seller confirmation", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),

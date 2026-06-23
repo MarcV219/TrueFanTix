@@ -113,13 +113,14 @@ export async function POST(req: Request) {
         create: {
           orderId,
           amountCents: order.totalCents,
-          currency: "CAD",
+          currency: (order as any).currency || "CAD",
           status: "SUCCEEDED",
           provider: "MANUAL",
           providerRef: `manual_${orderId}`,
         },
         update: {
           amountCents: order.totalCents,
+          currency: (order as any).currency || "CAD",
           status: "SUCCEEDED",
           provider: "MANUAL",
           providerRef: `manual_${orderId}`,

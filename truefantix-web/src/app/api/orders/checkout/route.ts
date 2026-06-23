@@ -18,6 +18,10 @@ function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));
 }
 
+function normalizeCurrency(value: unknown): "CAD" | "USD" {
+  return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
+}
+
 function normalizeId(value: unknown) {
   try {
     return decodeURIComponent(String(value ?? "")).trim();
@@ -227,6 +231,19 @@ export async function POST(req: Request) {
         };
       }
 
+      const currency = normalizeCurrency(tickets[0]?.currency);
+      if (tickets.some((t: any) => normalizeCurrency(t.currency) !== currency)) {
+        return {
+          ok: false as const,
+          status: 400 as const,
+          body: {
+            ok: false,
+            error: "MIXED_CURRENCY_ORDER",
+            message: "Checkout can only include tickets listed in the same currency.",
+          },
+        };
+      }
+
       // No self-buy
       if (buyerSellerId === sellerId) {
         return {
@@ -280,6 +297,7 @@ export async function POST(req: Request) {
           amountCents,
           adminFeeCents,
           adminFeeTaxCents: adminFeeTax.taxCents,
+          currency,
           taxRateBps: adminFeeTax.rateBps,
           taxRegionCode: adminFeeTax.regionCode || null,
           taxRegionName: adminFeeTax.regionName || null,
@@ -325,6 +343,7 @@ export async function POST(req: Request) {
           ticketId: t.id,
           priceCents: t.priceCents,
           faceValueCents: t.faceValueCents ?? null,
+          currency,
         })),
       });
 

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import { getTicketImage, getPlaceholderImage } from "@/lib/imageSearch";
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
+import { formatMoney, normalizeCurrency } from "@/lib/ticketsView";
 import PurchaseButton from "./PurchaseButton";
 
 interface TicketPageProps {
@@ -18,6 +19,7 @@ async function getTicket(id: string) {
       id: true,
       title: true,
       priceCents: true,
+      currency: true,
       faceValueCents: true,
       adminFeePaidCents: true,
       image: true,
@@ -74,6 +76,7 @@ async function getTicket(id: string) {
       id: String(ticket.event.id)
     } : null,
     priceCents: Number(ticket.priceCents),
+    currency: normalizeCurrency((ticket as any).currency),
     faceValueCents: ticket.faceValueCents ? Number(ticket.faceValueCents) : null,
     adminFeePaidCents: Number(ticket.adminFeePaidCents ?? 0),
     createdAt: ticket.createdAt.toISOString(),
@@ -118,6 +121,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
 
   // Calculate price display
   const price = ticket.priceCents / 100;
+  const currency = normalizeCurrency((ticket as any).currency);
   const faceValue = ticket.faceValueCents ? ticket.faceValueCents / 100 : price;
   const adminFeePaid = ticket.adminFeePaidCents / 100;
   const maxFairListPrice = faceValue + adminFeePaid;
@@ -223,30 +227,30 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                   <div className="space-y-3">
                     <div className="flex justify-between">
                       <span className="text-gray-600 dark:text-gray-400">Price:</span>
-                      <span className="font-bold text-2xl text-[var(--tft-navy)] dark:text-[var(--tft-teal)]">${price.toFixed(2)}</span>
+                      <span className="font-bold text-2xl text-[var(--tft-navy)] dark:text-[var(--tft-teal)]">{formatMoney(price, currency)} {currency}</span>
                     </div>
                     {faceValue > 0 && (
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Face Value:</span>
-                        <span className="font-medium text-gray-900 dark:text-white">${faceValue.toFixed(2)}</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{formatMoney(faceValue, currency)} {currency}</span>
                       </div>
                     )}
                     {adminFeePaid > 0 && (
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Original Admin Fees Paid:</span>
-                        <span className="font-medium text-gray-900 dark:text-white">${adminFeePaid.toFixed(2)}</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{formatMoney(adminFeePaid, currency)} {currency}</span>
                       </div>
                     )}
                     {adminFeePaid > 0 && (
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Max Fair List Price:</span>
-                        <span className="font-medium text-gray-900 dark:text-white">${maxFairListPrice.toFixed(2)}</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{formatMoney(maxFairListPrice, currency)} {currency}</span>
                       </div>
                     )}
                     {isBelowFaceValue && maxFairListPrice > 0 && (
                       <div className="flex justify-between text-green-600">
                         <span>You Save:</span>
-                        <span className="font-bold">${(maxFairListPrice - price).toFixed(2)}</span>
+                        <span className="font-bold">{formatMoney(maxFairListPrice - price, currency)} {currency}</span>
                       </div>
                     )}
                   </div>
@@ -288,7 +292,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
 
                   {/* Purchase Section */}
                   <div className="mt-8">
-                    <PurchaseButton ticketId={ticket.id} price={`$${price.toFixed(2)}`} />
+                    <PurchaseButton ticketId={ticket.id} price={`${formatMoney(price, currency)} ${currency}`} />
                     <p className="text-sm text-gray-500 mt-2 text-center">
                       + 8.75% admin fee + applicable taxes
                     </p>

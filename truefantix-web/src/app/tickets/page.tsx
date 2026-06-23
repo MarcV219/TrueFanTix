@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import Footer from "@/components/Footer";
 import TicketCard from "@/components/tickets/TicketCard";
 import { fetchJson } from "@/lib/api-fetch";
-import { inferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
+import { formatMoney, inferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
 import type { TicketCardView } from "@/lib/ticketsView";
 
 type Ticket = TicketCardView;
@@ -188,6 +188,8 @@ export default function TicketsPage() {
 
   const selectedTotal = selectedTickets.reduce((sum, ticket) => sum + ticket.price, 0);
   const selectedSellerIds = Array.from(new Set(selectedTickets.map((ticket) => ticket.sellerId).filter(Boolean)));
+  const selectedCurrencies = Array.from(new Set(selectedTickets.map((ticket) => ticket.currency)));
+  const selectedCurrency = selectedCurrencies.length === 1 ? selectedCurrencies[0] : "CAD";
   const selectedVisibleIds = new Set(sortedFilteredTickets.map((ticket) => ticket.id));
   const selectedVisibleCount = selectedTicketIds.filter((id) => selectedVisibleIds.has(id)).length;
   const allVisibleSelected = sortedFilteredTickets.length > 0 && selectedVisibleCount === sortedFilteredTickets.length;
@@ -251,6 +253,11 @@ export default function TicketsPage() {
 
     if (selectedSellerIds.length > 1) {
       setCheckoutError("For now, checkout can only include tickets from one seller.");
+      return;
+    }
+
+    if (selectedCurrencies.length > 1) {
+      setCheckoutError("Checkout can only include tickets listed in the same currency.");
       return;
     }
 
@@ -481,7 +488,7 @@ export default function TicketsPage() {
                   {loading ? "Loading tickets..." : `${sortedFilteredTickets.length} ticket${sortedFilteredTickets.length !== 1 ? "s" : ""} found`}
                 </p>
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                  {selectedTicketIds.length} selected · ${selectedTotal.toFixed(2)} subtotal
+                  {selectedTicketIds.length} selected · {formatMoney(selectedTotal, selectedCurrency)} {selectedCurrency} subtotal
                 </p>
                 {checkoutError ? <p className="mt-1 text-sm font-semibold text-red-600">{checkoutError}</p> : null}
               </div>

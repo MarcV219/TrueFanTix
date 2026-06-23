@@ -72,6 +72,7 @@ function normalizeTicket(ticket: any, query: string) {
 
   return {
     ...safeTicket,
+    currency: ticket.currency || "CAD",
     price: centsToDollars(ticket.priceCents),
     faceValue: ticket.faceValueCents == null ? null : centsToDollars(ticket.faceValueCents),
     adminFeePaid: centsToDollars(ticket.adminFeePaidCents ?? 0),
@@ -184,6 +185,7 @@ export async function GET(req: Request) {
           id: true,
           title: true,
           priceCents: true,
+          currency: true,
           faceValueCents: true,
           adminFeePaidCents: true,
           image: true,

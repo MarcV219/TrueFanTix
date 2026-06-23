@@ -326,6 +326,7 @@ model Ticket {
   priceCents        Int
   faceValueCents    Int?
   adminFeePaidCents Int @default(0)
+  currency          String @default("CAD")
 
   image String
   venue String
@@ -404,6 +405,7 @@ model Order {
   amountCents      Int
   adminFeeCents    Int
   adminFeeTaxCents Int     @default(0)
+  currency         String  @default("CAD")
   taxRateBps       Int     @default(0)
   taxRegionCode    String?
   taxRegionName    String?
@@ -463,6 +465,7 @@ model OrderItem {
   // Snapshot pricing (so future ticket edits don't affect historical orders)
   priceCents     Int
   faceValueCents Int?
+  currency       String @default("CAD")
 
   createdAt DateTime @default(now())
 

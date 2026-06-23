@@ -10,6 +10,7 @@ type ListingValidationInput = {
   sellerSeat: string | null;
   purchaseQuantity: number;
   priceCents: number;
+  sellerCurrency?: "CAD" | "USD";
   sellerFaceValueCents: number | null;
   adminFeePaidCents: number;
   hasReceiptProof: boolean;
@@ -46,7 +47,7 @@ export type ListingPricingDetails = {
 
 export type ListingSourceIssue = {
   code: string;
-  field: "title" | "venue" | "date" | "time" | "faceValue" | "serviceFees" | "listPrice" | "receipt" | "quantity" | "seating";
+  field: "title" | "venue" | "date" | "time" | "currency" | "faceValue" | "serviceFees" | "listPrice" | "receipt" | "quantity" | "seating";
   source: "Ticketmaster" | "Receipt";
   entered: string | null;
   found: string | null;
@@ -230,6 +231,14 @@ function receiptAdminFeesCents(receipt: ReceiptOcrReview): number | null {
   return null;
 }
 
+function normalizeCurrency(value: string | null | undefined): "CAD" | "USD" | null {
+  const raw = String(value ?? "").trim().toUpperCase();
+  if (!raw) return null;
+  if (/\b(USD|US DOLLARS?|U\.S\. DOLLARS?)\b/.test(raw) || raw.includes("US$")) return "USD";
+  if (/\b(CAD|CDN|CANADIAN DOLLARS?)\b/.test(raw) || raw.includes("CA$") || raw.includes("C$")) return "CAD";
+  return null;
+}
+
 function receiptSeatingMismatchMessage(receipt: ReceiptOcrReview) {
   const hasExplicitSeat = receipt.seats.some((item) => !!normalizeSeatPart(item.seat));
   if (hasExplicitSeat) {
@@ -289,6 +298,7 @@ export function validateListingPriceAgainstOfficial({
   sellerSeat,
   purchaseQuantity,
   priceCents,
+  sellerCurrency,
   sellerFaceValueCents,
   adminFeePaidCents,
   hasReceiptProof,
@@ -375,6 +385,18 @@ export function validateListingPriceAgainstOfficial({
           entered: "Tickets purchased",
           found: receiptReview.rawTextSummary,
           message: "The uploaded receipt does not clearly confirm tickets were purchased.",
+        });
+      }
+
+      const receiptCurrency = normalizeCurrency(receiptReview.currency);
+      if (sellerCurrency && receiptCurrency && sellerCurrency !== receiptCurrency) {
+        receiptIssues.push({
+          code: "RECEIPT_CURRENCY_MISMATCH",
+          field: "currency",
+          source: "Receipt",
+          entered: sellerCurrency,
+          found: receiptCurrency,
+          message: "Receipt currency does not match the selected listing currency.",
         });
       }
 

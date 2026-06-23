@@ -11,8 +11,10 @@ export type ApiTicketLike = {
   seat?: string | null;
   price?: number;
   priceCents?: number;
+  currency?: string | null;
   faceValue?: number | null;
   faceValueCents?: number | null;
+  confirmedMaxListPriceCents?: number | null;
   status?: string;
   image?: string;
   sellerId?: string;
@@ -41,7 +43,9 @@ export type TicketCardView = {
   row: string | null;
   seat: string | null;
   price: number;
+  currency: string;
   faceValue: number | null;
+  confirmedMaxListPriceCents: number | null;
   image: string;
   sellerId: string;
   badges: string[];
@@ -82,10 +86,27 @@ export function resolveTicketImageSrc(raw: unknown) {
   return s;
 }
 
-export function computePriceTag(price: number, faceValue: number | null, isSoldOut = false): "Face Value" | "Below Face Value" {
+export function normalizeCurrency(value: unknown): "CAD" | "USD" {
+  return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
+}
+
+export function formatMoney(amount: number, currency: string) {
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: normalizeCurrency(currency),
+    currencyDisplay: "narrowSymbol",
+  }).format(amount);
+}
+
+export function formatCents(cents: number, currency: string) {
+  return formatMoney(cents / 100, currency);
+}
+
+export function computePriceTag(price: number, faceValue: number | null, isSoldOut = false, maxListPrice: number | null = null): "Face Value" | "Below Face Value" {
   if (isSoldOut) return "Face Value";
-  if (faceValue == null) return "Face Value";
-  return price < faceValue ? "Below Face Value" : "Face Value";
+  const cap = maxListPrice ?? faceValue;
+  if (cap == null) return "Face Value";
+  return price < cap ? "Below Face Value" : "Face Value";
 }
 
 export function getEventType(title: string): EventTypeInfo {
@@ -266,7 +287,10 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
   const eventTypeInfo = eventTypeFromType(t.eventTypeOverride ?? null, t.title || "");
   const isSoldOut = t.event?.selloutStatus === "SOLD_OUT";
   const price = Number(t.price ?? (typeof t.priceCents === 'number' ? t.priceCents / 100 : 0));
+  const currency = normalizeCurrency(t.currency);
   const faceValue = t.faceValue ?? (typeof t.faceValueCents === 'number' ? t.faceValueCents / 100 : null);
+  const confirmedMaxListPrice =
+    typeof t.confirmedMaxListPriceCents === "number" ? t.confirmedMaxListPriceCents / 100 : null;
 
   const isPastEvent = isTicketEventExpired({
     date: t.date,
@@ -287,13 +311,15 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
     row: t.row ?? null,
     seat: t.seat ?? null,
     price,
+    currency,
     faceValue: faceValue ?? null,
+    confirmedMaxListPriceCents: typeof t.confirmedMaxListPriceCents === "number" ? t.confirmedMaxListPriceCents : null,
     image: resolveTicketImageSrc(t.image),
     sellerId: t.sellerId || "",
     badges: t.seller?.badges ?? [],
     rating: t.seller?.rating ?? 0,
     reviews: t.seller?.reviews ?? 0,
-    priceTag: computePriceTag(price, faceValue ?? null, isSoldOut),
+    priceTag: computePriceTag(price, faceValue ?? null, isSoldOut, confirmedMaxListPrice),
     eventType: eventTypeInfo.type,
     eventTypeLabel: eventTypeInfo.label,
     isSoldOut,

@@ -40,6 +40,10 @@ function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message }, { status: 400 });
 }
 
+function normalizeCurrency(value: unknown): "CAD" | "USD" {
+  return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
+}
+
 function receiptReviewFromEvidence(value: unknown): ReceiptOcrReview | null {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
@@ -67,6 +71,7 @@ export async function GET(req: Request) {
         id: true,
         title: true,
         priceCents: true,
+        currency: true,
         faceValueCents: true,
         adminFeePaidCents: true,
         image: true,
@@ -245,6 +250,7 @@ export async function PATCH(req: Request) {
       typeof body.adminFeePaidCents === "number" && Number.isInteger(body.adminFeePaidCents)
         ? body.adminFeePaidCents
         : existing.adminFeePaidCents;
+    const currency = normalizeCurrency((existing as any).currency);
 
     if (title.length < 1 || title.length > 120) return badRequest("Title is required.");
     if (venue.length < 1 || venue.length > 200) return badRequest("Venue is required.");
@@ -288,6 +294,7 @@ export async function PATCH(req: Request) {
       sellerSeat: seat,
       purchaseQuantity: 1,
       priceCents,
+      sellerCurrency: currency,
       sellerFaceValueCents: faceValueCents,
       adminFeePaidCents,
       hasReceiptProof: !!existing.verificationImage,
@@ -355,6 +362,7 @@ export async function PATCH(req: Request) {
         row,
         seat,
         priceCents,
+        currency,
         faceValueCents: listingCheck.faceValueCents,
         adminFeePaidCents,
         image,
@@ -404,6 +412,7 @@ export async function PATCH(req: Request) {
         id: updated.id,
         title: updated.title,
         priceCents: safeInt(updated.priceCents),
+        currency: normalizeCurrency((updated as any).currency),
         faceValueCents: updated.faceValueCents,
         adminFeePaidCents: (updated as any).adminFeePaidCents ?? 0,
         price: centsToDollars(safeInt(updated.priceCents)),

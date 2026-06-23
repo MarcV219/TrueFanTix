@@ -16,6 +16,10 @@ async function getStripe() {
   return new StripeCtor(key, { apiVersion: "2024-06-20" });
 }
 
+function normalizeCurrency(value: unknown): "CAD" | "USD" {
+  return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
+}
+
 export async function POST(req: Request) {
   const rlResult = await applyRateLimit(req, "payments:create-intent");
   if (!rlResult.ok) return rlResult.response;
@@ -81,16 +85,18 @@ export async function POST(req: Request) {
     }
 
     const stripe = await getStripe();
+    const currency = normalizeCurrency((order as any).currency);
 
     // Create PaymentIntent
     const paymentIntent = await stripe.paymentIntents.create({
       amount: order.totalCents,
-      currency: "cad",
+      currency: currency.toLowerCase(),
       automatic_payment_methods: { enabled: true },
       metadata: {
         orderId: order.id,
         buyerId: gate.user.id,
         sellerId: order.sellerId,
+        currency,
       },
       description: `TrueFanTix Order #${order.id.slice(0, 8)}`,
     });
@@ -100,7 +106,7 @@ export async function POST(req: Request) {
         ok: true,
         clientSecret: paymentIntent.client_secret,
         amount: order.totalCents,
-        currency: "cad",
+        currency,
       },
       { status: 200 }
     );

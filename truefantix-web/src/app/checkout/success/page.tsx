@@ -4,10 +4,7 @@ import React, { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { formatTaxRate } from "@/lib/tax-rates";
-
-function centsToDollars(cents: number) {
-  return (cents / 100).toFixed(2);
-}
+import { formatCents, normalizeCurrency } from "@/lib/ticketsView";
 
 function taxLineLabel(order: any) {
   const label = order?.taxLabel || "Tax";
@@ -143,22 +140,22 @@ function SuccessContent() {
 
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
               <span>Subtotal:</span>
-              <span>${centsToDollars(order.amountCents)}</span>
+              <span>{formatCents(order.amountCents, normalizeCurrency(order.currency))} {normalizeCurrency(order.currency)}</span>
             </div>
             
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
               <span>Service Fee:</span>
-              <span>${centsToDollars(order.adminFeeCents)}</span>
+              <span>{formatCents(order.adminFeeCents, normalizeCurrency(order.currency))} {normalizeCurrency(order.currency)}</span>
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
               <span>{taxLineLabel(order)}</span>
-              <span>${centsToDollars(order.adminFeeTaxCents ?? 0)}</span>
+              <span>{formatCents(order.adminFeeTaxCents ?? 0, normalizeCurrency(order.currency))} {normalizeCurrency(order.currency)}</span>
             </div>
             
             <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 800, fontSize: 16 }}>
               <span>Total Paid:</span>
-              <span>${centsToDollars(order.totalCents)} CAD</span>
+              <span>{formatCents(order.totalCents, normalizeCurrency(order.currency))} {normalizeCurrency(order.currency)}</span>
             </div>
           </div>
 

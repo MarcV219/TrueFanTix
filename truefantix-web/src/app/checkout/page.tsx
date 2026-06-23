@@ -8,6 +8,7 @@ import { loadStripe, Stripe } from "@stripe/stripe-js";
 import { CheckoutForm } from "@/components/CheckoutForm";
 import { fetchJson } from "@/lib/api-fetch";
 import { formatTaxRate } from "@/lib/tax-rates";
+import { formatCents, normalizeCurrency } from "@/lib/ticketsView";
 
 let stripePromise: Promise<Stripe | null> | null = null;
 
@@ -21,10 +22,6 @@ function getStripePromise() {
     stripePromise = loadStripe(key);
   }
   return stripePromise;
-}
-
-function centsToDollars(cents: number) {
-  return (cents / 100).toFixed(2);
 }
 
 function taxLineLabel(order: any) {
@@ -80,6 +77,7 @@ function CheckoutContent() {
 
       setClientSecret(intentRes.data?.clientSecret);
       setAmount(intentRes.data?.amount);
+      setOrder((current: any) => current ? { ...current, currency: intentRes.data?.currency || current.currency || "CAD" } : current);
       setIsLoading(false);
     }
 
@@ -180,15 +178,15 @@ function CheckoutContent() {
           <div style={{ display: "grid", gap: 4, fontSize: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span>Subtotal:</span>
-              <span>${centsToDollars(order.amountCents)}</span>
+              <span>{formatCents(order.amountCents, normalizeCurrency(order.currency))} {normalizeCurrency(order.currency)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span>Service Fee:</span>
-              <span>${centsToDollars(order.adminFeeCents)}</span>
+              <span>{formatCents(order.adminFeeCents, normalizeCurrency(order.currency))} {normalizeCurrency(order.currency)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span>{taxLineLabel(order)}</span>
-              <span>${centsToDollars(order.adminFeeTaxCents ?? 0)}</span>
+              <span>{formatCents(order.adminFeeTaxCents ?? 0, normalizeCurrency(order.currency))} {normalizeCurrency(order.currency)}</span>
             </div>
             <div
               style={{
@@ -201,7 +199,7 @@ function CheckoutContent() {
               }}
             >
               <span>Total:</span>
-              <span>${centsToDollars(order.totalCents)} CAD</span>
+              <span>{formatCents(order.totalCents, normalizeCurrency(order.currency))} {normalizeCurrency(order.currency)}</span>
             </div>
           </div>
         </div>
@@ -222,6 +220,7 @@ function CheckoutContent() {
         <CheckoutForm
           orderId={orderId!}
           amount={amount}
+          currency={normalizeCurrency(order?.currency)}
           onSuccess={handlePaymentSuccess}
           onError={handlePaymentError}
         />

@@ -8,6 +8,7 @@ import { fetchJson } from "@/lib/api-fetch";
 type CreateTicketBody = {
   title: string;
   priceCents: number;
+  currency: "CAD" | "USD";
   faceValueCents?: number | null;
   adminFeePaidCents?: number;
   purchaseQuantity?: number;
@@ -46,7 +47,7 @@ type PricingConfirmation = {
 
 type PricingSourceIssue = {
   code: string;
-  field: "title" | "venue" | "date" | "time" | "faceValue" | "serviceFees" | "listPrice" | "receipt" | "quantity" | "seating";
+  field: "title" | "venue" | "date" | "time" | "currency" | "faceValue" | "serviceFees" | "listPrice" | "receipt" | "quantity" | "seating";
   source: "Ticketmaster" | "Receipt";
   entered: string | null;
   found: string | null;
@@ -57,6 +58,7 @@ type TicketRow = {
   id: string;
   title: string;
   price: number;
+  currency?: string | null;
   faceValue: number | null;
   adminFeePaid?: number | null;
   image: string;
@@ -238,13 +240,20 @@ function setDateTimePickerMinutes(v: string, minute: string): string {
   return `${match[1]}:${minute}`;
 }
 
-function formatMoney(n: number) {
-  // no Intl needed for MVP; keep stable formatting
-  return `$${Number(n).toFixed(2)}`;
+function normalizeCurrency(value: unknown): "CAD" | "USD" {
+  return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
 }
 
-function centsToMoney(cents: number | null | undefined) {
-  return typeof cents === "number" ? formatMoney(cents / 100) : "Not found";
+function formatMoney(n: number, currency: "CAD" | "USD" = "CAD") {
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency,
+    currencyDisplay: "narrowSymbol",
+  }).format(Number(n));
+}
+
+function centsToMoney(cents: number | null | undefined, currency: "CAD" | "USD" = "CAD") {
+  return typeof cents === "number" ? formatMoney(cents / 100, currency) : "Not found";
 }
 
 function centsRangeToMoney(minCents: number | null | undefined, maxCents: number | null | undefined) {
@@ -391,12 +400,12 @@ function ListingRow({
           </div>
         ) : null}
         <div style={{ fontSize: 13 }}>
-          <span style={{ fontWeight: 900 }}>{formatMoney(t.price)}</span>
+          <span style={{ fontWeight: 900 }}>{formatMoney(t.price, normalizeCurrency(t.currency))} {normalizeCurrency(t.currency)}</span>
           {t.faceValue != null ? (
-            <span style={{ opacity: 0.7 }}> (Face {formatMoney(t.faceValue)})</span>
+            <span style={{ opacity: 0.7 }}> (Face {formatMoney(t.faceValue, normalizeCurrency(t.currency))})</span>
           ) : null}
           {t.adminFeePaid ? (
-            <span style={{ opacity: 0.7 }}> + {formatMoney(t.adminFeePaid)} admin fees paid</span>
+            <span style={{ opacity: 0.7 }}> + {formatMoney(t.adminFeePaid, normalizeCurrency(t.currency))} eligible fees paid</span>
           ) : null}
         </div>
       </div>
@@ -593,12 +602,12 @@ function ActiveListings({
 
     const adminFeePaidCents = parseOptionalNonnegativeDollarsToCents(editForm.adminFeePaid);
     if (adminFeePaidCents == null) {
-      setError("Admin fees paid must be a number 0 or greater.");
+      setError("Eligible fees paid must be a number 0 or greater.");
       setOk(null);
       return;
     }
     if (faceValueCents != null && priceCents > faceValueCents + adminFeePaidCents) {
-      setError(`List price cannot exceed ${formatMoney((faceValueCents + adminFeePaidCents) / 100)}.`);
+      setError(`List price cannot exceed ${formatMoney((faceValueCents + adminFeePaidCents) / 100, normalizeCurrency(ticket.currency))} ${normalizeCurrency(ticket.currency)}.`);
       setOk(null);
       return;
     }
@@ -870,7 +879,7 @@ function ActiveListings({
                 </label>
 
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 900 }}>Admin fees paid per ticket</span>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Eligible fees paid per ticket</span>
                   <input
                     value={editForm.adminFeePaid}
                     onChange={(e) => setEditForm((current) => current ? { ...current, adminFeePaid: e.target.value } : current)}
@@ -977,6 +986,7 @@ function Body({ me }: { me: MeUser }) {
   const [eventHour, setEventHour] = React.useState("7");
   const [eventMinute, setEventMinute] = React.useState("00");
   const [eventPeriod, setEventPeriod] = React.useState<"AM" | "PM">("PM");
+  const [listingCurrency, setListingCurrency] = React.useState<"CAD" | "USD">("CAD");
   const [price, setPrice] = React.useState("");
   const [faceValue, setFaceValue] = React.useState("");
   const [adminFeePaid, setAdminFeePaid] = React.useState("0");
@@ -1248,6 +1258,12 @@ function Body({ me }: { me: MeUser }) {
       return;
     }
 
+    if (issue.field === "currency" && issue.found) {
+      setListingCurrency(normalizeCurrency(issue.found));
+      clearAppliedIssue();
+      return;
+    }
+
     if (issue.field === "quantity" && issue.found) {
       setTicketQuantity(String(normalizeTicketQuantity(issue.found)));
       clearAppliedIssue();
@@ -1276,6 +1292,7 @@ function Body({ me }: { me: MeUser }) {
 
   function actionLabelForSourceIssue(issue: PricingSourceIssue) {
     if (issue.field === "serviceFees") return issue.found ? `Use ${issue.source} fees` : "Set fees to $0";
+    if (issue.field === "currency") return "Use receipt currency";
     if (issue.field === "quantity") return "Use quantity";
     if (issue.field === "faceValue") return "Use face value";
     if (issue.field === "listPrice") return "Use max price";
@@ -1317,6 +1334,17 @@ function Body({ me }: { me: MeUser }) {
       if (missingSeatIndex !== -1) {
         return setError(`Row and seat are required for ticket ${missingSeatIndex + 1}.`);
       }
+
+      const seenSeats = new Set<string>();
+      const duplicateSeatIndex = seatingForSubmit.findIndex((item) => {
+        const key = `${item.row.trim().toLowerCase()}::${item.seat.trim().toLowerCase()}`;
+        if (seenSeats.has(key)) return true;
+        seenSeats.add(key);
+        return false;
+      });
+      if (duplicateSeatIndex !== -1) {
+        return setError(`Ticket ${duplicateSeatIndex + 1} repeats a row/seat already entered. Each listed seat must be unique.`);
+      }
     }
     if (!d) return setError("Date is required.");
 
@@ -1330,13 +1358,13 @@ function Body({ me }: { me: MeUser }) {
 
     const adminFeePaidCents = parseOptionalNonnegativeDollarsToCents(adminFeePaid);
     if (adminFeePaidCents == null) {
-      return setError("Admin fees paid must be a number 0 or greater.");
+      return setError("Eligible fees paid must be a number 0 or greater.");
     }
     if (!receiptProofDataUrl) {
       return setError("Upload the original purchase receipt before listing tickets.");
     }
     if (!sellerConfirmedReceiptValues) {
-      return setError("Confirm the receipt shows the event, tickets, face value, and service fees paid.");
+      return setError("Confirm the receipt shows the event, tickets, currency, face value, and eligible fees paid.");
     }
 
     setBusy(true);
@@ -1347,6 +1375,7 @@ function Body({ me }: { me: MeUser }) {
           title: t,
           venue: v,
           date: d,
+          currency: listingCurrency,
           row: seatInfo.row,
           seat: seatInfo.seat,
           priceCents,
@@ -1391,6 +1420,7 @@ function Body({ me }: { me: MeUser }) {
       setEventHour("7");
       setEventMinute("00");
       setEventPeriod("PM");
+      setListingCurrency("CAD");
       setPrice("");
       setFaceValue("");
       setAdminFeePaid("0");
@@ -1438,9 +1468,9 @@ function Body({ me }: { me: MeUser }) {
           }}
         >
           <div style={{ display: "grid", gap: 4 }}>
-            <div>Confirmed face value: {centsToMoney(pricingConfirmation.officialFaceValueCents)}</div>
+            <div>Confirmed face value: {centsToMoney(pricingConfirmation.officialFaceValueCents, listingCurrency)} {listingCurrency}</div>
             {eligibleFeesCents != null ? (
-              <div>Verified eligible fees paid: {centsToMoney(eligibleFeesCents)}</div>
+              <div>Verified eligible fees paid: {centsToMoney(eligibleFeesCents, listingCurrency)} {listingCurrency}</div>
             ) : null}
             {(pricingConfirmation.officialPriceRangeMinCents != null || pricingConfirmation.officialPriceRangeMaxCents != null) ? (
               <div>
@@ -1466,8 +1496,8 @@ function Body({ me }: { me: MeUser }) {
             <div>
               Maximum list price:{" "}
               {pricingConfirmation.officialFaceValueCents != null && eligibleFeesCents != null && pricingConfirmation.maxListPriceCents != null
-                ? `${centsToMoney(pricingConfirmation.officialFaceValueCents)} face value + ${centsToMoney(eligibleFeesCents)} eligible fees = ${centsToMoney(pricingConfirmation.maxListPriceCents)}`
-                : centsToMoney(pricingConfirmation.maxListPriceCents)}
+                ? `${centsToMoney(pricingConfirmation.officialFaceValueCents, listingCurrency)} face value + ${centsToMoney(eligibleFeesCents, listingCurrency)} eligible fees = ${centsToMoney(pricingConfirmation.maxListPriceCents, listingCurrency)} ${listingCurrency}`
+                : `${centsToMoney(pricingConfirmation.maxListPriceCents, listingCurrency)} ${listingCurrency}`}
             </div>
             {pricingConfirmation.sourceUrl ? (
               <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>
@@ -2089,9 +2119,28 @@ function Body({ me }: { me: MeUser }) {
           </div>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>List price per ticket (dollars)</span>
+            <span style={{ fontWeight: 900 }}>Currency</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Enter the price you want buyers to see. It cannot exceed face value plus admin fees paid.
+              Choose the currency shown to buyers and used for checkout.
+            </div>
+            <select
+              value={listingCurrency}
+              onChange={(e) => {
+                setListingCurrency(e.target.value === "USD" ? "USD" : "CAD");
+                clearSourceIssuesFor(["currency"]);
+              }}
+              disabled={busy}
+              style={inputStyle(false)}
+            >
+              <option value="CAD">CAD - Canadian dollars</option>
+              <option value="USD">USD - US dollars</option>
+            </select>
+          </label>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontWeight: 900 }}>List price per ticket ({listingCurrency})</span>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Enter the price you want buyers to see. It cannot exceed face value plus eligible fees paid.
             </div>
             <input
               value={price}
@@ -2109,7 +2158,7 @@ function Body({ me }: { me: MeUser }) {
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Face value per ticket (dollars)</span>
+            <span style={{ fontWeight: 900 }}>Face value per ticket ({listingCurrency})</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>Enter the ticket face value before fees.</div>
             <input
               value={faceValue}
@@ -2127,9 +2176,9 @@ function Body({ me }: { me: MeUser }) {
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontWeight: 900 }}>Admin fees paid per ticket above face value (dollars)</span>
+            <span style={{ fontWeight: 900 }}>Eligible fees paid per ticket above face value ({listingCurrency})</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Enter 0 for now. Fees above face value must be verified from the receipt before they can raise the list price.
+              Enter all fees paid above face value. Fees must be verified from the receipt before they can raise the list price.
             </div>
             <input
               value={adminFeePaid}
@@ -2158,12 +2207,12 @@ function Body({ me }: { me: MeUser }) {
           >
             <span style={{ fontSize: 12, fontWeight: 900, opacity: 0.76 }}>List price per ticket</span>
             <span style={{ fontSize: 20, fontWeight: 950 }}>
-              {previewPriceCents == null ? "Enter a list price" : formatMoney(previewPriceCents / 100)}
+              {previewPriceCents == null ? "Enter a list price" : `${formatMoney(previewPriceCents / 100, listingCurrency)} ${listingCurrency}`}
             </span>
             <span style={{ fontSize: 12, opacity: 0.7 }}>
               {previewListPriceCents == null
                 ? "Maximum allowed price appears after face value is entered."
-                : `Maximum allowed before fee verification: ${formatMoney(previewListPriceCents / 100)}`}
+                : `Maximum allowed before fee verification: ${formatMoney(previewListPriceCents / 100, listingCurrency)} ${listingCurrency}`}
             </span>
           </div>
 
@@ -2181,7 +2230,7 @@ function Body({ me }: { me: MeUser }) {
               <span style={{ fontWeight: 900 }}>Purchase receipt proof</span>
               <div style={{ fontSize: 12, opacity: 0.7 }}>
                 Required. Upload the original receipt as {RECEIPT_PROOF_TYPES}, up to {RECEIPT_PROOF_MAX_LABEL}. It must show the event,
-                tickets, face value, and service fees paid.
+                tickets, face value, currency, and eligible fees paid.
               </div>
               <input
                 type="file"
@@ -2215,7 +2264,7 @@ function Body({ me }: { me: MeUser }) {
                 style={{ width: 18, height: 18, marginTop: 2 }}
               />
               <span>
-                I confirm this receipt shows the event, proves I have the tickets, and confirms the face value and service fees entered above.
+                I confirm this receipt shows the event, proves I have the tickets, and confirms the currency, face value, and eligible fees entered above.
               </span>
             </label>
           </div>

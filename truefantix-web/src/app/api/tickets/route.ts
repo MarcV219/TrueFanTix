@@ -27,6 +27,20 @@ function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message }, { status: 400 });
 }
 
+function normalizeCurrency(value: unknown): "CAD" | "USD" {
+  return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
+}
+
+function normalizeListingText(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function inferEvidenceEventType(title: string, parsedEvidence: any): string | null {
   const manualEventType = typeof parsedEvidence?.manualEventType === "string" ? parsedEvidence.manualEventType.trim().toLowerCase() : "";
   if (manualEventType) return manualEventType;
@@ -58,6 +72,54 @@ function hasActionableValidationMismatch(ticket: any, officialSync: any) {
   if (Array.isArray(officialSync?.sourceIssues) && officialSync.sourceIssues.length > 0) return true;
 
   return false;
+}
+
+async function findDuplicateSeatListing(params: {
+  sellerId: string;
+  title: string;
+  date: string;
+  row: string | null;
+  seat: string | null;
+  eventId?: string | null;
+}) {
+  const normalizedTitle = normalizeListingText(params.title);
+  const normalizedRow = normalizeListingText(params.row);
+  const normalizedSeat = normalizeListingText(params.seat);
+
+  if (!normalizedTitle || !params.date || !normalizedRow || !normalizedSeat) return null;
+
+  const candidates = await prisma.ticket.findMany({
+    where: {
+      sellerId: params.sellerId,
+      status: { in: ["AVAILABLE", "RESERVED", "SOLD"] },
+      row: { not: null },
+      seat: { not: null },
+      OR: [
+        ...(params.eventId ? [{ eventId: params.eventId }] : []),
+        { date: params.date },
+      ],
+    },
+    select: {
+      id: true,
+      title: true,
+      date: true,
+      row: true,
+      seat: true,
+      status: true,
+      eventId: true,
+    },
+    take: 100,
+  });
+
+  return candidates.find((ticket) => {
+    const sameEvent = params.eventId && ticket.eventId === params.eventId;
+    const sameDateAndTitle = ticket.date === params.date && normalizeListingText(ticket.title) === normalizedTitle;
+    return (
+      (sameEvent || sameDateAndTitle) &&
+      normalizeListingText(ticket.row) === normalizedRow &&
+      normalizeListingText(ticket.seat) === normalizedSeat
+    );
+  }) ?? null;
 }
 
 export async function GET(req: Request) {
@@ -122,6 +184,7 @@ export async function GET(req: Request) {
         priceCents: true,
         faceValueCents: true,
         adminFeePaidCents: true,
+        currency: true,
         image: true,
         venue: true,
         row: true,
@@ -179,6 +242,7 @@ export async function GET(req: Request) {
       const faceValueCents =
         (t as any).faceValueCents == null ? null : safeInt((t as any).faceValueCents);
       const adminFeePaidCents = safeInt((t as any).adminFeePaidCents);
+      const currency = normalizeCurrency((t as any).currency);
 
       const sellerAccessTokenBalance =
         t.seller ? safeInt((t.seller as any).accessTokenBalance) : 0;
@@ -213,6 +277,8 @@ export async function GET(req: Request) {
         priceCents,
         faceValueCents,
         adminFeePaidCents,
+        currency,
+        confirmedMaxListPriceCents,
 
         price: centsToDollars(priceCents),
         faceValue: faceValueCents != null ? centsToDollars(faceValueCents) : null,
@@ -375,6 +441,7 @@ export async function POST(req: Request) {
   const priceCentsRaw = body.priceCents;
   const faceValueCents: number | null = body.faceValueCents ?? null;
   const adminFeePaidCents = body.adminFeePaidCents ?? 0;
+  const currency = normalizeCurrency((body as any).currency);
 
   // Image is now auto-fetched server-side for consistency/relevance.
   // Optional client-provided image can be used only as fallback if auto-fetch fails.
@@ -438,6 +505,29 @@ export async function POST(req: Request) {
       }
     }
 
+    const duplicateSeat = await findDuplicateSeatListing({
+      sellerId,
+      title,
+      date,
+      row,
+      seat,
+      eventId,
+    });
+
+    if (duplicateSeat) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "DUPLICATE_ACTIVE_SEAT",
+          message:
+            "This seat is already listed by you for this event. Withdraw the existing listing before listing the same seat again.",
+          duplicateTicketId: duplicateSeat.id,
+          duplicateStatus: duplicateSeat.status,
+        },
+        { status: 409 }
+      );
+    }
+
     const providerCheck = await verifyWithProvider({
       eventId,
       title,
@@ -471,6 +561,7 @@ export async function POST(req: Request) {
       sellerSeat: seat,
       purchaseQuantity,
       priceCents: priceCentsRaw,
+      sellerCurrency: currency,
       sellerFaceValueCents: faceValueCents,
       adminFeePaidCents,
       hasReceiptProof: !!verificationImage,
@@ -527,6 +618,7 @@ export async function POST(req: Request) {
         priceCents: priceCentsRaw,
         faceValueCents,
         adminFeePaidCents,
+        currency,
         image: resolvedImage,
         venue,
         date,
@@ -611,6 +703,7 @@ export async function POST(req: Request) {
         priceCents: syncedPriceCents,
         faceValueCents: syncedFaceValueCents,
         adminFeePaidCents,
+        currency,
         ...(linkedEventId ? { eventId: linkedEventId } : {}),
         verificationEvidence: JSON.stringify({
           ...existingEvidence,
@@ -654,6 +747,7 @@ export async function POST(req: Request) {
           priceCents: finalTicket?.priceCents ?? created.priceCents,
           faceValueCents: finalTicket?.faceValueCents ?? created.faceValueCents,
           adminFeePaidCents: (finalTicket as any)?.adminFeePaidCents ?? (created as any).adminFeePaidCents ?? 0,
+          currency: normalizeCurrency((finalTicket as any)?.currency ?? (created as any).currency),
           price: centsToDollars(finalTicket?.priceCents ?? created.priceCents),
           faceValue:
             (finalTicket?.faceValueCents ?? created.faceValueCents) != null

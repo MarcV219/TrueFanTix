@@ -21,6 +21,10 @@ function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));
 }
 
+function normalizeCurrency(value: unknown): "CAD" | "USD" {
+  return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
+}
+
 function normalizeId(value: unknown) {
   try {
     return decodeURIComponent(String(value ?? "")).trim();
@@ -260,6 +264,7 @@ export async function POST(req: Request, ctx: Ctx) {
       }
 
       const adminFeeCents = Math.round((ticket.priceCents * ADMIN_FEE_BPS) / BPS_DENOMINATOR);
+      const currency = normalizeCurrency((ticket as any).currency);
       const taxRate = getTaxRateForVenue(ticket.event?.venue ?? ticket.venue);
       const adminFeeTax = calculateAdminFeeTax(adminFeeCents, taxRate);
       const totalCents = ticket.priceCents + adminFeeCents + adminFeeTax.taxCents;
@@ -333,6 +338,7 @@ export async function POST(req: Request, ctx: Ctx) {
                 amountCents: ticket.priceCents,
                 adminFeeCents,
                 adminFeeTaxCents: adminFeeTax.taxCents,
+                currency,
                 taxRateBps: adminFeeTax.rateBps,
                 taxRegionCode: adminFeeTax.regionCode || null,
                 taxRegionName: adminFeeTax.regionName || null,
@@ -346,6 +352,7 @@ export async function POST(req: Request, ctx: Ctx) {
                     ticketId: ticket.id,
                     priceCents: ticket.priceCents,
                     faceValueCents: ticket.faceValueCents,
+                    currency,
                   },
                 },
               },
@@ -357,6 +364,7 @@ export async function POST(req: Request, ctx: Ctx) {
                 amountCents: ticket.priceCents,
                 adminFeeCents,
                 adminFeeTaxCents: adminFeeTax.taxCents,
+                currency,
                 taxRateBps: adminFeeTax.rateBps,
                 taxRegionCode: adminFeeTax.regionCode || null,
                 taxRegionName: adminFeeTax.regionName || null,

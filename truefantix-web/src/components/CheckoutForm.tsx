@@ -6,23 +6,21 @@ import {
   useStripe,
   useElements,
 } from "@stripe/react-stripe-js";
+import { formatCents, normalizeCurrency } from "@/lib/ticketsView";
 
 interface CheckoutFormProps {
   orderId: string;
   amount: number;
+  currency: string;
   onSuccess: () => void;
   onError: (message: string) => void;
-}
-
-function centsToDollars(cents: number) {
-  return (cents / 100).toFixed(2);
 }
 
 export function buildCheckoutReturnUrl(origin: string, orderId: string) {
   return `${origin}/checkout/success?orderId=${encodeURIComponent(orderId)}`;
 }
 
-export function CheckoutForm({ orderId, amount, onSuccess, onError }: CheckoutFormProps) {
+export function CheckoutForm({ orderId, amount, currency, onSuccess, onError }: CheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -97,7 +95,7 @@ export function CheckoutForm({ orderId, amount, onSuccess, onError }: CheckoutFo
           opacity: !stripe || isProcessing ? 0.7 : 1,
         }}
       >
-        {isProcessing ? "Processing..." : `Pay $${centsToDollars(amount)} CAD`}
+        {isProcessing ? "Processing..." : `Pay ${formatCents(amount, normalizeCurrency(currency))} ${normalizeCurrency(currency)}`}
       </button>
 
       <div style={{ fontSize: 12, opacity: 0.7, textAlign: "center" }}>

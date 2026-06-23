@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { formatMoney } from "@/lib/ticketsView";
 import type { TicketCardView } from "@/lib/ticketsView";
 
 const DEFAULT_IMAGE = "/default.jpg";
@@ -77,7 +78,9 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
           <span className="text-sm text-gray-500 ml-2">({ticket.reviews})</span>
         </div>
 
-        <p className="font-bold text-lg text-gray-900 dark:text-white mb-3">${ticket.price.toFixed(2)}</p>
+        <p className="font-bold text-lg text-gray-900 dark:text-white mb-3">
+          {formatMoney(ticket.price, ticket.currency)} {ticket.currency}
+        </p>
 
         <div className="mt-auto flex gap-2">
           <Link href={`/tickets/${ticket.id}`} className="flex-1 text-center bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
