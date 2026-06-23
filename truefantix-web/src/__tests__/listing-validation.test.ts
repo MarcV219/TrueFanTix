@@ -394,6 +394,63 @@ describe("listing validation", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts seller seat numbers when receipt confirms section or row but omits explicit seats", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "N",
+      sellerSeat: "14",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        seats: [{ section: "N", row: "13", seat: null }],
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("still rejects seating when receipt includes an explicit different seat", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "N",
+      sellerSeat: "14",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        seats: [{ section: "N", row: "13", seat: "15" }],
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("RECEIPT_SEATING_MISMATCH");
+      expect(result.details?.sourceIssues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "RECEIPT_SEATING_MISMATCH",
+            message: "Receipt seating shows a different seat. Update the row/seat to match the receipt, or upload proof for the seat being listed.",
+          }),
+        ])
+      );
+    }
+  });
+
   it("reports missing receipt dates as not found instead of mismatched", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),

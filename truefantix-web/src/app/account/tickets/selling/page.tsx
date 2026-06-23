@@ -1906,6 +1906,9 @@ function Body({ me }: { me: MeUser }) {
 
           <div style={{ display: "grid", gap: 10 }}>
             <span style={{ fontWeight: 900 }}>Seating information</span>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              If the receipt shows section/row only, enter the exact seat from the ticket view. The receipt can confirm the seating area even when it does not show seat numbers.
+            </div>
             {isGeneralAdmission ? (
               <div
                 style={{

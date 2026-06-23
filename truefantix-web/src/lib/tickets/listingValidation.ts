@@ -146,6 +146,17 @@ function receiptSeatText(section: string | null | undefined, row: string | null 
   return [section ? `Section ${section}` : null, row ? `Row ${row}` : null, seat ? `Seat ${seat}` : null].filter(Boolean).join(" ");
 }
 
+function receiptSeatingMismatchMessage(receipt: ReceiptOcrReview) {
+  const hasExplicitSeat = receipt.seats.some((item) => !!normalizeSeatPart(item.seat));
+  if (hasExplicitSeat) {
+    return "Receipt seating shows a different seat. Update the row/seat to match the receipt, or upload proof for the seat being listed.";
+  }
+  if (receipt.seats.length) {
+    return "Receipt seating only shows section/row, not individual seat numbers. Enter a row or seat value that matches the receipt section/row, or upload proof that shows the exact seat.";
+  }
+  return "Receipt seating was not found. Upload proof that shows the listed row/seat, or choose General Admission if there are no assigned seats.";
+}
+
 function isGeneralAdmissionText(value: string | null | undefined) {
   const normalized = String(value ?? "")
     .trim()
@@ -174,6 +185,13 @@ function receiptHasSeat(receipt: ReceiptOcrReview, sellerRow: string | null, sel
   }
   return receipt.seats.some((item) => {
     const receiptParts = [item.section, item.row, item.seat].map(normalizeSeatPart).filter(Boolean);
+    const receiptHasExplicitSeat = !!normalizeSeatPart(item.seat);
+    if (!receiptHasExplicitSeat) {
+      // Some Ticketmaster receipts show only Sec/Row, not individual seat numbers.
+      // Treat the seating area as confirmed when the seller-entered row or seat matches
+      // the receipt section/row, and do not block on a seat number the receipt omitted.
+      return Boolean([row, seat].filter(Boolean).some((part) => receiptParts.includes(part)));
+    }
     return (!row || receiptParts.includes(row)) && (!seat || receiptParts.includes(seat));
   });
 }
@@ -349,7 +367,7 @@ export function validateListingPriceAgainstOfficial({
           source: "Receipt",
           entered: seatText(sellerRow, sellerSeat) || null,
           found: receiptSeats || null,
-          message: "Receipt seating does not match the row/seat entered.",
+          message: receiptSeatingMismatchMessage(receiptReview),
         });
       }
 
