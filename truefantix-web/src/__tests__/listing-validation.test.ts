@@ -275,6 +275,37 @@ describe("listing validation", () => {
     if (result.ok) expect(result.maxListPriceCents).toBe(9865);
   });
 
+  it("includes multiple receipt admin fee types in the max list price", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ officialFaceValueCents: 8500 }),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "N",
+      sellerSeat: "14",
+      purchaseQuantity: 2,
+      priceCents: 10150,
+      sellerFaceValueCents: 8500,
+      adminFeePaidCents: 1650,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        ticketQuantity: 2,
+        seats: [{ section: "N", row: "13", seat: null }],
+        faceValueCents: 8500,
+        totalFaceValueCents: 17000,
+        serviceFeesCents: 1000,
+        totalServiceFeesCents: 2000,
+        rawTextSummary:
+          "Service Fee CA $20.00. Order Processing Fee CA $5.00. Facility Fee CA $4.00. Delivery Fee CA $4.00. Order Processing Fee CA $5.00.",
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.maxListPriceCents).toBe(10150);
+  });
+
   it("allows receipt-confirmed pricing when Ticketmaster has no event match", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({ found: false, officialFaceValueCents: null, reason: "no-event-match" }),

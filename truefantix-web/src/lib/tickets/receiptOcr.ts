@@ -329,8 +329,8 @@ export async function analyzeReceiptProof({
       },
       faceValueCents: { type: ["number", "null"], description: "Per-ticket face value in cents." },
       totalFaceValueCents: { type: ["number", "null"] },
-      serviceFeesCents: { type: ["number", "null"], description: "Per-ticket service/admin fees in cents." },
-      totalServiceFeesCents: { type: ["number", "null"] },
+      serviceFeesCents: { type: ["number", "null"], description: "Per-ticket total non-face-value fees in cents, including service, processing, order, facility, delivery, convenience, or other admin fees." },
+      totalServiceFeesCents: { type: ["number", "null"], description: "Total non-face-value fees in cents across all tickets, including service, processing, order, facility, delivery, convenience, or other admin fees." },
       currency: { type: ["string", "null"] },
       confidence: { type: "number" },
       rawTextSummary: { type: ["string", "null"] },
@@ -361,7 +361,7 @@ export async function analyzeReceiptProof({
                   "If a visible receipt date omits the year but its month/day matches the expected listing date, return the expected YYYY-MM-DD date. " +
                   "If the visible month/day conflicts with the expected date, return the visible date text rather than forcing a match. " +
                   "Return null for missing fields. Amounts must be integer cents. " +
-                  "For faceValueCents and serviceFeesCents, prefer per-ticket values; also fill totals when visible.",
+                  "For faceValueCents, use ticket face value only. For serviceFeesCents and totalServiceFeesCents, include every non-face-value fee visibly paid: service fees, order processing fees, processing fees, facility fees, delivery fees, convenience fees, admin fees, and similar fee lines. Prefer per-ticket values; also fill totals when visible.",
               },
               receiptInputContent(receiptDataUrl, receiptFileName),
             ],

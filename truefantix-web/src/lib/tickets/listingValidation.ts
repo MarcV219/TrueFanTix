@@ -175,29 +175,36 @@ function moneyTextToCents(value: string | null | undefined): number | null {
   return Math.round(amount * 100);
 }
 
-function receiptOrderProcessingFeeTotalCents(receipt: ReceiptOcrReview): number | null {
+function receiptAdditionalFeeTotalCents(receipt: ReceiptOcrReview): number {
   const summary = receipt.rawTextSummary ?? "";
-  const matches = Array.from(
-    summary.matchAll(/\border\s+processing\s+fee\b[^$A-Z0-9]*(?:CA|US|USD|CAD)?\s*\$?\s*(\d+(?:\.\d{1,2})?)/gi)
-  );
-  if (!matches.length) return null;
-  const cents = matches.map((match) => moneyTextToCents(match[1])).filter((value): value is number => value != null);
-  if (!cents.length) return null;
-  return Math.max(...cents);
+  const feeTotalsByLabel = new Map<string, number>();
+  const feePattern = /\b([A-Za-z][A-Za-z\s-]{0,48}?fee(?:s)?)\b[^$A-Z0-9]*(?:CA|US|USD|CAD)?\s*\$?\s*(\d+(?:\.\d{1,2})?)/gi;
+
+  for (const match of summary.matchAll(feePattern)) {
+    const label = match[1].trim().toLowerCase().replace(/\s+/g, " ");
+    if (!label || /\bservice fees?\b/.test(label)) continue;
+
+    const cents = moneyTextToCents(match[2]);
+    if (cents == null) continue;
+
+    feeTotalsByLabel.set(label, Math.max(feeTotalsByLabel.get(label) ?? 0, cents));
+  }
+
+  return Array.from(feeTotalsByLabel.values()).reduce((sum, cents) => sum + cents, 0);
 }
 
 function receiptServiceFeesWithProcessingCents(receipt: ReceiptOcrReview): number | null {
   const quantity = typeof receipt.ticketQuantity === "number" && receipt.ticketQuantity > 0
     ? receipt.ticketQuantity
     : null;
-  const processingTotal = receiptOrderProcessingFeeTotalCents(receipt) ?? 0;
+  const additionalFeeTotal = receiptAdditionalFeeTotalCents(receipt);
 
   if (receipt.totalServiceFeesCents != null && quantity) {
-    return Math.round((receipt.totalServiceFeesCents + processingTotal) / quantity);
+    return Math.round((receipt.totalServiceFeesCents + additionalFeeTotal) / quantity);
   }
 
   if (receipt.serviceFeesCents != null) {
-    return receipt.serviceFeesCents + (quantity ? Math.round(processingTotal / quantity) : 0);
+    return receipt.serviceFeesCents + (quantity ? Math.round(additionalFeeTotal / quantity) : 0);
   }
 
   return null;

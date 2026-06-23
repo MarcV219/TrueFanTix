@@ -80,6 +80,9 @@ describe("receipt OCR upload formats", () => {
     expect(prompt).toContain('venue "Casino Rama Resort"');
     expect(prompt).toContain('date "2026-06-26 9:00 PM"');
     expect(prompt).toContain("If a visible receipt date omits the year but its month/day matches the expected listing date");
+    expect(prompt).toContain("include every non-face-value fee visibly paid");
+    expect(prompt).toContain("order processing fees");
+    expect(prompt).toContain("facility fees");
   });
 
   it("normalizes visible month/day receipt dates to the expected event year when they match", async () => {
