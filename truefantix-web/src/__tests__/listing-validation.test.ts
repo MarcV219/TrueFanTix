@@ -150,7 +150,7 @@ describe("listing validation", () => {
     }
   });
 
-  it("returns a date-specific error when the official match has a different date", () => {
+  it("returns a date-specific error when neither Ticketmaster nor the receipt confirms the submitted date", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({
         found: false,
@@ -168,7 +168,7 @@ describe("listing validation", () => {
       adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
-      receiptReview: receipt({ eventDate: "2026-10-21" }),
+      receiptReview: receipt({ eventDate: null }),
       action: "list",
     });
 
@@ -227,7 +227,65 @@ describe("listing validation", () => {
     if (result.ok) expect(result.faceValueSource).toBe("receipt");
   });
 
-  it("still blocks when Ticketmaster finds a conflicting event detail", () => {
+  it("does not require receipt date or time when Ticketmaster confirms the submitted event timing", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({
+        officialEventDate: "2026-10-20",
+        officialEventTime: "7:00 PM",
+      }),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventDate: null,
+        eventTime: null,
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("allows receipt-confirmed event timing when Ticketmaster cannot confirm the submitted date", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({
+        found: false,
+        officialFaceValueCents: null,
+        reason: "date-not-confirmed",
+        officialEventDate: "2026-10-21",
+        officialEventTime: "7:00 PM",
+      }),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventDate: "2026-10-20",
+        eventTime: "7:00 PM",
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.faceValueSource).toBe("receipt");
+  });
+
+  it("still blocks when Ticketmaster finds a conflicting date and the receipt does not confirm the submitted date", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official({
         found: false,
@@ -246,7 +304,7 @@ describe("listing validation", () => {
       adminFeePaidCents: 0,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
-      receiptReview: receipt(),
+      receiptReview: receipt({ eventDate: null }),
       action: "list",
     });
 

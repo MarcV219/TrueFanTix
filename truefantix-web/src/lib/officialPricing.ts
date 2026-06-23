@@ -22,6 +22,7 @@ export type OfficialSnapshot = {
   reason?: string;
   officialEventTitle?: string | null;
   officialEventDate?: string | null;
+  officialEventTime?: string | null;
   officialVenueName?: string | null;
 };
 
@@ -53,6 +54,31 @@ function toYmd(input: string | null | undefined): string | null {
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 10);
+}
+
+function officialEventTime(ev: any): string | null {
+  const localTime = String(ev?.dates?.start?.localTime || "").trim();
+  if (localTime) {
+    const match = localTime.match(/^(\d{1,2}):(\d{2})/);
+    if (match) {
+      let hour = Number(match[1]);
+      const minute = match[2];
+      const period = hour >= 12 ? "PM" : "AM";
+      hour = hour % 12 || 12;
+      return `${hour}:${minute} ${period}`;
+    }
+  }
+
+  const dateTime = String(ev?.dates?.start?.dateTime || "").trim();
+  if (!dateTime) return null;
+  const d = new Date(dateTime);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: String(ev?._embedded?.venues?.[0]?.timezone || "UTC"),
+  });
 }
 
 function tokenize(s: string): string[] {
@@ -300,6 +326,7 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
       reason: "date-not-confirmed",
       officialEventTitle: String(best.ev?.name || "") || null,
       officialEventDate: toYmd(best.ev?.dates?.start?.dateTime || best.ev?.dates?.start?.localDate || null),
+      officialEventTime: officialEventTime(best.ev),
       officialVenueName: best.tmVenueName || null,
     };
   }
@@ -314,6 +341,7 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
       reason: "venue-not-confirmed",
       officialEventTitle: String(best.ev?.name || "") || null,
       officialEventDate: toYmd(best.ev?.dates?.start?.dateTime || best.ev?.dates?.start?.localDate || null),
+      officialEventTime: officialEventTime(best.ev),
       officialVenueName: best.tmVenueName || null,
     };
   }
@@ -330,6 +358,7 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
       reason: "title-not-confirmed",
       officialEventTitle: String(best.ev?.name || "") || null,
       officialEventDate: toYmd(best.ev?.dates?.start?.dateTime || best.ev?.dates?.start?.localDate || null),
+      officialEventTime: officialEventTime(best.ev),
       officialVenueName: best.tmVenueName || null,
     };
   }
@@ -346,6 +375,7 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
       reason: "teams-not-confirmed",
       officialEventTitle: String(best.ev?.name || "") || null,
       officialEventDate: toYmd(best.ev?.dates?.start?.dateTime || best.ev?.dates?.start?.localDate || null),
+      officialEventTime: officialEventTime(best.ev),
       officialVenueName: best.tmVenueName || null,
     };
   }
@@ -376,6 +406,7 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
     sourceUrl: ev?.url ?? null,
     officialEventTitle: String(ev?.name || "") || null,
     officialEventDate: toYmd(ev?.dates?.start?.dateTime || ev?.dates?.start?.localDate || null),
+    officialEventTime: officialEventTime(ev),
     officialVenueName: best.tmVenueName || null,
   };
 }

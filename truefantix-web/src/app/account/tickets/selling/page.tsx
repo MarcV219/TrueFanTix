@@ -33,6 +33,7 @@ type PricingConfirmation = {
   soldOutSource?: string | null;
   officialEventTitle?: string | null;
   officialEventDate?: string | null;
+  officialEventTime?: string | null;
   officialVenueName?: string | null;
   sourceUrl?: string | null;
   sellerFaceValueCents: number | null;
@@ -1441,6 +1442,7 @@ function Body({ me }: { me: MeUser }) {
             <div>Ticketmaster sold-out status: {soldOutLabel(pricingConfirmation)}</div>
             <div>Ticketmaster venue: {pricingConfirmation.officialVenueName || "Not found"}</div>
             <div>Ticketmaster event date: {pricingConfirmation.officialEventDate || "Not found"}</div>
+            <div>Ticketmaster event time: {pricingConfirmation.officialEventTime || "Not found"}</div>
             <div>Maximum list price: {centsToMoney(pricingConfirmation.maxListPriceCents)}</div>
             {pricingConfirmation.sourceUrl ? (
               <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>

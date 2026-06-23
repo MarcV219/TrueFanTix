@@ -6,6 +6,7 @@ const ticketmasterEvent = {
   dates: {
     start: {
       localDate: "2026-10-20",
+      localTime: "19:00:00",
       dateTime: "2026-10-20T23:00:00Z",
     },
     status: { code: "onsale" },
@@ -76,6 +77,7 @@ describe("official pricing lookup", () => {
     expect(result.officialStatusCode).toBe("onsale");
     expect(result.soldOut).toBe(false);
     expect(result.officialVenueName).toBe("Scotiabank Arena");
+    expect(result.officialEventTime).toBe("7:00 PM");
   });
 
   it("accepts Ticketmaster matches when venue input includes a hyphenated city", async () => {
@@ -86,6 +88,7 @@ describe("official pricing lookup", () => {
       dates: {
         start: {
           localDate: "2026-06-20",
+          localTime: "19:00:00",
           dateTime: "2026-06-20T23:00:00Z",
         },
         status: { code: "onsale" },
@@ -112,6 +115,7 @@ describe("official pricing lookup", () => {
     expect(result.found).toBe(true);
     expect(result.officialEventTitle).toBe("Daniela Andrade - Oda Tour");
     expect(result.officialEventDate).toBe("2026-06-20");
+    expect(result.officialEventTime).toBe("7:00 PM");
     expect(result.officialVenueName).toBe("The Mod Club");
   });
 

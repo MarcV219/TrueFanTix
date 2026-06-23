@@ -33,6 +33,7 @@ export type ListingPricingDetails = {
   soldOutSource: string | null;
   officialEventTitle: string | null;
   officialEventDate: string | null;
+  officialEventTime: string | null;
   officialVenueName: string | null;
   sourceUrl: string | null;
   sellerFaceValueCents: number | null;
@@ -104,6 +105,30 @@ function sellerTimeFromDate(value: string): string | null {
 
 function sameMoney(a: number | null | undefined, b: number | null | undefined) {
   return typeof a === "number" && typeof b === "number" && Math.abs(a - b) <= 1;
+}
+
+function sellerDateConfirmedByTicketmaster(official: OfficialSnapshot, sellerDate: string) {
+  const officialYmd = ymd(official.officialEventDate);
+  const sellerYmd = ymd(sellerDate);
+  return official.found && !!officialYmd && !!sellerYmd && officialYmd === sellerYmd;
+}
+
+function sellerTimeConfirmedByTicketmaster(official: OfficialSnapshot, sellerDate: string) {
+  const officialMinutes = timeMinutes(official.officialEventTime);
+  const sellerMinutes = timeMinutes(sellerTimeFromDate(sellerDate));
+  return official.found && officialMinutes != null && sellerMinutes != null && Math.abs(officialMinutes - sellerMinutes) <= 15;
+}
+
+function sellerDateConfirmedByReceipt(receiptReview: ReceiptOcrReview | null, sellerDate: string) {
+  const sellerYmd = ymd(sellerDate);
+  const receiptYmd = ymd(receiptReview?.eventDate);
+  return !!sellerYmd && !!receiptYmd && sellerYmd === receiptYmd;
+}
+
+function sellerTimeConfirmedByReceipt(receiptReview: ReceiptOcrReview | null, sellerDate: string) {
+  const sellerMinutes = timeMinutes(sellerTimeFromDate(sellerDate));
+  const receiptMinutes = timeMinutes(receiptReview?.eventTime);
+  return sellerMinutes != null && receiptMinutes != null && Math.abs(sellerMinutes - receiptMinutes) <= 15;
 }
 
 function isBlockingOfficialConflict(reason: string | null | undefined) {
@@ -186,6 +211,7 @@ export function validateListingPriceAgainstOfficial({
     soldOutSource: official.soldOutSource ?? null,
     officialEventTitle: official.officialEventTitle ?? null,
     officialEventDate: official.officialEventDate ?? null,
+    officialEventTime: official.officialEventTime ?? null,
     officialVenueName: official.officialVenueName ?? null,
     sourceUrl: official.sourceUrl ?? null,
     sellerFaceValueCents,
@@ -274,7 +300,7 @@ export function validateListingPriceAgainstOfficial({
 
       const sellerYmd = ymd(sellerDate);
       const receiptYmd = ymd(receiptReview.eventDate);
-      if (!receiptYmd || sellerYmd !== receiptYmd) {
+      if (!sellerDateConfirmedByTicketmaster(official, sellerDate) && !sellerDateConfirmedByReceipt(receiptReview, sellerDate)) {
         const missingDate = !receiptYmd;
         receiptIssues.push({
           code: missingDate ? "RECEIPT_DATE_NOT_FOUND" : "RECEIPT_DATE_MISMATCH",
@@ -290,7 +316,7 @@ export function validateListingPriceAgainstOfficial({
 
       const sellerMinutes = timeMinutes(sellerTimeFromDate(sellerDate));
       const receiptMinutes = timeMinutes(receiptReview.eventTime);
-      if (receiptMinutes == null || sellerMinutes == null || Math.abs(sellerMinutes - receiptMinutes) > 15) {
+      if (!sellerTimeConfirmedByTicketmaster(official, sellerDate) && !sellerTimeConfirmedByReceipt(receiptReview, sellerDate)) {
         const missingTime = receiptMinutes == null;
         receiptIssues.push({
           code: missingTime ? "RECEIPT_TIME_NOT_FOUND" : "RECEIPT_TIME_MISMATCH",
@@ -396,6 +422,27 @@ export function validateListingPriceAgainstOfficial({
 
   if (!official.found && isBlockingOfficialConflict(official.reason)) {
     if (official.reason === "date-not-confirmed") {
+      if (sellerDateConfirmedByReceipt(receiptReview, sellerDate)) {
+        const issues = [...receiptIssues, ...receiptPriceIssues].filter((issue) => issue.field !== "date");
+        if (!issues.length && receiptVerifiedMaxListPriceCents != null && receiptFaceValueCents != null) {
+          return {
+            ok: true,
+            faceValueCents: receiptFaceValueCents,
+            faceValueSource: "receipt",
+            maxListPriceCents: receiptVerifiedMaxListPriceCents,
+          };
+        }
+
+        return {
+          ok: false,
+          error: issues[0]?.code ?? "RECEIPT_PRICING_NOT_CONFIRMED",
+          message: issues.length
+            ? `${notChanged} We found ${issues.length} receipt difference${issues.length === 1 ? "" : "s"} to review before this listing can go live.`
+            : `${notChanged} Ticketmaster did not confirm the event date, but the receipt did. We still could not confirm price and service fees from the receipt.`,
+          details: details(receiptFaceValueCents, issues),
+        };
+      }
+
       const issues = [
         {
           code: "OFFICIAL_EVENT_DATE_MISMATCH",
