@@ -146,6 +146,25 @@ function receiptSeatText(section: string | null | undefined, row: string | null 
   return [section ? `Section ${section}` : null, row ? `Row ${row}` : null, seat ? `Seat ${seat}` : null].filter(Boolean).join(" ");
 }
 
+function receiptHasTicketEvidence(receipt: ReceiptOcrReview) {
+  return (
+    (typeof receipt.ticketQuantity === "number" && receipt.ticketQuantity > 0) ||
+    receipt.seats.length > 0 ||
+    receipt.faceValueCents != null ||
+    receipt.totalFaceValueCents != null ||
+    receipt.serviceFeesCents != null ||
+    receipt.totalServiceFeesCents != null ||
+    /\b(ticket|tickets|standard adult|quantity|face value|service fee|subtotal)\b/i.test(receipt.rawTextSummary ?? "")
+  );
+}
+
+function receiptHasPurchaseEvidence(receipt: ReceiptOcrReview) {
+  return (
+    receiptHasTicketEvidence(receipt) &&
+    /\b(ticketmaster|receipt|order|subtotal|processing fee|face value|service fee|purchase)\b/i.test(receipt.rawTextSummary ?? "")
+  );
+}
+
 function receiptSeatingMismatchMessage(receipt: ReceiptOcrReview) {
   const hasExplicitSeat = receipt.seats.some((item) => !!normalizeSeatPart(item.seat));
   if (hasExplicitSeat) {
@@ -272,7 +291,7 @@ export function validateListingPriceAgainstOfficial({
         message: "Automated receipt review supports JPG, PNG, WebP, GIF, and PDF receipt uploads.",
       });
     } else {
-      if (!receiptReview.hasPurchaseReceipt) {
+      if (!receiptReview.hasPurchaseReceipt && !receiptHasPurchaseEvidence(receiptReview)) {
         receiptIssues.push({
           code: "RECEIPT_PURCHASE_NOT_CONFIRMED",
           field: "receipt",
@@ -283,7 +302,7 @@ export function validateListingPriceAgainstOfficial({
         });
       }
 
-      if (!receiptReview.hasTickets) {
+      if (!receiptReview.hasTickets && !receiptHasTicketEvidence(receiptReview)) {
         receiptIssues.push({
           code: "RECEIPT_TICKETS_NOT_CONFIRMED",
           field: "receipt",
