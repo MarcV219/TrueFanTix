@@ -34,19 +34,17 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
             </span>
           </div>
         )}
-        <div className="absolute top-2 left-2 flex flex-col gap-1">
-          {ticket.isSoldOut && (
-            <span className="bg-amber-500 text-white px-2 py-1 text-xs font-semibold rounded">
-              ⭐ Sold Out Event
-            </span>
-          )}
-        </div>
         <span className="absolute top-2 right-2 px-2 py-1 text-xs font-semibold rounded bg-gray-800 text-white">
           {ticket.eventTypeLabel}
         </span>
       </div>
 
       <div className="p-4 flex flex-col flex-1">
+        {ticket.isSoldOut && (
+          <div className="mb-3 rounded-lg border border-amber-600 bg-amber-500 px-3 py-2 text-center text-sm font-extrabold uppercase tracking-wide text-white shadow-sm">
+            Sold Out Event
+          </div>
+        )}
         <h4 className="font-bold text-lg text-gray-900 dark:text-white mb-1">{ticket.title}</h4>
         <p className="text-gray-600 dark:text-gray-400 text-sm">{ticket.date}</p>
         <p className="text-gray-500 dark:text-gray-500 text-sm mb-1">{ticket.venue}</p>
