@@ -81,6 +81,63 @@ function officialEventTime(ev: any): string | null {
   });
 }
 
+function priceRangeType(range: any): string {
+  return [
+    range?.type,
+    range?.name,
+    range?.priceType,
+    range?.ticketType,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function isResalePriceRange(range: any) {
+  return /\b(resale|verified resale|fan-to-fan|secondary)\b/i.test(priceRangeType(range));
+}
+
+function usablePriceRanges(ev: any) {
+  const ranges = Array.isArray(ev?.priceRanges) ? ev.priceRanges : [];
+  const primaryRanges = ranges.filter((range: any) => !isResalePriceRange(range));
+  const resaleRanges = ranges.filter(isResalePriceRange);
+  const sourceRanges = primaryRanges.length ? primaryRanges : ranges.length && !resaleRanges.length ? ranges : [];
+
+  const mins = sourceRanges
+    .map((range: any) => typeof range?.min === "number" ? range.min : null)
+    .filter((value: number | null): value is number => value != null);
+  const maxes = sourceRanges
+    .map((range: any) => typeof range?.max === "number" ? range.max : null)
+    .filter((value: number | null): value is number => value != null);
+
+  const min = mins.length ? Math.min(...mins) : null;
+  const max = maxes.length ? Math.max(...maxes) : null;
+
+  return {
+    min,
+    max,
+    primaryCount: primaryRanges.length,
+    resaleCount: resaleRanges.length,
+    totalCount: ranges.length,
+  };
+}
+
+function soldOutSignal(ev: any, statusCode: string | null, priceRanges: ReturnType<typeof usablePriceRanges>) {
+  if (statusCode === "offsale") {
+    return { soldOut: true, source: "ticketmaster-event-status" };
+  }
+
+  if (priceRanges.resaleCount > 0 && priceRanges.primaryCount === 0) {
+    return { soldOut: true, source: "ticketmaster-resale-only" };
+  }
+
+  if (statusCode) {
+    return { soldOut: false, source: "ticketmaster-event-status" };
+  }
+
+  return { soldOut: null as boolean | null, source: null as string | null };
+}
+
 function tokenize(s: string): string[] {
   return (s || "")
     .toLowerCase()
@@ -382,15 +439,16 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
 
   const ev = best.ev;
 
-  const min = typeof ev?.priceRanges?.[0]?.min === "number" ? ev.priceRanges[0].min : null;
-  const max = typeof ev?.priceRanges?.[0]?.max === "number" ? ev.priceRanges[0].max : null;
+  const ranges = usablePriceRanges(ev);
+  const min = ranges.min;
+  const max = ranges.max;
   const minCents = min == null ? null : Math.round(Number(min) * 100);
   const maxCents = max == null ? null : Math.round(Number(max) * 100);
-  // conservative face value estimate for primary market: max advertised face range if available, else min.
+  // Conservative original fair value estimate: use primary/standard range only, never resale-only pricing.
   const face = max ?? min;
 
   const statusCode = String(ev?.dates?.status?.code || "").toLowerCase() || null;
-  const soldOut = statusCode === "offsale";
+  const sellout = soldOutSignal(ev, statusCode, ranges);
 
   return {
     found: true,
@@ -401,8 +459,8 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
     officialServiceFeesCents: null,
     officialServiceFeeSource: null,
     officialStatusCode: statusCode,
-    soldOut,
-    soldOutSource: statusCode ? "ticketmaster-event-status" : null,
+    soldOut: sellout.soldOut,
+    soldOutSource: sellout.source,
     sourceUrl: ev?.url ?? null,
     officialEventTitle: String(ev?.name || "") || null,
     officialEventDate: toYmd(ev?.dates?.start?.dateTime || ev?.dates?.start?.localDate || null),

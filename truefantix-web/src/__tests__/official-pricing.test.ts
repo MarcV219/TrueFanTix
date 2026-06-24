@@ -22,7 +22,9 @@ const ticketmasterEvent = {
   },
 };
 
-type TicketmasterEventFixture = typeof ticketmasterEvent;
+type TicketmasterEventFixture = typeof ticketmasterEvent & {
+  priceRanges?: Array<{ min: number; max: number; type?: string }>;
+};
 
 function mockTicketmasterResponse(events: TicketmasterEventFixture[]) {
   jest.spyOn(global, "fetch").mockResolvedValue({
@@ -141,5 +143,59 @@ describe("official pricing lookup", () => {
     expect(result.officialStatusCode).toBe("offsale");
     expect(result.soldOut).toBe(true);
     expect(result.soldOutSource).toBe("ticketmaster-event-status");
+  });
+
+  it("marks Ticketmaster resale-only events as sold out without treating resale as face value", async () => {
+    mockTicketmasterResponse([
+      {
+        ...ticketmasterEvent,
+        dates: {
+          ...ticketmasterEvent.dates,
+          status: { code: "onsale" },
+        },
+        priceRanges: [{ type: "resale", min: 178.5, max: 242 }],
+      },
+    ]);
+
+    const result = await fetchOfficialSnapshot({
+      title: "Toronto Raptors vs Boston Celtics",
+      date: "2026-10-20 7:00 PM",
+      venue: "Scotiabank Arena, Toronto",
+      primaryVendor: "Ticketmaster",
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.officialStatusCode).toBe("onsale");
+    expect(result.soldOut).toBe(true);
+    expect(result.soldOutSource).toBe("ticketmaster-resale-only");
+    expect(result.officialFaceValueCents).toBeNull();
+    expect(result.officialPriceRangeMinCents).toBeNull();
+    expect(result.officialPriceRangeMaxCents).toBeNull();
+  });
+
+  it("uses standard primary price ranges when Ticketmaster also exposes resale ranges", async () => {
+    mockTicketmasterResponse([
+      {
+        ...ticketmasterEvent,
+        priceRanges: [
+          { type: "resale", min: 178.5, max: 242 },
+          { type: "standard", min: 65, max: 95 },
+        ],
+      },
+    ]);
+
+    const result = await fetchOfficialSnapshot({
+      title: "Toronto Raptors vs Boston Celtics",
+      date: "2026-10-20 7:00 PM",
+      venue: "Scotiabank Arena, Toronto",
+      primaryVendor: "Ticketmaster",
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.soldOut).toBe(false);
+    expect(result.soldOutSource).toBe("ticketmaster-event-status");
+    expect(result.officialFaceValueCents).toBe(9500);
+    expect(result.officialPriceRangeMinCents).toBe(6500);
+    expect(result.officialPriceRangeMaxCents).toBe(9500);
   });
 });

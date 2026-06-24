@@ -335,6 +335,12 @@ export async function GET(req: Request) {
       const displayedConfirmedFaceValueCents = confirmedFaceValueCents ?? receiptConfirmedFaceValueCents;
       const confirmedMaxListPriceCents =
         displayedConfirmedFaceValueCents == null ? null : displayedConfirmedFaceValueCents + Math.max(0, adminFeePaidCents);
+      const officialOriginalFairValueCents = confirmedFaceValueCents;
+      const sellerMarkupPaidCents =
+        officialOriginalFairValueCents != null && faceValueCents != null
+          ? Math.max(0, faceValueCents - officialOriginalFairValueCents)
+          : null;
+      const sellerTotalPaidCents = faceValueCents != null ? faceValueCents + adminFeePaidCents : null;
       const isAboveConfirmedFaceValue =
         confirmedMaxListPriceCents != null ? priceCents > confirmedMaxListPriceCents : false;
       const isPriceUnconfirmed = displayedConfirmedFaceValueCents == null;
@@ -349,6 +355,11 @@ export async function GET(req: Request) {
         adminFeePaidCents,
         currency,
         confirmedMaxListPriceCents,
+        officialOriginalFairValueCents,
+        sellerFaceValuePaidCents: faceValueCents,
+        sellerMarkupPaidCents,
+        sellerFeesPaidCents: adminFeePaidCents,
+        sellerTotalPaidCents,
 
         price: centsToDollars(priceCents),
         faceValue: faceValueCents != null ? centsToDollars(faceValueCents) : null,

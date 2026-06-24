@@ -22,6 +22,7 @@ async function getTicket(id: string) {
       currency: true,
       faceValueCents: true,
       adminFeePaidCents: true,
+      verificationEvidence: true,
       image: true,
       venue: true,
       section: true,
@@ -80,9 +81,19 @@ async function getTicket(id: string) {
     currency: normalizeCurrency((ticket as any).currency),
     faceValueCents: ticket.faceValueCents ? Number(ticket.faceValueCents) : null,
     adminFeePaidCents: Number(ticket.adminFeePaidCents ?? 0),
+    verificationEvidence: ticket.verificationEvidence ?? null,
     createdAt: ticket.createdAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
   };
+}
+
+function parseJson(value: string | null | undefined): any {
+  if (!value) return {};
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
 }
 
 function getEventTypeInfo(title: string) {
@@ -126,6 +137,18 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   const faceValue = ticket.faceValueCents ? ticket.faceValueCents / 100 : price;
   const adminFeePaid = ticket.adminFeePaidCents / 100;
   const maxFairListPrice = faceValue + adminFeePaid;
+  const evidence = parseJson(ticket.verificationEvidence);
+  const officialOriginalFairValueCents =
+    typeof evidence?.officialPricingSync?.officialFaceValueCents === "number"
+      ? evidence.officialPricingSync.officialFaceValueCents
+      : null;
+  const officialOriginalFairValue =
+    officialOriginalFairValueCents == null ? null : officialOriginalFairValueCents / 100;
+  const sellerMarkupPaid =
+    officialOriginalFairValueCents != null && ticket.faceValueCents != null
+      ? Math.max(0, ticket.faceValueCents - officialOriginalFairValueCents) / 100
+      : null;
+  const sellerTotalPaid = faceValue + adminFeePaid;
   const isBelowFaceValue = maxFairListPrice && price < maxFairListPrice;
   const isFaceValue = maxFairListPrice && price === maxFairListPrice;
   const isSoldOut = event?.selloutStatus === "SOLD_OUT";
@@ -234,19 +257,37 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                     </div>
                     {faceValue > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">Face Value:</span>
+                        <span className="text-gray-600 dark:text-gray-400">Seller Face Value Paid:</span>
                         <span className="font-medium text-gray-900 dark:text-white">{formatMoney(faceValue, currency)} {currency}</span>
                       </div>
                     )}
-                    {adminFeePaid > 0 && (
+                    {officialOriginalFairValue != null && (
                       <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">Original Admin Fees Paid:</span>
-                        <span className="font-medium text-gray-900 dark:text-white">{formatMoney(adminFeePaid, currency)} {currency}</span>
+                        <span className="text-gray-600 dark:text-gray-400">Original Fair Value:</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{formatMoney(officialOriginalFairValue, currency)} {currency}</span>
+                      </div>
+                    )}
+                    {sellerMarkupPaid != null && sellerMarkupPaid > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Markup Seller Paid:</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{formatMoney(sellerMarkupPaid, currency)} {currency}</span>
                       </div>
                     )}
                     {adminFeePaid > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">Max Fair List Price:</span>
+                        <span className="text-gray-600 dark:text-gray-400">Seller Fees Paid:</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{formatMoney(adminFeePaid, currency)} {currency}</span>
+                      </div>
+                    )}
+                    {sellerTotalPaid > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Seller Total Paid:</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{formatMoney(sellerTotalPaid, currency)} {currency}</span>
+                      </div>
+                    )}
+                    {adminFeePaid > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Max Allowed List Price:</span>
                         <span className="font-medium text-gray-900 dark:text-white">{formatMoney(maxFairListPrice, currency)} {currency}</span>
                       </div>
                     )}
