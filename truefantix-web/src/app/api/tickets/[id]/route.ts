@@ -44,6 +44,16 @@ function normalizeCurrency(value: unknown): "CAD" | "USD" {
   return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
 }
 
+function normalizeListingText(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function receiptReviewFromEvidence(value: unknown): ReceiptOcrReview | null {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
@@ -76,6 +86,7 @@ export async function GET(req: Request) {
         adminFeePaidCents: true,
         image: true,
         venue: true,
+        section: true,
         row: true,
         seat: true,
         date: true,
@@ -167,6 +178,7 @@ export async function PATCH(req: Request) {
         title: true,
         venue: true,
         date: true,
+        section: true,
         row: true,
         seat: true,
         priceCents: true,
@@ -233,6 +245,7 @@ export async function PATCH(req: Request) {
     const title = typeof body.title === "string" ? body.title.trim() : existing.title;
     const venue = typeof body.venue === "string" ? body.venue.trim() : existing.venue;
     const date = typeof body.date === "string" ? body.date.trim() : existing.date;
+    const section = typeof body.section === "string" ? body.section.trim() || null : (existing as any).section;
     const row = typeof body.row === "string" ? body.row.trim() || null : existing.row;
     const seat = typeof body.seat === "string" ? body.seat.trim() || null : existing.seat;
     const primaryVendor = typeof body.primaryVendor === "string" ? body.primaryVendor.trim() || null : existing.primaryVendor;
@@ -255,8 +268,14 @@ export async function PATCH(req: Request) {
     if (title.length < 1 || title.length > 120) return badRequest("Title is required.");
     if (venue.length < 1 || venue.length > 200) return badRequest("Venue is required.");
     if (date.length < 1 || date.length > 100) return badRequest("Date is required.");
+    if (section && section.length > 80) return badRequest("Section must be 80 characters or less.");
     if (row && row.length > 80) return badRequest("Row must be 80 characters or less.");
     if (seat && seat.length > 80) return badRequest("Seat must be 80 characters or less.");
+    const seatingParts = [section, row, seat].filter(Boolean);
+    const isGeneralAdmission = [section, row, seat].some((part) => normalizeListingText(part) === "general admission");
+    if (!isGeneralAdmission && seatingParts.length < 2) {
+      return badRequest("Enter at least two seating details: section, row, or seat.");
+    }
     if (!Number.isInteger(priceCents) || priceCents <= 0 || priceCents > 10_000_000) {
       return badRequest("Price must be greater than 0.");
     }
@@ -359,6 +378,7 @@ export async function PATCH(req: Request) {
         title,
         venue,
         date,
+        section,
         row,
         seat,
         priceCents,
@@ -421,6 +441,7 @@ export async function PATCH(req: Request) {
         image: updated.image,
         venue: updated.venue,
         date: updated.date,
+        section: (updated as any).section ?? null,
         row: updated.row,
         seat: updated.seat,
         status: updated.status,

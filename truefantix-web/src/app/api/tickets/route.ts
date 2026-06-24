@@ -78,31 +78,38 @@ async function findDuplicateSeatListing(params: {
   sellerId: string;
   title: string;
   date: string;
+  section: string | null;
   row: string | null;
   seat: string | null;
   eventId?: string | null;
 }) {
   const normalizedTitle = normalizeListingText(params.title);
+  const normalizedSection = normalizeListingText(params.section);
   const normalizedRow = normalizeListingText(params.row);
   const normalizedSeat = normalizeListingText(params.seat);
+  const submittedParts = [normalizedSection, normalizedRow, normalizedSeat].filter(Boolean);
 
-  if (!normalizedTitle || !params.date || !normalizedRow || !normalizedSeat) return null;
+  if (!normalizedTitle || !params.date || submittedParts.length < 2) return null;
 
   const candidates = await prisma.ticket.findMany({
     where: {
       sellerId: params.sellerId,
       status: { in: ["AVAILABLE", "RESERVED", "SOLD"] },
-      row: { not: null },
-      seat: { not: null },
-      OR: [
-        ...(params.eventId ? [{ eventId: params.eventId }] : []),
-        { date: params.date },
+      AND: [
+        { OR: [{ section: { not: null } }, { row: { not: null } }, { seat: { not: null } }] },
+        {
+          OR: [
+            ...(params.eventId ? [{ eventId: params.eventId }] : []),
+            { date: params.date },
+          ],
+        },
       ],
     },
     select: {
       id: true,
       title: true,
       date: true,
+      section: true,
       row: true,
       seat: true,
       status: true,
@@ -116,6 +123,7 @@ async function findDuplicateSeatListing(params: {
     const sameDateAndTitle = ticket.date === params.date && normalizeListingText(ticket.title) === normalizedTitle;
     return (
       (sameEvent || sameDateAndTitle) &&
+      normalizeListingText(ticket.section) === normalizedSection &&
       normalizeListingText(ticket.row) === normalizedRow &&
       normalizeListingText(ticket.seat) === normalizedSeat
     );
@@ -187,6 +195,7 @@ export async function GET(req: Request) {
         currency: true,
         image: true,
         venue: true,
+        section: true,
         row: true,
         seat: true,
         date: true,
@@ -320,6 +329,7 @@ export async function GET(req: Request) {
         image: t.image,
         venue: t.venue,
         date: t.date,
+        section: (t as any).section ?? null,
         row: (t as any).row ?? null,
         seat: (t as any).seat ?? null,
         status: t.status,
@@ -424,6 +434,7 @@ export async function POST(req: Request) {
   const requestedImage = (body.image ?? "").trim();
   const venue = body.venue;
   const date = body.date;
+  const section = (body.section ?? "").trim() || null;
   const row = (body.row ?? "").trim() || null;
   const seat = (body.seat ?? "").trim() || null;
 
@@ -452,6 +463,12 @@ export async function POST(req: Request) {
   ]);
   if (!eventTypeOverride || !allowed.has(eventTypeOverride)) {
     return badRequest("Choose a valid ticket category.");
+  }
+
+  const seatingParts = [section, row, seat].filter(Boolean);
+  const isGeneralAdmission = [section, row, seat].some((part) => normalizeListingText(part) === "general admission");
+  if (!isGeneralAdmission && seatingParts.length < 2) {
+    return badRequest("Enter at least two seating details: section, row, or seat.");
   }
 
   // Optional: event linking
@@ -507,6 +524,7 @@ export async function POST(req: Request) {
       sellerId,
       title,
       date,
+      section,
       row,
       seat,
       eventId,
@@ -620,6 +638,7 @@ export async function POST(req: Request) {
         image: resolvedImage,
         venue,
         date,
+        section,
         row,
         seat,
         primaryVendor,
@@ -757,6 +776,7 @@ export async function POST(req: Request) {
           imageReason,
           venue: finalTicket?.venue ?? created.venue,
           date: finalTicket?.date ?? created.date,
+          section: (finalTicket as any)?.section ?? (created as any).section ?? null,
           row: (finalTicket as any)?.row ?? created.row ?? null,
           seat: (finalTicket as any)?.seat ?? created.seat ?? null,
           status: finalTicket?.status ?? created.status,

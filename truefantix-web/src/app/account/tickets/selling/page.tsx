@@ -16,6 +16,7 @@ type CreateTicketBody = {
   image?: string | null;
   venue: string;
   date: string; // keep string for now (matches schema)
+  section?: string | null;
   row?: string | null;
   seat?: string | null;
   eventId?: string | null;
@@ -65,6 +66,7 @@ type TicketRow = {
   image: string;
   venue: string;
   date: string;
+  section?: string | null;
   row?: string | null;
   seat?: string | null;
   status: string;
@@ -85,6 +87,7 @@ type CatalogSuggestion = {
 };
 
 type SeatingInfo = {
+  section: string;
   row: string;
   seat: string;
 };
@@ -133,6 +136,7 @@ type ListingEditForm = {
   price: string;
   faceValue: string;
   adminFeePaid: string;
+  section: string;
   row: string;
   seat: string;
 };
@@ -232,6 +236,18 @@ function parseOptionalNonnegativeDollarsToCents(v: string): number | null {
   if (n < 0) return null;
 
   return Math.round(n * 100);
+}
+
+function filledSeatingParts(seating: Pick<SeatingInfo, "section" | "row" | "seat">) {
+  return [seating.section, seating.row, seating.seat].filter((value) => String(value ?? "").trim()).length;
+}
+
+function seatingLabel(seating: Pick<SeatingInfo, "section" | "row" | "seat">) {
+  return [
+    seating.section ? `Section ${seating.section}` : null,
+    seating.row ? `Row ${seating.row}` : null,
+    seating.seat ? `Seat ${seating.seat}` : null,
+  ].filter(Boolean).join(" • ");
 }
 
 function formatTicketDateTime(v: string): string {
@@ -432,9 +448,9 @@ function ListingRow({
         <div style={{ fontSize: 13, opacity: 0.78 }}>
           {t.venue} • {t.date}
         </div>
-        {(t.row || t.seat) ? (
+        {(t.section || t.row || t.seat) ? (
           <div style={{ fontSize: 13, opacity: 0.78 }}>
-            {[t.row ? `Row ${t.row}` : null, t.seat ? `Seat ${t.seat}` : null].filter(Boolean).join(" • ")}
+            {seatingLabel({ section: t.section ?? "", row: t.row ?? "", seat: t.seat ?? "" })}
           </div>
         ) : null}
         <div style={{ fontSize: 13 }}>
@@ -611,6 +627,7 @@ function ActiveListings({
       price: String(ticket.price ?? ""),
       faceValue: ticket.faceValue == null ? "" : String(ticket.faceValue),
       adminFeePaid: ticket.adminFeePaid == null ? "0" : String(ticket.adminFeePaid),
+      section: ticket.section ?? "",
       row: ticket.row ?? "",
       seat: ticket.seat ?? "",
     });
@@ -669,6 +686,7 @@ function ActiveListings({
           title: editForm.title.trim(),
           venue: editForm.venue.trim(),
           date: formattedDate,
+          section: editForm.section.trim() || null,
           row: editForm.row.trim() || null,
           seat: editForm.seat.trim() || null,
           priceCents,
@@ -692,6 +710,7 @@ function ActiveListings({
             title: updated.title ?? item.title,
             venue: updated.venue ?? item.venue,
             date: updated.date ?? item.date,
+            section: updated.section ?? null,
             row: updated.row ?? null,
             seat: updated.seat ?? null,
             price: typeof updated.price === "number" ? updated.price : item.price,
@@ -936,6 +955,16 @@ function ActiveListings({
                 }}
               >
                 <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>Section</span>
+                  <input
+                    value={editForm.section}
+                    onChange={(e) => setEditForm((current) => current ? { ...current, section: e.target.value } : current)}
+                    disabled={!!actionBusyId}
+                    style={inputStyle(false)}
+                  />
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
                   <span style={{ fontSize: 12, fontWeight: 900 }}>Row</span>
                   <input
                     value={editForm.row}
@@ -1020,7 +1049,7 @@ function Body({ me }: { me: MeUser }) {
   const [venueSuggestions, setVenueSuggestions] = React.useState<CatalogSuggestion[]>([]);
   const [ticketQuantity, setTicketQuantity] = React.useState("1");
   const [isGeneralAdmission, setIsGeneralAdmission] = React.useState(false);
-  const [seating, setSeating] = React.useState<SeatingInfo[]>([{ row: "", seat: "" }]);
+  const [seating, setSeating] = React.useState<SeatingInfo[]>([{ section: "", row: "", seat: "" }]);
   const [date, setDate] = React.useState("");
   const [eventHour, setEventHour] = React.useState("7");
   const [eventMinute, setEventMinute] = React.useState("00");
@@ -1083,7 +1112,7 @@ function Body({ me }: { me: MeUser }) {
   React.useEffect(() => {
     const nextQuantity = normalizeTicketQuantity(ticketQuantity);
     setSeating((current) =>
-      Array.from({ length: nextQuantity }, (_, index) => current[index] ?? { row: "", seat: "" })
+      Array.from({ length: nextQuantity }, (_, index) => current[index] ?? { section: "", row: "", seat: "" })
     );
   }, [ticketQuantity]);
 
@@ -1357,8 +1386,9 @@ function Body({ me }: { me: MeUser }) {
     const quantity = normalizeTicketQuantity(ticketQuantity);
     const d = formatEventDateTime(date, eventHour, eventMinute, eventPeriod);
     const seatingForSubmit = isGeneralAdmission
-      ? Array.from({ length: quantity }, () => ({ row: "General Admission", seat: "" }))
+      ? Array.from({ length: quantity }, () => ({ section: "", row: "General Admission", seat: "" }))
       : seating.slice(0, quantity).map((item) => ({
+          section: item.section.trim(),
           row: item.row.trim(),
           seat: item.seat.trim(),
     }));
@@ -1370,14 +1400,14 @@ function Body({ me }: { me: MeUser }) {
     if (!validVenueSuggestion) return setError("Choose a verified venue from the list before listing tickets.");
     if (String(quantity) !== ticketQuantity.trim()) return setError("Ticket quantity must be a whole number from 1 to 20.");
     if (!isGeneralAdmission) {
-      const missingSeatIndex = seatingForSubmit.findIndex((item) => !item.row || !item.seat);
+      const missingSeatIndex = seatingForSubmit.findIndex((item) => filledSeatingParts(item) < 2);
       if (missingSeatIndex !== -1) {
-        return setError(`Row and seat are required for ticket ${missingSeatIndex + 1}.`);
+        return setError(`Enter at least two seating details for ticket ${missingSeatIndex + 1}: section, row, or seat.`);
       }
 
       const seenSeats = new Set<string>();
       const duplicateSeatIndex = seatingForSubmit.findIndex((item) => {
-        const key = `${item.row.trim().toLowerCase()}::${item.seat.trim().toLowerCase()}`;
+        const key = `${item.section.trim().toLowerCase()}::${item.row.trim().toLowerCase()}::${item.seat.trim().toLowerCase()}`;
         if (seenSeats.has(key)) return true;
         seenSeats.add(key);
         return false;
@@ -1417,6 +1447,7 @@ function Body({ me }: { me: MeUser }) {
           date: d,
           currency: listingCurrency,
           eventTypeOverride: eventCategory,
+          section: seatInfo.section,
           row: seatInfo.row,
           seat: seatInfo.seat,
           priceCents,
@@ -1457,7 +1488,7 @@ function Body({ me }: { me: MeUser }) {
       setVenueSuggestions([]);
       setTicketQuantity("1");
       setIsGeneralAdmission(false);
-      setSeating([{ row: "", seat: "" }]);
+      setSeating([{ section: "", row: "", seat: "" }]);
       setDate("");
       setEventHour("7");
       setEventMinute("00");
@@ -2028,7 +2059,7 @@ function Body({ me }: { me: MeUser }) {
           <div style={{ display: "grid", gap: 10 }}>
             <span style={{ fontWeight: 900 }}>Seating information</span>
             <div style={{ fontSize: 12, opacity: 0.7 }}>
-              If the receipt shows section/row only, enter the exact seat from the ticket view. The receipt can confirm the seating area even when it does not show seat numbers.
+              Enter at least two details per ticket: section, row, or seat. If the receipt shows section/row only, enter those and add the exact seat when available from the ticket view.
             </div>
             {isGeneralAdmission ? (
               <div
@@ -2057,6 +2088,24 @@ function Body({ me }: { me: MeUser }) {
                     background: "rgba(248, 250, 252, 1)",
                   }}
                 >
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} section</span>
+                    <input
+                      value={seatInfo.section}
+                      onChange={(e) => {
+                        clearSourceIssuesFor(["seating"]);
+                        setSeating((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, section: e.target.value } : item
+                          )
+                        );
+                      }}
+                      disabled={busy}
+                      placeholder="e.g., N"
+                      style={inputStyle(false)}
+                    />
+                  </label>
+
                   <label style={{ display: "grid", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 900 }}>Ticket {index + 1} row</span>
                     <input

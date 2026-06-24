@@ -24,6 +24,7 @@ async function getTicket(id: string) {
       adminFeePaidCents: true,
       image: true,
       venue: true,
+      section: true,
       row: true,
       seat: true,
       date: true,
@@ -209,10 +210,12 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                       <span className="text-gray-600 dark:text-gray-400">Location:</span>
                       <span className="font-medium text-gray-900 dark:text-white">{city}, {province}, {country}</span>
                     </div>
-                    {(ticket.row || ticket.seat) && (
+                    {(ticket.section || ticket.row || ticket.seat) && (
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Seat:</span>
                         <span className="font-medium text-gray-900 dark:text-white">
+                          {ticket.section && `Section ${ticket.section}`}
+                          {ticket.section && (ticket.row || ticket.seat) && " • "}
                           {ticket.row && `Row ${ticket.row}`}
                           {ticket.row && ticket.seat && " • "}
                           {ticket.seat && `Seat ${ticket.seat}`}

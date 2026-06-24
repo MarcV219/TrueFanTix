@@ -10,6 +10,7 @@ export const schemas = {
     faceValueCents: z.number().int().positive().optional(),
     venue: z.string().min(2).max(200),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2} (AM|PM)$/),
+    section: z.string().max(20).optional(),
     row: z.string().max(20).optional(),
     seat: z.string().max(20).optional(),
     primaryVendor: z.enum(["Ticketmaster", "AXS", "StubHub", "SeatGeek", "Other"]).optional(),
@@ -33,6 +34,7 @@ export const schemas = {
 
     venue: z.string().trim().min(1).max(200),
     date: z.string().trim().min(1).max(100),
+    section: z.string().trim().max(80).optional().nullable(),
     row: z.string().trim().max(80).optional().nullable(),
     seat: z.string().trim().max(80).optional().nullable(),
 

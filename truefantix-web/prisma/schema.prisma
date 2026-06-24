@@ -332,8 +332,9 @@ model Ticket {
   venue String
 
   // Seating information
-  row  String?
-  seat String?
+  section String?
+  row     String?
+  seat    String?
 
   eventId String?
   event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)

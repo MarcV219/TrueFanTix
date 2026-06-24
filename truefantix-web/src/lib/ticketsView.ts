@@ -7,6 +7,7 @@ export type ApiTicketLike = {
   title: string;
   date: string;
   venue: string;
+  section?: string | null;
   row?: string | null;
   seat?: string | null;
   price?: number;
@@ -40,6 +41,7 @@ export type TicketCardView = {
   city: string;
   province: string;
   country: string;
+  section: string | null;
   row: string | null;
   seat: string | null;
   price: number;
@@ -308,6 +310,7 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
     city: venueInfo.city,
     province: venueInfo.province,
     country: venueInfo.country,
+    section: t.section ?? null,
     row: t.row ?? null,
     seat: t.seat ?? null,
     price,

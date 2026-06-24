@@ -54,8 +54,10 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
           {ticket.city}, {ticket.province}, {ticket.country}
         </p>
 
-        {(ticket.row || ticket.seat) && (
+        {(ticket.section || ticket.row || ticket.seat) && (
           <p className="text-sm font-medium text-blue-600 dark:text-blue-400 mb-2">
+            {ticket.section && `Section ${ticket.section}`}
+            {ticket.section && (ticket.row || ticket.seat) && " • "}
             {ticket.row && `Row ${ticket.row}`}
             {ticket.row && ticket.seat && " • "}
             {ticket.seat && `Seat ${ticket.seat}`}
