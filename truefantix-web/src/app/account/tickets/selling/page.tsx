@@ -1843,7 +1843,11 @@ function Body({ me }: { me: MeUser }) {
                       onClick={() => {
                         setSelectedTitleSuggestion(suggestion);
                         setTitle(suggestion.label);
+                        if (TITLE_CATALOG_TYPES.some((option) => option.value === suggestion.type)) {
+                          setTitleRequestType(suggestion.type as TitleCatalogType);
+                        }
                         setTitleSuggestions([]);
+                        setFTitle(false);
                         clearSourceIssuesFor(["title"]);
                         setError(null);
                         setOk(null);
@@ -1975,6 +1979,7 @@ function Body({ me }: { me: MeUser }) {
                         setSelectedVenueSuggestion(suggestion);
                         setVenue(suggestion.label);
                         setVenueSuggestions([]);
+                        setFVenue(false);
                         clearSourceIssuesFor(["venue"]);
                         setError(null);
                         setOk(null);
