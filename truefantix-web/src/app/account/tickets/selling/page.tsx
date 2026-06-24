@@ -1567,6 +1567,8 @@ function Body({ me }: { me: MeUser }) {
     pricingConfirmation?.officialFaceValueCents != null && pricingConfirmation.maxListPriceCents != null
       ? Math.max(0, pricingConfirmation.maxListPriceCents - pricingConfirmation.officialFaceValueCents)
       : null;
+  const receiptFeeIssue = pricingConfirmation?.sourceIssues?.find((issue) => issue.source === "Receipt" && issue.field === "serviceFees" && issue.found) ?? null;
+  const receiptFeeSourceCents = receiptFeeIssue?.found ? parseDollarsToCents(moneyTextToDollars(receiptFeeIssue.found)) : null;
 
   const warningPanel = (error || pricingConfirmation) ? (
     <div
@@ -1653,8 +1655,14 @@ function Body({ me }: { me: MeUser }) {
             }}
           >
             <div>Confirmed face value: {centsToMoney(pricingConfirmation.officialFaceValueCents, listingCurrency)} {listingCurrency}</div>
+            {receiptFeeSourceCents != null ? (
+              <div>Receipt fee source found: {centsToMoney(receiptFeeSourceCents, listingCurrency)} {listingCurrency}</div>
+            ) : null}
             {eligibleFeesCents != null ? (
-              <div>Verified eligible fees paid: {centsToMoney(eligibleFeesCents, listingCurrency)} {listingCurrency}</div>
+              <div>
+                {receiptFeeSourceCents != null ? "Accepted eligible fees for max price" : "Verified eligible fees paid"}:{" "}
+                {centsToMoney(eligibleFeesCents, listingCurrency)} {listingCurrency}
+              </div>
             ) : null}
             {(pricingConfirmation.officialPriceRangeMinCents != null || pricingConfirmation.officialPriceRangeMaxCents != null) ? (
               <div>
