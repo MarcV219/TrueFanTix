@@ -258,8 +258,10 @@ function ticketmasterType(raw: any): CatalogSuggestionType | null {
   const segment = cleanText(raw?.classifications?.[0]?.segment?.name).toLowerCase();
   const subType = cleanText(raw?.classifications?.[0]?.subType?.name).toLowerCase();
   const type = cleanText(raw?.classifications?.[0]?.type?.name).toLowerCase();
-  if (segment === "sports" || subType.includes("team") || type.includes("team")) return "TEAM";
+  if (subType.includes("team") || type.includes("team")) return "TEAM";
+  if (segment === "sports") return "SPORT";
   if (segment === "music") return "ARTIST";
+  if (segment || subType || type) return "SHOW";
   return null;
 }
 
@@ -312,7 +314,8 @@ async function fetchTicketmasterSuggestions(query: string, type: CatalogSuggesti
   const out: ProviderCatalogSuggestion[] = [];
 
   for (const attraction of attractions) {
-    const resolvedType = ticketmasterType(attraction);
+    const baseType = ticketmasterType(attraction);
+    const resolvedType = type === "SHOW" && baseType && baseType !== "ARTIST" && baseType !== "TEAM" ? "SHOW" : baseType;
     if (!resolvedType || (type !== "ALL" && type !== resolvedType)) continue;
     const name = cleanText(attraction.name);
     const id = cleanText(attraction.id);
@@ -926,7 +929,7 @@ async function fetchProviderSuggestions(query: string, type: CatalogSuggestionTy
     }
   }
 
-  if ((type === "ARTIST" || out.length < limit) && (type === "ALL" || type === "ARTIST" || type === "TEAM" || type === "VENUE")) {
+  if ((type === "ARTIST" || out.length < limit) && (type === "ALL" || type === "ARTIST" || type === "TEAM" || type === "VENUE" || type === "SHOW")) {
     try {
       out.push(...await fetchWikidataSuggestions(query, type, type === "ARTIST" ? limit : limit - out.length));
     } catch {

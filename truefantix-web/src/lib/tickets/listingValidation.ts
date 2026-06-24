@@ -6,6 +6,7 @@ type ListingValidationInput = {
   sellerTitle: string;
   sellerDate: string;
   sellerVenue: string;
+  sellerSection?: string | null;
   sellerRow: string | null;
   sellerSeat: string | null;
   purchaseQuantity: number;
@@ -139,8 +140,8 @@ function isBlockingOfficialConflict(reason: string | null | undefined) {
     reason === "venue-not-confirmed";
 }
 
-function seatText(row: string | null | undefined, seat: string | null | undefined) {
-  return [row ? `Row ${row}` : null, seat ? `Seat ${seat}` : null].filter(Boolean).join(" ");
+function seatText(section: string | null | undefined, row: string | null | undefined, seat: string | null | undefined) {
+  return [section ? `Section ${section}` : null, row ? `Row ${row}` : null, seat ? `Seat ${seat}` : null].filter(Boolean).join(" ");
 }
 
 function receiptSeatText(section: string | null | undefined, row: string | null | undefined, seat: string | null | undefined) {
@@ -262,11 +263,12 @@ function normalizeSeatPart(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-function receiptHasSeat(receipt: ReceiptOcrReview, sellerRow: string | null, sellerSeat: string | null) {
+function receiptHasSeat(receipt: ReceiptOcrReview, sellerSection: string | null, sellerRow: string | null, sellerSeat: string | null) {
+  const section = normalizeSeatPart(sellerSection);
   const row = normalizeSeatPart(sellerRow);
   const seat = normalizeSeatPart(sellerSeat);
-  if (!row && !seat) return true;
-  if (isGeneralAdmissionText(row) && !seat) {
+  if (!section && !row && !seat) return true;
+  if ([section, row, seat].some(isGeneralAdmissionText)) {
     if (!receipt.seats.length) return true;
     return receipt.seats.some((item) => {
       return (
@@ -281,11 +283,11 @@ function receiptHasSeat(receipt: ReceiptOcrReview, sellerRow: string | null, sel
     const receiptHasExplicitSeat = !!normalizeSeatPart(item.seat);
     if (!receiptHasExplicitSeat) {
       // Some Ticketmaster receipts show only Sec/Row, not individual seat numbers.
-      // Treat the seating area as confirmed when the seller-entered row or seat matches
+      // Treat the seating area as confirmed when a seller-entered section, row, or seat matches
       // the receipt section/row, and do not block on a seat number the receipt omitted.
-      return Boolean([row, seat].filter(Boolean).some((part) => receiptParts.includes(part)));
+      return Boolean([section, row, seat].filter(Boolean).some((part) => receiptParts.includes(part)));
     }
-    return (!row || receiptParts.includes(row)) && (!seat || receiptParts.includes(seat));
+    return (!section || receiptParts.includes(section)) && (!row || receiptParts.includes(row)) && (!seat || receiptParts.includes(seat));
   });
 }
 
@@ -294,6 +296,7 @@ export function validateListingPriceAgainstOfficial({
   sellerTitle,
   sellerDate,
   sellerVenue,
+  sellerSection = null,
   sellerRow,
   sellerSeat,
   purchaseQuantity,
@@ -468,13 +471,13 @@ export function validateListingPriceAgainstOfficial({
         });
       }
 
-      if (!receiptHasSeat(receiptReview, sellerRow, sellerSeat)) {
+      if (!receiptHasSeat(receiptReview, sellerSection, sellerRow, sellerSeat)) {
         const receiptSeats = receiptReview.seats.map((seat) => receiptSeatText(seat.section, seat.row, seat.seat)).filter(Boolean).join("; ");
         receiptIssues.push({
           code: "RECEIPT_SEATING_MISMATCH",
           field: "seating",
           source: "Receipt",
-          entered: seatText(sellerRow, sellerSeat) || null,
+          entered: seatText(sellerSection, sellerRow, sellerSeat) || null,
           found: receiptSeats || null,
           message: receiptSeatingMismatchMessage(receiptReview),
         });

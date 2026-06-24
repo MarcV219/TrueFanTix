@@ -1,6 +1,6 @@
 import { NCAA_D1_TEAMS } from "@/lib/catalog/ncaa-d1-teams.generated";
 
-export type CatalogSuggestionType = "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT";
+export type CatalogSuggestionType = "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT" | "SHOW" | "OTHER";
 
 export type CatalogSuggestion = {
   type: CatalogSuggestionType;
@@ -123,6 +123,15 @@ const SPORTS = [
           : name === "Mixed Martial Arts"
             ? ["MMA", "UFC"]
             : undefined,
+}));
+
+const SHOWS = [
+  "Monster Jam",
+].map((name) => ({
+  type: "SHOW" as const,
+  value: name,
+  label: name,
+  subtitle: "Show",
 }));
 
 const TEAMS: TeamSeed[] = [
@@ -917,6 +926,7 @@ const ALL_CITIES = Array.from(
 export const LIVE_EVENT_CATALOG: CatalogSuggestion[] = [
   ...ARTISTS,
   ...SPORTS,
+  ...SHOWS,
   ...ALL_TEAMS.map((team) => ({
     type: "TEAM" as const,
     value: team.name,

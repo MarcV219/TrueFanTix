@@ -57,6 +57,7 @@ export const schemas = {
       "sports-lacrosse",
       "sports-other",
     ]),
+    catalogRequestType: z.enum(["ARTIST", "TEAM", "SPORT", "SHOW", "OTHER"]).optional(),
 
     eventId: z.string().trim().cuid().optional().nullable(),
 
@@ -455,7 +456,7 @@ export const schemas = {
 
   // Used by POST /api/catalog/requests
   catalogRequestCreateApi: z.object({
-    type: z.enum(["ARTIST", "TEAM", "VENUE", "CITY", "SPORT"]),
+    type: z.enum(["ARTIST", "TEAM", "VENUE", "CITY", "SPORT", "SHOW", "OTHER"]),
     value: z.string().trim().min(2).max(120),
     notes: z.string().trim().max(1000).optional().nullable(),
   }),

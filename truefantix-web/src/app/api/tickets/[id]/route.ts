@@ -309,6 +309,7 @@ export async function PATCH(req: Request) {
       sellerTitle: title,
       sellerDate: date,
       sellerVenue: venue,
+      sellerSection: section,
       sellerRow: row,
       sellerSeat: seat,
       purchaseQuantity: 1,

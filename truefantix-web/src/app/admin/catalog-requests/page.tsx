@@ -312,6 +312,8 @@ export default function CatalogRequestsAdminPage() {
                       <option value="VENUE">Venue</option>
                       <option value="CITY">City / town</option>
                       <option value="SPORT">Sport</option>
+                      <option value="SHOW">Show</option>
+                      <option value="OTHER">Other</option>
                     </select>
                     <button
                       type="button"

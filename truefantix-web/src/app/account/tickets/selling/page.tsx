@@ -10,6 +10,7 @@ type CreateTicketBody = {
   priceCents: number;
   currency: "CAD" | "USD";
   eventTypeOverride: EventCategoryValue;
+  catalogRequestType?: TitleCatalogType;
   faceValueCents?: number | null;
   adminFeePaidCents?: number;
   purchaseQuantity?: number;
@@ -76,7 +77,7 @@ type TicketRow = {
 };
 
 type CatalogSuggestion = {
-  type: "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT";
+  type: "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT" | "SHOW" | "OTHER";
   value: string;
   label: string;
   catalogEntityId?: string;
@@ -85,6 +86,16 @@ type CatalogSuggestion = {
   subtitle?: string;
   aliases?: string[];
 };
+
+type TitleCatalogType = "ARTIST" | "TEAM" | "SPORT" | "SHOW" | "OTHER";
+
+const TITLE_CATALOG_TYPES: Array<{ value: TitleCatalogType; label: string }> = [
+  { value: "ARTIST", label: "Artist" },
+  { value: "TEAM", label: "Team" },
+  { value: "SPORT", label: "Sport" },
+  { value: "SHOW", label: "Show" },
+  { value: "OTHER", label: "Other" },
+];
 
 type SeatingInfo = {
   section: string;
@@ -1042,7 +1053,7 @@ function Body({ me }: { me: MeUser }) {
   const [title, setTitle] = React.useState("");
   const [selectedTitleSuggestion, setSelectedTitleSuggestion] = React.useState<CatalogSuggestion | null>(null);
   const [titleSuggestions, setTitleSuggestions] = React.useState<CatalogSuggestion[]>([]);
-  const [titleRequestType, setTitleRequestType] = React.useState<"ARTIST" | "TEAM" | "SPORT">("ARTIST");
+  const [titleRequestType, setTitleRequestType] = React.useState<TitleCatalogType>("ARTIST");
   const [eventCategory, setEventCategory] = React.useState<EventCategoryValue | "">("");
   const [venue, setVenue] = React.useState("");
   const [selectedVenueSuggestion, setSelectedVenueSuggestion] = React.useState<CatalogSuggestion | null>(null);
@@ -1088,8 +1099,8 @@ function Body({ me }: { me: MeUser }) {
     const timer = window.setTimeout(async () => {
       try {
         const results = await Promise.all(
-          ["ARTIST", "TEAM", "SPORT"].map(async (type) => {
-            const params = new URLSearchParams({ q, type, limit: "50", providers: "0" });
+          ["ARTIST", "TEAM", "SPORT", "SHOW"].map(async (type) => {
+            const params = new URLSearchParams({ q, type, limit: "50" });
             const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
             const data = await res.json();
             return Array.isArray(data?.suggestions) ? (data.suggestions as CatalogSuggestion[]) : [];
@@ -1167,7 +1178,7 @@ function Body({ me }: { me: MeUser }) {
   async function requestCatalogAddition(kind: "title" | "venue") {
     const requestValue = (kind === "title" ? title : venue).trim();
     if (requestValue.length < 2) {
-      setError(kind === "title" ? "Type the missing artist, team, or sport before requesting an addition." : "Type the missing venue before requesting an addition.");
+      setError(kind === "title" ? "Type the missing artist, team, sport, show, or other event before requesting an addition." : "Type the missing venue before requesting an addition.");
       setOk(null);
       return;
     }
@@ -1348,7 +1359,7 @@ function Body({ me }: { me: MeUser }) {
       const nextTitle = issue.found;
       setTitle(nextTitle);
       setSelectedTitleSuggestion({
-        type: "ARTIST",
+        type: titleRequestType,
         value: nextTitle,
         label: nextTitle,
         canonicalName: nextTitle,
@@ -1396,7 +1407,9 @@ function Body({ me }: { me: MeUser }) {
     if (!t) return setError("Title is required.");
     if (!eventCategory) return setError("Choose the ticket category before listing tickets.");
     if (!v) return setError("Venue is required.");
-    if (!validTitleSuggestion) return setError("Choose a verified artist, team, or sport from the list before listing tickets.");
+    if (!validTitleSuggestion && !receiptProofDataUrl) {
+      return setError("Choose a verified artist, team, sport, or show from the list, or upload a receipt so TrueFanTix can verify the event name.");
+    }
     if (!validVenueSuggestion) return setError("Choose a verified venue from the list before listing tickets.");
     if (String(quantity) !== ticketQuantity.trim()) return setError("Ticket quantity must be a whole number from 1 to 20.");
     if (!isGeneralAdmission) {
@@ -1447,6 +1460,7 @@ function Body({ me }: { me: MeUser }) {
           date: d,
           currency: listingCurrency,
           eventTypeOverride: eventCategory,
+          catalogRequestType: validTitleSuggestion ? selectedTitleSuggestion?.type as TitleCatalogType : titleRequestType,
           section: seatInfo.section,
           row: seatInfo.row,
           seat: seatInfo.seat,
@@ -1853,23 +1867,22 @@ function Body({ me }: { me: MeUser }) {
                   ))
                 ) : selectedTitleSuggestion ? null : (
                   <div style={{ display: "grid", gap: 8, padding: "10px 12px", fontSize: 13 }}>
-                    <div style={{ opacity: 0.72 }}>No verified artist, team, or sport match found.</div>
+                    <div style={{ opacity: 0.72 }}>No verified artist, team, sport, or show match found.</div>
                     <label style={{ display: "grid", gap: 4, fontWeight: 800 }}>
                       Request as
                       <select
                         value={titleRequestType}
-                        onChange={(e) => setTitleRequestType(e.target.value as "ARTIST" | "TEAM" | "SPORT")}
+                        onChange={(e) => setTitleRequestType(e.target.value as TitleCatalogType)}
                         disabled={busy || !!requestBusy}
                         style={{ ...inputStyle(false), padding: 8 }}
                       >
-                        <option value="ARTIST">Artist</option>
-                        <option value="TEAM">Team</option>
-                        <option value="SPORT">Sport</option>
+                        {TITLE_CATALOG_TYPES.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
                       </select>
                     </label>
                     <button
                       type="button"
-                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => requestCatalogAddition("title")}
                       disabled={busy || !!requestBusy}
                       style={{

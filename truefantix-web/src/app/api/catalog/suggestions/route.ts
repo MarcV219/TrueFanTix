@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { searchProviderCatalog } from "@/lib/catalog/provider-catalog";
 import type { CatalogSuggestionType } from "@/lib/catalog/live-event-catalog";
 
-const TYPES = new Set(["ARTIST", "TEAM", "VENUE", "CITY", "SPORT", "ALL"]);
+const TYPES = new Set(["ARTIST", "TEAM", "VENUE", "CITY", "SPORT", "SHOW", "OTHER", "ALL"]);
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);

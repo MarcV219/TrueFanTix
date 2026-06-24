@@ -721,6 +721,30 @@ describe("listing validation", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts seller section and seat when receipt confirms section but omits explicit seats", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerSection: "N",
+      sellerRow: "",
+      sellerSeat: "14",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 0,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        seats: [{ section: "N", row: "13", seat: null }],
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("still rejects seating when receipt includes an explicit different seat", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),

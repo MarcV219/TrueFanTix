@@ -41,6 +41,67 @@ function normalizeListingText(value: unknown) {
     .trim();
 }
 
+function catalogProviderId(type: string, value: string) {
+  const slug = `${type}:${value}`
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || `${type.toLowerCase()}-receipt-event`;
+}
+
+async function cacheReceiptConfirmedEventTitle({
+  type,
+  sellerTitle,
+  receiptTitle,
+  venue,
+  date,
+}: {
+  type: string | null | undefined;
+  sellerTitle: string;
+  receiptTitle: string | null | undefined;
+  venue: string;
+  date: string;
+}) {
+  const allowed = new Set(["ARTIST", "TEAM", "SPORT", "SHOW", "OTHER"]);
+  const requestedType = String(type || "SHOW").trim().toUpperCase();
+  const catalogType = allowed.has(requestedType) ? requestedType : "SHOW";
+  const canonicalName = String(receiptTitle || "").trim();
+  if (!canonicalName || normalizeListingText(canonicalName) !== normalizeListingText(sellerTitle)) return null;
+
+  return prisma.catalogEntity.upsert({
+    where: {
+      provider_providerId_type: {
+        provider: "seller-receipt",
+        providerId: catalogProviderId(catalogType, canonicalName),
+        type: catalogType,
+      },
+    },
+    create: {
+      type: catalogType,
+      canonicalName,
+      provider: "seller-receipt",
+      providerId: catalogProviderId(catalogType, canonicalName),
+      aliases: null,
+      subtitle: "Receipt-confirmed event",
+      address: null,
+      city: null,
+      region: null,
+      country: null,
+      sourceUrl: null,
+      metadata: JSON.stringify({ venue, date, source: "listing-receipt" }),
+      lastSeenAt: new Date(),
+    },
+    update: {
+      canonicalName,
+      subtitle: "Receipt-confirmed event",
+      metadata: JSON.stringify({ venue, date, source: "listing-receipt" }),
+      lastSeenAt: new Date(),
+    },
+  });
+}
+
 function inferEvidenceEventType(title: string, parsedEvidence: any): string | null {
   const manualEventType = typeof parsedEvidence?.manualEventType === "string" ? parsedEvidence.manualEventType.trim().toLowerCase() : "";
   if (manualEventType) return manualEventType;
@@ -447,6 +508,7 @@ export async function POST(req: Request) {
   const sellerConfirmedReceiptValues = body.sellerConfirmedReceiptValues === true;
   const purchaseQuantity = body.purchaseQuantity ?? 1;
   const eventTypeOverride = (body.eventTypeOverride ?? "").trim().toLowerCase() || null;
+  const catalogRequestType = body.catalogRequestType ?? null;
 
   // We store cents.
   const priceCentsRaw = body.priceCents;
@@ -573,6 +635,7 @@ export async function POST(req: Request) {
       sellerTitle: title,
       sellerDate: date,
       sellerVenue: venue,
+      sellerSection: section,
       sellerRow: row,
       sellerSeat: seat,
       purchaseQuantity,
@@ -598,6 +661,14 @@ export async function POST(req: Request) {
         { status: 422 }
       );
     }
+
+    const receiptCatalogEntity = await cacheReceiptConfirmedEventTitle({
+      type: catalogRequestType,
+      sellerTitle: title,
+      receiptTitle: receiptReview?.eventTitle,
+      venue,
+      date,
+    });
 
     // Auto image pipeline: always attempt event-relevant fetch server-side.
     const evidenceEventType = inferEvidenceEventType(title, {
@@ -661,6 +732,7 @@ export async function POST(req: Request) {
             confirmedAt: sellerConfirmedReceiptValues ? new Date().toISOString() : null,
             ocr: receiptReview,
           },
+          receiptConfirmedCatalogEntityId: receiptCatalogEntity?.id ?? null,
         }),
         barcodeHash,
         sellerId,
