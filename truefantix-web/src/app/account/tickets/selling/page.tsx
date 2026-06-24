@@ -1100,7 +1100,7 @@ function Body({ me }: { me: MeUser }) {
       try {
         const results = await Promise.all(
           ["ARTIST", "TEAM", "SPORT", "SHOW"].map(async (type) => {
-            const params = new URLSearchParams({ q, type, limit: "50" });
+            const params = new URLSearchParams({ q, type, limit: "50", providers: "0" });
             const res = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
             const data = await res.json();
             return Array.isArray(data?.suggestions) ? (data.suggestions as CatalogSuggestion[]) : [];
