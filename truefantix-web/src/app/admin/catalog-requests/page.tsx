@@ -34,6 +34,23 @@ type CatalogSuggestion = {
   subtitle?: string;
 };
 
+type WebVenueCandidate = {
+  type: "VENUE";
+  label: string;
+  canonicalName: string;
+  provider: "web-search" | "openstreetmap";
+  providerId: string;
+  subtitle?: string;
+  address?: string;
+  city?: string;
+  region?: string;
+  country?: string;
+  sourceUrl?: string;
+  confidence: number;
+  sourceName?: string;
+  metadata?: Record<string, unknown>;
+};
+
 type ReviewStatus = "FULFILLED" | "REJECTED" | "NEEDS_CLARIFICATION";
 type RequestMessage = {
   tone: "success" | "warning" | "error";
@@ -48,6 +65,7 @@ export default function CatalogRequestsAdminPage() {
   const [adminNotes, setAdminNotes] = React.useState<Record<string, string>>({});
   const [clarificationOpen, setClarificationOpen] = React.useState<Record<string, boolean>>({});
   const [matchesById, setMatchesById] = React.useState<Record<string, CatalogSuggestion[]>>({});
+  const [webMatchesById, setWebMatchesById] = React.useState<Record<string, WebVenueCandidate[]>>({});
   const [searchQueries, setSearchQueries] = React.useState<Record<string, string>>({});
   const [searchTypes, setSearchTypes] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(false);
@@ -200,6 +218,68 @@ export default function CatalogRequestsAdminPage() {
     }
   }
 
+  async function webSearchVenues(request: CatalogRequest) {
+    if (request.requestedType !== "VENUE") {
+      setRequestMessage(request.id, { tone: "warning", text: "Web venue search is only available for venue requests." });
+      return;
+    }
+
+    setBusyId(request.id);
+    setError(null);
+    setRequestMessages((prev) => {
+      const next = { ...prev };
+      delete next[request.id];
+      return next;
+    });
+    try {
+      const query = (searchQueries[request.id] || request.requestedValue).trim();
+      const { res, data } = await fetchJson(`/api/admin/catalog-requests/${request.id}/web-search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "search", query, limit: 8 }),
+      });
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || data?.error || "Could not search the web for this venue.");
+      }
+      const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      setWebMatchesById((prev) => ({ ...prev, [request.id]: candidates }));
+      if (candidates.length === 0) {
+        setRequestMessage(request.id, { tone: "warning", text: "No web venue candidates found. Ask the user for a location or source link." });
+        openClarification(request);
+      }
+    } catch (e: any) {
+      setRequestMessage(request.id, { tone: "error", text: e?.message || "Could not search the web for this venue." });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveAndFulfillWebVenue(request: CatalogRequest, candidate: WebVenueCandidate) {
+    setBusyId(request.id);
+    setError(null);
+    setRequestMessages((prev) => {
+      const next = { ...prev };
+      delete next[request.id];
+      return next;
+    });
+    try {
+      const { res, data } = await fetchJson(`/api/admin/catalog-requests/${request.id}/web-search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", candidate }),
+      });
+      if (!res.ok || !data?.ok || !data.entity?.id) {
+        throw new Error(data?.message || data?.error || "Could not save this venue.");
+      }
+      setEntityIds((prev) => ({ ...prev, [request.id]: data.entity.id }));
+      await reviewRequest(request.id, "FULFILLED", data.entity.id);
+    } catch (e: any) {
+      setRequestMessage(request.id, { tone: "error", text: e?.message || "Could not save this venue." });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div style={{ maxWidth: 1100, margin: "40px auto", padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -325,6 +405,14 @@ export default function CatalogRequestsAdminPage() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => webSearchVenues(request)}
+                      disabled={busyId === request.id || request.requestedType !== "VENUE"}
+                      style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(79,70,229,0.35)", background: "rgba(238,242,255,1)", fontWeight: 900 }}
+                    >
+                      Web search
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => reviewRequest(request.id, "FULFILLED")}
                       disabled={busyId === request.id}
                       style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,0.35)", background: "rgba(240,253,244,1)", fontWeight: 900 }}
@@ -401,6 +489,43 @@ export default function CatalogRequestsAdminPage() {
                             style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(34,197,94,0.35)", background: "rgba(240,253,244,1)", fontWeight: 900 }}
                           >
                             Add
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {webMatchesById[request.id]?.length ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <div style={{ fontSize: 13, fontWeight: 950 }}>Web venue candidates</div>
+                      {webMatchesById[request.id].map((match) => (
+                        <div
+                          key={`${request.id}:web:${match.provider}:${match.providerId}`}
+                          style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr auto", alignItems: "center", padding: 10, borderRadius: 8, border: "1px solid rgba(129,140,248,0.45)", background: "rgba(238,242,255,0.72)" }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 950 }}>{match.canonicalName || match.label}</div>
+                            <div style={{ marginTop: 2, fontSize: 12, opacity: 0.78 }}>
+                              {[match.address, match.city, match.region, match.country].filter(Boolean).join(", ") || match.subtitle || "Address not found"}
+                            </div>
+                            <div style={{ marginTop: 2, fontSize: 12, opacity: 0.72 }}>
+                              {[match.sourceName || match.provider, `${Math.round(match.confidence)}% confidence`].filter(Boolean).join(" - ")}
+                              {match.sourceUrl ? (
+                                <>
+                                  {" - "}
+                                  <a href={match.sourceUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>
+                                    Source
+                                  </a>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => saveAndFulfillWebVenue(request, match)}
+                            disabled={busyId === request.id}
+                            style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(34,197,94,0.35)", background: "rgba(240,253,244,1)", fontWeight: 900 }}
+                          >
+                            Save & fulfill
                           </button>
                         </div>
                       ))}
