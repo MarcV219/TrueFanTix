@@ -1171,6 +1171,8 @@ function Body({ me }: { me: MeUser }) {
     selectedVenueSuggestion.type === "VENUE" &&
     selectedVenueSuggestion.label === trimmedVenue &&
     suggestionMatchesTypedValue(selectedVenueSuggestion, trimmedVenue);
+  const showTitleSuggestionPanel = fTitle && trimmedTitle.length >= 2 && !validTitleSuggestion;
+  const showVenueSuggestionPanel = fVenue && trimmedVenue.length >= 2 && !validVenueSuggestion;
   const previewFaceValueCents = parseOptionalDollarsToCents(faceValue);
   const previewListPriceCents = previewFaceValueCents;
   const previewPriceCents = parseDollarsToCents(price);
@@ -1811,7 +1813,7 @@ function Body({ me }: { me: MeUser }) {
               onFocus={() => setFTitle(true)}
               onBlur={() => setFTitle(false)}
             />
-            {fTitle && title.trim().length >= 2 ? (
+            {showTitleSuggestionPanel ? (
               <div
                 style={{
                   display: "grid",
@@ -1946,7 +1948,7 @@ function Body({ me }: { me: MeUser }) {
               onFocus={() => setFVenue(true)}
               onBlur={() => setFVenue(false)}
             />
-            {fVenue && venue.trim().length >= 2 ? (
+            {showVenueSuggestionPanel ? (
               <div
                 style={{
                   display: "grid",
