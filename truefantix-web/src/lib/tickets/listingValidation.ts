@@ -260,7 +260,25 @@ function isGeneralAdmissionText(value: string | null | undefined) {
 }
 
 function normalizeSeatPart(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "").trim().toLowerCase().replace(/[–—]/g, "-");
+}
+
+function seatValueMatchesReceiptSeat(sellerSeat: string | null, receiptSeat: string | null) {
+  if (!sellerSeat) return true;
+  if (!receiptSeat) return false;
+  if (sellerSeat === receiptSeat) return true;
+
+  const sellerNumber = Number(sellerSeat);
+  if (!Number.isInteger(sellerNumber)) return false;
+
+  const range = receiptSeat.match(/^(\d+)\s*(?:-|to|through)\s*(\d+)$/i);
+  if (!range) return false;
+
+  const start = Number(range[1]);
+  const end = Number(range[2]);
+  if (!Number.isInteger(start) || !Number.isInteger(end)) return false;
+
+  return sellerNumber >= Math.min(start, end) && sellerNumber <= Math.max(start, end);
 }
 
 function receiptHasSeat(receipt: ReceiptOcrReview, sellerSection: string | null, sellerRow: string | null, sellerSeat: string | null) {
@@ -287,7 +305,12 @@ function receiptHasSeat(receipt: ReceiptOcrReview, sellerSection: string | null,
       // the receipt section/row, and do not block on a seat number the receipt omitted.
       return Boolean([section, row, seat].filter(Boolean).some((part) => receiptParts.includes(part)));
     }
-    return (!section || receiptParts.includes(section)) && (!row || receiptParts.includes(row)) && (!seat || receiptParts.includes(seat));
+    const receiptSeat = normalizeSeatPart(item.seat);
+    return (
+      (!section || receiptParts.includes(section)) &&
+      (!row || receiptParts.includes(row)) &&
+      seatValueMatchesReceiptSeat(seat, receiptSeat)
+    );
   });
 }
 

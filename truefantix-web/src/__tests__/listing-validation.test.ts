@@ -745,6 +745,36 @@ describe("listing validation", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts an individual seller seat inside an explicit receipt seat range", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({ officialFaceValueCents: 30000 }),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerSection: "429",
+      sellerRow: "34",
+      sellerSeat: "3",
+      purchaseQuantity: 1,
+      priceCents: 35700,
+      sellerCurrency: "USD",
+      sellerFaceValueCents: 30000,
+      adminFeePaidCents: 5700,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        seats: [{ section: "429", row: "34", seat: "3-6" }],
+        faceValueCents: 30000,
+        totalFaceValueCents: 30000,
+        serviceFeesCents: 5700,
+        totalServiceFeesCents: 5700,
+        currency: "USD",
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("still rejects seating when receipt includes an explicit different seat", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),
