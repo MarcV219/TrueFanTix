@@ -382,6 +382,10 @@ function wordsForSearch(text: string) {
     .filter(Boolean);
 }
 
+function normalizedSearchText(text: string) {
+  return wordsForSearch(text).join(" ");
+}
+
 function suggestionMatchesTypedValue(suggestion: CatalogSuggestion, typedValue: string) {
   const queryWords = wordsForSearch(typedValue);
   if (queryWords.length === 0) return true;
@@ -395,6 +399,18 @@ function suggestionMatchesTypedValue(suggestion: CatalogSuggestion, typedValue: 
   ].flatMap((part) => wordsForSearch(part ?? ""));
 
   return queryWords.every((queryWord) => candidateWords.some((candidateWord) => candidateWord.startsWith(queryWord)));
+}
+
+function suggestionMatchesSelectedValue(suggestion: CatalogSuggestion, typedValue: string) {
+  const normalizedTyped = normalizedSearchText(typedValue);
+  if (!normalizedTyped) return false;
+
+  return [
+    suggestion.label,
+    suggestion.value,
+    suggestion.canonicalName,
+    ...(suggestion.aliases ?? []),
+  ].some((part) => normalizedSearchText(part ?? "") === normalizedTyped);
 }
 
 function uniqueCatalogSuggestions(items: CatalogSuggestion[]) {
@@ -1164,13 +1180,11 @@ function Body({ me }: { me: MeUser }) {
   );
   const validTitleSuggestion =
     !!selectedTitleSuggestion &&
-    selectedTitleSuggestion.label === trimmedTitle &&
-    suggestionMatchesTypedValue(selectedTitleSuggestion, trimmedTitle);
+    suggestionMatchesSelectedValue(selectedTitleSuggestion, trimmedTitle);
   const validVenueSuggestion =
     !!selectedVenueSuggestion &&
     selectedVenueSuggestion.type === "VENUE" &&
-    selectedVenueSuggestion.label === trimmedVenue &&
-    suggestionMatchesTypedValue(selectedVenueSuggestion, trimmedVenue);
+    suggestionMatchesSelectedValue(selectedVenueSuggestion, trimmedVenue);
   const showTitleSuggestionPanel = fTitle && trimmedTitle.length >= 2 && !validTitleSuggestion;
   const showVenueSuggestionPanel = fVenue && trimmedVenue.length >= 2 && !validVenueSuggestion;
   const previewFaceValueCents = parseOptionalDollarsToCents(faceValue);
@@ -1369,6 +1383,29 @@ function Body({ me }: { me: MeUser }) {
       });
       clearAppliedIssue();
     }
+  }
+
+  function selectTitleSuggestion(suggestion: CatalogSuggestion) {
+    setSelectedTitleSuggestion(suggestion);
+    setTitle(suggestion.label);
+    if (TITLE_CATALOG_TYPES.some((option) => option.value === suggestion.type)) {
+      setTitleRequestType(suggestion.type as TitleCatalogType);
+    }
+    setTitleSuggestions([suggestion]);
+    setFTitle(false);
+    clearSourceIssuesFor(["title"]);
+    setError(null);
+    setOk(null);
+  }
+
+  function selectVenueSuggestion(suggestion: CatalogSuggestion) {
+    setSelectedVenueSuggestion(suggestion);
+    setVenue(suggestion.label);
+    setVenueSuggestions([suggestion]);
+    setFVenue(false);
+    clearSourceIssuesFor(["venue"]);
+    setError(null);
+    setOk(null);
   }
 
   function actionLabelForSourceIssue(issue: PricingSourceIssue) {
@@ -1841,18 +1878,9 @@ function Body({ me }: { me: MeUser }) {
                     <button
                       key={`${suggestion.type}:${suggestion.value}`}
                       type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setSelectedTitleSuggestion(suggestion);
-                        setTitle(suggestion.label);
-                        if (TITLE_CATALOG_TYPES.some((option) => option.value === suggestion.type)) {
-                          setTitleRequestType(suggestion.type as TitleCatalogType);
-                        }
-                        setTitleSuggestions([]);
-                        setFTitle(false);
-                        clearSourceIssuesFor(["title"]);
-                        setError(null);
-                        setOk(null);
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        selectTitleSuggestion(suggestion);
                       }}
                       disabled={busy || !!requestBusy}
                       style={{
@@ -1976,15 +2004,9 @@ function Body({ me }: { me: MeUser }) {
                     <button
                       key={`${suggestion.type}:${suggestion.value}`}
                       type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setSelectedVenueSuggestion(suggestion);
-                        setVenue(suggestion.label);
-                        setVenueSuggestions([]);
-                        setFVenue(false);
-                        clearSourceIssuesFor(["venue"]);
-                        setError(null);
-                        setOk(null);
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        selectVenueSuggestion(suggestion);
                       }}
                       disabled={busy || !!requestBusy}
                       style={{
