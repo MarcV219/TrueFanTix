@@ -33,6 +33,7 @@ function receipt(overrides: Partial<ReceiptOcrReview> = {}): ReceiptOcrReview {
     totalFaceValueCents: 10000,
     serviceFeesCents: 0,
     totalServiceFeesCents: 0,
+    totalPaidCents: null,
     currency: "USD",
     confidence: 0.9,
     rawTextSummary: "Example Event receipt",
@@ -865,6 +866,55 @@ describe("listing validation", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.maxListPriceCents).toBe(11250);
+  });
+
+  it("allows all above-ticket-price receipt charges using total paid minus ticket price", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({
+        officialFaceValueCents: null,
+        found: true,
+        vendor: "primary-web",
+        reason: "confirmed-official-web-fallback",
+        officialEventDate: "2026-07-31",
+        officialEventTime: "7:00 PM",
+        officialVenueName: "Duke's Live Music",
+      }),
+      sellerTitle: "Danny Michel",
+      sellerDate: "2026-07-31 7:00 PM",
+      sellerVenue: "Duke's Live Music",
+      sellerSection: "Bar",
+      sellerRow: "1",
+      sellerSeat: "4",
+      purchaseQuantity: 2,
+      priceCents: 10914,
+      sellerFaceValueCents: 9000,
+      adminFeePaidCents: 1914,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventTitle: "Danny Michel at Duke's Live Music",
+        artistOrTeam: "Danny Michel",
+        venue: "Duke's Live Music",
+        eventDate: null,
+        eventTime: null,
+        ticketQuantity: 2,
+        seats: [
+          { section: "Bar", row: "1", seat: "4" },
+          { section: "Bar", row: "1", seat: "3" },
+        ],
+        faceValueCents: 9000,
+        totalFaceValueCents: 18000,
+        serviceFeesCents: 658,
+        totalServiceFeesCents: 1316,
+        totalPaidCents: 21828,
+        currency: "CAD",
+        rawTextSummary: "Danny Michel at Duke's Live Music. Quantity 2. Ticket price CA$180.00. Fees CA$13.16. HST CA$25.12. Total Paid CAD CA$218.28.",
+      }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.maxListPriceCents).toBe(10914);
   });
 
   it("shows source-provided service fee differences when available", () => {

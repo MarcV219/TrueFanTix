@@ -15,6 +15,7 @@ const openAiResponse = {
     totalFaceValueCents: 20000,
     serviceFeesCents: 1500,
     totalServiceFeesCents: 3000,
+    totalPaidCents: 23000,
     currency: "CAD",
     confidence: 0.9,
     rawTextSummary: "Ticket purchase receipt",
@@ -80,7 +81,7 @@ describe("receipt OCR upload formats", () => {
     expect(prompt).toContain('venue "Casino Rama Resort"');
     expect(prompt).toContain('date "2026-06-26 9:00 PM"');
     expect(prompt).toContain("If a visible receipt date omits the year but its month/day matches the expected listing date");
-    expect(prompt).toContain("include every non-face-value fee visibly paid");
+    expect(prompt).toContain("include every non-face-value amount visibly paid");
     expect(prompt).toContain("order processing fees");
     expect(prompt).toContain("facility fees");
     expect(prompt).toContain("Preserve visible seat ranges exactly");
@@ -147,6 +148,7 @@ describe("receipt OCR upload formats", () => {
           totalFaceValueCents: 25500,
           serviceFeesCents: 1215,
           totalServiceFeesCents: 3645,
+          totalPaidCents: 29145,
           rawTextSummary:
             "Ticketmaster page for Ice Cube at Casino Rama Resort, Rama, ON. Visible date/time: Fri Jun 26, 9:00 PM. Selected location Sec N, Row 13. Quantity 3 Standard Adult Tickets at CA $97.15 each. Face Value CA $255.00; Service Fee CA $36.45.",
         }),
@@ -181,6 +183,7 @@ describe("receipt OCR upload formats", () => {
           totalFaceValueCents: 120000,
           serviceFeesCents: 5700,
           totalServiceFeesCents: 22800,
+          totalPaidCents: 142800,
           currency: "USD",
           rawTextSummary:
             "Ticketmaster Chicago Bears vs. Green Bay Packers at Soldier Field, Chicago, IL. UPPER (400 LEVEL) • Sec 429 • Row 34 • Seats 3-6. 4 tickets. Face Value x4 US$1,200.00; Service Fee x4 US$228.00.",

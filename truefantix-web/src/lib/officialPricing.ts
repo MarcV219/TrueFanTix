@@ -221,6 +221,23 @@ function trustedPrimaryDomain(u: string): boolean {
   return allow.some((d) => h.includes(d));
 }
 
+function likelyOfficialEventWebResult({ url, text, title, venue }: { url: string; text: string; title: string; venue: string }) {
+  const host = hostFromUrl(url);
+  if (!host) return false;
+  if (/\b(facebook|instagram|reddit|youtube|x\.com|twitter|tiktok)\b/.test(host)) return false;
+
+  const normalizedText = text.toLowerCase();
+  const titleScore = overlap(normalizeTitle(title), text);
+  const requestedVenueName = venueName(venue);
+  const venueScore = requestedVenueName ? overlap(requestedVenueName, text) : 1;
+  const hasEventLanguage = /\b(ticket|tickets|show|concert|event|performance|live music|admission|seat|seating|doors)\b/.test(normalizedText);
+  const hostLooksRelevant =
+    overlap(requestedVenueName, host.replace(/\./g, " ")) >= 0.5 ||
+    overlap(normalizeTitle(title), host.replace(/\./g, " ")) >= 0.5;
+
+  return titleScore >= 0.6 && venueScore >= 0.6 && hasEventLanguage && (hostLooksRelevant || venueScore >= 0.8);
+}
+
 function ticketmasterEventIdFromUrl(u: string): string | null {
   try {
     const url = new URL(u);
@@ -270,6 +287,11 @@ function ticketmasterSnapshotFromEvent(ev: any, tmVenueName?: string | null): Of
   };
 }
 
+function sellerEventTime(ticket: TicketLike): string | null {
+  const match = ticket.date.match(/\b(\d{1,2}:\d{2}\s*(?:AM|PM))\b/i);
+  return match?.[1]?.toUpperCase().replace(/\s+/, " ") ?? null;
+}
+
 async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSnapshot | null> {
   const brave = process.env.BRAVE_API_KEY;
   if (!brave) return null;
@@ -291,15 +313,16 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
 
   for (const r of results) {
     const url = String(r?.url || "");
-    if (!trustedPrimaryDomain(url)) continue;
 
     const text = `${r?.title || ""} ${r?.description || ""} ${url}`;
     const score = overlap(normalizeTitle(ticket.title), text);
     const hasDate = textHasDate(text, ymd);
     const hasCity = !city || text.toLowerCase().includes(city);
     const hasVenue = !requestedVenueName || overlap(requestedVenueName, text) >= 0.6;
+    const trusted = trustedPrimaryDomain(url);
+    const likelyOfficial = likelyOfficialEventWebResult({ url, text, title: ticket.title, venue: ticket.venue });
 
-    if (score >= 0.6 && hasDate && hasCity && hasVenue) {
+    if (score >= 0.6 && hasDate && hasCity && hasVenue && (trusted || likelyOfficial)) {
       const sellout = webTextSoldOutSignal(text);
       const ticketmasterEventId = ticketmasterEventIdFromUrl(url);
 
@@ -328,7 +351,11 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
         soldOut: sellout.soldOut,
         soldOutSource: sellout.source,
         sourceUrl: url,
-        reason: "confirmed-primary-web-fallback",
+        reason: trusted ? "confirmed-primary-web-fallback" : "confirmed-official-web-fallback",
+        officialEventTitle: normalizeTitle(ticket.title) || null,
+        officialEventDate: ymd,
+        officialEventTime: sellerEventTime(ticket),
+        officialVenueName: requestedVenueName || null,
       };
     }
   }
@@ -339,6 +366,8 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
 export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<OfficialSnapshot> {
   const key = process.env.TICKETMASTER_API_KEY;
   if (!key) {
+    const fb = await fallbackPrimaryWebConfirm(ticket);
+    if (fb) return fb;
     return { found: false, vendor: "none", officialFaceValueCents: null, soldOut: null, sourceUrl: null, reason: "missing-ticketmaster-key" };
   }
 

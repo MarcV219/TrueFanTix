@@ -156,7 +156,8 @@ function receiptHasTicketEvidence(receipt: ReceiptOcrReview) {
     receipt.totalFaceValueCents != null ||
     receipt.serviceFeesCents != null ||
     receipt.totalServiceFeesCents != null ||
-    /\b(ticket|tickets|standard adult|quantity|face value|service fee|subtotal)\b/i.test(receipt.rawTextSummary ?? "")
+    receipt.totalPaidCents != null ||
+    /\b(ticket|tickets|standard adult|quantity|face value|service fee|subtotal|total paid|hst|tax)\b/i.test(receipt.rawTextSummary ?? "")
   );
 }
 
@@ -180,7 +181,7 @@ function moneyTextToCents(value: string | null | undefined): number | null {
 function receiptAdditionalFeeTotalCents(receipt: ReceiptOcrReview): number {
   const summary = receipt.rawTextSummary ?? "";
   const feeTotalsByLabel = new Map<string, number>();
-  const feePattern = /\b([A-Za-z][A-Za-z\s-]{0,48}?fee(?:s)?)\b[^$A-Z0-9]*(?:CA|US|USD|CAD)?\s*\$?\s*(\d+(?:\.\d{1,2})?)/gi;
+  const feePattern = /\b([A-Za-z][A-Za-z\s-]{0,48}?(?:fee(?:s)?|hst|gst|pst|qst|tax(?:es)?))\b[^$A-Z0-9]*(?:CA|US|USD|CAD)?\s*\$?\s*(\d+(?:\.\d{1,2})?)/gi;
 
   for (const match of summary.matchAll(feePattern)) {
     const label = match[1].trim().toLowerCase().replace(/\s+/g, " ");
@@ -213,6 +214,12 @@ function receiptAdminFeesCents(receipt: ReceiptOcrReview): number | null {
   const quantity = typeof receipt.ticketQuantity === "number" && receipt.ticketQuantity > 0
     ? receipt.ticketQuantity
     : null;
+
+  if (receipt.totalPaidCents != null && receipt.totalFaceValueCents != null && quantity) {
+    const totalExtraPaidCents = Math.max(0, receipt.totalPaidCents - receipt.totalFaceValueCents);
+    return Math.round(totalExtraPaidCents / quantity);
+  }
+
   const additionalFeeTotal = receiptAdditionalFeeTotalCents(receipt);
   const serviceFeeLineTotal = receiptServiceFeeLineTotalCents(receipt);
 

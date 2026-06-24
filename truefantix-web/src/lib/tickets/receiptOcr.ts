@@ -23,6 +23,7 @@ export type ReceiptOcrReview = {
   totalFaceValueCents: number | null;
   serviceFeesCents: number | null;
   totalServiceFeesCents: number | null;
+  totalPaidCents: number | null;
   currency: string | null;
   confidence: number;
   rawTextSummary: string | null;
@@ -56,6 +57,7 @@ function unavailable(reason: string, status: ReceiptOcrReview["status"] = "unava
     totalFaceValueCents: null,
     serviceFeesCents: null,
     totalServiceFeesCents: null,
+    totalPaidCents: null,
     currency: null,
     confidence: 0,
     rawTextSummary: null,
@@ -167,6 +169,18 @@ function extractReceiptTimeText(value: string | null): string | null {
   return value.match(/\b\d{1,2}:\d{2}\s*(?:AM|PM)\b/i)?.[0]?.toUpperCase() ?? null;
 }
 
+function extractTotalPaidCents(value: string | null): number | null {
+  if (!value) return null;
+  const matches = Array.from(
+    value.matchAll(/\b(?:total\s+paid|total|order\s+total|amount\s+paid|grand\s+total)\b[^$0-9]*(?:CAD|USD|CA|US)?\s*\$?\s*(\d+(?:\.\d{1,2})?)/gi)
+  );
+  const cents = matches
+    .map((match) => normalizeCents(Number(match[1]) * 100))
+    .filter((item): item is number => item != null);
+  if (!cents.length) return null;
+  return Math.max(...cents);
+}
+
 function normalizeBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
@@ -237,6 +251,7 @@ function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string,
   const totalFaceValueCents = normalizeCents(parsed.totalFaceValueCents);
   const serviceFeesCents = normalizeCents(parsed.serviceFeesCents);
   const totalServiceFeesCents = normalizeCents(parsed.totalServiceFeesCents);
+  const totalPaidCents = normalizeCents(parsed.totalPaidCents) ?? extractTotalPaidCents(normalizeString(parsed.rawTextSummary));
   const ticketQuantity = normalizeNumber(parsed.ticketQuantity);
   const rawTextSummary = normalizeString(parsed.rawTextSummary);
   const seats = normalizeSeats(parsed.seats);
@@ -252,7 +267,8 @@ function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string,
     totalFaceValueCents != null ||
     serviceFeesCents != null ||
     totalServiceFeesCents != null ||
-    /\b(ticket|tickets|standard adult|quantity|face value|service fee)\b/i.test(rawTextSummary ?? "");
+    totalPaidCents != null ||
+    /\b(ticket|tickets|standard adult|quantity|face value|service fee|total paid|hst|tax)\b/i.test(rawTextSummary ?? "");
 
   const receiptEvidence =
     ticketEvidence &&
@@ -282,6 +298,7 @@ function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string,
     totalFaceValueCents,
     serviceFeesCents,
     totalServiceFeesCents,
+    totalPaidCents,
     currency: normalizeString(parsed.currency),
     confidence,
     rawTextSummary,
@@ -338,6 +355,7 @@ export async function analyzeReceiptProof({
       "totalFaceValueCents",
       "serviceFeesCents",
       "totalServiceFeesCents",
+      "totalPaidCents",
       "currency",
       "confidence",
       "rawTextSummary",
@@ -369,6 +387,7 @@ export async function analyzeReceiptProof({
       totalFaceValueCents: { type: ["number", "null"] },
       serviceFeesCents: { type: ["number", "null"], description: "Per-ticket total non-face-value fees in cents, including service, processing, order, facility, delivery, convenience, or other admin fees." },
       totalServiceFeesCents: { type: ["number", "null"], description: "Total non-face-value fees in cents across all tickets, including service, processing, order, facility, delivery, convenience, or other admin fees." },
+      totalPaidCents: { type: ["number", "null"], description: "Grand total paid in cents across all tickets, including ticket price, all fees, and all taxes such as HST/GST/PST/QST/sales tax." },
       currency: { type: ["string", "null"] },
       confidence: { type: "number" },
       rawTextSummary: { type: ["string", "null"] },
@@ -401,7 +420,7 @@ export async function analyzeReceiptProof({
                   "If a visible receipt date omits the year but its month/day matches the expected listing date, return the expected YYYY-MM-DD date. " +
                   "If the visible month/day conflicts with the expected date, return the visible date text rather than forcing a match. " +
                   "Return null for missing fields. Amounts must be integer cents. " +
-                  "For faceValueCents, use ticket face value only. For serviceFeesCents and totalServiceFeesCents, include every non-face-value fee visibly paid: service fees, order processing fees, processing fees, facility fees, delivery fees, convenience fees, admin fees, and similar fee lines. Prefer per-ticket values; also fill totals when visible.",
+                  "For faceValueCents, use ticket face value only. For serviceFeesCents and totalServiceFeesCents, include every non-face-value amount visibly paid: service fees, order processing fees, processing fees, facility fees, delivery fees, convenience fees, admin fees, HST, GST, PST, QST, sales tax, and similar fee or tax lines. Prefer per-ticket values; also fill totals when visible. For totalPaidCents, use the grand total paid across all tickets including ticket price, fees, and taxes.",
               },
               receiptInputContent(receiptDataUrl, receiptFileName),
             ],

@@ -268,4 +268,45 @@ describe("official pricing lookup", () => {
     expect(result.officialFaceValueCents).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("confirms non-Ticketmaster events from official venue web results when Ticketmaster has no match", async () => {
+    const fetchMock = jest.spyOn(global, "fetch");
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ _embedded: { events: [] } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          web: {
+            results: [
+              {
+                title: "Danny Michel - Duke's Live Music",
+                description: "Danny Michel concert at Duke's Live Music on July 31, 2026 at 7:00 PM. Tickets and reserved seating available.",
+                url: "https://www.dukeslivemusic.com/2026-shows/danny-michel",
+              },
+            ],
+          },
+        }),
+      } as Response);
+
+    const result = await fetchOfficialSnapshot({
+      title: "Danny Michel",
+      date: "2026-07-31 7:00 PM",
+      venue: "Duke's Live Music",
+      primaryVendor: "Other",
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.vendor).toBe("primary-web");
+    expect(result.reason).toBe("confirmed-official-web-fallback");
+    expect(result.officialEventTitle).toBe("Danny Michel");
+    expect(result.officialEventDate).toBe("2026-07-31");
+    expect(result.officialEventTime).toBe("7:00 PM");
+    expect(result.officialVenueName).toBe("Duke's Live Music");
+    expect(result.sourceUrl).toBe("https://www.dukeslivemusic.com/2026-shows/danny-michel");
+  });
 });
