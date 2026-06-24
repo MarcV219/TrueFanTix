@@ -64,6 +64,29 @@ function receiptReviewFromEvidence(value: unknown): ReceiptOcrReview | null {
   }
 }
 
+function receiptShowsResaleOnly(receiptReview: any) {
+  const text = [
+    receiptReview?.rawTextSummary,
+    receiptReview?.reason,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return /\b(verified resale|resale tickets?|fan-to-fan|secondary market)\b/.test(text);
+}
+
+function officialWithReceiptSelloutSignal<T extends { soldOut: boolean | null; soldOutSource?: string | null }>(official: T, receiptReview: any): T {
+  if (typeof official.soldOut === "boolean") return official;
+  if (!receiptShowsResaleOnly(receiptReview)) return official;
+
+  return {
+    ...official,
+    soldOut: true,
+    soldOutSource: "receipt-resale-signal",
+  };
+}
+
 export async function GET(req: Request) {
   try {
     const ticketId = parseTicketIdFromUrl(req);
@@ -286,7 +309,7 @@ export async function PATCH(req: Request) {
       return badRequest("Admin fees paid must be 0 or greater.");
     }
 
-    const official = await fetchOfficialSnapshot({
+    let official = await fetchOfficialSnapshot({
       title,
       date,
       venue,
@@ -303,6 +326,8 @@ export async function PATCH(req: Request) {
         expectedVenue: venue,
         expectedEventDate: date,
       });
+
+    official = officialWithReceiptSelloutSignal(official, receiptReview);
 
     const listingCheck = validateListingPriceAgainstOfficial({
       official,

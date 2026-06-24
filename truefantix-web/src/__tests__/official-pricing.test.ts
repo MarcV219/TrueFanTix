@@ -36,14 +36,17 @@ function mockTicketmasterResponse(events: TicketmasterEventFixture[]) {
 
 describe("official pricing lookup", () => {
   const originalTicketmasterKey = process.env.TICKETMASTER_API_KEY;
+  const originalBraveKey = process.env.BRAVE_API_KEY;
 
   beforeEach(() => {
     process.env.TICKETMASTER_API_KEY = "test-ticketmaster-key";
+    process.env.BRAVE_API_KEY = "test-brave-key";
     jest.restoreAllMocks();
   });
 
   afterAll(() => {
     process.env.TICKETMASTER_API_KEY = originalTicketmasterKey;
+    process.env.BRAVE_API_KEY = originalBraveKey;
   });
 
   it("rejects Ticketmaster matches when the submitted venue name is wrong", async () => {
@@ -197,5 +200,72 @@ describe("official pricing lookup", () => {
     expect(result.officialFaceValueCents).toBe(9500);
     expect(result.officialPriceRangeMinCents).toBe(6500);
     expect(result.officialPriceRangeMaxCents).toBe(9500);
+  });
+
+  it("resolves Ticketmaster event detail by id when broad event search misses but web fallback finds the event URL", async () => {
+    const fetchMock = jest.spyOn(global, "fetch");
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ _embedded: { events: [] } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          web: {
+            results: [
+              {
+                title: "Green Bay Packers vs Minnesota Vikings Tickets",
+                description: "Official tickets for Sun Nov 15, 2026 at Lambeau Field, Green Bay.",
+                url: "https://www.ticketmaster.com/green-bay-packers-vs-minnesota-vikings-green-bay-wisconsin-11-15-2026/event/0700646BCF6D88C8",
+              },
+            ],
+          },
+        }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ...ticketmasterEvent,
+          name: "Green Bay Packers vs Minnesota Vikings",
+          url: "https://www.ticketmaster.com/green-bay-packers-vs-minnesota-vikings-green-bay-wisconsin-11-15-2026/event/0700646BCF6D88C8",
+          dates: {
+            start: {
+              localDate: "2026-11-15",
+              localTime: "12:00:00",
+              dateTime: "2026-11-15T18:00:00Z",
+            },
+            status: { code: "onsale" },
+          },
+          priceRanges: [{ type: "verified resale", min: 350, max: 500 }],
+          _embedded: {
+            venues: [
+              {
+                name: "Lambeau Field",
+                city: { name: "Green Bay" },
+              },
+            ],
+          },
+        }),
+      } as Response);
+
+    const result = await fetchOfficialSnapshot({
+      title: "Green Bay Packers vs Minnesota Vikings",
+      date: "2026-11-15 12:00 PM",
+      venue: "Lambeau Field",
+      primaryVendor: "Ticketmaster",
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.vendor).toBe("ticketmaster");
+    expect(result.reason).toBe("confirmed-ticketmaster-event-id-fallback");
+    expect(result.sourceUrl).toContain("/event/0700646BCF6D88C8");
+    expect(result.soldOut).toBe(true);
+    expect(result.soldOutSource).toBe("ticketmaster-resale-only");
+    expect(result.officialFaceValueCents).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

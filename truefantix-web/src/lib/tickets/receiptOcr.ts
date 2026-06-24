@@ -396,6 +396,7 @@ export async function analyzeReceiptProof({
                   `Expected listing context: event title "${expectedEventTitle || "unknown"}", venue "${expectedVenue || "unknown"}", date "${expectedEventDate || "unknown"}". ` +
                   "Only report values visibly present on the receipt. Do not infer fees or seats. " +
                   "Preserve visible seat ranges exactly in the seat field, for example Seats 3-6 should be seat \"3-6\" with the visible section and row; do not split ranges unless individual seats are visibly listed separately. " +
+                  "Preserve visible ticket type wording in rawTextSummary, especially Standard Admission, Standard Adult, Verified Resale Ticket, resale ticket, fan-to-fan, or similar labels. " +
                   "For Ticketmaster receipts, the event date often appears near the event title like 'Fri Jun 26, 9:00 PM'. " +
                   "If a visible receipt date omits the year but its month/day matches the expected listing date, return the expected YYYY-MM-DD date. " +
                   "If the visible month/day conflicts with the expected date, return the visible date text rather than forcing a match. " +

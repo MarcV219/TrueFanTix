@@ -85,6 +85,8 @@ describe("receipt OCR upload formats", () => {
     expect(prompt).toContain("facility fees");
     expect(prompt).toContain("Preserve visible seat ranges exactly");
     expect(prompt).toContain('Seats 3-6 should be seat "3-6"');
+    expect(prompt).toContain("Preserve visible ticket type wording");
+    expect(prompt).toContain("Verified Resale Ticket");
   });
 
   it("normalizes visible month/day receipt dates to the expected event year when they match", async () => {

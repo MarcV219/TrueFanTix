@@ -138,6 +138,17 @@ function soldOutSignal(ev: any, statusCode: string | null, priceRanges: ReturnTy
   return { soldOut: null as boolean | null, source: null as string | null };
 }
 
+function webTextSoldOutSignal(text: string) {
+  const normalized = text.toLowerCase();
+  if (/\b(verified resale|resale tickets?|fan-to-fan|secondary market)\b/.test(normalized)) {
+    return { soldOut: true, source: "primary-web-resale-signal" };
+  }
+  if (/\b(sold out|no tickets available|tickets are not currently available|currently unavailable|offsale|off sale)\b/.test(normalized)) {
+    return { soldOut: true, source: "primary-web-sold-out-text" };
+  }
+  return { soldOut: null as boolean | null, source: null as string | null };
+}
+
 function tokenize(s: string): string[] {
   return (s || "")
     .toLowerCase()
@@ -210,9 +221,59 @@ function trustedPrimaryDomain(u: string): boolean {
   return allow.some((d) => h.includes(d));
 }
 
+function ticketmasterEventIdFromUrl(u: string): string | null {
+  try {
+    const url = new URL(u);
+    if (!url.hostname.toLowerCase().includes("ticketmaster.")) return null;
+    return url.pathname.match(/\/event\/([A-Za-z0-9]+)/)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchTicketmasterEventById(key: string, eventId: string): Promise<any | null> {
+  const url = `https://app.ticketmaster.com/discovery/v2/events/${encodeURIComponent(eventId)}.json?${new URLSearchParams({ apikey: key }).toString()}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
+}
+
+function ticketmasterSnapshotFromEvent(ev: any, tmVenueName?: string | null): OfficialSnapshot {
+  const ranges = usablePriceRanges(ev);
+  const min = ranges.min;
+  const max = ranges.max;
+  const minCents = min == null ? null : Math.round(Number(min) * 100);
+  const maxCents = max == null ? null : Math.round(Number(max) * 100);
+  // Conservative original fair value estimate: use primary/standard range only, never resale-only pricing.
+  const face = max ?? min;
+
+  const statusCode = String(ev?.dates?.status?.code || "").toLowerCase() || null;
+  const sellout = soldOutSignal(ev, statusCode, ranges);
+  const venue = tmVenueName || String(ev?._embedded?.venues?.[0]?.name || "") || null;
+
+  return {
+    found: true,
+    vendor: "ticketmaster",
+    officialFaceValueCents: face == null ? null : Math.round(Number(face) * 100),
+    officialPriceRangeMinCents: minCents,
+    officialPriceRangeMaxCents: maxCents,
+    officialServiceFeesCents: null,
+    officialServiceFeeSource: null,
+    officialStatusCode: statusCode,
+    soldOut: sellout.soldOut,
+    soldOutSource: sellout.source,
+    sourceUrl: ev?.url ?? null,
+    officialEventTitle: String(ev?.name || "") || null,
+    officialEventDate: toYmd(ev?.dates?.start?.dateTime || ev?.dates?.start?.localDate || null),
+    officialEventTime: officialEventTime(ev),
+    officialVenueName: venue,
+  };
+}
+
 async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSnapshot | null> {
   const brave = process.env.BRAVE_API_KEY;
   if (!brave) return null;
+  const ticketmasterKey = process.env.TICKETMASTER_API_KEY;
 
   const q = `${normalizeTitle(ticket.title)} ${ticket.date} ${ticket.venue} official tickets`;
   const sp = new URLSearchParams({ q, count: "10", country: "US", search_lang: "en" });
@@ -239,6 +300,22 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
     const hasVenue = !requestedVenueName || overlap(requestedVenueName, text) >= 0.6;
 
     if (score >= 0.6 && hasDate && hasCity && hasVenue) {
+      const sellout = webTextSoldOutSignal(text);
+      const ticketmasterEventId = ticketmasterEventIdFromUrl(url);
+
+      if (ticketmasterKey && ticketmasterEventId) {
+        const eventDetail = await fetchTicketmasterEventById(ticketmasterKey, ticketmasterEventId);
+        if (eventDetail) {
+          const snapshot = ticketmasterSnapshotFromEvent(eventDetail);
+          return {
+            ...snapshot,
+            soldOut: snapshot.soldOut ?? sellout.soldOut,
+            soldOutSource: snapshot.soldOutSource ?? sellout.source,
+            reason: "confirmed-ticketmaster-event-id-fallback",
+          };
+        }
+      }
+
       return {
         found: true,
         vendor: "primary-web",
@@ -248,8 +325,8 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
         officialServiceFeesCents: null,
         officialServiceFeeSource: null,
         officialStatusCode: null,
-        soldOut: null,
-        soldOutSource: null,
+        soldOut: sellout.soldOut,
+        soldOutSource: sellout.source,
         sourceUrl: url,
         reason: "confirmed-primary-web-fallback",
       };
@@ -439,32 +516,5 @@ export async function fetchOfficialSnapshot(ticket: TicketLike): Promise<Officia
 
   const ev = best.ev;
 
-  const ranges = usablePriceRanges(ev);
-  const min = ranges.min;
-  const max = ranges.max;
-  const minCents = min == null ? null : Math.round(Number(min) * 100);
-  const maxCents = max == null ? null : Math.round(Number(max) * 100);
-  // Conservative original fair value estimate: use primary/standard range only, never resale-only pricing.
-  const face = max ?? min;
-
-  const statusCode = String(ev?.dates?.status?.code || "").toLowerCase() || null;
-  const sellout = soldOutSignal(ev, statusCode, ranges);
-
-  return {
-    found: true,
-    vendor: "ticketmaster",
-    officialFaceValueCents: face == null ? null : Math.round(Number(face) * 100),
-    officialPriceRangeMinCents: minCents,
-    officialPriceRangeMaxCents: maxCents,
-    officialServiceFeesCents: null,
-    officialServiceFeeSource: null,
-    officialStatusCode: statusCode,
-    soldOut: sellout.soldOut,
-    soldOutSource: sellout.source,
-    sourceUrl: ev?.url ?? null,
-    officialEventTitle: String(ev?.name || "") || null,
-    officialEventDate: toYmd(ev?.dates?.start?.dateTime || ev?.dates?.start?.localDate || null),
-    officialEventTime: officialEventTime(ev),
-    officialVenueName: best.tmVenueName || null,
-  };
+  return ticketmasterSnapshotFromEvent(ev, best.tmVenueName);
 }

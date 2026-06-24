@@ -135,6 +135,29 @@ function hasActionableValidationMismatch(ticket: any, officialSync: any) {
   return false;
 }
 
+function receiptShowsResaleOnly(receiptReview: any) {
+  const text = [
+    receiptReview?.rawTextSummary,
+    receiptReview?.reason,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return /\b(verified resale|resale tickets?|fan-to-fan|secondary market)\b/.test(text);
+}
+
+function officialWithReceiptSelloutSignal<T extends { soldOut: boolean | null; soldOutSource?: string | null }>(official: T, receiptReview: any): T {
+  if (typeof official.soldOut === "boolean") return official;
+  if (!receiptShowsResaleOnly(receiptReview)) return official;
+
+  return {
+    ...official,
+    soldOut: true,
+    soldOutSource: "receipt-resale-signal",
+  };
+}
+
 async function findDuplicateSeatListing(params: {
   sellerId: string;
   title: string;
@@ -345,6 +368,23 @@ export async function GET(req: Request) {
         confirmedMaxListPriceCents != null ? priceCents > confirmedMaxListPriceCents : false;
       const isPriceUnconfirmed = displayedConfirmedFaceValueCents == null;
       const isValidationMismatch = hasActionableValidationMismatch(t, officialSync);
+      const eventPayload = includeEvent && eventAny
+        ? {
+            id: eventAny.id,
+            title: eventAny.title,
+            venue: eventAny.venue,
+            date: eventAny.date,
+            selloutStatus: eventAny.selloutStatus,
+          }
+        : includeEvent && officialSync?.soldOut === true
+          ? {
+              id: null,
+              title: t.title,
+              venue: t.venue,
+              date: t.date,
+              selloutStatus: "SOLD_OUT",
+            }
+          : null;
 
       return {
         id: t.id,
@@ -420,16 +460,7 @@ export async function GET(req: Request) {
         barcodeType: (t as any).barcodeType ?? null,
         barcodeLast4: (t as any).barcodeLast4 ?? null,
 
-        event:
-          includeEvent && eventAny
-            ? {
-                id: eventAny.id,
-                title: eventAny.title,
-                venue: eventAny.venue,
-                date: eventAny.date,
-                selloutStatus: eventAny.selloutStatus,
-              }
-            : null,
+        event: eventPayload,
 
         createdAt: t.createdAt,
         updatedAt: t.updatedAt,
@@ -626,7 +657,7 @@ export async function POST(req: Request) {
       barcodeType,
     });
 
-    const official = await fetchOfficialSnapshot({
+    let official = await fetchOfficialSnapshot({
       title,
       date,
       venue,
@@ -640,6 +671,8 @@ export async function POST(req: Request) {
       expectedVenue: venue,
       expectedEventDate: date,
     });
+
+    official = officialWithReceiptSelloutSignal(official, receiptReview);
 
     const listingCheck = validateListingPriceAgainstOfficial({
       official,
