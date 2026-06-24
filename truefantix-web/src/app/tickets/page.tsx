@@ -555,8 +555,8 @@ export default function TicketsPage() {
                 const selected = selectedTicketIds.includes(ticket.id);
 
                 return (
-                  <div key={ticket.id} className="relative min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
-                    <label className="absolute left-3 top-3 z-10 inline-flex items-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-sm font-bold text-gray-900 shadow ring-1 ring-gray-200 dark:bg-gray-900/95 dark:text-white dark:ring-gray-700">
+                  <div key={ticket.id} className="min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
+                    <label className="mb-2 inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-bold text-gray-900 shadow ring-1 ring-gray-200 dark:bg-gray-900 dark:text-white dark:ring-gray-700">
                       <input
                         type="checkbox"
                         checked={selected}
