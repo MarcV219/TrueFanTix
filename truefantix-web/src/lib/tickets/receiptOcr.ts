@@ -194,6 +194,43 @@ function normalizeSeats(value: unknown): ReceiptSeat[] {
   });
 }
 
+function addUniqueSeat(seats: ReceiptSeat[], seat: ReceiptSeat) {
+  const normalized = {
+    section: normalizeString(seat.section),
+    row: normalizeString(seat.row),
+    seat: normalizeString(seat.seat),
+  };
+  if (!normalized.section && !normalized.row && !normalized.seat) return;
+
+  const key = [normalized.section, normalized.row, normalized.seat]
+    .map((part) => String(part ?? "").trim().toLowerCase())
+    .join("|");
+  const exists = seats.some((item) => {
+    return [item.section, item.row, item.seat]
+      .map((part) => String(part ?? "").trim().toLowerCase())
+      .join("|") === key;
+  });
+  if (!exists) seats.push(normalized);
+}
+
+function extractSeatsFromSummary(value: string | null): ReceiptSeat[] {
+  if (!value) return [];
+
+  const seats: ReceiptSeat[] = [];
+  const pattern =
+    /\b(?:sec(?:tion)?\.?)\s*([A-Z0-9-]+)\b[\s,.;|•]*(?:row\.?)\s*([A-Z0-9-]+)\b(?:[\s,.;|•]*(?:seats?|seat\.?)\s*([A-Z0-9]+(?:\s*(?:-|–|—|to|through)\s*[A-Z0-9]+)?))?/gi;
+
+  for (const match of value.matchAll(pattern)) {
+    addUniqueSeat(seats, {
+      section: match[1] ?? null,
+      row: match[2] ?? null,
+      seat: match[3]?.replace(/[–—]/g, "-") ?? null,
+    });
+  }
+
+  return seats;
+}
+
 function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string, expectedEventDate?: string | null): ReceiptOcrReview {
   const confidence = Math.max(0, Math.min(1, normalizeNumber(parsed.confidence) ?? 0));
   const faceValueCents = normalizeCents(parsed.faceValueCents);
@@ -201,8 +238,9 @@ function receiptReviewFromParsed(parsed: Record<string, unknown>, model: string,
   const serviceFeesCents = normalizeCents(parsed.serviceFeesCents);
   const totalServiceFeesCents = normalizeCents(parsed.totalServiceFeesCents);
   const ticketQuantity = normalizeNumber(parsed.ticketQuantity);
-  const seats = normalizeSeats(parsed.seats);
   const rawTextSummary = normalizeString(parsed.rawTextSummary);
+  const seats = normalizeSeats(parsed.seats);
+  for (const summarySeat of extractSeatsFromSummary(rawTextSummary)) addUniqueSeat(seats, summarySeat);
   const eventDate = normalizeReceiptDate(parsed.eventDate, expectedEventDate) ??
     normalizeReceiptDate(extractReceiptDateText(rawTextSummary), expectedEventDate);
   const eventTime = normalizeString(parsed.eventTime) ?? extractReceiptTimeText(rawTextSummary);
@@ -357,6 +395,7 @@ export async function analyzeReceiptProof({
                   `Extract ticket purchase receipt data from this upload. File name: ${receiptFileName || "receipt"}. ` +
                   `Expected listing context: event title "${expectedEventTitle || "unknown"}", venue "${expectedVenue || "unknown"}", date "${expectedEventDate || "unknown"}". ` +
                   "Only report values visibly present on the receipt. Do not infer fees or seats. " +
+                  "Preserve visible seat ranges exactly in the seat field, for example Seats 3-6 should be seat \"3-6\" with the visible section and row; do not split ranges unless individual seats are visibly listed separately. " +
                   "For Ticketmaster receipts, the event date often appears near the event title like 'Fri Jun 26, 9:00 PM'. " +
                   "If a visible receipt date omits the year but its month/day matches the expected listing date, return the expected YYYY-MM-DD date. " +
                   "If the visible month/day conflicts with the expected date, return the visible date text rather than forcing a match. " +

@@ -83,6 +83,8 @@ describe("receipt OCR upload formats", () => {
     expect(prompt).toContain("include every non-face-value fee visibly paid");
     expect(prompt).toContain("order processing fees");
     expect(prompt).toContain("facility fees");
+    expect(prompt).toContain("Preserve visible seat ranges exactly");
+    expect(prompt).toContain('Seats 3-6 should be seat "3-6"');
   });
 
   it("normalizes visible month/day receipt dates to the expected event year when they match", async () => {
@@ -159,6 +161,38 @@ describe("receipt OCR upload formats", () => {
     expect(result.eventDate).toBe("2026-06-26");
     expect(result.eventTime).toBe("9:00 PM");
     expect(result.ok).toBe(true);
+  });
+
+  it("recovers Ticketmaster section row and seat range from the raw summary", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output_text: JSON.stringify({
+          ...JSON.parse(openAiResponse.output_text),
+          eventTitle: "Chicago Bears vs. Green Bay Packers",
+          venue: "Soldier Field",
+          eventDate: "2026-12-25",
+          eventTime: "12:00 PM",
+          ticketQuantity: 4,
+          seats: [],
+          faceValueCents: 30000,
+          totalFaceValueCents: 120000,
+          serviceFeesCents: 5700,
+          totalServiceFeesCents: 22800,
+          currency: "USD",
+          rawTextSummary:
+            "Ticketmaster Chicago Bears vs. Green Bay Packers at Soldier Field, Chicago, IL. UPPER (400 LEVEL) • Sec 429 • Row 34 • Seats 3-6. 4 tickets. Face Value x4 US$1,200.00; Service Fee x4 US$228.00.",
+        }),
+      }),
+    } as Response);
+
+    const result = await analyzeReceiptProof({
+      receiptDataUrl: "data:application/pdf;base64,JVBERi0=",
+      receiptFileName: "ticketmaster-receipt.pdf",
+      expectedEventDate: "2026-12-25 12:00 PM",
+    });
+
+    expect(result.seats).toEqual([{ section: "429", row: "34", seat: "3-6" }]);
   });
 
   it("rejects unsupported upload formats before OCR", async () => {
