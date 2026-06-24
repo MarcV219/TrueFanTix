@@ -1593,45 +1593,6 @@ function Body({ me }: { me: MeUser }) {
             fontWeight: 800,
           }}
         >
-          <div style={{ display: "grid", gap: 4 }}>
-            <div>Confirmed face value: {centsToMoney(pricingConfirmation.officialFaceValueCents, listingCurrency)} {listingCurrency}</div>
-            {eligibleFeesCents != null ? (
-              <div>Verified eligible fees paid: {centsToMoney(eligibleFeesCents, listingCurrency)} {listingCurrency}</div>
-            ) : null}
-            {(pricingConfirmation.officialPriceRangeMinCents != null || pricingConfirmation.officialPriceRangeMaxCents != null) ? (
-              <div>
-                Ticketmaster price range:{" "}
-                {centsRangeToMoney(pricingConfirmation.officialPriceRangeMinCents, pricingConfirmation.officialPriceRangeMaxCents)}
-              </div>
-            ) : null}
-            {pricingConfirmation.officialServiceFeesCents != null ? (
-              <div>Ticketmaster service fees: {officialServiceFeesLabel(pricingConfirmation)}</div>
-            ) : null}
-            {pricingConfirmation.soldOut != null || pricingConfirmation.officialStatusCode ? (
-              <div>Ticketmaster sold-out status: {soldOutLabel(pricingConfirmation)}</div>
-            ) : null}
-            {pricingConfirmation.officialVenueName ? (
-              <div>Ticketmaster venue: {pricingConfirmation.officialVenueName}</div>
-            ) : null}
-            {pricingConfirmation.officialEventDate ? (
-              <div>Ticketmaster event date: {pricingConfirmation.officialEventDate}</div>
-            ) : null}
-            {pricingConfirmation.officialEventTime ? (
-              <div>Ticketmaster event time: {pricingConfirmation.officialEventTime}</div>
-            ) : null}
-            <div>
-              Maximum list price:{" "}
-              {pricingConfirmation.officialFaceValueCents != null && eligibleFeesCents != null && pricingConfirmation.maxListPriceCents != null
-                ? `${centsToMoney(pricingConfirmation.officialFaceValueCents, listingCurrency)} face value + ${centsToMoney(eligibleFeesCents, listingCurrency)} eligible fees = ${centsToMoney(pricingConfirmation.maxListPriceCents, listingCurrency)} ${listingCurrency}`
-                : `${centsToMoney(pricingConfirmation.maxListPriceCents, listingCurrency)} ${listingCurrency}`}
-            </div>
-            {pricingConfirmation.sourceUrl ? (
-              <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>
-                Open Ticketmaster source
-              </a>
-            ) : null}
-          </div>
-
           {pricingConfirmation.sourceIssues?.length ? (
             <div style={{ display: "grid", gap: 8 }}>
               {pricingConfirmation.sourceIssues.map((issue) => {
@@ -1678,6 +1639,56 @@ function Body({ me }: { me: MeUser }) {
               })}
             </div>
           ) : null}
+
+          <div
+            style={{
+              display: "grid",
+              gap: 4,
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid rgba(15, 23, 42, 0.08)",
+              background: "rgba(241, 245, 249, 0.9)",
+              color: "rgba(51, 65, 85, 1)",
+              fontWeight: 800,
+            }}
+          >
+            <div>Confirmed face value: {centsToMoney(pricingConfirmation.officialFaceValueCents, listingCurrency)} {listingCurrency}</div>
+            {eligibleFeesCents != null ? (
+              <div>Verified eligible fees paid: {centsToMoney(eligibleFeesCents, listingCurrency)} {listingCurrency}</div>
+            ) : null}
+            {(pricingConfirmation.officialPriceRangeMinCents != null || pricingConfirmation.officialPriceRangeMaxCents != null) ? (
+              <div>
+                Ticketmaster price range:{" "}
+                {centsRangeToMoney(pricingConfirmation.officialPriceRangeMinCents, pricingConfirmation.officialPriceRangeMaxCents)}
+              </div>
+            ) : null}
+            {pricingConfirmation.officialServiceFeesCents != null ? (
+              <div>Ticketmaster service fees: {officialServiceFeesLabel(pricingConfirmation)}</div>
+            ) : null}
+            {pricingConfirmation.soldOut != null || pricingConfirmation.officialStatusCode ? (
+              <div>Ticketmaster sold-out status: {soldOutLabel(pricingConfirmation)}</div>
+            ) : null}
+            {pricingConfirmation.officialVenueName ? (
+              <div>Ticketmaster venue: {pricingConfirmation.officialVenueName}</div>
+            ) : null}
+            {pricingConfirmation.officialEventDate ? (
+              <div>Ticketmaster event date: {pricingConfirmation.officialEventDate}</div>
+            ) : null}
+            {pricingConfirmation.officialEventTime ? (
+              <div>Ticketmaster event time: {pricingConfirmation.officialEventTime}</div>
+            ) : null}
+            <div>
+              Maximum list price:{" "}
+              {pricingConfirmation.officialFaceValueCents != null && eligibleFeesCents != null && pricingConfirmation.maxListPriceCents != null
+                ? `${centsToMoney(pricingConfirmation.officialFaceValueCents, listingCurrency)} face value + ${centsToMoney(eligibleFeesCents, listingCurrency)} eligible fees = ${centsToMoney(pricingConfirmation.maxListPriceCents, listingCurrency)} ${listingCurrency}`
+                : `${centsToMoney(pricingConfirmation.maxListPriceCents, listingCurrency)} ${listingCurrency}`}
+            </div>
+            {pricingConfirmation.sourceUrl ? (
+              <a href={pricingConfirmation.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "rgba(29, 78, 216, 1)" }}>
+                Open Ticketmaster source
+              </a>
+            ) : null}
+          </div>
 
           {(pricingConfirmation.receiptRequired || pricingConfirmation.sellerConfirmationRequired) ? (
             <div>Upload the purchase receipt and confirm the receipt values before listing.</div>
