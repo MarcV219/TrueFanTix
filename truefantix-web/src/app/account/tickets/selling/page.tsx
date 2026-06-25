@@ -2538,20 +2538,7 @@ function Body({ me }: { me: MeUser }) {
               {listingSuccessMessage}
             </div>
           ) : hasListingWarnings ? (
-            <div
-              role="status"
-              style={{
-                padding: 12,
-                borderRadius: 10,
-                border: "1px solid rgba(220, 38, 38, 0.35)",
-                background: "rgba(254, 242, 242, 1)",
-                color: "rgba(153, 27, 27, 1)",
-                fontWeight: 950,
-                textAlign: "center",
-              }}
-            >
-              Tickets not listed, please address warnings below
-            </div>
+            warningPanel
           ) : (
             <button
               type="submit"
@@ -2572,8 +2559,6 @@ function Body({ me }: { me: MeUser }) {
               {busy ? "Listing..." : !sellerApproved ? "Seller verification required" : "List Tickets"}
             </button>
           )}
-
-          {warningPanel}
         </form>
       </Card>
 
