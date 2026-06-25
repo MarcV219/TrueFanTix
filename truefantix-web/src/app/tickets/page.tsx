@@ -437,17 +437,23 @@ export default function TicketsPage() {
     let alive = true;
     const timer = window.setTimeout(async () => {
       try {
-        const allParams = new URLSearchParams({ q: query, type: "ALL", limit: "10" });
-        const cityParams = new URLSearchParams({ q: query, type: "CITY", limit: "8" });
-        const [allResult, cityResult] = await Promise.allSettled([
-          fetch(`/api/catalog/suggestions?${allParams.toString()}`, { cache: "no-store" }).then((res) => res.json()),
-          fetch(`/api/catalog/suggestions?${cityParams.toString()}`, { cache: "no-store" }).then((res) => res.json()),
-        ]);
-        const allData = allResult.status === "fulfilled" ? allResult.value : {};
-        const cityData = cityResult.status === "fulfilled" ? cityResult.value : {};
-        const allSuggestions = Array.isArray(allData?.suggestions) ? allData.suggestions as CatalogSuggestion[] : [];
-        const citySuggestions = Array.isArray(cityData?.suggestions) ? cityData.suggestions as CatalogSuggestion[] : [];
-        const suggestions = mergeCatalogSuggestions(citySuggestions, allSuggestions).slice(0, 14);
+        const suggestionGroups = [
+          new URLSearchParams({ q: query, type: "ARTIST", limit: "8" }),
+          new URLSearchParams({ q: query, type: "CITY", limit: "8" }),
+          new URLSearchParams({ q: query, type: "VENUE", limit: "8" }),
+          new URLSearchParams({ q: query, type: "SHOW", limit: "6" }),
+          new URLSearchParams({ q: query, type: "ALL", limit: "10" }),
+        ];
+        const results = await Promise.allSettled(
+          suggestionGroups.map((params) =>
+            fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" }).then((res) => res.json())
+          )
+        );
+        const suggestionLists = results.map((result) => {
+          const data = result.status === "fulfilled" ? result.value : {};
+          return Array.isArray(data?.suggestions) ? data.suggestions as CatalogSuggestion[] : [];
+        });
+        const suggestions = mergeCatalogSuggestions(...suggestionLists).slice(0, 18);
         if (!alive) return;
 
         setSearchSuggestions(suggestions);
@@ -512,10 +518,20 @@ export default function TicketsPage() {
     const hasRadiusFilter = Boolean(distanceCenter && radiusKm);
 
     return tickets.filter((ticket: any) => {
-      if (searchQuery && !searchCenter) {
-        const query = searchQuery.toLowerCase();
-        const searchable = `${ticket.title} ${ticket.venue} ${ticket.city} ${ticket.eventTypeLabel}`.toLowerCase();
-        if (!searchable.includes(query)) return false;
+      const query = searchQuery.toLowerCase().trim();
+      const searchable = `${ticket.title} ${ticket.venue} ${ticket.city} ${ticket.eventTypeLabel}`.toLowerCase();
+      const textMatchesSearch = !query || searchable.includes(query);
+      const radiusMatchesSearch =
+        !hasRadiusFilter || (distanceCenter && radiusKm && isTicketWithinRadius(ticket, distanceCenter, radiusKm));
+
+      if (query) {
+        if (searchCenter) {
+          if (!textMatchesSearch && !radiusMatchesSearch) return false;
+        } else {
+          if (!textMatchesSearch || !radiusMatchesSearch) return false;
+        }
+      } else if (!radiusMatchesSearch) {
+        return false;
       }
 
       if (priceRange !== "all") {
@@ -555,10 +571,6 @@ export default function TicketsPage() {
           e.setHours(23, 59, 59, 999);
           if (td > e) return false;
         }
-      }
-
-      if (hasRadiusFilter) {
-        if (!distanceCenter || !radiusKm || !isTicketWithinRadius(ticket, distanceCenter, radiusKm)) return false;
       }
 
       return true;
