@@ -5,7 +5,13 @@ import type { TicketCardView } from "@/lib/ticketsView";
 
 const DEFAULT_IMAGE = "/default.jpg";
 
-export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
+export default function TicketCard({
+  ticket,
+  onViewTicket,
+}: {
+  ticket: TicketCardView;
+  onViewTicket?: () => void;
+}) {
   const venueLocation = [ticket.venueAddress, ticket.city, ticket.province, ticket.country].filter(Boolean).join(", ");
 
   return (
@@ -78,7 +84,11 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
         </div>
 
         <div className="mt-auto flex gap-2">
-          <Link href={`/tickets/${ticket.id}`} className="flex-1 text-center bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+          <Link
+            href={`/tickets/${ticket.id}`}
+            onClick={onViewTicket}
+            className="flex-1 text-center bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
+          >
             View Ticket
           </Link>
         </div>

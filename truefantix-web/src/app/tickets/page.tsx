@@ -17,11 +17,24 @@ import type { TicketCardView } from "@/lib/ticketsView";
 
 type Ticket = TicketCardView;
 type RadiusUnit = "km" | "mi";
+type BrowseFilters = {
+  searchQuery: string;
+  radiusValue: string;
+  radiusUnit: RadiusUnit;
+  eventType: string;
+  priceRange: string;
+  priceTagFilter: string;
+  soldOutOnly: boolean;
+  startDate: string;
+  endDate: string;
+};
 
 const DEFAULT_RADIUS_VALUE = "50";
 const DEFAULT_RADIUS_UNIT: RadiusUnit = "km";
 const RADIUS_PREF_PREFIX = "truefantix:tickets:radius";
 const ANONYMOUS_RADIUS_PREF_KEY = `${RADIUS_PREF_PREFIX}:anonymous`;
+const RETURN_FILTERS_KEY = "truefantix:tickets:returnFilters";
+const RETURN_PENDING_KEY = "truefantix:tickets:returnPending";
 const FILTER_QUERY_KEYS = ["q", "radius", "unit", "type", "price", "priceTag", "soldOut", "start", "end"];
 
 function radiusPreferenceKey(userId: unknown) {
@@ -66,38 +79,134 @@ function getInitialQueryParam(key: string) {
   return new URLSearchParams(window.location.search).get(key) || "";
 }
 
-function getInitialRadiusValue() {
+function normalizeRadiusUnit(value: unknown): RadiusUnit {
+  return value === "mi" ? "mi" : "km";
+}
+
+function defaultBrowseFilters(): BrowseFilters {
+  return {
+    searchQuery: "",
+    radiusValue: readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.value ?? DEFAULT_RADIUS_VALUE,
+    radiusUnit: readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.unit ?? DEFAULT_RADIUS_UNIT,
+    eventType: "all",
+    priceRange: "all",
+    priceTagFilter: "all",
+    soldOutOnly: false,
+    startDate: "",
+    endDate: "",
+  };
+}
+
+function hasFilterQueryParams() {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return FILTER_QUERY_KEYS.some((key) => params.has(key));
+}
+
+function isTicketDetailReferrer() {
+  if (typeof document === "undefined" || !document.referrer) return false;
+
+  try {
+    const referrer = new URL(document.referrer);
+    return referrer.origin === window.location.origin && /^\/tickets\/[^/]+\/?$/.test(referrer.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function readReturnFilters(): BrowseFilters | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(RETURN_FILTERS_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<BrowseFilters>;
+    const radiusValue = String(parsed.radiusValue || "").trim();
+    const numericRadius = Number(radiusValue);
+    if (!radiusValue || !Number.isFinite(numericRadius) || numericRadius <= 0) return null;
+
+    return {
+      searchQuery: String(parsed.searchQuery || ""),
+      radiusValue,
+      radiusUnit: normalizeRadiusUnit(parsed.radiusUnit),
+      eventType: String(parsed.eventType || "all"),
+      priceRange: String(parsed.priceRange || "all"),
+      priceTagFilter: String(parsed.priceTagFilter || "all"),
+      soldOutOnly: parsed.soldOutOnly === true,
+      startDate: String(parsed.startDate || ""),
+      endDate: String(parsed.endDate || ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function shouldRestoreReturnFilters() {
+  if (typeof window === "undefined") return false;
+  return window.sessionStorage.getItem(RETURN_PENDING_KEY) === "1" || isTicketDetailReferrer();
+}
+
+function getFiltersFromUrl(): BrowseFilters {
+  const defaults = defaultBrowseFilters();
   const fromUrl = getInitialQueryParam("radius");
   const numeric = Number(fromUrl);
-  if (fromUrl && Number.isFinite(numeric) && numeric > 0) return fromUrl;
-  return readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.value ?? DEFAULT_RADIUS_VALUE;
+
+  return {
+    searchQuery: getInitialQueryParam("q"),
+    radiusValue: fromUrl && Number.isFinite(numeric) && numeric > 0 ? fromUrl : defaults.radiusValue,
+    radiusUnit: normalizeRadiusUnit(getInitialQueryParam("unit") || defaults.radiusUnit),
+    eventType: getInitialQueryParam("type") || "all",
+    priceRange: getInitialQueryParam("price") || "all",
+    priceTagFilter: getInitialQueryParam("priceTag") || "all",
+    soldOutOnly: getInitialQueryParam("soldOut") === "1",
+    startDate: getInitialQueryParam("start"),
+    endDate: getInitialQueryParam("end"),
+  };
 }
 
-function getInitialRadiusUnit(): RadiusUnit {
-  const fromUrl = getInitialQueryParam("unit");
-  if (fromUrl === "mi" || fromUrl === "km") return fromUrl;
-  return readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.unit ?? DEFAULT_RADIUS_UNIT;
+function getInitialBrowseFilters(): BrowseFilters {
+  if (hasFilterQueryParams()) return getFiltersFromUrl();
+
+  if (shouldRestoreReturnFilters()) {
+    const filters = readReturnFilters();
+    if (filters) return filters;
+  }
+
+  return defaultBrowseFilters();
 }
 
-function getInitialSelectValue(key: string, fallback: string) {
-  return getInitialQueryParam(key) || fallback;
+function writeReturnFilters(filters: BrowseFilters) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.sessionStorage.setItem(RETURN_FILTERS_KEY, JSON.stringify(filters));
+  } catch {
+    // Ignore storage failures; browser Back can still restore normal page state.
+  }
 }
 
-function getInitialSoldOutOnly() {
-  return getInitialQueryParam("soldOut") === "1";
+function markTicketReturnPending() {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.sessionStorage.setItem(RETURN_PENDING_KEY, "1");
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
-function writeFilterQuery(params: {
-  searchQuery: string;
-  radiusValue: string;
-  radiusUnit: RadiusUnit;
-  eventType: string;
-  priceRange: string;
-  priceTagFilter: string;
-  soldOutOnly: boolean;
-  startDate: string;
-  endDate: string;
-}) {
+function clearTicketReturnPending() {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.sessionStorage.removeItem(RETURN_PENDING_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function writeFilterQuery(params: BrowseFilters) {
   if (typeof window === "undefined") return;
 
   const next = new URLSearchParams(window.location.search);
@@ -120,23 +229,24 @@ function writeFilterQuery(params: {
 
 export default function TicketsPage() {
   const router = useRouter();
+  const [initialFilters] = useState(() => getInitialBrowseFilters());
+  const [shouldPreserveInitialRadius] = useState(() => hasFilterQueryParams() || shouldRestoreReturnFilters());
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState(() => getInitialQueryParam("q"));
-  const [priceRange, setPriceRange] = useState(() => getInitialSelectValue("price", "all"));
-  const [eventType, setEventType] = useState(() => getInitialSelectValue("type", "all"));
-  const [priceTagFilter, setPriceTagFilter] = useState(() => getInitialSelectValue("priceTag", "all"));
-  const [soldOutOnly, setSoldOutOnly] = useState(() => getInitialSoldOutOnly());
-  const [startDate, setStartDate] = useState(() => getInitialQueryParam("start"));
-  const [endDate, setEndDate] = useState(() => getInitialQueryParam("end"));
+  const [searchQuery, setSearchQuery] = useState(initialFilters.searchQuery);
+  const [priceRange, setPriceRange] = useState(initialFilters.priceRange);
+  const [eventType, setEventType] = useState(initialFilters.eventType);
+  const [priceTagFilter, setPriceTagFilter] = useState(initialFilters.priceTagFilter);
+  const [soldOutOnly, setSoldOutOnly] = useState(initialFilters.soldOutOnly);
+  const [startDate, setStartDate] = useState(initialFilters.startDate);
+  const [endDate, setEndDate] = useState(initialFilters.endDate);
   const [radiusPreferenceStorageKey, setRadiusPreferenceStorageKey] = useState(ANONYMOUS_RADIUS_PREF_KEY);
-  const [radiusValue, setRadiusValue] = useState(() => getInitialRadiusValue());
-  const [radiusUnit, setRadiusUnit] = useState<RadiusUnit>(() => getInitialRadiusUnit());
-  const [hasInitialRadiusQuery] = useState(() => Boolean(getInitialQueryParam("radius") || getInitialQueryParam("unit")));
+  const [radiusValue, setRadiusValue] = useState(initialFilters.radiusValue);
+  const [radiusUnit, setRadiusUnit] = useState<RadiusUnit>(initialFilters.radiusUnit);
   const [homeCoords, setHomeCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
@@ -181,7 +291,7 @@ export default function TicketsPage() {
           setRadiusPreferenceStorageKey(nextPreferenceKey);
 
           const savedRadiusPreference = readRadiusPreference(nextPreferenceKey);
-          if (savedRadiusPreference && !hasInitialRadiusQuery) {
+          if (savedRadiusPreference && !shouldPreserveInitialRadius) {
             setRadiusValue(savedRadiusPreference.value);
             setRadiusUnit(savedRadiusPreference.unit);
           }
@@ -200,7 +310,7 @@ export default function TicketsPage() {
     return () => {
       cancelled = true;
     };
-  }, [hasInitialRadiusQuery]);
+  }, [shouldPreserveInitialRadius]);
 
   useEffect(() => {
     writeRadiusPreference(radiusPreferenceStorageKey, radiusValue, radiusUnit);
@@ -218,7 +328,22 @@ export default function TicketsPage() {
       startDate,
       endDate,
     });
+    writeReturnFilters({
+      searchQuery,
+      radiusValue,
+      radiusUnit,
+      eventType,
+      priceRange,
+      priceTagFilter,
+      soldOutOnly,
+      startDate,
+      endDate,
+    });
   }, [endDate, eventType, priceRange, priceTagFilter, radiusUnit, radiusValue, searchQuery, soldOutOnly, startDate]);
+
+  useEffect(() => {
+    clearTicketReturnPending();
+  }, []);
 
   // Fetch dynamic images for tickets
   async function fetchImagesForTickets(ticketList: Ticket[]) {
@@ -498,6 +623,21 @@ export default function TicketsPage() {
     setEndDate("");
   };
 
+  function rememberReturnFilters() {
+    writeReturnFilters({
+      searchQuery,
+      radiusValue,
+      radiusUnit,
+      eventType,
+      priceRange,
+      priceTagFilter,
+      soldOutOnly,
+      startDate,
+      endDate,
+    });
+    markTicketReturnPending();
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       {/* Hero */}
@@ -735,7 +875,7 @@ export default function TicketsPage() {
                       />
                       Select
                     </label>
-                    <TicketCard ticket={ticket} />
+                    <TicketCard ticket={ticket} onViewTicket={rememberReturnFilters} />
                     <button
                       type="button"
                       onClick={() => toggleTicketSelection(ticket)}
