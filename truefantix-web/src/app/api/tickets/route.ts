@@ -51,6 +51,75 @@ function catalogProviderId(type: string, value: string) {
   return slug || `${type.toLowerCase()}-receipt-event`;
 }
 
+function normalizeVenueKey(value: unknown) {
+  return normalizeListingText(value);
+}
+
+function parseAliases(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((item) => String(item ?? "").trim()).filter(Boolean);
+
+  const raw = String(value).trim();
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((item) => String(item ?? "").trim()).filter(Boolean);
+  } catch {
+    // Some legacy rows store aliases as a plain delimited string.
+  }
+
+  return raw.split(/[|,;]/).map((item) => item.trim()).filter(Boolean);
+}
+
+async function loadVenueLocations(venues: string[]) {
+  const uniqueVenues = Array.from(new Set(venues.map((venue) => venue.trim()).filter(Boolean)));
+  if (!uniqueVenues.length) return new Map<string, { address: string | null; city: string | null; region: string | null; country: string | null }>();
+
+  const entities = await prisma.catalogEntity.findMany({
+    where: {
+      type: "VENUE",
+      OR: uniqueVenues.flatMap((venue) => [
+        { canonicalName: { equals: venue, mode: "insensitive" as const } },
+        { aliases: { contains: venue, mode: "insensitive" as const } },
+      ]),
+    },
+    select: {
+      canonicalName: true,
+      aliases: true,
+      address: true,
+      city: true,
+      region: true,
+      country: true,
+      popularity: true,
+      lastSeenAt: true,
+    },
+    orderBy: [{ popularity: "desc" }, { lastSeenAt: "desc" }],
+    take: Math.max(uniqueVenues.length * 3, 25),
+  });
+
+  const byVenue = new Map<string, { address: string | null; city: string | null; region: string | null; country: string | null }>();
+  const wanted = new Set(uniqueVenues.map(normalizeVenueKey));
+
+  for (const entity of entities) {
+    const location = {
+      address: entity.address,
+      city: entity.city,
+      region: entity.region,
+      country: entity.country,
+    };
+    const names = [entity.canonicalName, ...parseAliases(entity.aliases)];
+
+    for (const name of names) {
+      const key = normalizeVenueKey(name);
+      if (!key || !wanted.has(key) || byVenue.has(key)) continue;
+      byVenue.set(key, location);
+    }
+  }
+
+  return byVenue;
+}
+
 async function cacheReceiptConfirmedEventTitle({
   type,
   sellerTitle,
@@ -329,6 +398,7 @@ export async function GET(req: Request) {
     const hasNext = tickets.length > take;
     const page = hasNext ? tickets.slice(0, take) : tickets;
     const nextCursor = hasNext ? page[page.length - 1]?.id ?? null : null;
+    const venueLocations = await loadVenueLocations(page.map((ticket) => String(ticket.venue || "")));
 
     const normalized = page.map((t: any) => {
       const priceCents = safeInt((t as any).priceCents);
@@ -385,6 +455,7 @@ export async function GET(req: Request) {
               selloutStatus: "SOLD_OUT",
             }
           : null;
+      const venueLocation = venueLocations.get(normalizeVenueKey(t.venue)) ?? null;
 
       return {
         id: t.id,
@@ -440,6 +511,7 @@ export async function GET(req: Request) {
 
         image: t.image,
         venue: t.venue,
+        venueLocation,
         date: t.date,
         section: (t as any).section ?? null,
         row: (t as any).row ?? null,

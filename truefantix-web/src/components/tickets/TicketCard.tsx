@@ -6,6 +6,8 @@ import type { TicketCardView } from "@/lib/ticketsView";
 const DEFAULT_IMAGE = "/default.jpg";
 
 export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
+  const venueLocation = [ticket.venueAddress, ticket.city, ticket.province, ticket.country].filter(Boolean).join(", ");
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition flex flex-col border border-gray-200 dark:border-gray-700 overflow-hidden">
       {ticket.isSoldOut && (
@@ -49,7 +51,7 @@ export default function TicketCard({ ticket }: { ticket: TicketCardView }) {
         <p className="text-gray-600 dark:text-gray-400 text-sm">{ticket.date}</p>
         <p className="text-gray-500 dark:text-gray-500 text-sm mb-1">{ticket.venue}</p>
         <p className="text-gray-500 dark:text-gray-500 text-xs mb-1">
-          {ticket.city}, {ticket.province}, {ticket.country}
+          {venueLocation}
         </p>
 
         {(ticket.section || ticket.row || ticket.seat) && (

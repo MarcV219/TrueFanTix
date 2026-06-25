@@ -7,6 +7,12 @@ export type ApiTicketLike = {
   title: string;
   date: string;
   venue: string;
+  venueLocation?: {
+    address?: string | null;
+    city?: string | null;
+    region?: string | null;
+    country?: string | null;
+  } | null;
   section?: string | null;
   row?: string | null;
   seat?: string | null;
@@ -38,6 +44,7 @@ export type TicketCardView = {
   title: string;
   date: string;
   venue: string;
+  venueAddress: string | null;
   city: string;
   province: string;
   country: string;
@@ -190,6 +197,41 @@ export function parseVenue(venue: string): { city: string; province: string; cou
   return { city: tail, province: "ON", country: "Canada" };
 }
 
+const US_REGION_CODES = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","IA","ID","IL","IN","KS","KY","LA","MA","MD","ME","MI","MN","MO","MS","MT","NC","ND","NE","NH","NJ","NM","NV","NY","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VA","VT","WA","WI","WV","WY","DC"]);
+const CA_REGION_CODES = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
+
+function normalizeCountryLabel(country: string) {
+  const upper = country.trim().toUpperCase();
+  if (upper === "CA" || upper === "CAN") return "Canada";
+  if (upper === "US" || upper === "USA") return "USA";
+  return country.trim();
+}
+
+function inferCountryFromRegion(region: string) {
+  const code = region.trim().toUpperCase();
+  if (CA_REGION_CODES.has(code)) return "Canada";
+  if (US_REGION_CODES.has(code)) return "USA";
+  return "";
+}
+
+export function venueInfoFromLocation(
+  venue: string,
+  venueLocation?: ApiTicketLike["venueLocation"]
+): { address: string | null; city: string; province: string; country: string } {
+  const parsed = parseVenue(venue);
+  const address = String(venueLocation?.address ?? "").trim();
+  const city = String(venueLocation?.city ?? "").trim();
+  const province = String(venueLocation?.region ?? "").trim();
+  const country = String(venueLocation?.country ?? "").trim();
+
+  return {
+    address: address || null,
+    city: city || parsed.city,
+    province: province || parsed.province,
+    country: (country && normalizeCountryLabel(country)) || inferCountryFromRegion(province) || parsed.country,
+  };
+}
+
 const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
   toronto: { lat: 43.6532, lon: -79.3832 },
   barrie: { lat: 44.3894, lon: -79.6903 },
@@ -285,7 +327,7 @@ function eventTypeFromType(type: string | null | undefined, fallbackTitle: strin
 }
 
 export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
-  const venueInfo = parseVenue(t.venue || "");
+  const venueInfo = venueInfoFromLocation(t.venue || "", t.venueLocation ?? null);
   const eventTypeInfo = eventTypeFromType(t.eventTypeOverride ?? null, t.title || "");
   const isSoldOut = t.event?.selloutStatus === "SOLD_OUT";
   const price = Number(t.price ?? (typeof t.priceCents === 'number' ? t.priceCents / 100 : 0));
@@ -307,6 +349,7 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
     title: t.title,
     date: t.date,
     venue: t.venue,
+    venueAddress: venueInfo.address,
     city: venueInfo.city,
     province: venueInfo.province,
     country: venueInfo.country,
