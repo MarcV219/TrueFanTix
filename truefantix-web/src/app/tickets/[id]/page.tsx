@@ -5,7 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import { getTicketImage, getPlaceholderImage } from "@/lib/imageSearch";
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
-import { formatMoney, normalizeCurrency } from "@/lib/ticketsView";
+import { formatMoney, normalizeCurrency, venueInfoFromLocation } from "@/lib/ticketsView";
+import { searchProviderCatalog } from "@/lib/catalog/provider-catalog";
 import PurchaseButton from "./PurchaseButton";
 
 interface TicketPageProps {
@@ -51,6 +52,9 @@ async function getTicket(id: string) {
       event: {
         select: {
           id: true,
+          title: true,
+          venue: true,
+          date: true,
           selloutStatus: true,
         },
       },
@@ -120,6 +124,69 @@ function getEventTypeInfo(title: string) {
   return { type: "other", label: "Other", class: "bg-gray-100 text-gray-800" };
 }
 
+function getEventTypeInfoFromType(type: string | null | undefined, fallbackTitle: string) {
+  const normalized = String(type || "").trim().toLowerCase();
+  const map: Record<string, { type: string; label: string; class: string }> = {
+    "sports-basketball": { type: "sports-basketball", label: "Sports: Basketball", class: "bg-orange-100 text-orange-800" },
+    "sports-hockey": { type: "sports-hockey", label: "Sports: Hockey", class: "bg-blue-100 text-blue-800" },
+    "sports-baseball": { type: "sports-baseball", label: "Sports: Baseball", class: "bg-red-100 text-red-800" },
+    "sports-football": { type: "sports-football", label: "Sports: Football", class: "bg-brown-100 text-brown-800" },
+    "sports-soccer": { type: "sports-soccer", label: "Sports: Soccer", class: "bg-green-100 text-green-800" },
+    "sports-lacrosse": { type: "sports-lacrosse", label: "Sports: Lacrosse", class: "bg-purple-100 text-purple-800" },
+    "sports-other": { type: "sports-other", label: "Sports: Other", class: "bg-blue-100 text-blue-800" },
+    concert: { type: "concert", label: "Concert", class: "bg-pink-100 text-pink-800" },
+    theatre: { type: "theatre", label: "Theatre", class: "bg-amber-100 text-amber-800" },
+    comedy: { type: "comedy", label: "Comedy", class: "bg-yellow-100 text-yellow-800" },
+    conference: { type: "conference", label: "Conference", class: "bg-indigo-100 text-indigo-800" },
+    festival: { type: "festival", label: "Festival", class: "bg-green-100 text-green-800" },
+    gala: { type: "gala", label: "Gala", class: "bg-purple-100 text-purple-800" },
+    opera: { type: "opera", label: "Opera", class: "bg-red-100 text-red-800" },
+    workshop: { type: "workshop", label: "Workshop", class: "bg-teal-100 text-teal-800" },
+    other: { type: "other", label: "Other", class: "bg-gray-100 text-gray-800" },
+  };
+  return map[normalized] ?? getEventTypeInfo(fallbackTitle);
+}
+
+function normalizeVenueCountry(country: string | null | undefined) {
+  const upper = String(country || "").trim().toUpperCase();
+  if (upper === "CA" || upper === "CAN") return "Canada";
+  if (upper === "US" || upper === "USA") return "USA";
+  return String(country || "").trim();
+}
+
+async function resolveVenueLocation(venue: string) {
+  const suggestions = await searchProviderCatalog({
+    query: venue,
+    type: "VENUE",
+    limit: 10,
+    includeProviders: false,
+  });
+
+  const key = venue.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const exact = suggestions.find((suggestion) =>
+    String(suggestion.canonicalName || suggestion.label || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim() === key
+  );
+  const best = exact ?? suggestions[0];
+  if (!best) return null;
+
+  return {
+    address: best.address ?? null,
+    city: best.city ?? null,
+    region: best.region ?? null,
+    country: normalizeVenueCountry(best.country),
+  };
+}
+
+function eventTitleWithVenue(title: string, venue: string) {
+  const t = title.trim();
+  const v = venue.trim();
+  if (!v || t.toLowerCase().includes(v.toLowerCase())) return t;
+  return `${t} at ${v}`;
+}
+
 export default async function TicketDetailPage({ params }: TicketPageProps) {
   const { id } = await params;
   const ticket = await getTicket(id);
@@ -152,27 +219,27 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   const isBelowFaceValue = maxFairListPrice && price < maxFairListPrice;
   const isFaceValue = maxFairListPrice && price === maxFairListPrice;
   const isSoldOut = event?.selloutStatus === "SOLD_OUT";
+  const eventTitle = event?.title || ticket.title;
+  const eventVenue = event?.venue || ticket.venue;
+  const eventDisplayTitle = eventTitleWithVenue(eventTitle, eventVenue);
+  const venueLocation = await resolveVenueLocation(eventVenue);
+  const venueInfo = venueInfoFromLocation(eventVenue, venueLocation);
+  const locationDisplay = [venueInfo.address, venueInfo.city, venueInfo.province, venueInfo.country].filter(Boolean).join(", ");
 
-  // Get event type info
-  const eventTypeInfo = getEventTypeInfo(ticket.title);
+  // Get seller-selected event category from listing evidence, matching card behavior.
+  const eventTypeInfo = getEventTypeInfoFromType(evidence?.manualEventType ?? evidence?.inferredEventType, ticket.title);
   
   // Fetch dynamic image
   const dynamicImage = await getTicketImage(ticket.title, eventTypeInfo.type);
   const imageToShow = dynamicImage.startsWith("http") ? dynamicImage : getPlaceholderImage(eventTypeInfo.type);
-
-  // Parse venue for location info
-  const venueParts = ticket.venue.split(",").map((p: string) => p.trim());
-  const city = venueParts[1] || "Toronto";
-  const province = "ON";
-  const country = "Canada";
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       {/* Hero */}
       <section className="bg-[var(--tft-navy)] text-white py-12">
         <div className="max-w-4xl mx-auto px-4">
-          <h1 className="text-4xl font-bold mb-2">{ticket.title}</h1>
-          <p className="text-xl text-gray-300">{ticket.venue}</p>
+          <h1 className="text-4xl font-bold mb-2">{eventDisplayTitle}</h1>
+          <p className="text-xl text-gray-300">{eventVenue}</p>
         </div>
       </section>
 
@@ -227,11 +294,11 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600 dark:text-gray-400">Venue:</span>
-                      <span className="font-medium text-gray-900 dark:text-white">{ticket.venue}</span>
+                      <span className="font-medium text-gray-900 dark:text-white">{eventVenue}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600 dark:text-gray-400">Location:</span>
-                      <span className="font-medium text-gray-900 dark:text-white">{city}, {province}, {country}</span>
+                      <span className="font-medium text-gray-900 dark:text-white">{locationDisplay || "Venue location unavailable"}</span>
                     </div>
                     {(ticket.section || ticket.row || ticket.seat) && (
                       <div className="flex justify-between">
