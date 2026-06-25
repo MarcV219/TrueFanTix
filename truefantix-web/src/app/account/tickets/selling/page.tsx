@@ -1116,6 +1116,7 @@ function Body({ me }: { me: MeUser }) {
   const [requestBusy, setRequestBusy] = React.useState<"title" | "venue" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
+  const [listingSuccessMessage, setListingSuccessMessage] = React.useState<string | null>(null);
   const [pricingConfirmation, setPricingConfirmation] = React.useState<PricingConfirmation>(null);
 
   // focus state (obvious boxes)
@@ -1158,6 +1159,50 @@ function Body({ me }: { me: MeUser }) {
       window.clearTimeout(timer);
     };
   }, [title]);
+
+  React.useEffect(() => {
+    if (!listingSuccessMessage) return;
+
+    const hasNewListingInput =
+      title.trim() ||
+      venue.trim() ||
+      date.trim() ||
+      eventCategory ||
+      price.trim() ||
+      faceValue.trim() ||
+      adminFeePaid.trim() !== "0" ||
+      ticketQuantity.trim() !== "1" ||
+      listingCurrency !== "CAD" ||
+      isGeneralAdmission ||
+      receiptProofDataUrl ||
+      receiptFileName ||
+      sellerConfirmedReceiptValues ||
+      selectedTitleSuggestion ||
+      selectedVenueSuggestion ||
+      seating.some((item) => item.section.trim() || item.row.trim() || item.seat.trim());
+
+    if (hasNewListingInput) {
+      setListingSuccessMessage(null);
+    }
+  }, [
+    adminFeePaid,
+    date,
+    eventCategory,
+    faceValue,
+    isGeneralAdmission,
+    listingCurrency,
+    listingSuccessMessage,
+    price,
+    receiptFileName,
+    receiptProofDataUrl,
+    seating,
+    selectedTitleSuggestion,
+    selectedVenueSuggestion,
+    sellerConfirmedReceiptValues,
+    ticketQuantity,
+    title,
+    venue,
+  ]);
 
   React.useEffect(() => {
     const nextQuantity = normalizeTicketQuantity(ticketQuantity);
@@ -1225,6 +1270,7 @@ function Body({ me }: { me: MeUser }) {
     setRequestBusy(kind);
     setError(null);
     setOk(null);
+    setListingSuccessMessage(null);
     try {
       const { res, data } = await fetchJson("/api/catalog/requests", {
         method: "POST",
@@ -1447,6 +1493,7 @@ function Body({ me }: { me: MeUser }) {
     e.preventDefault();
     setError(null);
     setOk(null);
+    setListingSuccessMessage(null);
     setPricingConfirmation(null);
 
     if (!sellerApproved) {
@@ -1554,7 +1601,7 @@ function Body({ me }: { me: MeUser }) {
         }
       }
 
-      setOk(quantity === 1 ? "Ticket listed successfully." : `${quantity} tickets listed successfully.`);
+      setListingSuccessMessage("Tickets successfully listed.");
       setTitle("");
       setSelectedTitleSuggestion(null);
       setTitleSuggestions([]);
@@ -2474,24 +2521,41 @@ function Body({ me }: { me: MeUser }) {
             </label>
           </div>
 
-          <button
-            type="submit"
-            disabled={busy || !sellerApproved}
-            style={{
-              padding: 12,
-              borderRadius: 10,
-              border: "1px solid rgba(0,0,0,0.12)",
-              background:
-                busy || !sellerApproved
-                  ? "rgba(148, 163, 184, 0.18)"
-                  : "rgba(15, 23, 42, 0.92)",
-              color: busy || !sellerApproved ? "rgba(15,23,42,0.55)" : "white",
-              fontWeight: 950,
-              cursor: busy || !sellerApproved ? "not-allowed" : "pointer",
-            }}
-          >
-            {busy ? "Listing…" : !sellerApproved ? "Seller verification required" : "List ticket"}
-          </button>
+          {listingSuccessMessage ? (
+            <div
+              role="status"
+              style={{
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid rgba(34, 197, 94, 0.35)",
+                background: "rgba(240, 253, 244, 1)",
+                color: "rgba(22, 101, 52, 1)",
+                fontWeight: 950,
+                textAlign: "center",
+              }}
+            >
+              {listingSuccessMessage}
+            </div>
+          ) : (
+            <button
+              type="submit"
+              disabled={busy || !sellerApproved}
+              style={{
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid rgba(0,0,0,0.12)",
+                background:
+                  busy || !sellerApproved
+                    ? "rgba(148, 163, 184, 0.18)"
+                    : "rgba(15, 23, 42, 0.92)",
+                color: busy || !sellerApproved ? "rgba(15,23,42,0.55)" : "white",
+                fontWeight: 950,
+                cursor: busy || !sellerApproved ? "not-allowed" : "pointer",
+              }}
+            >
+              {busy ? "Listing..." : !sellerApproved ? "Seller verification required" : "List ticket"}
+            </button>
+          )}
 
           {warningPanel}
         </form>
