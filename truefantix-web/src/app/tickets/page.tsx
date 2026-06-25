@@ -32,7 +32,6 @@ export default function TicketsPage() {
   const [soldOutOnly, setSoldOutOnly] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [locationQuery, setLocationQuery] = useState("");
   const [radiusValue, setRadiusValue] = useState("50");
   const [radiusUnit, setRadiusUnit] = useState<"km" | "mi">("km");
   const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -134,7 +133,7 @@ export default function TicketsPage() {
     setTickets(updatedTickets);
   }
 
-  const radiusCenter = React.useMemo(() => inferCoordsFromCity(locationQuery), [locationQuery]);
+  const searchCenter = React.useMemo(() => inferCoordsFromCity(searchQuery), [searchQuery]);
   const radiusKm = React.useMemo(() => {
     const value = Number(radiusValue);
     if (!Number.isFinite(value) || value <= 0) return null;
@@ -142,10 +141,10 @@ export default function TicketsPage() {
   }, [radiusUnit, radiusValue]);
 
   const filteredTickets = React.useMemo(() => {
-    const hasLocationFilter = Boolean(locationQuery.trim());
+    const hasRadiusFilter = Boolean(searchCenter && radiusKm);
 
     return tickets.filter((ticket: any) => {
-      if (searchQuery) {
+      if (searchQuery && !hasRadiusFilter) {
         const query = searchQuery.toLowerCase();
         const searchable = `${ticket.title} ${ticket.venue} ${ticket.city} ${ticket.eventTypeLabel}`.toLowerCase();
         if (!searchable.includes(query)) return false;
@@ -190,9 +189,8 @@ export default function TicketsPage() {
         }
       }
 
-      if (hasLocationFilter) {
-        if (!radiusCenter || !radiusKm) return false;
-        if (!isTicketWithinRadius(ticket, radiusCenter, radiusKm)) return false;
+      if (hasRadiusFilter) {
+        if (!searchCenter || !radiusKm || !isTicketWithinRadius(ticket, searchCenter, radiusKm)) return false;
       }
 
       return true;
@@ -206,14 +204,13 @@ export default function TicketsPage() {
     soldOutOnly,
     startDate,
     endDate,
-    locationQuery,
-    radiusCenter,
+    searchCenter,
     radiusKm,
   ]);
 
   const sortedFilteredTickets = React.useMemo(
-    () => sortTicketsByPriority(filteredTickets, radiusCenter ?? userCoords),
-    [filteredTickets, radiusCenter, userCoords]
+    () => sortTicketsByPriority(filteredTickets, searchCenter ?? userCoords),
+    [filteredTickets, searchCenter, userCoords]
   );
 
   const selectedTickets = React.useMemo(() => {
@@ -377,7 +374,6 @@ export default function TicketsPage() {
     setSoldOutOnly(false);
     setStartDate("");
     setEndDate("");
-    setLocationQuery("");
     setRadiusValue("50");
     setRadiusUnit("km");
   };
@@ -408,11 +404,38 @@ export default function TicketsPage() {
           <div className="flex flex-col lg:flex-row gap-4">
             <input
               type="text"
-              placeholder="Search events, venues, artists..."
+              placeholder="Search events, venues, artists, towns, cities..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="flex-1 px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
             />
+
+            <div className="flex items-end gap-2">
+              <div>
+                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Within</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={radiusValue}
+                  onChange={(e) => setRadiusValue(e.target.value)}
+                  className="w-24 px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  aria-label="Within"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Unit</label>
+                <select
+                  value={radiusUnit}
+                  onChange={(e) => setRadiusUnit(e.target.value as "km" | "mi")}
+                  className="px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  aria-label="Unit"
+                >
+                  <option value="km">km</option>
+                  <option value="mi">miles</option>
+                </select>
+              </div>
+            </div>
 
             <select
               value={eventType}
@@ -493,42 +516,7 @@ export default function TicketsPage() {
               </div>
             </div>
 
-            <div className="flex items-end gap-3 flex-wrap">
-              <div>
-                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Search near city</label>
-                <input
-                  type="text"
-                  placeholder="City"
-                  value={locationQuery}
-                  onChange={(e) => setLocationQuery(e.target.value)}
-                  className="w-40 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Within</label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={radiusValue}
-                  onChange={(e) => setRadiusValue(e.target.value)}
-                  className="w-24 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Unit</label>
-                <select
-                  value={radiusUnit}
-                  onChange={(e) => setRadiusUnit(e.target.value as "km" | "mi")}
-                  className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                >
-                  <option value="km">km</option>
-                  <option value="mi">miles</option>
-                </select>
-              </div>
-            </div>
-            
-            {(searchQuery || eventType !== "all" || priceRange !== "all" || priceTagFilter !== "all" || soldOutOnly || startDate || endDate || locationQuery || radiusValue !== "50" || radiusUnit !== "km") && (
+            {(searchQuery || eventType !== "all" || priceRange !== "all" || priceTagFilter !== "all" || soldOutOnly || startDate || endDate || radiusValue !== "50" || radiusUnit !== "km") && (
               <button
                 onClick={clearFilters}
                 className="text-blue-600 hover:underline"

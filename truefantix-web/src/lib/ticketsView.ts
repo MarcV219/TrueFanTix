@@ -235,6 +235,7 @@ export function venueInfoFromLocation(
 const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
   toronto: { lat: 43.6532, lon: -79.3832 },
   barrie: { lat: 44.3894, lon: -79.6903 },
+  portcarling: { lat: 45.1177, lon: -79.5787 },
   hamilton: { lat: 43.2557, lon: -79.8711 },
   mississauga: { lat: 43.589, lon: -79.6441 },
   brampton: { lat: 43.7315, lon: -79.7624 },
