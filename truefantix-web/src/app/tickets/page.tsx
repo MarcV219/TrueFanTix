@@ -16,6 +16,49 @@ import {
 import type { TicketCardView } from "@/lib/ticketsView";
 
 type Ticket = TicketCardView;
+type RadiusUnit = "km" | "mi";
+
+const DEFAULT_RADIUS_VALUE = "50";
+const DEFAULT_RADIUS_UNIT: RadiusUnit = "km";
+const RADIUS_PREF_PREFIX = "truefantix:tickets:radius";
+const ANONYMOUS_RADIUS_PREF_KEY = `${RADIUS_PREF_PREFIX}:anonymous`;
+
+function radiusPreferenceKey(userId: unknown) {
+  const id = String(userId || "").trim();
+  return id ? `${RADIUS_PREF_PREFIX}:${id}` : ANONYMOUS_RADIUS_PREF_KEY;
+}
+
+function readRadiusPreference(key: string): { value: string; unit: RadiusUnit } | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as { value?: unknown; unit?: unknown };
+    const value = String(parsed.value || "").trim();
+    const unit = parsed.unit === "mi" ? "mi" : parsed.unit === "km" ? "km" : null;
+    const numeric = Number(value);
+
+    if (!value || !Number.isFinite(numeric) || numeric <= 0 || !unit) return null;
+    return { value, unit };
+  } catch {
+    return null;
+  }
+}
+
+function writeRadiusPreference(key: string, value: string, unit: RadiusUnit) {
+  if (typeof window === "undefined") return;
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return;
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ value, unit }));
+  } catch {
+    // Ignore storage failures; the filters still work for this page view.
+  }
+}
 
 export default function TicketsPage() {
   const router = useRouter();
@@ -32,8 +75,9 @@ export default function TicketsPage() {
   const [soldOutOnly, setSoldOutOnly] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [radiusValue, setRadiusValue] = useState("50");
-  const [radiusUnit, setRadiusUnit] = useState<"km" | "mi">("km");
+  const [radiusPreferenceStorageKey, setRadiusPreferenceStorageKey] = useState(ANONYMOUS_RADIUS_PREF_KEY);
+  const [radiusValue, setRadiusValue] = useState(() => readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.value ?? DEFAULT_RADIUS_VALUE);
+  const [radiusUnit, setRadiusUnit] = useState<RadiusUnit>(() => readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.unit ?? DEFAULT_RADIUS_UNIT);
   const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
@@ -72,6 +116,18 @@ export default function TicketsPage() {
       try {
         const res = await fetch('/api/auth/me', { cache: 'no-store' });
         const json: any = await res.json().catch(() => ({}));
+
+        if (!cancelled) {
+          const nextPreferenceKey = radiusPreferenceKey(json?.user?.id);
+          setRadiusPreferenceStorageKey(nextPreferenceKey);
+
+          const savedRadiusPreference = readRadiusPreference(nextPreferenceKey);
+          if (savedRadiusPreference) {
+            setRadiusValue(savedRadiusPreference.value);
+            setRadiusUnit(savedRadiusPreference.unit);
+          }
+        }
+
         const fromProfile = inferCoordsFromCity(json?.user?.city);
         if (!cancelled && fromProfile) {
           setUserCoords(fromProfile);
@@ -99,6 +155,10 @@ export default function TicketsPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    writeRadiusPreference(radiusPreferenceStorageKey, radiusValue, radiusUnit);
+  }, [radiusPreferenceStorageKey, radiusUnit, radiusValue]);
 
   // Fetch dynamic images for tickets
   async function fetchImagesForTickets(ticketList: Ticket[]) {
@@ -374,8 +434,8 @@ export default function TicketsPage() {
     setSoldOutOnly(false);
     setStartDate("");
     setEndDate("");
-    setRadiusValue("50");
-    setRadiusUnit("km");
+    setRadiusValue(DEFAULT_RADIUS_VALUE);
+    setRadiusUnit(DEFAULT_RADIUS_UNIT);
   };
 
   return (
@@ -427,7 +487,7 @@ export default function TicketsPage() {
                 <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Unit</label>
                 <select
                   value={radiusUnit}
-                  onChange={(e) => setRadiusUnit(e.target.value as "km" | "mi")}
+                  onChange={(e) => setRadiusUnit(e.target.value as RadiusUnit)}
                   className="px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   aria-label="Unit"
                 >
