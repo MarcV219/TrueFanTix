@@ -28,6 +28,17 @@ type BrowseFilters = {
   startDate: string;
   endDate: string;
 };
+type CatalogSuggestion = {
+  type: "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT" | "SHOW" | "OTHER";
+  value: string;
+  label: string;
+  canonicalName?: string;
+  subtitle?: string;
+  city?: string;
+  region?: string;
+  country?: string;
+  metadata?: string | null;
+};
 
 const DEFAULT_RADIUS_VALUE = "50";
 const DEFAULT_RADIUS_UNIT: RadiusUnit = "km";
@@ -206,6 +217,65 @@ function clearTicketReturnPending() {
   }
 }
 
+function parseSuggestionCoords(suggestion: CatalogSuggestion): { lat: number; lon: number } | null {
+  const fallback = inferCoordsFromCity(suggestion.city || suggestion.value || suggestion.label);
+  if (fallback) return fallback;
+
+  try {
+    const metadata = suggestion.metadata ? JSON.parse(suggestion.metadata) : null;
+    const lat = Number(metadata?.lat);
+    const lon = Number(metadata?.lon);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function findBestCitySuggestion(query: string, suggestions: CatalogSuggestion[]) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return null;
+
+  const cities = suggestions.filter((suggestion) => suggestion.type === "CITY");
+  return (
+    cities.find((suggestion) =>
+      [suggestion.label, suggestion.value, suggestion.canonicalName, suggestion.city]
+        .map((value) => normalizeSearchText(value || ""))
+        .some((value) => value === normalizedQuery)
+    ) ?? null
+  );
+}
+
+function mergeCatalogSuggestions(...groups: CatalogSuggestion[][]) {
+  const seen = new Set<string>();
+  const merged: CatalogSuggestion[] = [];
+
+  for (const suggestion of groups.flat()) {
+    const key = [
+      suggestion.type,
+      normalizeSearchText(suggestion.label),
+      normalizeSearchText(suggestion.subtitle || ""),
+      suggestion.region || "",
+      suggestion.country || "",
+    ].join(":");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(suggestion);
+  }
+
+  return merged;
+}
+
+function normalizeSearchText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function writeFilterQuery(params: BrowseFilters) {
   if (typeof window === "undefined") return;
 
@@ -248,6 +318,8 @@ export default function TicketsPage() {
   const [radiusValue, setRadiusValue] = useState(initialFilters.radiusValue);
   const [radiusUnit, setRadiusUnit] = useState<RadiusUnit>(initialFilters.radiusUnit);
   const [homeCoords, setHomeCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [searchSuggestions, setSearchSuggestions] = useState<CatalogSuggestion[]>([]);
+  const [searchSuggestionCoords, setSearchSuggestionCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
     async function fetchTickets() {
@@ -297,9 +369,18 @@ export default function TicketsPage() {
           }
         }
 
-        const fromProfile = inferCoordsFromCity(json?.user?.city);
+        const profileCity = String(json?.user?.city || "").trim();
+        const fromProfile = inferCoordsFromCity(profileCity);
         if (!cancelled && fromProfile) {
           setHomeCoords(fromProfile);
+        } else if (!cancelled && profileCity.length >= 2) {
+          const params = new URLSearchParams({ q: profileCity, type: "CITY", limit: "5" });
+          const cityRes = await fetch(`/api/catalog/suggestions?${params.toString()}`, { cache: "no-store" });
+          const cityJson = await cityRes.json().catch(() => ({}));
+          const suggestions = Array.isArray(cityJson?.suggestions) ? cityJson.suggestions as CatalogSuggestion[] : [];
+          const citySuggestion = findBestCitySuggestion(profileCity, suggestions) ?? suggestions.find((suggestion) => suggestion.type === "CITY");
+          const coords = citySuggestion ? parseSuggestionCoords(citySuggestion) : null;
+          if (!cancelled && coords) setHomeCoords(coords);
         }
       } catch {
         // Keep null; distance filtering needs the saved home city or a searched city.
@@ -345,6 +426,48 @@ export default function TicketsPage() {
     clearTicketReturnPending();
   }, []);
 
+  useEffect(() => {
+    const query = searchQuery.trim();
+    setSearchSuggestionCoords(null);
+
+    if (query.length < 2) {
+      setSearchSuggestions([]);
+      return;
+    }
+
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const allParams = new URLSearchParams({ q: query, type: "ALL", limit: "10" });
+        const cityParams = new URLSearchParams({ q: query, type: "CITY", limit: "8" });
+        const [allResult, cityResult] = await Promise.allSettled([
+          fetch(`/api/catalog/suggestions?${allParams.toString()}`, { cache: "no-store" }).then((res) => res.json()),
+          fetch(`/api/catalog/suggestions?${cityParams.toString()}`, { cache: "no-store" }).then((res) => res.json()),
+        ]);
+        const allData = allResult.status === "fulfilled" ? allResult.value : {};
+        const cityData = cityResult.status === "fulfilled" ? cityResult.value : {};
+        const allSuggestions = Array.isArray(allData?.suggestions) ? allData.suggestions as CatalogSuggestion[] : [];
+        const citySuggestions = Array.isArray(cityData?.suggestions) ? cityData.suggestions as CatalogSuggestion[] : [];
+        const suggestions = mergeCatalogSuggestions(citySuggestions, allSuggestions).slice(0, 14);
+        if (!alive) return;
+
+        setSearchSuggestions(suggestions);
+        const citySuggestion = findBestCitySuggestion(query, suggestions);
+        setSearchSuggestionCoords(citySuggestion ? parseSuggestionCoords(citySuggestion) : null);
+      } catch {
+        if (alive) {
+          setSearchSuggestions([]);
+          setSearchSuggestionCoords(null);
+        }
+      }
+    }, 180);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
+
   // Fetch dynamic images for tickets
   async function fetchImagesForTickets(ticketList: Ticket[]) {
     // Fetch one image per logical event key so identical events stay visually consistent.
@@ -378,7 +501,7 @@ export default function TicketsPage() {
     setTickets(updatedTickets);
   }
 
-  const searchCenter = React.useMemo(() => inferCoordsFromCity(searchQuery), [searchQuery]);
+  const searchCenter = React.useMemo(() => searchSuggestionCoords ?? inferCoordsFromCity(searchQuery), [searchQuery, searchSuggestionCoords]);
   const distanceCenter = searchCenter ?? homeCoords;
   const radiusKm = React.useMemo(() => {
     const value = Number(radiusValue);
@@ -667,8 +790,18 @@ export default function TicketsPage() {
               placeholder="Search events, venues, artists, towns, cities..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              list="browse-ticket-search-suggestions"
               className="flex-1 px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
             />
+            <datalist id="browse-ticket-search-suggestions">
+              {searchSuggestions.map((suggestion) => (
+                <option
+                  key={`${suggestion.type}:${suggestion.label}:${suggestion.subtitle || ""}`}
+                  value={suggestion.label}
+                  label={`${suggestion.type}${suggestion.subtitle ? ` - ${suggestion.subtitle}` : ""}`}
+                />
+              ))}
+            </datalist>
 
             <div className="flex items-end gap-2">
               <div>

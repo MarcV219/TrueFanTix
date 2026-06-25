@@ -53,7 +53,7 @@ function normalizedDisplayName(value: string) {
 function providerRank(provider: string) {
   if (provider === "ticketmaster" || provider === "ticketmaster-city") return 400;
   if (provider === "static") return 300;
-  if (provider === "openstreetmap") return 285;
+  if (provider === "openstreetmap" || provider === "openstreetmap-place") return 285;
   if (provider === "wikidata") return 275;
   if (provider === "geonames") return 250;
   if (provider === "musicbrainz") return 200;
@@ -505,7 +505,11 @@ async function fetchGeoNamesCities(query: string, limit: number) {
         city: name,
         region: region || undefined,
         country: country || undefined,
-        metadata: safeJson({ population: city?.population ?? null }),
+        metadata: safeJson({
+          population: city?.population ?? null,
+          lat: city?.lat == null ? null : String(city.lat),
+          lon: city?.lng == null ? null : String(city.lng),
+        }),
         sourceUrl: `https://www.geonames.org/${id}`,
       };
     })
