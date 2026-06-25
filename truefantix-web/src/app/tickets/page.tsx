@@ -238,13 +238,12 @@ function findBestCitySuggestion(query: string, suggestions: CatalogSuggestion[])
   if (!normalizedQuery) return null;
 
   const cities = suggestions.filter((suggestion) => suggestion.type === "CITY");
-  return (
-    cities.find((suggestion) =>
-      [suggestion.label, suggestion.value, suggestion.canonicalName, suggestion.city]
-        .map((value) => normalizeSearchText(value || ""))
-        .some((value) => value === normalizedQuery)
-    ) ?? null
+  const exactMatches = cities.filter((suggestion) =>
+    [suggestion.label, suggestion.value, suggestion.canonicalName, suggestion.city]
+      .map((value) => normalizeSearchText(value || ""))
+      .some((value) => value === normalizedQuery)
   );
+  return exactMatches.find((suggestion) => parseSuggestionCoords(suggestion)) ?? exactMatches[0] ?? null;
 }
 
 function mergeCatalogSuggestions(...groups: CatalogSuggestion[][]) {
