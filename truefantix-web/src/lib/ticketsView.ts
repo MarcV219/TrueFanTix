@@ -166,7 +166,7 @@ const CITY_REGION: Record<string, { province: string; country: string }> = {
 
 export function parseVenue(venue: string): { city: string; province: string; country: string } {
   const parts = venue.split(",").map((p) => p.trim()).filter(Boolean);
-  const tail = parts.length >= 2 ? parts[parts.length - 1] : "Toronto";
+  const tail = parts.length >= 2 ? parts[parts.length - 1] : "";
   const key = tail.toLowerCase();
   const normalizedKey = normalizeCityKey(tail);
 
@@ -194,7 +194,7 @@ export function parseVenue(venue: string): { city: string; province: string; cou
     return { city: tail, province: "", country: "USA" };
   }
 
-  return { city: tail, province: "ON", country: "Canada" };
+  return { city: tail, province: "", country: "" };
 }
 
 const US_REGION_CODES = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","IA","ID","IL","IN","KS","KY","LA","MA","MD","ME","MI","MN","MO","MS","MT","NC","ND","NE","NH","NJ","NM","NV","NY","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VA","VT","WA","WI","WV","WY","DC"]);

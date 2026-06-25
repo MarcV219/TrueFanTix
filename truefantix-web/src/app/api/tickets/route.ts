@@ -10,6 +10,7 @@ import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
 import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
+import { searchProviderCatalog } from "@/lib/catalog/provider-catalog";
 import { fetchOfficialSnapshot } from "@/lib/officialPricing";
 import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
 import { analyzeReceiptProof } from "@/lib/tickets/receiptOcr";
@@ -72,9 +73,19 @@ function parseAliases(value: unknown): string[] {
   return raw.split(/[|,;]/).map((item) => item.trim()).filter(Boolean);
 }
 
+type VenueLocation = { address: string | null; city: string | null; region: string | null; country: string | null };
+
+function venueLocationScore(location: VenueLocation) {
+  return [location.address, location.city, location.region, location.country].filter((part) => String(part ?? "").trim()).length;
+}
+
+function hasUsableVenueLocation(location: VenueLocation | undefined) {
+  return venueLocationScore(location ?? { address: null, city: null, region: null, country: null }) >= 2;
+}
+
 async function loadVenueLocations(venues: string[]) {
   const uniqueVenues = Array.from(new Set(venues.map((venue) => venue.trim()).filter(Boolean)));
-  if (!uniqueVenues.length) return new Map<string, { address: string | null; city: string | null; region: string | null; country: string | null }>();
+  if (!uniqueVenues.length) return new Map<string, VenueLocation>();
 
   const entities = await prisma.catalogEntity.findMany({
     where: {
@@ -98,7 +109,7 @@ async function loadVenueLocations(venues: string[]) {
     take: Math.max(uniqueVenues.length * 3, 25),
   });
 
-  const byVenue = new Map<string, { address: string | null; city: string | null; region: string | null; country: string | null }>();
+  const byVenue = new Map<string, VenueLocation>();
   const wanted = new Set(uniqueVenues.map(normalizeVenueKey));
 
   for (const entity of entities) {
@@ -112,8 +123,34 @@ async function loadVenueLocations(venues: string[]) {
 
     for (const name of names) {
       const key = normalizeVenueKey(name);
-      if (!key || !wanted.has(key) || byVenue.has(key)) continue;
+      if (!key || !wanted.has(key)) continue;
+      const existing = byVenue.get(key);
+      if (existing && venueLocationScore(existing) >= venueLocationScore(location)) continue;
       byVenue.set(key, location);
+    }
+  }
+
+  const missingVenues = uniqueVenues.filter((venue) => !hasUsableVenueLocation(byVenue.get(normalizeVenueKey(venue))));
+
+  for (const venue of missingVenues) {
+    const suggestions = await searchProviderCatalog({
+      query: venue,
+      type: "VENUE",
+      limit: 10,
+      includeProviders: false,
+    });
+    const exact = suggestions.find((suggestion) => normalizeVenueKey(suggestion.canonicalName || suggestion.label) === normalizeVenueKey(venue));
+    const best = exact ?? suggestions[0];
+    if (!best) continue;
+
+    const location = {
+      address: best.address ?? null,
+      city: best.city ?? null,
+      region: best.region ?? null,
+      country: best.country ?? null,
+    };
+    if (hasUsableVenueLocation(location)) {
+      byVenue.set(normalizeVenueKey(venue), location);
     }
   }
 

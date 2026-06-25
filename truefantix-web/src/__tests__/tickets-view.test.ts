@@ -25,4 +25,28 @@ describe("tickets view", () => {
     expect(card.province).toBe("ON");
     expect(card.country).toBe("Canada");
   });
+
+  it("does not invent Toronto for a single-name venue without a resolved location", () => {
+    const card = mapApiTicketToCard({
+      id: "ticket-2",
+      title: "Chicago Bears vs. Green Bay Packers",
+      date: "2026-12-25 12:00 PM",
+      venue: "Soldier Field",
+      venueLocation: {
+        address: null,
+        city: null,
+        region: null,
+        country: null,
+      },
+      priceCents: 35700,
+      currency: "USD",
+      image: "/default.jpg",
+      sellerId: "seller-1",
+      seller: null,
+    });
+
+    expect(card.city).toBe("");
+    expect(card.province).toBe("");
+    expect(card.country).toBe("");
+  });
 });
