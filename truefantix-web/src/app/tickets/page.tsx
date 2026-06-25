@@ -22,6 +22,7 @@ const DEFAULT_RADIUS_VALUE = "50";
 const DEFAULT_RADIUS_UNIT: RadiusUnit = "km";
 const RADIUS_PREF_PREFIX = "truefantix:tickets:radius";
 const ANONYMOUS_RADIUS_PREF_KEY = `${RADIUS_PREF_PREFIX}:anonymous`;
+const FILTER_QUERY_KEYS = ["q", "radius", "unit", "type", "price", "priceTag", "soldOut", "start", "end"];
 
 function radiusPreferenceKey(userId: unknown) {
   const id = String(userId || "").trim();
@@ -60,6 +61,63 @@ function writeRadiusPreference(key: string, value: string, unit: RadiusUnit) {
   }
 }
 
+function getInitialQueryParam(key: string) {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get(key) || "";
+}
+
+function getInitialRadiusValue() {
+  const fromUrl = getInitialQueryParam("radius");
+  const numeric = Number(fromUrl);
+  if (fromUrl && Number.isFinite(numeric) && numeric > 0) return fromUrl;
+  return readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.value ?? DEFAULT_RADIUS_VALUE;
+}
+
+function getInitialRadiusUnit(): RadiusUnit {
+  const fromUrl = getInitialQueryParam("unit");
+  if (fromUrl === "mi" || fromUrl === "km") return fromUrl;
+  return readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.unit ?? DEFAULT_RADIUS_UNIT;
+}
+
+function getInitialSelectValue(key: string, fallback: string) {
+  return getInitialQueryParam(key) || fallback;
+}
+
+function getInitialSoldOutOnly() {
+  return getInitialQueryParam("soldOut") === "1";
+}
+
+function writeFilterQuery(params: {
+  searchQuery: string;
+  radiusValue: string;
+  radiusUnit: RadiusUnit;
+  eventType: string;
+  priceRange: string;
+  priceTagFilter: string;
+  soldOutOnly: boolean;
+  startDate: string;
+  endDate: string;
+}) {
+  if (typeof window === "undefined") return;
+
+  const next = new URLSearchParams(window.location.search);
+  FILTER_QUERY_KEYS.forEach((key) => next.delete(key));
+
+  if (params.searchQuery.trim()) next.set("q", params.searchQuery.trim());
+  if (params.radiusValue !== DEFAULT_RADIUS_VALUE) next.set("radius", params.radiusValue);
+  if (params.radiusUnit !== DEFAULT_RADIUS_UNIT) next.set("unit", params.radiusUnit);
+  if (params.eventType !== "all") next.set("type", params.eventType);
+  if (params.priceRange !== "all") next.set("price", params.priceRange);
+  if (params.priceTagFilter !== "all") next.set("priceTag", params.priceTagFilter);
+  if (params.soldOutOnly) next.set("soldOut", "1");
+  if (params.startDate) next.set("start", params.startDate);
+  if (params.endDate) next.set("end", params.endDate);
+
+  const query = next.toString();
+  const url = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  window.history.replaceState(window.history.state, "", url);
+}
+
 export default function TicketsPage() {
   const router = useRouter();
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -68,17 +126,18 @@ export default function TicketsPage() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [priceRange, setPriceRange] = useState("all");
-  const [eventType, setEventType] = useState("all");
-  const [priceTagFilter, setPriceTagFilter] = useState("all");
-  const [soldOutOnly, setSoldOutOnly] = useState(false);
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [searchQuery, setSearchQuery] = useState(() => getInitialQueryParam("q"));
+  const [priceRange, setPriceRange] = useState(() => getInitialSelectValue("price", "all"));
+  const [eventType, setEventType] = useState(() => getInitialSelectValue("type", "all"));
+  const [priceTagFilter, setPriceTagFilter] = useState(() => getInitialSelectValue("priceTag", "all"));
+  const [soldOutOnly, setSoldOutOnly] = useState(() => getInitialSoldOutOnly());
+  const [startDate, setStartDate] = useState(() => getInitialQueryParam("start"));
+  const [endDate, setEndDate] = useState(() => getInitialQueryParam("end"));
   const [radiusPreferenceStorageKey, setRadiusPreferenceStorageKey] = useState(ANONYMOUS_RADIUS_PREF_KEY);
-  const [radiusValue, setRadiusValue] = useState(() => readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.value ?? DEFAULT_RADIUS_VALUE);
-  const [radiusUnit, setRadiusUnit] = useState<RadiusUnit>(() => readRadiusPreference(ANONYMOUS_RADIUS_PREF_KEY)?.unit ?? DEFAULT_RADIUS_UNIT);
-  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [radiusValue, setRadiusValue] = useState(() => getInitialRadiusValue());
+  const [radiusUnit, setRadiusUnit] = useState<RadiusUnit>(() => getInitialRadiusUnit());
+  const [hasInitialRadiusQuery] = useState(() => Boolean(getInitialQueryParam("radius") || getInitialQueryParam("unit")));
+  const [homeCoords, setHomeCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
     async function fetchTickets() {
@@ -122,7 +181,7 @@ export default function TicketsPage() {
           setRadiusPreferenceStorageKey(nextPreferenceKey);
 
           const savedRadiusPreference = readRadiusPreference(nextPreferenceKey);
-          if (savedRadiusPreference) {
+          if (savedRadiusPreference && !hasInitialRadiusQuery) {
             setRadiusValue(savedRadiusPreference.value);
             setRadiusUnit(savedRadiusPreference.unit);
           }
@@ -130,23 +189,10 @@ export default function TicketsPage() {
 
         const fromProfile = inferCoordsFromCity(json?.user?.city);
         if (!cancelled && fromProfile) {
-          setUserCoords(fromProfile);
-          return;
+          setHomeCoords(fromProfile);
         }
       } catch {
-        // ignore and fallback to browser geolocation
-      }
-
-      if (typeof window !== 'undefined' && navigator.geolocation && !cancelled) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            if (!cancelled) setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-          },
-          () => {
-            // keep null; sorting will fall back to sold-out/date
-          },
-          { enableHighAccuracy: false, timeout: 4000, maximumAge: 300000 }
-        );
+        // Keep null; distance filtering needs the saved home city or a searched city.
       }
     }
 
@@ -154,11 +200,25 @@ export default function TicketsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hasInitialRadiusQuery]);
 
   useEffect(() => {
     writeRadiusPreference(radiusPreferenceStorageKey, radiusValue, radiusUnit);
   }, [radiusPreferenceStorageKey, radiusUnit, radiusValue]);
+
+  useEffect(() => {
+    writeFilterQuery({
+      searchQuery,
+      radiusValue,
+      radiusUnit,
+      eventType,
+      priceRange,
+      priceTagFilter,
+      soldOutOnly,
+      startDate,
+      endDate,
+    });
+  }, [endDate, eventType, priceRange, priceTagFilter, radiusUnit, radiusValue, searchQuery, soldOutOnly, startDate]);
 
   // Fetch dynamic images for tickets
   async function fetchImagesForTickets(ticketList: Ticket[]) {
@@ -194,6 +254,7 @@ export default function TicketsPage() {
   }
 
   const searchCenter = React.useMemo(() => inferCoordsFromCity(searchQuery), [searchQuery]);
+  const distanceCenter = searchCenter ?? homeCoords;
   const radiusKm = React.useMemo(() => {
     const value = Number(radiusValue);
     if (!Number.isFinite(value) || value <= 0) return null;
@@ -201,10 +262,10 @@ export default function TicketsPage() {
   }, [radiusUnit, radiusValue]);
 
   const filteredTickets = React.useMemo(() => {
-    const hasRadiusFilter = Boolean(searchCenter && radiusKm);
+    const hasRadiusFilter = Boolean(distanceCenter && radiusKm);
 
     return tickets.filter((ticket: any) => {
-      if (searchQuery && !hasRadiusFilter) {
+      if (searchQuery && !searchCenter) {
         const query = searchQuery.toLowerCase();
         const searchable = `${ticket.title} ${ticket.venue} ${ticket.city} ${ticket.eventTypeLabel}`.toLowerCase();
         if (!searchable.includes(query)) return false;
@@ -250,7 +311,7 @@ export default function TicketsPage() {
       }
 
       if (hasRadiusFilter) {
-        if (!searchCenter || !radiusKm || !isTicketWithinRadius(ticket, searchCenter, radiusKm)) return false;
+        if (!distanceCenter || !radiusKm || !isTicketWithinRadius(ticket, distanceCenter, radiusKm)) return false;
       }
 
       return true;
@@ -264,13 +325,14 @@ export default function TicketsPage() {
     soldOutOnly,
     startDate,
     endDate,
+    distanceCenter,
     searchCenter,
     radiusKm,
   ]);
 
   const sortedFilteredTickets = React.useMemo(
-    () => sortTicketsByPriority(filteredTickets, searchCenter ?? userCoords),
-    [filteredTickets, searchCenter, userCoords]
+    () => sortTicketsByPriority(filteredTickets, distanceCenter),
+    [filteredTickets, distanceCenter]
   );
 
   const selectedTickets = React.useMemo(() => {
@@ -434,8 +496,6 @@ export default function TicketsPage() {
     setSoldOutOnly(false);
     setStartDate("");
     setEndDate("");
-    setRadiusValue(DEFAULT_RADIUS_VALUE);
-    setRadiusUnit(DEFAULT_RADIUS_UNIT);
   };
 
   return (
