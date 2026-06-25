@@ -84,6 +84,10 @@ type CatalogSuggestion = {
   canonicalName?: string;
   provider?: string;
   subtitle?: string;
+  address?: string;
+  city?: string;
+  region?: string;
+  country?: string;
   aliases?: string[];
 };
 
@@ -369,8 +373,27 @@ function moneyTextToDollars(value: string | null | undefined) {
   return value.replace(/^\$/, "").trim();
 }
 
+const CA_REGION_CODES = new Set(["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"]);
+const US_REGION_CODES = new Set(["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY", "DC"]);
+
+function venueCountryLabel(suggestion: CatalogSuggestion) {
+  const country = String(suggestion.country ?? "").trim();
+  if (country.toUpperCase() === "CA") return "Canada";
+  if (country.toUpperCase() === "US") return "USA";
+  if (country) return country;
+
+  const region = String(suggestion.region ?? "").trim().toUpperCase();
+  if (CA_REGION_CODES.has(region)) return "Canada";
+  if (US_REGION_CODES.has(region)) return "USA";
+  return "";
+}
+
 function catalogSuggestionMeta(suggestion: CatalogSuggestion) {
-  return [suggestion.type, suggestion.subtitle, suggestion.provider].filter(Boolean).join(" • ");
+  if (suggestion.type === "VENUE") {
+    return [suggestion.address, suggestion.city, suggestion.region, venueCountryLabel(suggestion)].filter(Boolean).join(", ");
+  }
+
+  return suggestion.type;
 }
 
 function wordsForSearch(text: string) {
@@ -1893,31 +1916,34 @@ function Body({ me }: { me: MeUser }) {
                   {visibleTitleSuggestions.length} possible match{visibleTitleSuggestions.length === 1 ? "" : "es"}
                 </div>
                 {visibleTitleSuggestions.length > 0 ? (
-                  visibleTitleSuggestions.map((suggestion) => (
-                    <button
-                      key={`${suggestion.type}:${suggestion.value}`}
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        selectTitleSuggestion(suggestion);
-                      }}
-                      disabled={busy || !!requestBusy}
-                      style={{
-                        display: "grid",
-                        gap: 3,
-                        padding: "10px 12px",
-                        border: 0,
-                        borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
-                        background: selectedTitleSuggestion?.type === suggestion.type && selectedTitleSuggestion.value === suggestion.value ? "rgba(239, 246, 255, 1)" : "white",
-                        color: "rgba(15, 23, 42, 1)",
-                        textAlign: "left",
-                        cursor: busy || requestBusy ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      <span style={{ fontWeight: 900 }}>{suggestion.label}</span>
-                      <span style={{ fontSize: 12, opacity: 0.72 }}>{catalogSuggestionMeta(suggestion)}</span>
-                    </button>
-                  ))
+                  visibleTitleSuggestions.map((suggestion) => {
+                    const meta = catalogSuggestionMeta(suggestion);
+                    return (
+                      <button
+                        key={`${suggestion.type}:${suggestion.value}`}
+                        type="button"
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          selectTitleSuggestion(suggestion);
+                        }}
+                        disabled={busy || !!requestBusy}
+                        style={{
+                          display: "grid",
+                          gap: 3,
+                          padding: "10px 12px",
+                          border: 0,
+                          borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
+                          background: selectedTitleSuggestion?.type === suggestion.type && selectedTitleSuggestion.value === suggestion.value ? "rgba(239, 246, 255, 1)" : "white",
+                          color: "rgba(15, 23, 42, 1)",
+                          textAlign: "left",
+                          cursor: busy || requestBusy ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        <span style={{ fontWeight: 900 }}>{suggestion.label}</span>
+                        {meta ? <span style={{ fontSize: 12, opacity: 0.72 }}>{meta}</span> : null}
+                      </button>
+                    );
+                  })
                 ) : selectedTitleSuggestion ? null : (
                   <div style={{ display: "grid", gap: 8, padding: "10px 12px", fontSize: 13 }}>
                     <div style={{ opacity: 0.72 }}>No verified artist, team, sport, or show match found.</div>
@@ -2019,31 +2045,34 @@ function Body({ me }: { me: MeUser }) {
                   {visibleVenueSuggestions.length} possible match{visibleVenueSuggestions.length === 1 ? "" : "es"}
                 </div>
                 {visibleVenueSuggestions.length > 0 ? (
-                  visibleVenueSuggestions.map((suggestion) => (
-                    <button
-                      key={`${suggestion.type}:${suggestion.value}`}
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        selectVenueSuggestion(suggestion);
-                      }}
-                      disabled={busy || !!requestBusy}
-                      style={{
-                        display: "grid",
-                        gap: 3,
-                        padding: "10px 12px",
-                        border: 0,
-                        borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
-                        background: selectedVenueSuggestion?.value === suggestion.value ? "rgba(239, 246, 255, 1)" : "white",
-                        color: "rgba(15, 23, 42, 1)",
-                        textAlign: "left",
-                        cursor: busy || requestBusy ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      <span style={{ fontWeight: 900 }}>{suggestion.label}</span>
-                      <span style={{ fontSize: 12, opacity: 0.72 }}>{catalogSuggestionMeta(suggestion)}</span>
-                    </button>
-                  ))
+                  visibleVenueSuggestions.map((suggestion) => {
+                    const meta = catalogSuggestionMeta(suggestion);
+                    return (
+                      <button
+                        key={`${suggestion.type}:${suggestion.value}`}
+                        type="button"
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          selectVenueSuggestion(suggestion);
+                        }}
+                        disabled={busy || !!requestBusy}
+                        style={{
+                          display: "grid",
+                          gap: 3,
+                          padding: "10px 12px",
+                          border: 0,
+                          borderBottom: "1px solid rgba(148, 163, 184, 0.24)",
+                          background: selectedVenueSuggestion?.value === suggestion.value ? "rgba(239, 246, 255, 1)" : "white",
+                          color: "rgba(15, 23, 42, 1)",
+                          textAlign: "left",
+                          cursor: busy || requestBusy ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        <span style={{ fontWeight: 900 }}>{suggestion.label}</span>
+                        {meta ? <span style={{ fontSize: 12, opacity: 0.72 }}>{meta}</span> : null}
+                      </button>
+                    );
+                  })
                 ) : selectedVenueSuggestion ? null : (
                   <div style={{ display: "grid", gap: 8, padding: "10px 12px", fontSize: 13 }}>
                     <div style={{ opacity: 0.72 }}>No verified venue match found.</div>

@@ -78,25 +78,42 @@ function suggestionRank(item: ProviderCatalogSuggestion, query: string) {
       : 0;
   const canadaBoost = item.country === "Canada" || item.country === "CA" ? 100 : 0;
   const ontarioBoost = item.region === "ON" ? 75 : 0;
+  const locationBoost = [item.address, item.city, item.region, item.country].filter(Boolean).length * 80;
   return (
     typedMatchRank(item, query) +
     providerRank(item.provider) +
     exactCuratedBoost +
     canadaBoost +
     ontarioBoost +
+    locationBoost +
     Math.min(item.aliases?.length ?? 0, 20)
   );
 }
 
 function dedupeDisplaySuggestions(items: ProviderCatalogSuggestion[], query: string) {
   const bestByName = new Map<string, ProviderCatalogSuggestion>();
+  const locatedVenueNames = new Set<string>();
 
   for (const item of items) {
+    const nameKey = `${item.type}:${normalizedDisplayName(item.canonicalName || item.label)}`;
+    const hasLocation = Boolean(item.address || item.city || item.region || item.country);
+    if ((item.type === "VENUE" || item.type === "CITY") && hasLocation) {
+      locatedVenueNames.add(nameKey);
+    }
+  }
+
+  for (const item of items) {
+    const nameKey = `${item.type}:${normalizedDisplayName(item.canonicalName || item.label)}`;
+    const hasLocation = Boolean(item.address || item.city || item.region || item.country);
+    if ((item.type === "VENUE" || item.type === "CITY") && !hasLocation && locatedVenueNames.has(nameKey)) {
+      continue;
+    }
+
     const locationKey =
       item.type === "VENUE" || item.type === "CITY"
-        ? [item.address, item.city, item.region, item.country].map((part) => normalizedDisplayName(part ?? "")).join(":")
+        ? [item.city, item.region, item.country].map((part) => normalizedDisplayName(part ?? "")).join(":")
         : "";
-    const key = `${item.type}:${normalizedDisplayName(item.canonicalName || item.label)}:${locationKey}`;
+    const key = `${nameKey}:${locationKey}`;
     const existing = bestByName.get(key);
     if (!existing || suggestionRank(item, query) > suggestionRank(existing, query)) {
       bestByName.set(key, item);
