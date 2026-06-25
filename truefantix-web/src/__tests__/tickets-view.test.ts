@@ -54,14 +54,17 @@ describe("tickets view", () => {
     const chicago = inferCoordsFromCity("Chicago");
     const toronto = inferCoordsFromCity("Toronto");
     const portCarling = inferCoordsFromCity("Port Carling");
+    const southBend = inferCoordsFromCity("south bend");
 
     expect(chicago).toEqual(expect.any(Object));
     expect(toronto).toEqual(expect.any(Object));
     expect(portCarling).toEqual(expect.any(Object));
+    expect(southBend).toEqual(expect.any(Object));
 
     expect(isTicketWithinRadius({ city: "Chicago", venue: "Soldier Field" }, chicago!, 25)).toBe(true);
     expect(isTicketWithinRadius({ city: "Toronto", venue: "Scotiabank Arena" }, chicago!, 25)).toBe(false);
     expect(isTicketWithinRadius({ city: "Chicago", venue: "Soldier Field" }, toronto!, 25)).toBe(false);
     expect(isTicketWithinRadius({ city: "Port Carling", venue: "Duke's Live Music" }, portCarling!, 10)).toBe(true);
+    expect(isTicketWithinRadius({ city: "Chicago", venue: "Soldier Field" }, southBend!, 160)).toBe(true);
   });
 });
