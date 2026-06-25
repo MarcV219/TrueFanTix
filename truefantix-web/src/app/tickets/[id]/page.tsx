@@ -288,22 +288,26 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                     Event Details
                   </h2>
                   <div className="space-y-3">
-                    <div className="flex justify-between">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-gray-600 dark:text-gray-400">Event:</span>
+                      <span className="font-medium text-gray-900 dark:text-white text-right">{eventDisplayTitle}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
                       <span className="text-gray-600 dark:text-gray-400">Date:</span>
-                      <span className="font-medium text-gray-900 dark:text-white">{ticket.date}</span>
+                      <span className="font-medium text-gray-900 dark:text-white text-right">{ticket.date}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between gap-4">
                       <span className="text-gray-600 dark:text-gray-400">Venue:</span>
-                      <span className="font-medium text-gray-900 dark:text-white">{eventVenue}</span>
+                      <span className="font-medium text-gray-900 dark:text-white text-right">{eventVenue}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between gap-4">
                       <span className="text-gray-600 dark:text-gray-400">Location:</span>
-                      <span className="font-medium text-gray-900 dark:text-white">{locationDisplay || "Venue location unavailable"}</span>
+                      <span className="font-medium text-gray-900 dark:text-white text-right">{locationDisplay || "Venue location unavailable"}</span>
                     </div>
                     {(ticket.section || ticket.row || ticket.seat) && (
-                      <div className="flex justify-between">
+                      <div className="flex justify-between gap-4">
                         <span className="text-gray-600 dark:text-gray-400">Seat:</span>
-                        <span className="font-medium text-gray-900 dark:text-white">
+                        <span className="font-medium text-gray-900 dark:text-white text-right">
                           {ticket.section && `Section ${ticket.section}`}
                           {ticket.section && (ticket.row || ticket.seat) && " • "}
                           {ticket.row && `Row ${ticket.row}`}
