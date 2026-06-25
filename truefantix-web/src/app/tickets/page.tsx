@@ -6,7 +6,13 @@ import { useRouter } from "next/navigation";
 import Footer from "@/components/Footer";
 import TicketCard from "@/components/tickets/TicketCard";
 import { fetchJson } from "@/lib/api-fetch";
-import { formatMoney, inferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
+import {
+  formatMoney,
+  inferCoordsFromCity,
+  isTicketWithinRadius,
+  mapApiTicketToCard,
+  sortTicketsByPriority,
+} from "@/lib/ticketsView";
 import type { TicketCardView } from "@/lib/ticketsView";
 
 type Ticket = TicketCardView;
@@ -26,6 +32,9 @@ export default function TicketsPage() {
   const [soldOutOnly, setSoldOutOnly] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [locationQuery, setLocationQuery] = useState("");
+  const [radiusValue, setRadiusValue] = useState("50");
+  const [radiusUnit, setRadiusUnit] = useState<"km" | "mi">("km");
   const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
@@ -125,7 +134,16 @@ export default function TicketsPage() {
     setTickets(updatedTickets);
   }
 
+  const radiusCenter = React.useMemo(() => inferCoordsFromCity(locationQuery), [locationQuery]);
+  const radiusKm = React.useMemo(() => {
+    const value = Number(radiusValue);
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return radiusUnit === "mi" ? value * 1.609344 : value;
+  }, [radiusUnit, radiusValue]);
+
   const filteredTickets = React.useMemo(() => {
+    const hasLocationFilter = Boolean(locationQuery.trim());
+
     return tickets.filter((ticket: any) => {
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -172,13 +190,30 @@ export default function TicketsPage() {
         }
       }
 
+      if (hasLocationFilter) {
+        if (!radiusCenter || !radiusKm) return false;
+        if (!isTicketWithinRadius(ticket, radiusCenter, radiusKm)) return false;
+      }
+
       return true;
     });
-  }, [tickets, searchQuery, priceRange, eventType, priceTagFilter, soldOutOnly, startDate, endDate]);
+  }, [
+    tickets,
+    searchQuery,
+    priceRange,
+    eventType,
+    priceTagFilter,
+    soldOutOnly,
+    startDate,
+    endDate,
+    locationQuery,
+    radiusCenter,
+    radiusKm,
+  ]);
 
   const sortedFilteredTickets = React.useMemo(
-    () => sortTicketsByPriority(filteredTickets, userCoords),
-    [filteredTickets, userCoords]
+    () => sortTicketsByPriority(filteredTickets, radiusCenter ?? userCoords),
+    [filteredTickets, radiusCenter, userCoords]
   );
 
   const selectedTickets = React.useMemo(() => {
@@ -342,6 +377,9 @@ export default function TicketsPage() {
     setSoldOutOnly(false);
     setStartDate("");
     setEndDate("");
+    setLocationQuery("");
+    setRadiusValue("50");
+    setRadiusUnit("km");
   };
 
   return (
@@ -367,17 +405,6 @@ export default function TicketsPage() {
       {/* Search and Filters */}
       <section className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 py-6">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="mb-3 flex flex-wrap gap-4 text-sm">
-            <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
-              <span className="text-red-600 text-lg font-bold leading-none">✕</span>
-              <span>Validation mismatch / invalid listing</span>
-            </div>
-            <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
-              <span className="text-blue-500 text-lg font-bold leading-none">✕</span>
-              <span>Price unconfirmed (needs verification)</span>
-            </div>
-          </div>
-
           <div className="flex flex-col lg:flex-row gap-4">
             <input
               type="text"
@@ -465,8 +492,43 @@ export default function TicketsPage() {
                 />
               </div>
             </div>
+
+            <div className="flex items-end gap-3 flex-wrap">
+              <div>
+                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Search near city</label>
+                <input
+                  type="text"
+                  placeholder="City"
+                  value={locationQuery}
+                  onChange={(e) => setLocationQuery(e.target.value)}
+                  className="w-40 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Within</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={radiusValue}
+                  onChange={(e) => setRadiusValue(e.target.value)}
+                  className="w-24 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">Unit</label>
+                <select
+                  value={radiusUnit}
+                  onChange={(e) => setRadiusUnit(e.target.value as "km" | "mi")}
+                  className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="km">km</option>
+                  <option value="mi">miles</option>
+                </select>
+              </div>
+            </div>
             
-            {(searchQuery || eventType !== "all" || priceRange !== "all" || priceTagFilter !== "all" || soldOutOnly || startDate || endDate) && (
+            {(searchQuery || eventType !== "all" || priceRange !== "all" || priceTagFilter !== "all" || soldOutOnly || startDate || endDate || locationQuery || radiusValue !== "50" || radiusUnit !== "km") && (
               <button
                 onClick={clearFilters}
                 className="text-blue-600 hover:underline"

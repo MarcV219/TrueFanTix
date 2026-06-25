@@ -1,4 +1,4 @@
-import { mapApiTicketToCard } from "@/lib/ticketsView";
+import { inferCoordsFromCity, isTicketWithinRadius, mapApiTicketToCard } from "@/lib/ticketsView";
 
 describe("tickets view", () => {
   it("prefers catalog venue location over venue-name fallback", () => {
@@ -48,5 +48,17 @@ describe("tickets view", () => {
     expect(card.city).toBe("");
     expect(card.province).toBe("");
     expect(card.country).toBe("");
+  });
+
+  it("matches tickets within a city radius", () => {
+    const chicago = inferCoordsFromCity("Chicago");
+    const toronto = inferCoordsFromCity("Toronto");
+
+    expect(chicago).toEqual(expect.any(Object));
+    expect(toronto).toEqual(expect.any(Object));
+
+    expect(isTicketWithinRadius({ city: "Chicago", venue: "Soldier Field" }, chicago!, 25)).toBe(true);
+    expect(isTicketWithinRadius({ city: "Toronto", venue: "Scotiabank Arena" }, chicago!, 25)).toBe(false);
+    expect(isTicketWithinRadius({ city: "Chicago", venue: "Soldier Field" }, toronto!, 25)).toBe(false);
   });
 });

@@ -258,6 +258,12 @@ const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
   boston: { lat: 42.3601, lon: -71.0589 },
   buffalo: { lat: 42.8864, lon: -78.8784 },
   orchardpark: { lat: 42.7676, lon: -78.7439 },
+  greenbay: { lat: 44.5133, lon: -88.0133 },
+  foxborough: { lat: 42.0654, lon: -71.2478 },
+  eastrutherford: { lat: 40.8337, lon: -74.0971 },
+  arlington: { lat: 32.7357, lon: -97.1081 },
+  santaclara: { lat: 37.3541, lon: -121.9552 },
+  inglewood: { lat: 33.9617, lon: -118.3531 },
   miami: { lat: 25.7617, lon: -80.1918 },
   chicago: { lat: 41.8781, lon: -87.6298 },
   losangeles: { lat: 34.0522, lon: -118.2437 },
@@ -300,6 +306,21 @@ export function haversineKm(a: { lat: number; lon: number }, b: { lat: number; l
   const x = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
   const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
   return R * c;
+}
+
+export function inferTicketCoords(ticket: Pick<TicketCardView, "city" | "venue">): { lat: number; lon: number } | null {
+  return inferCoordsFromCity(ticket.city) ?? inferCityCoordsFromVenue(ticket.venue);
+}
+
+export function isTicketWithinRadius(
+  ticket: Pick<TicketCardView, "city" | "venue">,
+  center: { lat: number; lon: number },
+  radiusKm: number
+): boolean {
+  if (!Number.isFinite(radiusKm) || radiusKm <= 0) return false;
+  const ticketCoords = inferTicketCoords(ticket);
+  if (!ticketCoords) return false;
+  return haversineKm(center, ticketCoords) <= radiusKm;
 }
 
 function eventTypeFromType(type: string | null | undefined, fallbackTitle: string): EventTypeInfo {
@@ -383,8 +404,8 @@ export function sortTicketsByPriority<T extends Pick<TicketCardView, 'venue' | '
 ): T[] {
   const arr = [...tickets];
   arr.sort((a, b) => {
-    const aCoords = inferCoordsFromCity(a.city) ?? inferCityCoordsFromVenue(a.venue);
-    const bCoords = inferCoordsFromCity(b.city) ?? inferCityCoordsFromVenue(b.venue);
+    const aCoords = inferTicketCoords(a);
+    const bCoords = inferTicketCoords(b);
 
     const da = userCoords && aCoords ? haversineKm(userCoords, aCoords) : Number.POSITIVE_INFINITY;
     const db = userCoords && bCoords ? haversineKm(userCoords, bCoords) : Number.POSITIVE_INFINITY;
