@@ -230,10 +230,10 @@ export default function HowItWorksPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-1 text-lg">
-                    Receive tickets securely via escrow transfer
+                    Receive tickets through a secure seller transfer
                   </h3>
                   <p className="text-gray-600 dark:text-gray-400">
-                    Tickets are transferred to you once payment is confirmed
+                    The seller transfers tickets to you after purchase, and your payment stays protected until delivery is confirmed.
                   </p>
                 </div>
               </div>
