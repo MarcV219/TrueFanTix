@@ -405,7 +405,7 @@ export async function POST(req: Request) {
             payoutStatus: payout.status,
             netCents: payout.netCents,
           },
-          next: "Escrow released to pending payout queue.",
+          next: "Payment hold released to pending payout queue.",
         },
       };
     });

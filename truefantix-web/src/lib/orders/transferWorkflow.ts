@@ -42,7 +42,7 @@ export async function notifySellerTransferRequired(params: {
   const ticketWord = params.ticketCount === 1 ? "ticket" : "tickets";
   const message = overdue
     ? `Transfer ${params.ticketCount} sold ${ticketWord} now. The 24-hour transfer deadline passed at ${formatDeadline(params.deadline)}.`
-    : `Transfer ${params.ticketCount} sold ${ticketWord} to the buyer by ${formatDeadline(params.deadline)}. Payment stays in escrow until transfer is confirmed.`;
+    : `Transfer ${params.ticketCount} sold ${ticketWord} to the buyer by ${formatDeadline(params.deadline)}. Payment stays protected until transfer is confirmed.`;
 
   return createNotificationOncePerWindow({
     userId: params.sellerUserId,
@@ -81,7 +81,7 @@ export async function notifySellerBuyerConfirmed(params: {
   return createNotification({
     userId: params.sellerUserId,
     type: "TRANSFER_RECEIVED",
-    message: `The buyer confirmed receipt of ${params.ticketCount} ${ticketWord}. Escrow has been released to the pending payout queue.`,
+    message: `The buyer confirmed receipt of ${params.ticketCount} ${ticketWord}. The payment hold has moved to the pending payout queue.`,
     link: "/account/tickets/seller-holding",
   });
 }
@@ -109,7 +109,7 @@ export async function notifySellerAutoConfirmed(params: {
   return createNotification({
     userId: params.sellerUserId,
     type: "ESCROW_RELEASED",
-    message: `The buyer did not dispute ${params.ticketCount} transferred ${ticketWord} within 24 hours. Escrow has been released to the pending payout queue.`,
+    message: `The buyer did not dispute ${params.ticketCount} transferred ${ticketWord} within 24 hours. The payment hold has moved to the pending payout queue.`,
     link: "/account/tickets/sold",
   });
 }

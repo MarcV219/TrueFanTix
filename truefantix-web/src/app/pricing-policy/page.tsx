@@ -57,7 +57,7 @@ export default function PricingPolicyPage() {
                   </h3>
                   <p className="text-gray-600 dark:text-gray-400">
                     The buyer pays the ticket price plus an 8.75% admin fee. This covers payment processing, 
-                    escrow services, platform maintenance, and dispute resolution.
+                    payment protection, platform maintenance, and dispute resolution.
                   </p>
                 </div>
               </div>
@@ -118,9 +118,9 @@ export default function PricingPolicyPage() {
 
             <div className="grid md:grid-cols-2 gap-4">
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-                <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">🔒 Escrow Services</h3>
+                <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">🔒 Payment Protection</h3>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Secure ticket holding and verification
+                  Payout holds, transfer tracking, and delivery confirmation
                 </p>
               </div>
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">

@@ -131,7 +131,7 @@ export async function POST(req: Request) {
       });
     });
 
-    // Buyer confirmation releases escrow into the pending payout queue.
+    // Buyer confirmation moves the payment hold into the pending payout queue.
     if (order.seller.user?.id) {
       await notifySellerBuyerConfirmed({
         sellerUserId: order.seller.user.id,

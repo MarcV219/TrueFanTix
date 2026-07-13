@@ -134,7 +134,7 @@ function OrderCard({
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontWeight: 900, color: "rgba(6, 74, 147, 1)" }}>${order.amount.toFixed(2)}</div>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>Payment held in escrow</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>Payment protected until delivery</div>
         </div>
       </div>
 

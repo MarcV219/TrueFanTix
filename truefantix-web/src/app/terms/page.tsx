@@ -62,7 +62,7 @@ export default function TermsPage() {
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
               You agree not to attempt to move transactions off the TrueFanTix platform. This includes 
               exchanging contact information to arrange private sales, requesting payment outside our 
-              secure system, or any other attempt to bypass our escrow and verification processes. 
+              secure system, or any other attempt to bypass our payment protection, verification, and transfer confirmation processes.
               Off-platform transactions void all protections and may result in permanent account ban.
             </p>
           </div>

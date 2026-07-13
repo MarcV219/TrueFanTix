@@ -130,7 +130,7 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
               textAlign: "center",
             }}
           >
-            Payment held in escrow
+            Payment protected until delivery
           </span>
           <p style={{ margin: 0, fontSize: 12, opacity: 0.62, textAlign: "center" }}>
             Purchased {new Date(ticket.orderDate).toLocaleDateString()}

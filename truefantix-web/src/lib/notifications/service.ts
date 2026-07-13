@@ -10,7 +10,7 @@ export type NotificationType =
   | "TRANSFER_REQUIRED"   // Seller needs to transfer tickets
   | "TRANSFER_RECEIVED"   // Tickets transferred to you
   | "TRANSFER_CONFIRMATION_REQUIRED" // Buyer needs to confirm received tickets
-  | "ESCROW_RELEASED"     // Funds released from escrow
+  | "ESCROW_RELEASED"     // Funds moved from hold to payout
   | "VERIFICATION_NEEDED" // Ticket needs verification
   | "PAYOUT_PROCESSED"    // Payout completed
   | "DISPUTE_OPENED"      // Dispute opened on order
@@ -263,7 +263,7 @@ export async function notifyPurchaseConfirmed(params: {
 }
 
 /**
- * Notify when escrow is released
+ * Notify when a payment hold is released.
  */
 export async function notifyEscrowReleased(params: {
   sellerUserId: string;
@@ -275,7 +275,7 @@ export async function notifyEscrowReleased(params: {
   return createNotification({
     userId: sellerUserId,
     type: "ESCROW_RELEASED",
-    message: `$${(amount / 100).toFixed(2)} has been released from escrow to your account.`,
+    message: `$${(amount / 100).toFixed(2)} has moved from payment hold to your account.`,
     link: `/orders/${orderId}`,
   });
 }

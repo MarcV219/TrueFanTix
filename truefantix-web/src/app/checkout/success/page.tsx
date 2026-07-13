@@ -102,7 +102,7 @@ function SuccessContent() {
         <div style={{ fontSize: 48, marginBottom: 8 }}>🎉</div>
         <div style={{ fontWeight: 800, fontSize: 28, marginBottom: 8 }}>Payment Successful!</div>
         <div style={{ opacity: 0.9 }}>
-          Payment is being held in escrow until your tickets are transferred and receipt is confirmed.
+          Payment is protected until your tickets are transferred and receipt is confirmed.
         </div>
       </div>
 

@@ -57,8 +57,8 @@ export default function PaymentsFAQPage() {
               When are funds split?
             </h2>
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
-              Funds are split at checkout. The seller receives their portion and the admin fee 
-              is separated to cover platform costs.
+              Buyer payment is processed at checkout. The seller payout is held until ticket delivery
+              is confirmed and any dispute window has passed.
             </p>
           </div>
 
@@ -68,7 +68,7 @@ export default function PaymentsFAQPage() {
             </h2>
             <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
               The admin fee (8.75%) covers processing costs including payment gateway fees, 
-              escrow services, platform maintenance, and dispute resolution systems. Most of 
+              payment protection, platform maintenance, and dispute resolution systems. Most of
               the admin fee goes toward paying for the services required to run the site securely.
             </p>
           </div>
