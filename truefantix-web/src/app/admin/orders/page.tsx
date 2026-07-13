@@ -18,6 +18,9 @@ type AdminOrder = {
   taxCountryCode: string | null;
   taxLabel: string | null;
   totalCents: number;
+  transferVerificationStatus: string | null;
+  buyerConfirmationStatus: string | null;
+  disputeWindowEndsAt: string | null;
   seller: { id: string; name: string };
   buyerSeller: { id: string; name: string };
   payment: null | {
@@ -110,7 +113,7 @@ function AdminOrdersContent() {
           style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)" }}
         >
           <option value="">All statuses</option>
-          {["PENDING", "PAID", "DELIVERED", "COMPLETED", "CANCELLED", "REFUNDED", "FAILED"].map((s) => <option key={s} value={s}>{s}</option>)}
+          {["PENDING", "PAID", "DISPUTED", "DELIVERED", "COMPLETED", "CANCELLED", "REFUNDED", "FAILED"].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <button style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)", background: "white", fontWeight: 800 }}>
           Search
@@ -128,8 +131,16 @@ function AdminOrdersContent() {
                 <Link href={`/admin/orders/${encodeURIComponent(order.id)}`} style={{ color: "inherit", textDecoration: "none" }}>
                   <div style={{ fontWeight: 950 }}>{order.status} | {order.id}</div>
                 </Link>
+                {order.buyerConfirmationStatus === "DISPUTED" ? (
+                  <div style={{ display: "inline-block", marginTop: 6, padding: "4px 8px", borderRadius: 999, background: "rgba(254,226,226,1)", color: "rgba(153,27,27,1)", fontSize: 12, fontWeight: 900 }}>
+                    Dispute open
+                  </div>
+                ) : null}
                 <div style={{ opacity: 0.75, fontSize: 13 }}>Created {new Date(order.createdAt).toLocaleString()}</div>
                 <div style={{ opacity: 0.75, fontSize: 13 }}>Seller: {order.seller?.name || order.sellerId} | Buyer: {order.buyerSeller?.name || order.buyerSellerId}</div>
+                {order.disputeWindowEndsAt ? (
+                  <div style={{ opacity: 0.75, fontSize: 13 }}>Buyer confirmation window: {new Date(order.disputeWindowEndsAt).toLocaleString()}</div>
+                ) : null}
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontWeight: 950, fontSize: 20 }}>{cents(order.totalCents)}</div>

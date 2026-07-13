@@ -227,6 +227,19 @@ export const schemas = {
     orderId: z.string().trim().cuid(),
   }),
 
+  // Used by POST /api/orders/dispute
+  orderOpenDispute: z.object({
+    orderId: z.string().trim().cuid(),
+    reason: z.string().trim().min(10).max(2000),
+    evidence: z.string().trim().max(2048).optional().nullable(),
+  }),
+
+  // Used by POST /api/admin/orders/[id]/resolve-dispute
+  adminResolveDispute: z.object({
+    action: z.enum(["RELEASE_PAYOUT", "MARK_REFUND_REQUIRED", "KEEP_UNDER_REVIEW"]),
+    note: z.string().trim().min(3).max(2000),
+  }),
+
   // Profile update schemas
   profileUpdate: z.object({
     firstName: z.string().trim().min(1).max(100).optional(),

@@ -217,6 +217,7 @@ export async function runTransferReminderWorkflow(now = new Date()) {
       status: "PAID",
       payment: { status: "SUCCEEDED" },
       transferProofType: null,
+      buyerConfirmationStatus: { not: "DISPUTED" },
     },
     include: {
       payment: true,

@@ -32,6 +32,9 @@ export default function AdminOrderDetailPage() {
   const [order, setOrder] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [decisionNote, setDecisionNote] = React.useState("");
+  const [decisionBusy, setDecisionBusy] = React.useState(false);
+  const [decisionMessage, setDecisionMessage] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -51,6 +54,28 @@ export default function AdminOrderDetailPage() {
   React.useEffect(() => {
     load();
   }, [load]);
+
+  async function resolveDispute(action: "RELEASE_PAYOUT" | "MARK_REFUND_REQUIRED" | "KEEP_UNDER_REVIEW") {
+    setDecisionBusy(true);
+    setError(null);
+    setDecisionMessage(null);
+    try {
+      const res = await fetch(`/api/admin/orders/${encodeURIComponent(id)}/resolve-dispute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, note: decisionNote }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.message || json?.error || "Could not resolve dispute.");
+      setDecisionMessage(json.message || "Dispute updated.");
+      setDecisionNote("");
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "Could not resolve dispute.");
+    } finally {
+      setDecisionBusy(false);
+    }
+  }
 
   return (
     <main style={{ maxWidth: 1180, margin: "40px auto", padding: 16 }}>
@@ -85,6 +110,48 @@ export default function AdminOrderDetailPage() {
               <Field label="Transfer Verification" value={`${order.transferVerificationStatus || "-"} ${order.transferVerificationReason || ""}`} />
               <Field label="Buyer Confirmation" value={`${order.buyerConfirmationStatus || "-"} ${order.buyerConfirmationAt ? new Date(order.buyerConfirmationAt).toLocaleString() : ""}`} />
             </div>
+            {order.buyerConfirmationStatus === "DISPUTED" ? (
+              <div style={{ marginTop: 12, padding: 14, borderRadius: 10, border: "1px solid rgba(185,28,28,0.28)", background: "rgba(254,242,242,1)" }}>
+                <h3 style={{ margin: "0 0 8px", color: "rgba(153,27,27,1)" }}>Dispute review</h3>
+                <p style={{ margin: "0 0 10px", opacity: 0.8 }}>
+                  Seller payout is paused while this order is disputed. Add an admin note before making a decision.
+                </p>
+                <textarea
+                  value={decisionNote}
+                  onChange={(event) => setDecisionNote(event.target.value)}
+                  rows={4}
+                  placeholder="Admin decision note"
+                  style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", resize: "vertical" }}
+                />
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => resolveDispute("KEEP_UNDER_REVIEW")}
+                    disabled={decisionBusy || decisionNote.trim().length < 3}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", background: "white", fontWeight: 900 }}
+                  >
+                    Keep under review
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resolveDispute("MARK_REFUND_REQUIRED")}
+                    disabled={decisionBusy || decisionNote.trim().length < 3}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: 0, background: "rgba(185,28,28,1)", color: "white", fontWeight: 900 }}
+                  >
+                    Mark refund required
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resolveDispute("RELEASE_PAYOUT")}
+                    disabled={decisionBusy || decisionNote.trim().length < 3}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: 0, background: "rgba(22,101,52,1)", color: "white", fontWeight: 900 }}
+                  >
+                    Release seller payout
+                  </button>
+                </div>
+                {decisionMessage ? <div style={{ marginTop: 10, color: "rgba(22,101,52,1)", fontWeight: 800 }}>{decisionMessage}</div> : null}
+              </div>
+            ) : null}
             {order.transferProofData ? (
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 4 }}>Transfer proof data</div>

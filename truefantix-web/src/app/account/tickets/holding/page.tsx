@@ -43,6 +43,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
 }
 
 function fulfillmentLabel(ticket: HoldingTicket) {
+  if (ticket.orderStatus === "PAID" && ticket.buyerConfirmationStatus === "DISPUTED") return "Dispute opened";
   if (ticket.orderStatus === "PAID" && ticket.transferVerificationStatus === "PENDING") return "Confirm receipt";
   if (ticket.orderStatus === "PAID") return "Awaiting seller transfer";
   if (ticket.orderStatus === "DELIVERED" && ticket.buyerConfirmationStatus === "CONFIRMED") return "Transfer confirmed";
@@ -52,7 +53,11 @@ function fulfillmentLabel(ticket: HoldingTicket) {
 
 function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirmed: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [disputeEvidence, setDisputeEvidence] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const canConfirm =
     ticket.orderStatus === "PAID" &&
     ticket.transferVerificationStatus === "PENDING" &&
@@ -61,6 +66,7 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
   async function confirmReceipt() {
     setBusy(true);
     setError(null);
+    setSuccess(null);
     try {
       const res = await fetch("/api/orders/confirm-receipt", {
         method: "POST",
@@ -74,6 +80,34 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
       onConfirmed();
     } catch (err: any) {
       setError(err.message || "Could not confirm ticket receipt.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openDispute() {
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/orders/dispute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: ticket.orderId,
+          reason: disputeReason,
+          evidence: disputeEvidence || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || data?.error || "Could not open dispute.");
+      }
+      setSuccess("Dispute opened. Seller payout is paused while admin reviews it.");
+      setDisputeOpen(false);
+      onConfirmed();
+    } catch (err: any) {
+      setError(err.message || "Could not open dispute.");
     } finally {
       setBusy(false);
     }
@@ -141,22 +175,91 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
             </p>
           ) : null}
           {canConfirm ? (
-            <button
-              type="button"
-              onClick={confirmReceipt}
-              disabled={busy}
+            <div style={{ display: "grid", gap: 8 }}>
+              <button
+                type="button"
+                onClick={confirmReceipt}
+                disabled={busy}
+                style={{
+                  minHeight: 38,
+                  border: 0,
+                  borderRadius: 8,
+                  background: "rgba(6, 74, 147, 1)",
+                  color: "white",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                {busy ? "Working..." : "Confirm received"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDisputeOpen((current) => !current);
+                  setError(null);
+                  setSuccess(null);
+                }}
+                disabled={busy}
+                style={{
+                  minHeight: 38,
+                  border: "1px solid rgba(185, 28, 28, 0.35)",
+                  borderRadius: 8,
+                  background: "white",
+                  color: "rgba(185, 28, 28, 1)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                Open dispute
+              </button>
+            </div>
+          ) : null}
+          {disputeOpen ? (
+            <div style={{ display: "grid", gap: 8, minWidth: 260 }}>
+              <textarea
+                value={disputeReason}
+                onChange={(event) => setDisputeReason(event.target.value)}
+                placeholder="Describe what went wrong with the ticket transfer"
+                rows={4}
+                style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", resize: "vertical" }}
+              />
+              <input
+                value={disputeEvidence}
+                onChange={(event) => setDisputeEvidence(event.target.value)}
+                placeholder="Optional evidence link or transfer details"
+                style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)" }}
+              />
+              <button
+                type="button"
+                onClick={openDispute}
+                disabled={busy || disputeReason.trim().length < 10}
+                style={{
+                  minHeight: 38,
+                  border: 0,
+                  borderRadius: 8,
+                  background: disputeReason.trim().length >= 10 ? "rgba(185, 28, 28, 1)" : "rgba(148, 163, 184, 1)",
+                  color: "white",
+                  fontWeight: 900,
+                  cursor: disputeReason.trim().length >= 10 ? "pointer" : "not-allowed",
+                }}
+              >
+                {busy ? "Opening..." : "Submit dispute"}
+              </button>
+            </div>
+          ) : null}
+          {success ? (
+            <div
+              role="status"
               style={{
-                minHeight: 38,
-                border: 0,
+                padding: 8,
                 borderRadius: 8,
-                background: "rgba(6, 74, 147, 1)",
-                color: "white",
-                fontWeight: 900,
-                cursor: "pointer",
+                background: "rgba(240, 253, 244, 1)",
+                color: "rgba(22, 101, 52, 1)",
+                fontSize: 12,
               }}
             >
-              {busy ? "Confirming..." : "Confirm received"}
-            </button>
+              {success}
+            </div>
           ) : null}
           {error ? (
             <div

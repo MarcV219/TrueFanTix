@@ -62,9 +62,10 @@ export default function RefundsFAQPage() {
               How do I open a dispute?
             </h2>
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
-              If you encounter an issue with your ticket purchase, contact support through your 
-              account page. Our dispute resolution process involves reviewing evidence from both 
-              parties and making a fair determination.
+              If the seller has submitted transfer proof but the tickets were not received or the
+              transfer details look wrong, open the purchase from your Holding page and choose
+              <strong> Open dispute</strong>. Add a short explanation and any evidence link or transfer
+              details so our team can review it.
             </p>
           </div>
 

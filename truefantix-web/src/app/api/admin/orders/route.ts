@@ -18,7 +18,11 @@ export async function GET(req: Request) {
   const take = Math.min(Math.max(Number(url.searchParams.get("take") || 25), 1), 50);
 
   const where: any = {};
-  if (status) where.status = status;
+  if (status === "DISPUTED") {
+    where.buyerConfirmationStatus = "DISPUTED";
+  } else if (status) {
+    where.status = status;
+  }
   if (q) {
     where.OR = [
       { id: { contains: q, mode: "insensitive" } },
@@ -51,6 +55,9 @@ export async function GET(req: Request) {
       taxCountryCode: true,
       taxLabel: true,
       totalCents: true,
+      transferVerificationStatus: true,
+      buyerConfirmationStatus: true,
+      disputeWindowEndsAt: true,
       seller: { select: { id: true, name: true } },
       buyerSeller: { select: { id: true, name: true } },
       payment: {
