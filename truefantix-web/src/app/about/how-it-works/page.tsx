@@ -53,10 +53,10 @@ export default function HowItWorksPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-green-900 dark:text-green-300 mb-1 text-lg">
-                    Transfer tickets into secure escrow
+                    Keep tickets ready for secure buyer transfer
                   </h3>
                   <p className="text-gray-600 dark:text-gray-400">
-                    Your tickets are held safely until the sale is complete
+                    Your tickets stay with your original ticket provider until they sell. Once there&apos;s a buyer, we guide the transfer and hold payment until delivery is confirmed.
                   </p>
                 </div>
               </div>
