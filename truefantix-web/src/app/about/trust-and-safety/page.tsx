@@ -3,7 +3,7 @@ import Footer from "@/components/Footer";
 
 export const metadata = {
   title: "Trust & Safety | TrueFanTix",
-  description: "Learn about TrueFanTix's trust and safety measures including escrow, verification, and dispute resolution.",
+  description: "Learn about TrueFanTix's trust and safety measures including payment protection, verification, and dispute resolution.",
 };
 
 export default function TrustAndSafetyPage() {
@@ -22,38 +22,38 @@ export default function TrustAndSafetyPage() {
       {/* Content */}
       <section className="py-12 px-4 flex-1">
         <div className="max-w-4xl mx-auto">
-          {/* Mandatory Escrow */}
+          {/* Payment Protection */}
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 md:p-12 mb-8">
             <div className="flex items-center gap-4 mb-6">
               <div className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl">
                 🔒
               </div>
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                Mandatory Escrow
+                Payment Protection
               </h2>
             </div>
 
             <p className="text-gray-600 dark:text-gray-400 mb-6">
-              All tickets must be transferred into TrueFanTix escrow before listing. This prevents:
+              TrueFanTix does not take custody of tickets before listing. Sellers keep tickets with their original ticket provider until a purchase is made, and buyer payment is protected until delivery is confirmed.
             </p>
 
             <div className="grid md:grid-cols-3 gap-4">
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                <h3 className="font-semibold text-red-900 dark:text-red-300 mb-2">❌ Duplicate sales</h3>
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Payment hold</h3>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Tickets can&apos;t be sold multiple times
+                  Sellers are not paid until ticket delivery is confirmed
                 </p>
               </div>
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                <h3 className="font-semibold text-red-900 dark:text-red-300 mb-2">❌ Fake listings</h3>
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Transfer tracking</h3>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Sellers must prove they have the tickets
+                  Sellers submit transfer proof and buyers confirm receipt
                 </p>
               </div>
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                <h3 className="font-semibold text-red-900 dark:text-red-300 mb-2">❌ Off-platform manipulation</h3>
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Dispute pause</h3>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  All transactions go through our secure system
+                  Payouts are paused if a buyer reports a delivery issue
                 </p>
               </div>
             </div>
@@ -71,7 +71,7 @@ export default function TrustAndSafetyPage() {
             </div>
 
             <p className="text-gray-600 dark:text-gray-400 mb-6">
-              We use tiered verification:
+              We verify listings and transactions in layers:
             </p>
 
             <div className="space-y-4">
@@ -81,10 +81,10 @@ export default function TrustAndSafetyPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-green-900 dark:text-green-300 mb-1">
-                    Primary seller API integrations
+                    Seller and account checks
                   </h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Where available, we connect directly to official ticket providers
+                    Sellers must use a verified account before listing tickets
                   </p>
                 </div>
               </div>
@@ -95,10 +95,10 @@ export default function TrustAndSafetyPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-green-900 dark:text-green-300 mb-1">
-                    Automated upload validation
+                    Listing evidence review
                   </h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Our system verifies ticket authenticity automatically
+                    We check listing details, receipt evidence, event information, and face-value pricing rules
                   </p>
                 </div>
               </div>
@@ -109,10 +109,10 @@ export default function TrustAndSafetyPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-green-900 dark:text-green-300 mb-1">
-                    Manual review for edge cases
+                    Delivery confirmation
                   </h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Our team reviews complex situations
+                    Sellers provide transfer proof, buyers confirm receipt, and our team reviews edge cases or disputes
                   </p>
                 </div>
               </div>

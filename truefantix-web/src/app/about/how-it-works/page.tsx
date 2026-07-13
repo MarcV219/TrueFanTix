@@ -161,7 +161,7 @@ export default function HowItWorksPage() {
                     Browse verified listings
                   </h3>
                   <p className="text-gray-600 dark:text-gray-400">
-                    All tickets are verified and held in escrow before listing
+                    Listings are reviewed for ticket evidence, event details, and face-value pricing rules
                   </p>
                 </div>
               </div>

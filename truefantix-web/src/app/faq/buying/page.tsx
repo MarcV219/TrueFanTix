@@ -54,7 +54,7 @@ export default function BuyingFAQPage() {
               Are tickets guaranteed?
             </h2>
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
-              Yes. All tickets are transferred into escrow before listing and must pass verification.
+              Listings are reviewed before they go live, seller payment is held until delivery is confirmed, and disputes pause payout while our team reviews the evidence.
             </p>
           </div>
 
