@@ -71,6 +71,13 @@ function statusLabel(order: SellerHoldingOrder) {
   return "Awaiting buyer confirmation";
 }
 
+function proofHelpText(proofType: string) {
+  if (proofType === "Transfer ID") return "Paste the confirmation/reference number from the ticket platform.";
+  if (proofType === "Email Confirmation") return "Paste the key confirmation text from the transfer email.";
+  if (proofType === "Screenshot") return "Paste a screenshot/proof URL for the completed transfer.";
+  return "Describe the transfer proof clearly enough for the buyer/admin team to verify it.";
+}
+
 function OrderCard({
   order,
   onSubmitted,
@@ -180,6 +187,22 @@ function OrderCard({
 
       {!transferSubmitted ? (
         <form onSubmit={submitProof} style={{ marginTop: 16, display: "grid", gap: 10 }}>
+          <div style={instructionStyle}>
+            <div style={{ fontWeight: 950, color: "rgba(15, 23, 42, 1)" }}>
+              Transfer the tickets outside TrueFanTix first
+            </div>
+            <ol style={{ margin: "8px 0 0", paddingLeft: 20, lineHeight: 1.45 }}>
+              <li>Open the original ticket platform, such as Ticketmaster or AXS.</li>
+              <li>
+                Transfer all tickets in this order to{" "}
+                <span style={{ fontWeight: 900 }}>{order.buyer?.email || "the buyer email shown above"}</span>.
+              </li>
+              <li>After the platform confirms the transfer, enter the proof below and submit it here.</li>
+            </ol>
+            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75, lineHeight: 1.4 }}>
+              This button does not send the tickets. It records proof that you already sent them.
+            </div>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(160px, 220px) 1fr", gap: 10 }}>
             <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 800 }}>
               Proof type
@@ -190,20 +213,23 @@ function OrderCard({
               </select>
             </label>
             <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 800 }}>
-              Transfer confirmation
+              Transfer proof
               <input
                 value={proofData}
                 onChange={(e) => setProofData(e.target.value)}
-                placeholder="Transfer ID, confirmation email text, or screenshot URL"
+                placeholder={proofHelpText(proofType)}
                 required
                 style={inputStyle}
               />
+              <span style={{ fontSize: 12, opacity: 0.7, fontWeight: 700 }}>
+                {proofHelpText(proofType)}
+              </span>
             </label>
           </div>
           {error ? <div role="alert" style={errorStyle}>{error}</div> : null}
           {ok ? <div role="status" style={okStyle}>{ok}</div> : null}
           <button type="submit" disabled={busy} style={buttonStyle}>
-            {busy ? "Confirming..." : "Confirm ticket transfer"}
+            {busy ? "Submitting proof..." : "I transferred the tickets - submit proof"}
           </button>
         </form>
       ) : (
@@ -236,6 +262,14 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 8,
   border: "1px solid rgba(0,0,0,0.18)",
   padding: "8px 10px",
+};
+
+const instructionStyle: React.CSSProperties = {
+  padding: 12,
+  borderRadius: 10,
+  border: "1px solid rgba(37, 99, 235, 0.18)",
+  background: "rgba(239, 246, 255, 1)",
+  color: "rgba(15, 23, 42, 0.88)",
 };
 
 const buttonStyle: React.CSSProperties = {
