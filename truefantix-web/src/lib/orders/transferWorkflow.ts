@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { generateBuyerTransferConfirmationRequiredEmail, sendEmail } from "@/lib/email";
 import { createNotification, createNotificationOncePerWindow } from "@/lib/notifications/service";
 
 export const SELLER_TRANSFER_DEADLINE_HOURS = 24;
@@ -58,18 +59,41 @@ export async function notifyBuyerTransferConfirmationRequired(params: {
   orderId: string;
   ticketCount: number;
   deadline: Date;
+  sendEmail?: boolean;
   now?: Date;
 }) {
   const ticketWord = params.ticketCount === 1 ? "ticket" : "tickets";
   const message = `Confirm you received ${params.ticketCount} transferred ${ticketWord} by ${formatDeadline(params.deadline)}. If you do not confirm within 24 hours, the seller payout will be released.`;
 
-  return createNotificationOncePerWindow({
+  const notification = await createNotificationOncePerWindow({
     userId: params.buyerUserId,
     type: "TRANSFER_CONFIRMATION_REQUIRED",
     message,
     link: "/account/tickets/holding",
     windowStart: reminderWindowStart(params.now),
   });
+
+  if (params.sendEmail && notification.ok && !("skipped" in notification)) {
+    const buyer = await prisma.user.findUnique({
+      where: { id: params.buyerUserId },
+      select: { email: true, firstName: true },
+    });
+
+    if (buyer?.email) {
+      const email = generateBuyerTransferConfirmationRequiredEmail(
+        params.orderId,
+        buyer.firstName,
+        params.ticketCount,
+        params.deadline
+      );
+      const result = await sendEmail({ to: buyer.email, ...email });
+      if (!result.ok) {
+        console.error("[EMAIL] Buyer transfer confirmation email failed:", result.error);
+      }
+    }
+  }
+
+  return notification;
 }
 
 export async function notifySellerBuyerConfirmed(params: {

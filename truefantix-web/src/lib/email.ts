@@ -290,6 +290,83 @@ The TrueFanTix Team`;
   return { subject, text, html };
 }
 
+export function generateBuyerTransferConfirmationRequiredEmail(
+  orderId: string,
+  firstName: string | null,
+  ticketCount: number,
+  deadline: Date
+) {
+  const ticketWord = ticketCount === 1 ? "ticket" : "tickets";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN || "https://truefantix.com";
+  const holdingUrl = `${appUrl.replace(/\/$/, "")}/account/tickets/holding`;
+  const deadlineText = new Intl.DateTimeFormat("en-CA", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(deadline);
+  const subject = "Action Required: Confirm Your Ticket Transfer";
+
+  const text = `Hi ${firstName || "there"},
+
+The seller has confirmed that ${ticketCount} ${ticketWord} for order ${orderId} ${ticketCount === 1 ? "has" : "have"} been transferred to you.
+
+Please sign in to TrueFanTix and confirm receipt by ${deadlineText}. If anything looks incorrect or you have not received the transfer, open a dispute before the deadline.
+
+If you do not confirm receipt or open a dispute within the 24-hour confirmation window, the payment hold will be released to the seller automatically.
+
+Confirm or dispute the transfer:
+${holdingUrl}
+
+Thanks,
+The TrueFanTix Team`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #064a93; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
+    .notice { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #064a93; }
+    .deadline { background: #fffbeb; border: 1px solid #fcd34d; padding: 16px; border-radius: 8px; margin: 20px 0; }
+    .button { display: inline-block; background: #064a93; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
+    .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Transfer Confirmation Required</h1>
+    </div>
+    <div class="content">
+      <p>Hi ${firstName || "there"},</p>
+      <div class="notice">
+        <p>The seller has confirmed that <strong>${ticketCount} ${ticketWord}</strong> for order <strong>${orderId}</strong> ${ticketCount === 1 ? "has" : "have"} been transferred to you.</p>
+      </div>
+      <p>Please sign in to TrueFanTix and confirm receipt. If anything looks incorrect or you have not received the transfer, open a dispute before the deadline.</p>
+      <div class="deadline">
+        <p style="margin-top: 0;"><strong>Confirmation deadline:</strong> ${deadlineText}</p>
+        <p style="margin-bottom: 0;">If you do not confirm receipt or open a dispute within the 24-hour confirmation window, the payment hold will be released to the seller automatically.</p>
+      </div>
+      <div style="text-align: center;">
+        <a href="${holdingUrl}" class="button">Confirm or Dispute Transfer</a>
+      </div>
+      <p>Thanks,<br>The TrueFanTix Team</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated message from TrueFanTix. Please do not reply to this email.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  return { subject, text, html };
+}
+
 export function generateSaleNotificationEmail(
   orderId: string,
   firstName: string | null,

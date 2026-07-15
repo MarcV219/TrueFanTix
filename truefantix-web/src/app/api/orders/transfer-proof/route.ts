@@ -177,6 +177,7 @@ export async function POST(req: Request) {
         orderId,
         ticketCount: order.items.length,
         deadline: disputeWindowEndsAt,
+        sendEmail: true,
         now: submittedAt,
       });
     }
