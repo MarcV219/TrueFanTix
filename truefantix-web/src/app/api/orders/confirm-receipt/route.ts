@@ -11,19 +11,12 @@ import { notifySellerBuyerConfirmed } from "@/lib/orders/transferWorkflow";
 export async function POST(req: Request) {
   try {
     const gate = await requireUser(req); // Ensure user is logged in
+    if (!gate.ok) return gate.res;
 
     const validation = await validateRequest(schemas.orderConfirmReceipt)(req);
     if (!validation.success) return validation.response;
 
     const { orderId } = validation.data;
-
-    // Ensure user is authenticated
-    if (!gate.user) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
-        { status: 401 }
-      );
-    }
 
     // Find the order and verify the logged-in user is the buyer
     const order = await prisma.order.findUnique({

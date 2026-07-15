@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AccountGate from "@/app/account/_components/accountgate";
+import { apiFetch } from "@/lib/api-fetch";
 
 type SellerHoldingOrder = {
   id: string;
@@ -138,7 +139,7 @@ function OrderCard({
     setOk(null);
 
     try {
-      const res = await fetch("/api/orders/transfer-proof", {
+      const res = await apiFetch("/api/orders/transfer-proof", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AccountGate from "@/app/account/_components/accountgate";
+import { apiFetch } from "@/lib/api-fetch";
 
 type HoldingTicket = {
   id: string;
@@ -68,7 +69,7 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch("/api/orders/confirm-receipt", {
+      const res = await apiFetch("/api/orders/confirm-receipt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderId: ticket.orderId }),
@@ -90,7 +91,7 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch("/api/orders/dispute", {
+      const res = await apiFetch("/api/orders/dispute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
