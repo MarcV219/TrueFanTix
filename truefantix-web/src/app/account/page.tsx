@@ -40,12 +40,20 @@ function ToolLink({
   hint,
   href,
   disabled,
+  count,
+  attention,
+  attentionLabel,
 }: {
   label: string;
   hint?: string;
   href: string;
   disabled?: boolean;
+  count?: number;
+  attention?: "active" | "required";
+  attentionLabel?: string;
 }) {
+  const requiresAction = attention === "required";
+  const isActive = attention === "active";
   const styles: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
@@ -53,19 +61,79 @@ function ToolLink({
     gap: 12,
     padding: 12,
     borderRadius: 10,
-    border: "1px solid rgba(0,0,0,0.10)",
-    background: disabled ? "rgba(148, 163, 184, 0.12)" : "rgba(248, 250, 252, 1)",
+    border: disabled
+      ? "1px solid rgba(0,0,0,0.10)"
+      : requiresAction
+      ? "1px solid rgba(217, 119, 6, 0.55)"
+      : isActive
+      ? "1px solid rgba(37, 99, 235, 0.35)"
+      : "1px solid rgba(0,0,0,0.10)",
+    background: disabled
+      ? "rgba(148, 163, 184, 0.12)"
+      : requiresAction
+      ? "rgba(255, 251, 235, 1)"
+      : isActive
+      ? "rgba(239, 246, 255, 1)"
+      : "rgba(248, 250, 252, 1)",
     color: "rgba(15, 23, 42, 1)",
     textDecoration: "none",
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.65 : 1,
+    boxShadow: disabled
+      ? "none"
+      : requiresAction
+      ? "0 0 0 3px rgba(245, 158, 11, 0.14)"
+      : isActive
+      ? "0 0 0 3px rgba(37, 99, 235, 0.08)"
+      : "none",
   };
 
-  const Right = () => (
-    <span style={{ fontWeight: 900, opacity: 0.7 }} aria-hidden>
-      →
-    </span>
+  const right = (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {typeof count === "number" && count > 0 ? (
+        <span
+          aria-label={`${count} item${count === 1 ? "" : "s"}`}
+          style={{
+            minWidth: 28,
+            height: 24,
+            padding: "0 8px",
+            borderRadius: 999,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: requiresAction ? "rgba(217, 119, 6, 1)" : "rgba(6, 74, 147, 1)",
+            color: "white",
+            fontSize: 12,
+            fontWeight: 950,
+          }}
+        >
+          {count}
+        </span>
+      ) : null}
+      <span style={{ fontWeight: 900, opacity: 0.7 }} aria-hidden>
+        →
+      </span>
+    </div>
   );
+
+  const badge = attentionLabel ? (
+    <span
+      style={{
+        width: "fit-content",
+        marginTop: 4,
+        padding: "4px 8px",
+        borderRadius: 999,
+        background: requiresAction ? "rgba(245, 158, 11, 0.18)" : "rgba(37, 99, 235, 0.12)",
+        color: requiresAction ? "rgba(146, 64, 14, 1)" : "rgba(30, 64, 175, 1)",
+        fontSize: 11,
+        fontWeight: 950,
+        textTransform: "uppercase",
+        letterSpacing: 0,
+      }}
+    >
+      {attentionLabel}
+    </span>
+  ) : null;
 
   if (disabled) {
     return (
@@ -73,8 +141,9 @@ function ToolLink({
         <div style={{ display: "grid", gap: 2 }}>
           <div style={{ fontWeight: 900 }}>{label}</div>
           {hint ? <div style={{ fontSize: 12, opacity: 0.75 }}>{hint}</div> : null}
+          {badge}
         </div>
-        <Right />
+        {right}
       </div>
     );
   }
@@ -84,11 +153,28 @@ function ToolLink({
       <div style={{ display: "grid", gap: 2 }}>
         <div style={{ fontWeight: 900 }}>{label}</div>
         {hint ? <div style={{ fontSize: 12, opacity: 0.75 }}>{hint}</div> : null}
+        {badge}
       </div>
-      <Right />
+      {right}
     </Link>
   );
 }
+
+type TicketOverview = {
+  holding: { count: number; actionRequired: number };
+  selling: { count: number };
+  sellerHolding: { count: number; actionRequired: number };
+  bought: { count: number; activeUpcoming: number };
+  sold: { count: number };
+};
+
+const emptyTicketOverview: TicketOverview = {
+  holding: { count: 0, actionRequired: 0 },
+  selling: { count: 0 },
+  sellerHolding: { count: 0, actionRequired: 0 },
+  bought: { count: 0, activeUpcoming: 0 },
+  sold: { count: 0 },
+};
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -133,6 +219,8 @@ function AccountHub({ me }: { me: MeUser }) {
   const sellerEligible = emailVerified && phoneVerified && stripeOk;
 
   const [accessTokenBalance, setAccessTokenBalance] = React.useState<number>(0);
+  const [ticketOverview, setTicketOverview] = React.useState<TicketOverview>(emptyTicketOverview);
+  const [ticketOverviewError, setTicketOverviewError] = React.useState<string | null>(null);
 
   // Delete form state
   const [deletePassword, setDeletePassword] = React.useState("");
@@ -244,6 +332,38 @@ function AccountHub({ me }: { me: MeUser }) {
     }
 
     loadAccessTokenBalance();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let alive = true;
+
+    async function loadTicketOverview() {
+      setTicketOverviewError(null);
+      try {
+        const { res, data } = await fetchJson("/api/account/tickets/overview", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        if (!alive) return;
+        if (!res.ok || !data?.ok) {
+          throw new Error(String(data?.message || data?.error || `Failed to load ticket overview (${res.status}).`));
+        }
+
+        setTicketOverview({
+          ...emptyTicketOverview,
+          ...(data?.tickets ?? {}),
+        });
+      } catch (e) {
+        if (!alive) return;
+        setTicketOverviewError(e instanceof Error ? e.message : "Ticket overview unavailable.");
+      }
+    }
+
+    loadTicketOverview();
     return () => {
       alive = false;
     };
@@ -651,41 +771,99 @@ function AccountHub({ me }: { me: MeUser }) {
         </Card>
 
         <Card title="My tickets" description="Quick access to tickets you’re holding, selling, or have completed.">
+          {ticketOverviewError ? (
+            <div
+              role="alert"
+              style={{
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid rgba(245, 158, 11, 0.35)",
+                background: "rgba(255, 251, 235, 1)",
+                color: "rgba(146, 64, 14, 1)",
+                fontSize: 12,
+                fontWeight: 800,
+                marginBottom: 10,
+              }}
+            >
+              {ticketOverviewError}
+            </div>
+          ) : null}
           <div style={{ display: "grid", gap: 10 }}>
             <ToolLink
               label="Holding (incoming / transferred to you)"
-              hint="Tickets you bought that are not yet delivered or are in your possession."
+              hint={
+                ticketOverview.holding.actionRequired > 0
+                  ? "Transferred tickets are waiting for you to confirm receipt."
+                  : ticketOverview.holding.count > 0
+                  ? "Tickets you bought are still active until transfer and final completion."
+                  : "Tickets you bought that are not yet delivered or are in your possession."
+              }
               href="/account/tickets/holding"
+              count={ticketOverview.holding.count}
+              attention={ticketOverview.holding.actionRequired > 0 ? "required" : ticketOverview.holding.count > 0 ? "active" : undefined}
+              attentionLabel={ticketOverview.holding.actionRequired > 0 ? "Action required" : ticketOverview.holding.count > 0 ? "Active tickets" : undefined}
             />
             <ToolLink
               label="Selling (active listings)"
               hint={
-                sellerEligible
+                ticketOverview.selling.count > 0
+                  ? "Tickets currently listed or reserved for sale."
+                  : sellerEligible
                   ? "Tickets currently listed for sale."
                   : "Locked until seller verification is complete (email + phone + Stripe)."
               }
               href="/account/tickets/selling"
               disabled={!sellerEligible}
+              count={ticketOverview.selling.count}
+              attention={ticketOverview.selling.count > 0 ? "active" : undefined}
+              attentionLabel={ticketOverview.selling.count > 0 ? "Active listings" : undefined}
             />
             <ToolLink
               label="Seller holding (transfer required)"
               hint={
-                sellerEligible
+                ticketOverview.sellerHolding.actionRequired > 0
+                  ? "Sold tickets need transfer proof before the deadline."
+                  : ticketOverview.sellerHolding.count > 0
+                  ? "Sold tickets are awaiting buyer confirmation or final completion."
+                  : sellerEligible
                   ? "Sold tickets awaiting transfer or buyer confirmation."
                   : "Locked until seller verification is complete (email + phone + Stripe)."
               }
               href="/account/tickets/seller-holding"
               disabled={!sellerEligible}
+              count={ticketOverview.sellerHolding.count}
+              attention={
+                ticketOverview.sellerHolding.actionRequired > 0
+                  ? "required"
+                  : ticketOverview.sellerHolding.count > 0
+                  ? "active"
+                  : undefined
+              }
+              attentionLabel={
+                ticketOverview.sellerHolding.actionRequired > 0
+                  ? "Transfer required"
+                  : ticketOverview.sellerHolding.count > 0
+                  ? "In progress"
+                  : undefined
+              }
             />
             <ToolLink
               label="Bought (completed)"
-              hint="Your past purchases and receipts."
+              hint={
+                ticketOverview.bought.activeUpcoming > 0
+                  ? "Completed purchases for upcoming events."
+                  : "Your past purchases and receipts."
+              }
               href="/account/tickets/bought"
+              count={ticketOverview.bought.count}
+              attention={ticketOverview.bought.activeUpcoming > 0 ? "active" : undefined}
+              attentionLabel={ticketOverview.bought.activeUpcoming > 0 ? "Upcoming event" : undefined}
             />
             <ToolLink
               label="Sold (completed)"
               hint="Your past sales and payout records."
               href="/account/tickets/sold"
+              count={ticketOverview.sold.count}
             />
           </div>
         </Card>
