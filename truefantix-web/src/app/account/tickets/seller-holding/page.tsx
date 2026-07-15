@@ -74,8 +74,8 @@ function statusLabel(order: SellerHoldingOrder) {
 function proofHelpText(proofType: string) {
   if (proofType === "Transfer ID") return "Paste the confirmation/reference number from the ticket platform.";
   if (proofType === "Email Confirmation") return "Paste the key confirmation text from the transfer email.";
-  if (proofType === "Screenshot") return "Paste a screenshot/proof URL for the completed transfer.";
-  return "Describe the transfer proof clearly enough for the buyer/admin team to verify it.";
+  if (proofType === "Screenshot") return "Add any caption or context for the screenshot.";
+  return "Describe the transfer proof clearly enough for the admin team to understand it.";
 }
 
 function OrderCard({
@@ -87,13 +87,52 @@ function OrderCard({
 }) {
   const [proofType, setProofType] = useState(proofTypes[0]);
   const [proofData, setProofData] = useState("");
+  const [proofImage, setProofImage] = useState<string | null>(null);
+  const [proofFileName, setProofFileName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const transferSubmitted = !!order.transferProofType;
 
+  function handleProofFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    setError(null);
+    setOk(null);
+    setProofImage(null);
+    setProofFileName(null);
+
+    if (!file) return;
+    const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"];
+    if (!allowed.includes(file.type)) {
+      setError("Upload a JPG, PNG, WebP, GIF, or PDF transfer confirmation.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 3_000_000) {
+      setError("Upload a transfer proof under 3 MB.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : null;
+      setProofImage(result);
+      setProofFileName(file.name);
+    };
+    reader.onerror = () => {
+      setError("Could not read that transfer proof upload.");
+    };
+    reader.readAsDataURL(file);
+  }
+
   async function submitProof(event: React.FormEvent) {
     event.preventDefault();
+    if (!proofImage) {
+      setError("Upload a screenshot, image, or PDF confirmation before submitting proof.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     setOk(null);
@@ -106,14 +145,18 @@ function OrderCard({
           orderId: order.id,
           transferProofType: proofType,
           transferProofData: proofData,
+          transferProofImage: proofImage,
+          transferProofFileName: proofFileName,
         }),
       });
       const data = await res.json();
       if (!res.ok || !data?.ok) {
         throw new Error(data?.message || data?.error || "Could not confirm transfer.");
       }
-      setOk("Transfer confirmed. The buyer has been notified and has 24 hours to confirm receipt.");
+      setOk("Transfer proof checked and accepted. The buyer has been notified and has 24 hours to confirm receipt.");
       setProofData("");
+      setProofImage(null);
+      setProofFileName(null);
       onSubmitted();
     } catch (err: any) {
       setError(err.message || "Could not confirm transfer.");
@@ -197,10 +240,10 @@ function OrderCard({
                 Transfer all tickets in this order to{" "}
                 <span style={{ fontWeight: 900 }}>{order.buyer?.email || "the buyer email shown above"}</span>.
               </li>
-              <li>After the platform confirms the transfer, enter the proof below and submit it here.</li>
+              <li>After the platform confirms the transfer, upload the confirmation proof below.</li>
             </ol>
             <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75, lineHeight: 1.4 }}>
-              This button does not send the tickets. It records proof that you already sent them.
+              This button does not send the tickets. It checks the uploaded proof for obvious mismatches before the buyer is notified.
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(160px, 220px) 1fr", gap: 10 }}>
@@ -213,12 +256,11 @@ function OrderCard({
               </select>
             </label>
             <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 800 }}>
-              Transfer proof
+              Proof note
               <input
                 value={proofData}
                 onChange={(e) => setProofData(e.target.value)}
                 placeholder={proofHelpText(proofType)}
-                required
                 style={inputStyle}
               />
               <span style={{ fontSize: 12, opacity: 0.7, fontWeight: 700 }}>
@@ -226,10 +268,28 @@ function OrderCard({
               </span>
             </label>
           </div>
+          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 800 }}>
+            Upload transfer proof
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+              onChange={handleProofFile}
+              required
+              style={inputStyle}
+            />
+            <span style={{ fontSize: 12, opacity: 0.7, fontWeight: 700 }}>
+              Upload the confirmation screen or email showing the completed transfer, buyer email, event, date, and ticket count where visible.
+            </span>
+            {proofFileName ? (
+              <span style={{ fontSize: 12, color: "rgba(22, 101, 52, 1)", fontWeight: 900 }}>
+                Ready to check: {proofFileName}
+              </span>
+            ) : null}
+          </label>
           {error ? <div role="alert" style={errorStyle}>{error}</div> : null}
           {ok ? <div role="status" style={okStyle}>{ok}</div> : null}
-          <button type="submit" disabled={busy} style={buttonStyle}>
-            {busy ? "Submitting proof..." : "I transferred the tickets - submit proof"}
+          <button type="submit" disabled={busy || !proofImage} style={buttonStyle}>
+            {busy ? "Checking proof..." : "I transferred the tickets - check and submit proof"}
           </button>
         </form>
       ) : (

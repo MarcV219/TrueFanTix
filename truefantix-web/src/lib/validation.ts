@@ -70,7 +70,7 @@ export const schemas = {
     verificationImage: z
       .string()
       .trim()
-      .max(3_000_000)
+      .max(4_500_000)
       .refine(
         (value) =>
           !value ||
@@ -219,7 +219,23 @@ export const schemas = {
   orderTransferProof: z.object({
     orderId: z.string().trim().cuid(),
     transferProofType: z.enum(["Screenshot", "Transfer ID", "Email Confirmation", "Other"]),
-    transferProofData: z.string().trim().min(1).max(2048),
+    transferProofData: z.string().trim().max(2048).optional().nullable(),
+    transferProofImage: z
+      .string()
+      .trim()
+      .max(3_000_000)
+      .refine(
+        (value) =>
+          !value ||
+          /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(value) ||
+          /^data:application\/pdf;base64,/i.test(value),
+        {
+          message: "transferProofImage must be a JPG, PNG, WebP, GIF, or PDF upload.",
+        }
+      )
+      .optional()
+      .nullable(),
+    transferProofFileName: z.string().trim().max(255).optional().nullable(),
   }),
 
   // Used by POST /api/orders/confirm-receipt

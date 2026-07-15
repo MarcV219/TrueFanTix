@@ -9,6 +9,7 @@ import {
   addHours,
   notifyBuyerTransferConfirmationRequired,
 } from "@/lib/orders/transferWorkflow";
+import { analyzeTransferProof, transferProofIssueMessage } from "@/lib/orders/transferProofReview";
 
 // POST /api/orders/transfer-proof
 // Allows a seller to submit proof of ticket transfer for a specific order.
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.orderTransferProof)(req);
     if (!validation.success) return validation.response;
 
-    const { orderId, transferProofType, transferProofData } = validation.data;
+    const { orderId, transferProofType, transferProofData, transferProofImage, transferProofFileName } = validation.data;
 
     // Ensure user is authenticated
     if (!gate.user) {
@@ -37,7 +38,18 @@ export async function POST(req: Request) {
         sellerId: true,
         status: true,
         buyerConfirmationStatus: true,
-        items: { select: { id: true } },
+        items: {
+          select: {
+            id: true,
+            ticket: {
+              select: {
+                title: true,
+                venue: true,
+                date: true,
+              },
+            },
+          },
+        },
         buyerSeller: { include: { user: true } },
       },
     });
@@ -68,16 +80,93 @@ export async function POST(req: Request) {
       );
     }
 
+    if (!transferProofImage) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "TRANSFER_PROOF_UPLOAD_REQUIRED",
+          message: "Upload a screenshot, image, or PDF confirmation so TrueFanTix can check the transfer proof.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const firstTicket = order.items[0]?.ticket ?? null;
+    const review = await analyzeTransferProof({
+      proofDataUrl: transferProofImage,
+      proofFileName: transferProofFileName,
+      expectedBuyerEmail: order.buyerSeller.user?.email ?? null,
+      expectedEventTitles: Array.from(new Set(order.items.map((item) => item.ticket.title).filter(Boolean))),
+      expectedVenue: firstTicket?.venue ?? null,
+      expectedEventDate: firstTicket?.date ?? null,
+      expectedTicketCount: order.items.length,
+      sellerNote: transferProofData ?? null,
+    });
+
+    if (review.status === "unsupported") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "UNSUPPORTED_TRANSFER_PROOF",
+          message: "Upload a JPG, PNG, WebP, GIF, or PDF transfer confirmation.",
+          review,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (review.status === "unavailable") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "TRANSFER_PROOF_REVIEW_UNAVAILABLE",
+          message: "Automated transfer proof review is unavailable. Please try again shortly.",
+          review,
+        },
+        { status: 503 }
+      );
+    }
+
+    if (!review.ok) {
+      const details = review.issues.map(transferProofIssueMessage);
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "TRANSFER_PROOF_MISMATCH",
+          message: details.length
+            ? `This proof could not be accepted because ${details.join("; ")}.`
+            : "This proof could not be verified automatically. Upload clearer proof from the ticket platform.",
+          review,
+        },
+        { status: 422 }
+      );
+    }
+
     // Update the order with transfer proof and set dispute window
     const submittedAt = new Date();
     const disputeWindowEndsAt = addHours(submittedAt, BUYER_CONFIRMATION_DEADLINE_HOURS);
+    const storedProofData = JSON.stringify({
+      sellerNote: transferProofData ?? "",
+      fileName: transferProofFileName ?? null,
+      proofUpload: transferProofImage,
+      review,
+      reviewedAt: submittedAt.toISOString(),
+    });
 
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
       data: {
         transferProofType,
-        transferProofData,
-        transferVerificationStatus: "PENDING", // Automated verification will update this
+        transferProofData: storedProofData,
+        transferVerificationStatus: "PENDING",
+        transferVerificationReason: JSON.stringify({
+          status: review.status,
+          provider: review.provider,
+          model: review.model,
+          confidence: review.confidence,
+          issues: review.issues,
+          reason: review.reason,
+        }),
         disputeWindowEndsAt,
       },
       select: {
@@ -98,13 +187,12 @@ export async function POST(req: Request) {
         now: submittedAt,
       });
     }
-    // TODO: Trigger automated transfer verification (AI image analysis)
-
     return NextResponse.json(
       {
         ok: true,
         order: updatedOrder,
-        message: "Transfer proof submitted. Buyer will be notified.",
+        review,
+        message: "Transfer proof checked and accepted. Buyer will be notified.",
       },
       { status: 200 }
     );

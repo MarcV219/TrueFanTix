@@ -26,6 +26,23 @@ function JsonBlock({ value }: { value: unknown }) {
   );
 }
 
+function parseTransferProofData(value: unknown) {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as {
+      sellerNote?: string;
+      fileName?: string | null;
+      proofUpload?: string | null;
+      review?: unknown;
+      reviewedAt?: string;
+    };
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export default function AdminOrderDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -152,12 +169,44 @@ export default function AdminOrderDetailPage() {
                 {decisionMessage ? <div style={{ marginTop: 10, color: "rgba(22,101,52,1)", fontWeight: 800 }}>{decisionMessage}</div> : null}
               </div>
             ) : null}
-            {order.transferProofData ? (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 4 }}>Transfer proof data</div>
-                <div style={{ padding: 10, borderRadius: 8, background: "rgba(248,250,252,1)", overflowWrap: "anywhere" }}>{order.transferProofData}</div>
-              </div>
-            ) : null}
+            {order.transferProofData ? (() => {
+              const transferProof = parseTransferProofData(order.transferProofData);
+              const proofUpload = transferProof?.proofUpload ?? null;
+              const isImageProof = typeof proofUpload === "string" && /^data:image\//i.test(proofUpload);
+              const isPdfProof = typeof proofUpload === "string" && /^data:application\/pdf/i.test(proofUpload);
+
+              if (!transferProof) {
+                return (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 4 }}>Transfer proof data</div>
+                    <div style={{ padding: 10, borderRadius: 8, background: "rgba(248,250,252,1)", overflowWrap: "anywhere" }}>{order.transferProofData}</div>
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 4 }}>Transfer proof</div>
+                    <div style={{ padding: 10, borderRadius: 8, background: "rgba(248,250,252,1)", display: "grid", gap: 6 }}>
+                      <div><strong>File:</strong> {transferProof.fileName || "-"}</div>
+                      <div><strong>Seller note:</strong> {transferProof.sellerNote || "-"}</div>
+                      <div><strong>Reviewed:</strong> {transferProof.reviewedAt ? new Date(transferProof.reviewedAt).toLocaleString() : "-"}</div>
+                    </div>
+                  </div>
+                  {isImageProof ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={proofUpload} alt="Transfer proof upload" style={{ maxWidth: 520, width: "100%", borderRadius: 8, border: "1px solid rgba(0,0,0,0.12)" }} />
+                  ) : null}
+                  {isPdfProof ? (
+                    <a href={proofUpload} target="_blank" rel="noreferrer" style={{ textDecoration: "underline", fontWeight: 900 }}>
+                      Open transfer proof PDF
+                    </a>
+                  ) : null}
+                  <JsonBlock value={transferProof.review ?? null} />
+                </div>
+              );
+            })() : null}
           </section>
 
           <section style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 8, background: "white", padding: 14 }}>
