@@ -13,46 +13,46 @@ Use this checklist before promoting the dev app toward a public launch. It combi
 
 ## Do Not Break
 
-- [ ] Public domains stay on the Coming Soon project until launch:
+- [x] Public domains stay on the Coming Soon project until launch:
   - `truefantix.com`
   - `www.truefantix.com`
   - `truefantix.ca`
   - `www.truefantix.ca`
-- [ ] Dev project `truefantix-web` must not own public `.com` or `.ca` domains.
-- [ ] Vercel Root Directory remains `truefantix-web`.
-- [ ] Dev project does not set `COMING_SOON_MODE=1`.
-- [ ] Coming Soon lock enforcement remains in `src/proxy.ts`, not `middleware.ts`.
+- [x] Dev project `truefantix-web` must not own public `.com` or `.ca` domains.
+- [x] Vercel Root Directory remains `truefantix-web`.
+- [x] Dev project does not set `COMING_SOON_MODE=1`.
+- [x] Coming Soon lock enforcement remains in `src/proxy.ts`, not `middleware.ts`.
 
 ## Required Env Vars
 
 Set or verify these in Vercel for `truefantix-web` before release testing.
 
-- [ ] `PASSWORD_RESET_SECRET` is set and at least 32 characters.
-- [ ] `CRON_SECRET` is set if using cron header auth.
-- [ ] `APP_ORIGIN` is set to the exact app origin, for example `https://truefantix-web.vercel.app` for dev.
-- [ ] `STRIPE_WEBHOOK_SECRET` matches the Stripe webhook endpoint secret.
-- [ ] `UPSTASH_REDIS_REST_URL` is set for durable Vercel rate limiting.
-- [ ] `UPSTASH_REDIS_REST_TOKEN` is set with the matching Upstash token.
-- [ ] `TWILIO_ACCOUNT_SID` is set.
-- [ ] `TWILIO_AUTH_TOKEN` is set.
-- [ ] `TWILIO_PHONE_NUMBER` is set in E.164 format, for example `+14165550123`.
+- [x] `PASSWORD_RESET_SECRET` is set and at least 32 characters.
+- [x] `CRON_SECRET` is set if using cron header auth.
+- [x] `APP_ORIGIN` is set to the exact app origin, for example `https://truefantix-web.vercel.app` for dev.
+- [x] `STRIPE_WEBHOOK_SECRET` matches the Stripe webhook endpoint secret.
+- [x] `UPSTASH_REDIS_REST_URL` is set for durable Vercel rate limiting.
+- [x] `UPSTASH_REDIS_REST_TOKEN` is set with the matching Upstash token.
+- [x] `TWILIO_ACCOUNT_SID` is set.
+- [x] `TWILIO_AUTH_TOKEN` is set.
+- [x] `TWILIO_PHONE_NUMBER` is set in E.164 format, for example `+14165550123`.
 
 ## Verification Gates
 
-- [ ] Redeploy `truefantix-web` after env changes.
-- [ ] `GET https://truefantix-web.vercel.app/api/health` returns `200` and `status: healthy`.
-- [ ] `GET https://truefantix-web.vercel.app/api/health/verification` returns `200` and `status: healthy`.
-- [ ] Unsigned `POST /api/webhooks/stripe` returns a controlled `400 MISSING_SIGNATURE`.
-- [ ] Protected admin/account endpoints return controlled `401` or `403` when unauthenticated.
+- [x] Redeploy `truefantix-web` after env changes.
+- [x] `GET https://truefantix-web.vercel.app/api/health` returns `200` and `status: healthy`.
+- [x] `GET https://truefantix-web.vercel.app/api/health/verification` returns `200` and `status: healthy`.
+- [x] Unsigned `POST /api/webhooks/stripe` returns a controlled `400 MISSING_SIGNATURE`.
+- [x] Protected admin/account endpoints return controlled `401` or `403` when unauthenticated.
 - [ ] Password reset flow works with configured `PASSWORD_RESET_SECRET`.
-- [ ] Phone verification flow sends through Twilio and no longer falls back to dev logging.
-- [ ] Stripe webhook duplicate delivery replay does not double-process an order.
+- [x] Phone verification flow sends through Twilio and no longer falls back to dev logging.
+- [x] Stripe webhook duplicate delivery replay does not double-process an order.
 
 ## QA Before Dev-To-Main Promotion
 
-- [ ] `npm run typecheck` passes.
-- [ ] `npm test` passes.
-- [ ] `npm run build` passes.
+- [x] `npm run typecheck` passes.
+- [x] `npm test` passes.
+- [x] `npm run build` passes.
 - [ ] Manual auth flow passes: register, verify email/phone, login, forgot/reset password.
 - [ ] Manual seller flow passes: onboarding state, create listing, listing appears in account.
 - [ ] Manual buyer flow passes: browse ticket, initialize purchase, Stripe checkout form renders.
@@ -64,12 +64,19 @@ Set or verify these in Vercel for `truefantix-web` before release testing.
 
 Run this before and after any `dev` to `main` promotion.
 
-- [ ] `https://www.truefantix.com/` shows Coming Soon.
-- [ ] `https://www.truefantix.com/login` does not expose the full app.
+- [x] `https://www.truefantix.com/` shows Coming Soon.
+- [x] `https://www.truefantix.com/login` does not expose the full app.
 - [ ] Early access signup inserts a row in `EarlyAccessLead`.
 - [ ] DNS still points as expected:
   - Apex records to `76.76.21.21`
   - `www` CNAME records to `cname.vercel-dns.com`
+
+## Status Notes
+
+- 2026-05-28: Production profile phone updates and SMS verification were confirmed working after the missing `User` token/referral columns were added.
+- 2026-05-28: Email verification send was confirmed working after the Resend key was corrected and production was redeployed.
+- 2026-05-28: `truefantix.com` / `www.truefantix.com` are Cloudflare-proxied in DNS, while `truefantix.ca` resolves directly through Vercel DNS. Public `.com` route checks still show the Coming Soon lock.
+- 2026-05-29: Production forum create, forgot-password, and emailed reset-link handling were fixed and deployed from `origin/dev` at `2e31d6a`; targeted reset-password Jest coverage and `npm run typecheck` pass.
 
 ## References
 
