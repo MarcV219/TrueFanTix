@@ -3,9 +3,11 @@
 import React from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import Footer from "@/components/Footer";
 import TicketCard from "@/components/tickets/TicketCard";
-import { inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
+import { fetchJson } from "@/lib/api-fetch";
+import { formatMoney, inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
 import type { TicketCardView } from "@/lib/ticketsView";
 
 type ApiTicket = {
@@ -246,8 +248,12 @@ function ChevronRightIcon({ className }: { className?: string }) {
 }
 
 export default function Page() {
-  const [allTickets, setAllTickets] = React.useState<TicketCard[]>([]);
+  const router = useRouter();
+  const [allTickets, setAllTickets] = React.useState<TicketCardView[]>([]);
   const [currentIndex, setCurrentIndex] = React.useState(0);
+  const [selectedTicketIds, setSelectedTicketIds] = React.useState<string[]>([]);
+  const [checkoutBusy, setCheckoutBusy] = React.useState(false);
+  const [checkoutError, setCheckoutError] = React.useState<string | null>(null);
   const [userCoords, setUserCoords] = React.useState<{ lat: number; lon: number } | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -269,9 +275,9 @@ export default function Page() {
 
         if (!res.ok) throw new Error(json?.error || `Tickets fetch failed (${res.status})`);
 
-        const normalized: TicketCard[] = rawTickets
+        const normalized: TicketCardView[] = rawTickets
           .filter((t) => t.status === "AVAILABLE")
-          .map((t) => mapApiTicketToCard(t) as unknown as TicketCard);
+          .map((t) => mapApiTicketToCard(t));
 
         if (!alive) return;
         setAllTickets(normalized);
@@ -355,6 +361,17 @@ export default function Page() {
     () => sortedTickets.slice(currentIndex, currentIndex + TICKETS_PER_PAGE),
     [sortedTickets, currentIndex, TICKETS_PER_PAGE]
   );
+  const selectedTickets = React.useMemo(() => {
+    const selected = new Set(selectedTicketIds);
+    return allTickets.filter((ticket) => selected.has(ticket.id));
+  }, [allTickets, selectedTicketIds]);
+  const selectedTotal = selectedTickets.reduce((sum, ticket) => sum + ticket.price, 0);
+  const selectedSellerIds = Array.from(new Set(selectedTickets.map((ticket) => ticket.sellerId).filter(Boolean)));
+  const selectedCurrencies = Array.from(new Set(selectedTickets.map((ticket) => ticket.currency)));
+  const selectedCurrency = selectedCurrencies.length === 1 ? selectedCurrencies[0] : "CAD";
+  const displayedIds = new Set(displayedTickets.map((ticket) => ticket.id));
+  const selectedDisplayedCount = selectedTicketIds.filter((id) => displayedIds.has(id)).length;
+  const allDisplayedSelected = displayedTickets.length > 0 && selectedDisplayedCount === displayedTickets.length;
 
   const handlePrev = () => {
     const newIndex = Math.max(0, currentIndex - TICKETS_PER_PAGE);
@@ -370,6 +387,146 @@ export default function Page() {
 
   const canGoPrev = currentIndex > 0;
   const canGoNext = currentIndex + TICKETS_PER_PAGE < sortedTickets.length;
+
+  function buildIdempotencyKey(ticketIds: string[]) {
+    const random =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return `tickets-${ticketIds.join("-")}-${random}`.slice(0, 100);
+  }
+
+  function toggleTicketSelection(ticket: TicketCardView) {
+    setCheckoutError(null);
+    setSelectedTicketIds((current) => {
+      if (current.includes(ticket.id)) return current.filter((id) => id !== ticket.id);
+      if (current.length >= 10) {
+        setCheckoutError("Select up to 10 tickets per checkout.");
+        return current;
+      }
+      return [...current, ticket.id];
+    });
+  }
+
+  function toggleDisplayedSelection() {
+    setCheckoutError(null);
+    setSelectedTicketIds((current) => {
+      const visibleIds = displayedTickets.map((ticket) => ticket.id);
+      if (allDisplayedSelected) return current.filter((id) => !displayedIds.has(id));
+      const next = Array.from(new Set([...current, ...visibleIds]));
+      if (next.length > 10) {
+        setCheckoutError("Select up to 10 tickets per checkout.");
+        return next.slice(0, 10);
+      }
+      return next;
+    });
+  }
+
+  async function redirectForGate(status: number, data: { error?: unknown }) {
+    const errorCode = String(data?.error || "").toUpperCase();
+    if (status === 401 || errorCode === "NOT_AUTHENTICATED") {
+      router.push(`/login?next=${encodeURIComponent("/")}`);
+      return true;
+    }
+    if (status === 403 && errorCode === "NOT_VERIFIED") {
+      router.push(`/verify?next=${encodeURIComponent("/")}`);
+      return true;
+    }
+    return false;
+  }
+
+  async function checkoutSelectedTickets() {
+    if (checkoutBusy) return;
+    setCheckoutError(null);
+
+    if (!selectedTicketIds.length) {
+      setCheckoutError("Select at least one ticket to checkout.");
+      return;
+    }
+
+    if (selectedSellerIds.length > 1) {
+      setCheckoutError("For now, checkout can only include tickets from one seller.");
+      return;
+    }
+
+    if (selectedCurrencies.length > 1) {
+      setCheckoutError("Checkout can only include tickets listed in the same currency.");
+      return;
+    }
+
+    setCheckoutBusy(true);
+    try {
+      const meResult = await fetchJson("/api/auth/me", { cache: "no-store" });
+      const me = meResult.data;
+      const user = me?.ok === true ? me.user : null;
+
+      if (!meResult.res.ok || !user) {
+        router.push(`/login?next=${encodeURIComponent("/")}`);
+        return;
+      }
+
+      const verified = user.flags?.isVerified === true || (!!user.emailVerifiedAt && !!user.phoneVerifiedAt);
+      if (!verified) {
+        router.push(`/verify?next=${encodeURIComponent("/")}`);
+        return;
+      }
+
+      if (user.canBuy === false) {
+        setCheckoutError("Buying is disabled for this account.");
+        return;
+      }
+
+      const buyerResult = await fetchJson("/api/auth/ensure-buyer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!buyerResult.res.ok) {
+        if (await redirectForGate(buyerResult.res.status, buyerResult.data)) return;
+        setCheckoutError(buyerResult.data?.message || buyerResult.data?.error || "Could not prepare your buyer account.");
+        return;
+      }
+
+      const buyerSellerId = buyerResult.data?.sellerId || user.sellerId;
+      if (!buyerSellerId) {
+        setCheckoutError("Could not prepare your buyer account.");
+        return;
+      }
+
+      const idempotencyKey = buildIdempotencyKey(selectedTicketIds);
+      const checkoutResult = await fetchJson("/api/orders/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({
+          ticketIds: selectedTicketIds,
+          buyerSellerId,
+          idempotencyKey,
+        }),
+      });
+
+      if (!checkoutResult.res.ok) {
+        if (await redirectForGate(checkoutResult.res.status, checkoutResult.data)) return;
+        setCheckoutError(checkoutResult.data?.message || checkoutResult.data?.error || "Could not reserve selected tickets.");
+        return;
+      }
+
+      const orderId = checkoutResult.data?.order?.id;
+      if (!orderId) {
+        setCheckoutError("Could not start checkout for the selected tickets.");
+        return;
+      }
+
+      router.push(`/checkout?orderId=${encodeURIComponent(orderId)}`);
+    } catch {
+      setCheckoutError("Network error. Please try again.");
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
 
   return (
     <div className={`min-h-screen flex flex-col ${BRAND.pageBg}`}>
@@ -405,17 +562,79 @@ export default function Page() {
 
         {!loading && !error && allTickets.length > 0 && (
           <div className="max-w-7xl mx-auto">
+            <div className="mb-6 flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className={`text-sm ${BRAND.subtle}`}>Select featured tickets to checkout directly.</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                  {selectedTicketIds.length} selected · {formatMoney(selectedTotal, selectedCurrency)} {selectedCurrency} subtotal
+                </p>
+                {checkoutError ? <p className="mt-1 text-sm font-semibold text-red-600">{checkoutError}</p> : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={toggleDisplayedSelection}
+                  disabled={!displayedTickets.length || checkoutBusy}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-bold text-gray-800 transition hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-white dark:hover:bg-gray-700"
+                >
+                  {allDisplayedSelected ? "Clear visible" : "Select visible"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTicketIds([]);
+                    setCheckoutError(null);
+                  }}
+                  disabled={!selectedTicketIds.length || checkoutBusy}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-bold text-gray-800 transition hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-white dark:hover:bg-gray-700"
+                >
+                  Clear selection
+                </button>
+                <button
+                  type="button"
+                  onClick={checkoutSelectedTickets}
+                  disabled={!selectedTicketIds.length || checkoutBusy}
+                  className="rounded-lg bg-[#064a93] px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-900 disabled:opacity-50"
+                >
+                  {checkoutBusy ? "Preparing checkout..." : "Checkout selected"}
+                </button>
+              </div>
+            </div>
             <div className="relative flex items-center gap-4">
               <button onClick={handlePrev} disabled={!canGoPrev} className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center" aria-label="Previous tickets">
                 <ChevronLeftIcon className="w-6 h-6" />
               </button>
 
               <div className="flex-1 min-w-0 flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory sm:grid sm:grid-cols-2 sm:gap-6 sm:overflow-visible sm:pb-0 lg:grid-cols-4">
-                {displayedTickets.map((ticket) => (
-                  <div key={ticket.id} className="min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
-                    <TicketCard ticket={ticket as unknown as TicketCardView} />
-                  </div>
-                ))}
+                {displayedTickets.map((ticket) => {
+                  const selected = selectedTicketIds.includes(ticket.id);
+
+                  return (
+                    <div key={ticket.id} className="min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
+                      <label className="mb-2 inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-bold text-gray-900 shadow ring-1 ring-gray-200 dark:bg-gray-900 dark:text-white dark:ring-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleTicketSelection(ticket)}
+                          className="h-5 w-5 rounded border-gray-300"
+                        />
+                        Select
+                      </label>
+                      <TicketCard ticket={ticket} />
+                      <button
+                        type="button"
+                        onClick={() => toggleTicketSelection(ticket)}
+                        className={`mt-2 w-full rounded-lg border px-4 py-2 text-sm font-bold transition ${
+                          selected
+                            ? "border-[#064a93] bg-[#064a93] text-white hover:bg-blue-900"
+                            : "border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700"
+                        }`}
+                      >
+                        {selected ? "Selected" : "Select ticket"}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
 
               <button onClick={handleNext} disabled={!canGoNext} className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center" aria-label="Next tickets">
