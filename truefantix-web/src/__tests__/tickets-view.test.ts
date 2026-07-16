@@ -1,4 +1,4 @@
-import { inferCoordsFromCity, isTicketWithinRadius, mapApiTicketToCard } from "@/lib/ticketsView";
+import { inferCoordsFromCity, isTicketWithinRadius, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
 
 describe("tickets view", () => {
   it("prefers catalog venue location over venue-name fallback", () => {
@@ -66,5 +66,49 @@ describe("tickets view", () => {
     expect(isTicketWithinRadius({ city: "Chicago", venue: "Soldier Field" }, toronto!, 25)).toBe(false);
     expect(isTicketWithinRadius({ city: "Port Carling", venue: "Duke's Live Music" }, portCarling!, 10)).toBe(true);
     expect(isTicketWithinRadius({ city: "Chicago", venue: "Soldier Field" }, southBend!, 160)).toBe(true);
+  });
+
+  it("ranks featured tickets by saved interests, distance, and price quality", () => {
+    const toronto = inferCoordsFromCity("Toronto");
+    const favoriteArtist = mapApiTicketToCard({
+      id: "ticket-favorite",
+      title: "Taylor Swift",
+      date: "2026-08-01 7:00 PM",
+      venue: "Scotiabank Arena",
+      venueLocation: { address: "40 Bay St", city: "Toronto", region: "ON", country: "CA" },
+      priceCents: 9000,
+      faceValueCents: 10000,
+      confirmedMaxListPriceCents: 10000,
+      currency: "CAD",
+      image: "/concert-placeholder.jpg",
+      sellerId: "seller-1",
+      seller: { rating: 5, reviews: 12, badges: ["Verified"] },
+      createdAt: new Date().toISOString(),
+    });
+    const genericFarTicket = mapApiTicketToCard({
+      id: "ticket-far",
+      title: "Generic Football Game",
+      date: "2026-08-01 7:00 PM",
+      venue: "Soldier Field",
+      venueLocation: { address: "1410 S Museum Campus Dr", city: "Chicago", region: "IL", country: "US" },
+      priceCents: 10000,
+      faceValueCents: 10000,
+      confirmedMaxListPriceCents: 10000,
+      currency: "USD",
+      image: "/football-placeholder.jpg",
+      sellerId: "seller-2",
+      seller: { rating: 4, reviews: 2, badges: [] },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const ranked = rankFeaturedTickets([genericFarTicket, favoriteArtist], {
+      userCoords: toronto,
+      notificationRadiusKm: 100,
+      preferences: [{ type: "ARTIST", value: "Taylor Swift", status: "ACTIVE" }],
+    });
+
+    expect(ranked[0].id).toBe("ticket-favorite");
+    expect(ranked[0].featuredReasons).toEqual(expect.arrayContaining(["Matches your favorites", "Near you", "Below face value"]));
+    expect(ranked[0].featuredScore).toBeGreaterThan(ranked[1].featuredScore);
   });
 });

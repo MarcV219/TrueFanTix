@@ -37,6 +37,9 @@ export type ApiTicketLike = {
   event?: {
     selloutStatus?: "SOLD_OUT" | "NOT_SOLD_OUT" | string;
   } | null;
+  createdAt?: string | Date | null;
+  updatedAt?: string | Date | null;
+  verifiedAt?: string | Date | null;
 };
 
 export type TicketCardView = {
@@ -70,6 +73,41 @@ export type TicketCardView = {
   isPastEvent: boolean;
   isValidationMismatch: boolean;
   isPriceUnconfirmed: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+  verifiedAt: string | null;
+};
+
+export type FeaturedTicketPreference = {
+  type: string;
+  value: string;
+  status?: string | null;
+  catalogEntity?: {
+    canonicalName?: string | null;
+    aliases?: string | null;
+    subtitle?: string | null;
+  } | null;
+};
+
+export type FeaturedTicketRankContext = {
+  userCoords?: { lat: number; lon: number } | null;
+  notificationRadiusKm?: number | null;
+  preferences?: FeaturedTicketPreference[];
+};
+
+export type FeaturedTicketReason =
+  | "Matches your favorites"
+  | "Near you"
+  | "In your saved cities"
+  | "Venue you follow"
+  | "Below face value"
+  | "Verified ticket"
+  | "New listing"
+  | "Coming soon";
+
+export type RankedFeaturedTicket<T> = T & {
+  featuredScore: number;
+  featuredReasons: FeaturedTicketReason[];
 };
 
 const DEFAULT_IMAGE = "/default.jpg";
@@ -325,6 +363,194 @@ export function isTicketWithinRadius(
   return haversineKm(center, ticketCoords) <= radiusKm;
 }
 
+function toIsoString(value: string | Date | null | undefined) {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+
+function normalizeMatchText(value: unknown) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function parsePreferenceAliases(value: string | null | undefined): string[] {
+  const raw = String(value ?? "").trim();
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((item) => String(item ?? "").trim()).filter(Boolean);
+  } catch {
+    // Legacy rows can store aliases as a delimited string.
+  }
+
+  return raw.split(/[|,;]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function preferenceTerms(preference: FeaturedTicketPreference) {
+  return [
+    preference.value,
+    preference.catalogEntity?.canonicalName,
+    preference.catalogEntity?.subtitle,
+    ...parsePreferenceAliases(preference.catalogEntity?.aliases),
+  ]
+    .map(normalizeMatchText)
+    .filter((term) => term.length >= 2);
+}
+
+function containsTerm(haystack: string, terms: string[]) {
+  if (!haystack) return false;
+  return terms.some((term) => haystack === term || haystack.includes(term) || term.includes(haystack));
+}
+
+function ticketEventKey(ticket: Pick<TicketCardView, "title" | "date" | "venue">) {
+  return [ticket.title, ticket.date, ticket.venue].map(normalizeMatchText).join("|");
+}
+
+function daysUntil(date: string) {
+  const time = Date.parse(date);
+  if (Number.isNaN(time)) return Number.POSITIVE_INFINITY;
+  return (time - Date.now()) / 86400000;
+}
+
+function daysSince(value: string | null | undefined) {
+  const time = Date.parse(String(value || ""));
+  if (Number.isNaN(time)) return Number.POSITIVE_INFINITY;
+  return (Date.now() - time) / 86400000;
+}
+
+export function scoreFeaturedTicket(
+  ticket: TicketCardView,
+  context: FeaturedTicketRankContext = {},
+  seenEventCounts: Map<string, number> = new Map()
+): { score: number; reasons: FeaturedTicketReason[] } {
+  let score = 0;
+  const reasons: FeaturedTicketReason[] = [];
+  const addReason = (reason: FeaturedTicketReason) => {
+    if (!reasons.includes(reason)) reasons.push(reason);
+  };
+
+  const titleText = normalizeMatchText(ticket.title);
+  const venueText = normalizeMatchText(ticket.venue);
+  const cityText = normalizeMatchText(ticket.city);
+  const locationText = normalizeMatchText([ticket.venue, ticket.venueAddress, ticket.city, ticket.province, ticket.country].filter(Boolean).join(" "));
+  const eventText = normalizeMatchText([ticket.title, ticket.eventType, ticket.eventTypeLabel].join(" "));
+  const preferences = (context.preferences ?? []).filter((preference) => String(preference.status ?? "ACTIVE").toUpperCase() === "ACTIVE");
+
+  for (const preference of preferences) {
+    const terms = preferenceTerms(preference);
+    if (!terms.length) continue;
+    const type = String(preference.type || "").toUpperCase();
+
+    if ((type === "ARTIST" || type === "TEAM" || type === "SHOW") && containsTerm(titleText, terms)) {
+      score += 40;
+      addReason("Matches your favorites");
+    } else if (type === "VENUE" && containsTerm(venueText, terms)) {
+      score += 40;
+      addReason("Venue you follow");
+    } else if (type === "CITY" && (containsTerm(cityText, terms) || containsTerm(locationText, terms))) {
+      score += 40;
+      addReason("In your saved cities");
+    } else if ((type === "SPORT" || type === "EVENT_TYPE") && containsTerm(eventText, terms)) {
+      score += 34;
+      addReason("Matches your favorites");
+    }
+  }
+
+  const ticketCoords = inferTicketCoords(ticket);
+  if (context.userCoords && ticketCoords) {
+    const distanceKm = haversineKm(context.userCoords, ticketCoords);
+    if (context.notificationRadiusKm && distanceKm <= context.notificationRadiusKm) {
+      score += 30;
+      addReason("Near you");
+    } else if (distanceKm <= 80) {
+      score += 18;
+      addReason("Near you");
+    } else if (distanceKm <= 250) {
+      score += 10;
+      addReason("Near you");
+    }
+  }
+
+  if (ticket.priceTag === "Below Face Value") {
+    score += 20;
+    addReason("Below face value");
+  }
+
+  if (!ticket.isPriceUnconfirmed && !ticket.isValidationMismatch && !ticket.isAboveConfirmedFaceValue) {
+    score += 15;
+    addReason("Verified ticket");
+  } else if (ticket.isValidationMismatch || ticket.isAboveConfirmedFaceValue || ticket.isPastEvent) {
+    score -= 50;
+  }
+
+  if (ticket.section || ticket.row || ticket.seat) score += 5;
+  if (ticket.image && ticket.image !== DEFAULT_IMAGE) score += 4;
+  if (ticket.rating >= 4.5 && ticket.reviews > 0) score += 6;
+
+  const listedDaysAgo = daysSince(ticket.createdAt);
+  if (listedDaysAgo <= 3) {
+    score += 10;
+    addReason("New listing");
+  } else if (listedDaysAgo <= 14) {
+    score += 5;
+  }
+
+  const eventDays = daysUntil(ticket.date);
+  if (eventDays >= 1 && eventDays <= 21) {
+    score += eventDays <= 7 ? 12 : 8;
+    addReason("Coming soon");
+  } else if (eventDays < 0) {
+    score -= 50;
+  }
+
+  const duplicateCount = seenEventCounts.get(ticketEventKey(ticket)) ?? 0;
+  if (duplicateCount > 0) score -= Math.min(35, duplicateCount * 18);
+
+  if (ticket.isSoldOut) score += 3;
+
+  if (!reasons.length) {
+    if (ticket.priceTag === "Below Face Value") addReason("Below face value");
+    else if (!ticket.isPriceUnconfirmed && !ticket.isValidationMismatch && !ticket.isAboveConfirmedFaceValue) addReason("Verified ticket");
+  }
+
+  return { score, reasons: reasons.slice(0, 3) };
+}
+
+export function rankFeaturedTickets<T extends TicketCardView>(
+  tickets: T[],
+  context: FeaturedTicketRankContext = {}
+): RankedFeaturedTicket<T>[] {
+  const seenEventCounts = new Map<string, number>();
+
+  return tickets
+    .map((ticket) => {
+      const eventKey = ticketEventKey(ticket);
+      const ranked = scoreFeaturedTicket(ticket, context, seenEventCounts);
+      seenEventCounts.set(eventKey, (seenEventCounts.get(eventKey) ?? 0) + 1);
+
+      return {
+        ...ticket,
+        featuredScore: ranked.score,
+        featuredReasons: ranked.reasons,
+      };
+    })
+    .sort((a, b) => {
+      if (b.featuredScore !== a.featuredScore) return b.featuredScore - a.featuredScore;
+
+      const ta = Number.isNaN(Date.parse(a.date)) ? Number.POSITIVE_INFINITY : Date.parse(a.date);
+      const tb = Number.isNaN(Date.parse(b.date)) ? Number.POSITIVE_INFINITY : Date.parse(b.date);
+      if (ta !== tb) return ta - tb;
+
+      return 0;
+    })
+}
+
 function eventTypeFromType(type: string | null | undefined, fallbackTitle: string): EventTypeInfo {
   const normalized = String(type || "").trim().toLowerCase();
   if (!normalized) return getEventType(fallbackTitle);
@@ -397,6 +623,9 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
     isPastEvent,
     isValidationMismatch: Boolean(t.isValidationMismatch) || isPastEvent,
     isPriceUnconfirmed: Boolean(t.isPriceUnconfirmed),
+    createdAt: toIsoString(t.createdAt),
+    updatedAt: toIsoString(t.updatedAt),
+    verifiedAt: toIsoString(t.verifiedAt),
   };
 }
 

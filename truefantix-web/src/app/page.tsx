@@ -7,8 +7,8 @@ import { useRouter } from "next/navigation";
 import Footer from "@/components/Footer";
 import TicketCard from "@/components/tickets/TicketCard";
 import { fetchJson } from "@/lib/api-fetch";
-import { formatMoney, inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, sortTicketsByPriority } from "@/lib/ticketsView";
-import type { TicketCardView } from "@/lib/ticketsView";
+import { formatMoney, inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
+import type { FeaturedTicketPreference, TicketCardView } from "@/lib/ticketsView";
 
 type ApiTicket = {
   id: string;
@@ -255,6 +255,8 @@ export default function Page() {
   const [checkoutBusy, setCheckoutBusy] = React.useState(false);
   const [checkoutError, setCheckoutError] = React.useState<string | null>(null);
   const [userCoords, setUserCoords] = React.useState<{ lat: number; lon: number } | null>(null);
+  const [notificationRadiusKm, setNotificationRadiusKm] = React.useState<number | null>(null);
+  const [notificationPreferences, setNotificationPreferences] = React.useState<FeaturedTicketPreference[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [forumLoading, setForumLoading] = React.useState(true);
@@ -269,11 +271,24 @@ export default function Page() {
       try {
         setLoading(true);
         setError(null);
-        const res = await fetch("/api/tickets?status=AVAILABLE&take=100", { cache: "no-store" });
-        const json: any = await res.json();
-        const rawTickets: ApiTicket[] = Array.isArray(json) ? json : Array.isArray(json?.tickets) ? json.tickets : [];
+        const rawTickets: ApiTicket[] = [];
+        let cursor: string | null = null;
 
-        if (!res.ok) throw new Error(json?.error || `Tickets fetch failed (${res.status})`);
+        do {
+          const params = new URLSearchParams({ status: "AVAILABLE", take: "500" });
+          if (cursor) params.set("cursor", cursor);
+
+          const res = await fetch(`/api/tickets?${params.toString()}`, { cache: "no-store" });
+          const json: any = await res.json();
+
+          if (!res.ok) throw new Error(json?.error || `Tickets fetch failed (${res.status})`);
+
+          const pageTickets: ApiTicket[] = Array.isArray(json) ? json : Array.isArray(json?.tickets) ? json.tickets : [];
+          rawTickets.push(...pageTickets);
+          cursor = typeof json?.nextCursor === "string" && json.nextCursor ? json.nextCursor : null;
+        } while (cursor && alive);
+
+        if (!alive) return;
 
         const normalized: TicketCardView[] = rawTickets
           .filter((t) => t.status === "AVAILABLE")
@@ -332,6 +347,19 @@ export default function Page() {
         // ignore, fallback to browser geolocation below
       }
 
+      try {
+        const prefRes = await fetch("/api/notifications/preferences", { cache: "no-store" });
+        const prefJson: any = await prefRes.json().catch(() => ({}));
+        if (!cancelled && prefRes.ok) {
+          const preferences = Array.isArray(prefJson?.preferences) ? prefJson.preferences as FeaturedTicketPreference[] : [];
+          const radiusKm = Number(prefJson?.settings?.notificationRadiusKm);
+          setNotificationPreferences(preferences.filter((preference) => String(preference.status ?? "ACTIVE").toUpperCase() === "ACTIVE"));
+          setNotificationRadiusKm(Number.isFinite(radiusKm) && radiusKm > 0 ? radiusKm : null);
+        }
+      } catch {
+        // Guests and signed-out users simply get public relevance scoring.
+      }
+
       // Fallback for guests / users without profile city mapping
       if (typeof window !== 'undefined' && navigator.geolocation && !cancelled) {
         navigator.geolocation.getCurrentPosition(
@@ -353,8 +381,12 @@ export default function Page() {
   }, []);
 
   const sortedTickets = React.useMemo(
-    () => sortTicketsByPriority(allTickets, userCoords),
-    [allTickets, userCoords]
+    () => rankFeaturedTickets(allTickets, {
+      userCoords,
+      notificationRadiusKm,
+      preferences: notificationPreferences,
+    }),
+    [allTickets, notificationPreferences, notificationRadiusKm, userCoords]
   );
 
   const displayedTickets = React.useMemo(
@@ -635,6 +667,18 @@ export default function Page() {
                         Select
                       </label>
                       <TicketCard ticket={ticket} />
+                      {ticket.featuredReasons.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {ticket.featuredReasons.slice(0, 2).map((reason) => (
+                            <span
+                              key={reason}
+                              className="rounded-full bg-[rgba(6,74,147,0.08)] px-2.5 py-1 text-xs font-bold text-[var(--tft-navy)] ring-1 ring-[rgba(6,74,147,0.16)] dark:bg-white/10 dark:text-white dark:ring-white/15"
+                            >
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => toggleTicketSelection(ticket)}
