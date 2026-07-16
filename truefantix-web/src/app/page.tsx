@@ -361,6 +361,12 @@ export default function Page() {
     () => sortedTickets.slice(currentIndex, currentIndex + TICKETS_PER_PAGE),
     [sortedTickets, currentIndex, TICKETS_PER_PAGE]
   );
+  const maxFeaturedIndex = Math.max(0, sortedTickets.length - TICKETS_PER_PAGE);
+
+  React.useEffect(() => {
+    setCurrentIndex((index) => Math.min(index, maxFeaturedIndex));
+  }, [maxFeaturedIndex]);
+
   const selectedTickets = React.useMemo(() => {
     const selected = new Set(selectedTicketIds);
     return allTickets.filter((ticket) => selected.has(ticket.id));
@@ -387,6 +393,7 @@ export default function Page() {
 
   const canGoPrev = currentIndex > 0;
   const canGoNext = currentIndex + TICKETS_PER_PAGE < sortedTickets.length;
+  const showFeaturedControls = sortedTickets.length > TICKETS_PER_PAGE;
 
   function buildIdempotencyKey(ticketIds: string[]) {
     const random =
@@ -601,9 +608,16 @@ export default function Page() {
               </div>
             </div>
             <div className="relative flex items-center gap-4">
-              <button onClick={handlePrev} disabled={!canGoPrev} className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center" aria-label="Previous tickets">
-                <ChevronLeftIcon className="w-6 h-6" />
-              </button>
+              {showFeaturedControls ? (
+                <button
+                  onClick={handlePrev}
+                  disabled={!canGoPrev}
+                  className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center disabled:cursor-not-allowed disabled:opacity-35"
+                  aria-label="Previous tickets"
+                >
+                  <ChevronLeftIcon className="w-6 h-6" />
+                </button>
+              ) : null}
 
               <div className="flex-1 min-w-0 flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory sm:grid sm:grid-cols-2 sm:gap-6 sm:overflow-visible sm:pb-0 lg:grid-cols-4">
                 {displayedTickets.map((ticket) => {
@@ -637,9 +651,16 @@ export default function Page() {
                 })}
               </div>
 
-              <button onClick={handleNext} disabled={!canGoNext} className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center" aria-label="Next tickets">
-                <ChevronRightIcon className="w-6 h-6" />
-              </button>
+              {showFeaturedControls ? (
+                <button
+                  onClick={handleNext}
+                  disabled={!canGoNext}
+                  className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center disabled:cursor-not-allowed disabled:opacity-35"
+                  aria-label="Next tickets"
+                >
+                  <ChevronRightIcon className="w-6 h-6" />
+                </button>
+              ) : null}
             </div>
           </div>
         )}
