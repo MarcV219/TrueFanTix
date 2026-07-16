@@ -35,28 +35,10 @@ type ApiTicket = {
   } | null;
 };
 
-type TicketCard = {
-  id: string;
-  title: string;
-  date: string;
-  venue: string;
-  city: string;
-  province: string;
-  country: string;
-  row: string | null;
-  seat: string | null;
-  price: number;
-  image: string;
-  sellerId: string;
-  badges: string[];
-  rating: number;
-  reviews: number;
-  priceTag: "Face Value" | "Below Face Value";
-  eventType: string;
-  eventTypeLabel: string;
-  isSoldOut: boolean;
-  placeholderImage: string;
-  dynamicImage?: string;
+type TicketsResponse = {
+  error?: string;
+  tickets?: ApiTicket[];
+  nextCursor?: string | null;
 };
 
 type ApiForumThread = {
@@ -78,65 +60,23 @@ type ForumThreadPreview = {
   replies: number;
 };
 
-const badgeTooltips: Record<string, string> = {
-  VIP: "VIP Access",
-  Verified: "Verified Seller",
-  "Early Access": "Early Access Ticket",
+type ForumThreadsResponse = {
+  threads?: ApiForumThread[];
+  items?: ApiForumThread[];
 };
 
-const DEFAULT_IMAGE = "/default.jpg";
+type AuthMeResponse = {
+  user?: {
+    city?: string | null;
+  } | null;
+};
 
-function resolveTicketImageSrc(raw: unknown) {
-  let s = String(raw ?? "").trim();
-  if (!s) return DEFAULT_IMAGE;
-
-  const winPublicIdx = s.toLowerCase().lastIndexOf("\\public\\");
-  if (winPublicIdx !== -1) s = s.slice(winPublicIdx + "\\public\\".length).replaceAll("\\", "/");
-
-  if (s.toLowerCase().startsWith("public/")) s = s.slice("public/".length);
-  if (s.toLowerCase().startsWith("/public/")) s = s.slice("/public/".length);
-
-  if (s === "/img" || s.startsWith("/img?") || s.startsWith("/img/")) return DEFAULT_IMAGE;
-  if (s === "img" || s.startsWith("img?") || s.startsWith("img/")) return DEFAULT_IMAGE;
-
-  if (s === "/seed-image" || s.startsWith("/seed-image?") || s.startsWith("/seed-image/")) return DEFAULT_IMAGE;
-  if (s === "seed-image" || s.startsWith("seed-image?") || s.startsWith("seed-image/")) return DEFAULT_IMAGE;
-
-  if (s.startsWith("http://") || s.startsWith("https://")) return s;
-  if (!s.startsWith("/")) s = `/${s}`;
-  return s;
-}
-
-function computePriceTag(price: number, faceValue: number | null, isSoldOut = false): TicketCard["priceTag"] {
-  if (isSoldOut) return "Face Value";
-  if (faceValue == null) return "Face Value";
-  return price < faceValue ? "Below Face Value" : "Face Value";
-}
-
-function getEventType(title: string): { type: string; label: string; placeholder: string } {
-  const lower = title.toLowerCase();
-
-  if (lower.match(/raptors|basketball/)) return { type: "sports-basketball", label: "Sports: Basketball", placeholder: "/basketball-placeholder.jpg" };
-  if (lower.match(/leafs|hockey/)) return { type: "sports-hockey", label: "Sports: Hockey", placeholder: "/hockey-placeholder.jpg" };
-  if (lower.match(/blue jays|baseball/)) return { type: "sports-baseball", label: "Sports: Baseball", placeholder: "/sports-placeholder.jpg" };
-  if (lower.includes("football") && !lower.includes("hockey")) return { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" };
-  if (lower.includes("soccer")) return { type: "sports-soccer", label: "Sports: Soccer", placeholder: "/sports-placeholder.jpg" };
-  if (lower.includes("lacrosse")) return { type: "sports-lacrosse", label: "Sports: Lacrosse", placeholder: "/sports-placeholder.jpg" };
-  if (lower.match(/argos|argonauts/)) return { type: "sports-football", label: "Sports: Football", placeholder: "/football-placeholder.jpg" };
-  if (lower.match(/tfc|toronto fc/)) return { type: "sports-soccer", label: "Sports: Soccer", placeholder: "/sports-placeholder.jpg" };
-  if (lower.match(/sports|vs\.|game/)) return { type: "sports-other", label: "Sports: Other", placeholder: "/sports-placeholder.jpg" };
-
-  if (lower.match(/taylor swift|drake|ed sheeran|weeknd|concert|tour|live music/)) return { type: "concert", label: "Concert", placeholder: "/concert-placeholder.jpg" };
-  if (lower.match(/hamilton|theatre|theater|broadway|play/)) return { type: "theatre", label: "Theatre", placeholder: "/theatre-placeholder.jpg" };
-  if (lower.match(/comedy|stand.up|comedian|funny/)) return { type: "comedy", label: "Comedy", placeholder: "/comedy-placeholder.jpg" };
-  if (lower.match(/conference|summit|convention/)) return { type: "conference", label: "Conference", placeholder: "/conference-placeholder.jpg" };
-  if (lower.match(/festival|music fest|coachella/)) return { type: "festival", label: "Festival", placeholder: "/festival-placeholder.jpg" };
-  if (lower.match(/gala|ball|charity dinner/)) return { type: "gala", label: "Gala", placeholder: "/gala-placeholder.jpg" };
-  if (lower.match(/opera|symphony|orchestra/)) return { type: "opera", label: "Opera", placeholder: "/opera-placeholder.jpg" };
-  if (lower.match(/workshop|seminar|class|training/)) return { type: "workshop", label: "Workshop", placeholder: "/workshop-placeholder.jpg" };
-
-  return { type: "other", label: "Other", placeholder: "/default.jpg" };
-}
+type PreferencesResponse = {
+  preferences?: FeaturedTicketPreference[];
+  settings?: {
+    notificationRadiusKm?: number | null;
+  };
+};
 
 function formatForumTime(iso: string | null | undefined) {
   if (!iso) return "";
@@ -152,66 +92,11 @@ function topicTypeLabel(t: ForumThreadPreview["topicType"]) {
   return "Other";
 }
 
-const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
-  toronto: { lat: 43.6532, lon: -79.3832 },
-  montreal: { lat: 45.5017, lon: -73.5673 },
-  vancouver: { lat: 49.2827, lon: -123.1207 },
-  ottawa: { lat: 45.4215, lon: -75.6972 },
-  calgary: { lat: 51.0447, lon: -114.0719 },
-  edmonton: { lat: 53.5461, lon: -113.4938 },
-  newyork: { lat: 40.7128, lon: -74.006 },
-  boston: { lat: 42.3601, lon: -71.0589 },
-  miami: { lat: 25.7617, lon: -80.1918 },
-  chicago: { lat: 41.8781, lon: -87.6298 },
-  losangeles: { lat: 34.0522, lon: -118.2437 },
-};
-
-function normalizeCityKey(city: string): string {
-  return (city || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function inferCoordsFromCity(city: string | null | undefined): { lat: number; lon: number } | null {
-  const key = normalizeCityKey(city || "");
-  return CITY_COORDS[key] ?? null;
-}
-
-function inferCityCoordsFromVenue(venue: string): { lat: number; lon: number } | null {
-  const s = (venue || "").toLowerCase();
-  if (s.includes("toronto")) return CITY_COORDS.toronto;
-  if (s.includes("montréal") || s.includes("montreal")) return CITY_COORDS.montreal;
-  if (s.includes("vancouver")) return CITY_COORDS.vancouver;
-  if (s.includes("ottawa")) return CITY_COORDS.ottawa;
-  if (s.includes("calgary")) return CITY_COORDS.calgary;
-  if (s.includes("edmonton")) return CITY_COORDS.edmonton;
-  if (s.includes("new york")) return CITY_COORDS.newyork;
-  if (s.includes("boston")) return CITY_COORDS.boston;
-  if (s.includes("miami")) return CITY_COORDS.miami;
-  if (s.includes("chicago")) return CITY_COORDS.chicago;
-  if (s.includes("los angeles")) return CITY_COORDS.losangeles;
-  return null;
-}
-
-function haversineKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
-  const R = 6371;
-  const dLat = (b.lat - a.lat) * (Math.PI / 180);
-  const dLon = (b.lon - a.lon) * (Math.PI / 180);
-  const lat1 = a.lat * (Math.PI / 180);
-  const lat2 = b.lat * (Math.PI / 180);
-  const x =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
-  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-  return R * c;
-}
-
 async function fetchForumThreadsPreview(): Promise<ForumThreadPreview[]> {
   try {
     const res = await fetch("/api/forum/threads?take=6", { cache: "no-store" });
     if (!res.ok) return [];
-    const json: any = await res.json();
+    const json = await res.json() as ApiForumThread[] | ForumThreadsResponse;
     const raw: ApiForumThread[] = Array.isArray(json) ? json : Array.isArray(json?.threads) ? json.threads : Array.isArray(json?.items) ? json.items : [];
     return raw.map((t) => ({
       id: t.id,
@@ -279,13 +164,16 @@ export default function Page() {
           if (cursor) params.set("cursor", cursor);
 
           const res = await fetch(`/api/tickets?${params.toString()}`, { cache: "no-store" });
-          const json: any = await res.json();
+          const json = await res.json() as ApiTicket[] | TicketsResponse;
 
-          if (!res.ok) throw new Error(json?.error || `Tickets fetch failed (${res.status})`);
+          if (!res.ok) {
+            const message = Array.isArray(json) ? undefined : json.error;
+            throw new Error(message || `Tickets fetch failed (${res.status})`);
+          }
 
           const pageTickets: ApiTicket[] = Array.isArray(json) ? json : Array.isArray(json?.tickets) ? json.tickets : [];
           rawTickets.push(...pageTickets);
-          cursor = typeof json?.nextCursor === "string" && json.nextCursor ? json.nextCursor : null;
+          cursor = !Array.isArray(json) && typeof json.nextCursor === "string" && json.nextCursor ? json.nextCursor : null;
         } while (cursor && alive);
 
         if (!alive) return;
@@ -297,9 +185,9 @@ export default function Page() {
         if (!alive) return;
         setAllTickets(normalized);
         setCurrentIndex(0);
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!alive) return;
-        setError(e?.message ?? "Unknown error");
+        setError(e instanceof Error ? e.message : "Unknown error");
         setAllTickets([]);
       } finally {
         if (alive) setLoading(false);
@@ -336,7 +224,7 @@ export default function Page() {
     async function loadUserLocation() {
       try {
         const res = await fetch('/api/auth/me', { cache: 'no-store' });
-        const json: any = await res.json().catch(() => ({}));
+        const json = await res.json().catch(() => ({})) as AuthMeResponse;
         const city = json?.user?.city as string | undefined;
         const fromProfile = sharedInferCoordsFromCity(city);
         if (!cancelled && fromProfile) {
@@ -349,7 +237,7 @@ export default function Page() {
 
       try {
         const prefRes = await fetch("/api/notifications/preferences", { cache: "no-store" });
-        const prefJson: any = await prefRes.json().catch(() => ({}));
+        const prefJson = await prefRes.json().catch(() => ({})) as PreferencesResponse;
         if (!cancelled && prefRes.ok) {
           const preferences = Array.isArray(prefJson?.preferences) ? prefJson.preferences as FeaturedTicketPreference[] : [];
           const radiusKm = Number(prefJson?.settings?.notificationRadiusKm);
