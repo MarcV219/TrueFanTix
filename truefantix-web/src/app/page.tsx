@@ -313,7 +313,9 @@ export default function Page() {
 
   const canGoPrev = currentIndex > 0;
   const canGoNext = currentIndex + TICKETS_PER_PAGE < sortedTickets.length;
-  const showFeaturedControls = sortedTickets.length > TICKETS_PER_PAGE;
+  const showFeaturedControls = sortedTickets.length > 0;
+  const featuredStart = sortedTickets.length ? currentIndex + 1 : 0;
+  const featuredEnd = Math.min(currentIndex + TICKETS_PER_PAGE, sortedTickets.length);
 
   function buildIdempotencyKey(ticketIds: string[]) {
     const random =
@@ -495,6 +497,9 @@ export default function Page() {
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">
                   {selectedTicketIds.length} selected · {formatMoney(selectedTotal, selectedCurrency)} {selectedCurrency} subtotal
                 </p>
+                <p className={`text-xs font-semibold ${BRAND.subtle}`}>
+                  Showing {featuredStart}-{featuredEnd} of {sortedTickets.length} ranked featured tickets
+                </p>
                 {checkoutError ? <p className="mt-1 text-sm font-semibold text-red-600">{checkoutError}</p> : null}
               </div>
               <div className="flex flex-wrap gap-2">
@@ -532,7 +537,7 @@ export default function Page() {
                 <button
                   onClick={handlePrev}
                   disabled={!canGoPrev}
-                  className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center disabled:cursor-not-allowed disabled:opacity-35"
+                  className="flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center disabled:cursor-not-allowed disabled:opacity-35"
                   aria-label="Previous tickets"
                 >
                   <ChevronLeftIcon className="w-6 h-6" />
@@ -587,7 +592,7 @@ export default function Page() {
                 <button
                   onClick={handleNext}
                   disabled={!canGoNext}
-                  className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center disabled:cursor-not-allowed disabled:opacity-35"
+                  className="flex flex-shrink-0 w-12 h-12 rounded-full bg-white dark:bg-white/10 shadow-lg border border-[var(--border)] items-center justify-center disabled:cursor-not-allowed disabled:opacity-35"
                   aria-label="Next tickets"
                 >
                   <ChevronRightIcon className="w-6 h-6" />
