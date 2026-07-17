@@ -1,0 +1,32 @@
+name: Transfer reminders
+
+on:
+  schedule:
+    - cron: "7 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-transfer-reminders:
+    name: Run transfer reminder workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call TrueFanTix transfer reminder endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          TRUEFANTIX_APP_URL: ${{ vars.TRUEFANTIX_APP_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "CRON_SECRET GitHub secret is not configured."
+            exit 1
+          fi
+
+          app_url="${TRUEFANTIX_APP_URL:-https://truefantix-web.vercel.app}"
+          app_url="${app_url%/}"
+
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            "${app_url}/api/cron/order-transfer-reminders"

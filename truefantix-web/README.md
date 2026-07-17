@@ -76,7 +76,16 @@ Key variables:
 - `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` - Spotify app credentials for importing a user's followed/top artists into notification favorites
 - `SPOTIFY_REDIRECT_URI` - Optional override for the Spotify OAuth callback; defaults to `${APP_ORIGIN}/api/integrations/spotify/callback`
 - `SPOTIFY_TOKEN_ENCRYPTION_KEY` - Optional encryption secret for Spotify OAuth tokens; falls back to `SESSION_SECRET`
-- `CRON_SECRET` - Required for internal cron endpoints such as `/api/cron/catalog-sync`
+- `CRON_SECRET` - Required for internal cron endpoints such as `/api/cron/catalog-sync` and `/api/cron/order-transfer-reminders`
+
+### Free scheduled jobs
+
+The transfer reminder workflow is scheduled by GitHub Actions instead of Vercel Cron so the Vercel project can stay on Hobby. Configure these in the GitHub repo:
+
+- Secret `CRON_SECRET`: same value as the Vercel `CRON_SECRET`.
+- Optional variable `TRUEFANTIX_APP_URL`: app origin to call; defaults to `https://truefantix-web.vercel.app`.
+
+The workflow lives at `.github/workflows/transfer-reminders.yml` and calls `/api/cron/order-transfer-reminders` every six hours.
 
 The catalog also uses the public MusicBrainz API as an artist fallback. MusicBrainz does not require a key, but its public API is rate-limited and may require a commercial MetaBrainz plan depending on production usage.
 

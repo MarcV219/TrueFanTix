@@ -37,6 +37,13 @@ Set or verify these in Vercel for `truefantix-web` before release testing.
 - [x] `TWILIO_AUTH_TOKEN` is set.
 - [x] `TWILIO_PHONE_NUMBER` is set in E.164 format, for example `+14165550123`.
 
+## Scheduled Jobs
+
+- [ ] GitHub repo secret `CRON_SECRET` is set to the same value as Vercel `CRON_SECRET`.
+- [ ] Optional GitHub repo variable `TRUEFANTIX_APP_URL` points at the launch app origin; if omitted, the scheduler uses `https://truefantix-web.vercel.app`.
+- [ ] GitHub Actions workflow `Transfer reminders` has been run manually once and returns `ok: true`.
+- [x] Vercel Cron is not used for six-hour transfer reminders, keeping the Vercel Hobby plan viable.
+
 ## Verification Gates
 
 - [x] Redeploy `truefantix-web` after env changes.
