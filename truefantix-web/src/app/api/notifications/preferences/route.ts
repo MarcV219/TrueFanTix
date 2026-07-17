@@ -115,7 +115,7 @@ export async function POST(req: Request) {
     const requestedType = validation.data.type;
     let type = requestedType;
     let value = validation.data.value;
-    let catalogEntityId = validation.data.catalogEntityId ?? null;
+    const catalogEntityId = validation.data.catalogEntityId ?? null;
 
     if (catalogEntityId) {
       const entity = await prisma.catalogEntity.findUnique({ where: { id: catalogEntityId } });
