@@ -85,7 +85,7 @@ The transfer reminder workflow is scheduled by GitHub Actions instead of Vercel 
 - Secret `CRON_SECRET`: same value as the Vercel `CRON_SECRET`.
 - Optional variable `TRUEFANTIX_APP_URL`: app origin to call; defaults to `https://truefantix-web.vercel.app`.
 
-The workflow lives at `.github/workflows/transfer-reminders.yml` and calls `/api/cron/order-transfer-reminders` every six hours.
+The workflow lives at the repository root path `.github/workflows/transfer-reminders.yml` and calls `/api/cron/order-transfer-reminders` every six hours.
 
 The catalog also uses the public MusicBrainz API as an artist fallback. MusicBrainz does not require a key, but its public API is rate-limited and may require a commercial MetaBrainz plan depending on production usage.
 
