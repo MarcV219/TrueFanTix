@@ -39,9 +39,9 @@ Set or verify these in Vercel for `truefantix-web` before release testing.
 
 ## Scheduled Jobs
 
-- [ ] GitHub repo secret `CRON_SECRET` is set to the same value as Vercel `CRON_SECRET`.
+- [x] GitHub repo secret `CRON_SECRET` is set to the same value as Vercel `CRON_SECRET`.
 - [ ] Optional GitHub repo variable `TRUEFANTIX_APP_URL` points at the launch app origin; if omitted, the scheduler uses `https://truefantix-web.vercel.app`.
-- [ ] GitHub Actions workflow `Transfer reminders` has been run manually once and returns `ok: true`.
+- [x] GitHub Actions workflow `Transfer reminders` has been run manually once and returns `ok: true`.
 - [x] Vercel Cron is not used for six-hour transfer reminders, keeping the Vercel Hobby plan viable.
 
 ## Verification Gates

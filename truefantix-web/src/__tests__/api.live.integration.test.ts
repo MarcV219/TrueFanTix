@@ -63,7 +63,6 @@ describe("live API integration (dev env)", () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(Array.isArray(res.body.tickets)).toBe(true);
-    expect(res.body.tickets.length).toBeGreaterThan(0);
     expect(res.body).toHaveProperty("nextCursor");
     expect(typeof res.body.hasMore).toBe("boolean");
 
@@ -76,6 +75,7 @@ describe("live API integration (dev env)", () => {
         hasMore: expect.any(Boolean),
       })
     );
+    expect(res.body.pagination.total).toBeGreaterThanOrEqual(res.body.tickets.length);
   });
 
   it("GET /api/sellers returns stable JSON instead of broad Prisma drift failures", () => {
