@@ -6,6 +6,17 @@ import { enforceOriginAndCsrf } from "@/lib/security/csrf";
 
 const COOKIE_NAME = "tft_session";
 
+function appendSessionCookieClears(res: NextResponse) {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+
+  for (const path of ["/auth", "/api", "/"]) {
+    res.headers.append(
+      "Set-Cookie",
+      `${COOKIE_NAME}=; Path=${path}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; SameSite=Lax${secure}`
+    );
+  }
+}
+
 /**
  * Bulletproof cookie clear:
  * - Deletes DB session if present (via helper)
@@ -21,19 +32,7 @@ export async function POST(req: Request) {
 
   const res = NextResponse.json({ ok: true }, { status: 200 });
 
-  const secure = process.env.NODE_ENV === "production";
-  const base = {
-    httpOnly: true as const,
-    sameSite: "lax" as const,
-    secure,
-    expires: new Date(0),
-    maxAge: 0,
-  };
-
-  // Clear the cookie for common path variants
-  res.cookies.set(COOKIE_NAME, "", { ...base, path: "/" });
-  res.cookies.set(COOKIE_NAME, "", { ...base, path: "/api" });
-  res.cookies.set(COOKIE_NAME, "", { ...base, path: "/auth" });
+  appendSessionCookieClears(res);
 
   return res;
 }

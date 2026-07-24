@@ -5,14 +5,31 @@ import { NextResponse } from "next/server";
 const CSRF_COOKIE = "tft_csrf";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-function getAppOrigin() {
-  const configured = process.env.APP_ORIGIN || process.env.NEXT_PUBLIC_APP_URL;
-  if (!configured) return null;
+function parseOrigin(value: string | undefined) {
+  if (!value) return null;
   try {
-    return new URL(configured).origin;
+    return new URL(value.trim()).origin;
   } catch {
     return null;
   }
+}
+
+function getAllowedOrigins() {
+  const origins = new Set<string>();
+  const configured = process.env.APP_ALLOWED_ORIGINS || "";
+
+  for (const raw of configured.split(",")) {
+    const origin = parseOrigin(raw);
+    if (origin) origins.add(origin);
+  }
+
+  const appOrigin = parseOrigin(process.env.APP_ORIGIN);
+  if (appOrigin) origins.add(appOrigin);
+
+  const publicAppUrl = parseOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  if (publicAppUrl) origins.add(publicAppUrl);
+
+  return origins.size > 0 ? origins : null;
 }
 
 function isStateChanging(req: Request) {
@@ -62,9 +79,9 @@ export async function ensureCsrfCookie(res?: NextResponse): Promise<string> {
 export async function enforceOriginAndCsrf(req: Request): Promise<{ ok: true } | { ok: false; res: NextResponse }> {
   if (!isStateChanging(req)) return { ok: true };
 
-  const expectedOrigin = getAppOrigin();
+  const allowedOrigins = getAllowedOrigins();
   const requestOrigin = readOriginOrReferer(req);
-  if (expectedOrigin && requestOrigin !== expectedOrigin) {
+  if (allowedOrigins && (!requestOrigin || !allowedOrigins.has(requestOrigin))) {
     return {
       ok: false,
       res: jsonError(403, "INVALID_ORIGIN", "Cross-site state-changing requests are blocked."),
