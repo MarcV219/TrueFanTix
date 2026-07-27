@@ -7,6 +7,7 @@ const baseOpenAiPayload = {
   venue: "Casino Rama Resort",
   eventDate: "2026-06-26",
   ticketQuantity: 2,
+  ticketDetails: "Section 101, Row A, Seats 1-2",
   confirmationId: "TM-12345",
   confidence: 0.92,
   rawTextSummary: "Ticketmaster transfer completed to buyer@example.com for 2 Ice Cube tickets.",
@@ -43,6 +44,7 @@ describe("transfer proof review", () => {
       expectedVenue: "Casino Rama Resort",
       expectedEventDate: "2026-06-26 9:00 PM",
       expectedTicketCount: 2,
+      expectedTicketDetails: ["Row A, Seat 1", "Row A, Seat 2"],
       sellerNote: "TM-12345",
     });
 
@@ -57,6 +59,7 @@ describe("transfer proof review", () => {
     });
     expect(payload.input[0].content[0].text).toContain("Expected buyer email: buyer@example.com");
     expect(payload.input[0].content[0].text).toContain("Expected ticket count: 2");
+    expect(payload.input[0].content[0].text).toContain("Expected ticket details: Row A, Seat 1 | Row A, Seat 2");
   });
 
   it("flags proof sent to the wrong visible recipient", async () => {
@@ -96,5 +99,33 @@ describe("transfer proof review", () => {
     expect(result.status).toBe("unsupported");
     expect(result.reason).toBe("transfer-proof-unsupported-file-type");
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects proof that omits required recipient, event, or ticket information", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      recipientEmail: null,
+      eventTitle: null,
+      eventDate: null,
+      venue: null,
+      ticketQuantity: null,
+      ticketDetails: null,
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      "MISSING_RECIPIENT",
+      "MISSING_EVENT_INFO",
+      "MISSING_TICKET_INFO",
+    ]));
   });
 });

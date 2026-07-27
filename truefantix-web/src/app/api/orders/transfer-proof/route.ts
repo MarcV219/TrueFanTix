@@ -39,6 +39,8 @@ export async function POST(req: Request) {
                 title: true,
                 venue: true,
                 date: true,
+                row: true,
+                seat: true,
               },
             },
           },
@@ -93,6 +95,12 @@ export async function POST(req: Request) {
       expectedVenue: firstTicket?.venue ?? null,
       expectedEventDate: firstTicket?.date ?? null,
       expectedTicketCount: order.items.length,
+      expectedTicketDetails: order.items.map((item) =>
+        [
+          item.ticket.row ? `Row ${item.ticket.row}` : null,
+          item.ticket.seat ? `Seat ${item.ticket.seat}` : null,
+        ].filter(Boolean).join(", ") || "General admission"
+      ),
       sellerNote: transferProofData ?? null,
     });
 

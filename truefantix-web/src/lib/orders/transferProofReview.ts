@@ -1,5 +1,8 @@
 export type TransferProofIssue =
   | "NO_COMPLETED_TRANSFER"
+  | "MISSING_RECIPIENT"
+  | "MISSING_EVENT_INFO"
+  | "MISSING_TICKET_INFO"
   | "RECIPIENT_EMAIL_MISMATCH"
   | "EVENT_TITLE_MISMATCH"
   | "VENUE_MISMATCH"
@@ -19,6 +22,7 @@ export type TransferProofReview = {
   venue: string | null;
   eventDate: string | null;
   ticketQuantity: number | null;
+  ticketDetails: string | null;
   confirmationId: string | null;
   rawTextSummary: string | null;
   confidence: number;
@@ -33,6 +37,7 @@ type AnalyzeTransferProofInput = {
   expectedVenue?: string | null;
   expectedEventDate?: string | null;
   expectedTicketCount?: number;
+  expectedTicketDetails?: string[];
   sellerNote?: string | null;
 };
 
@@ -49,6 +54,7 @@ function unavailable(reason: string, status: TransferProofReview["status"] = "un
     venue: null,
     eventDate: null,
     ticketQuantity: null,
+    ticketDetails: null,
     confirmationId: null,
     rawTextSummary: null,
     confidence: 0,
@@ -151,10 +157,14 @@ function transferReviewFromParsed(
   const venue = normalizeString(parsed.venue);
   const eventDate = ymd(normalizeString(parsed.eventDate)) ?? normalizeString(parsed.eventDate);
   const ticketQuantity = normalizeNumber(parsed.ticketQuantity);
+  const ticketDetails = normalizeString(parsed.ticketDetails);
   const expectedTicketCount = Math.max(0, expected.expectedTicketCount ?? 0);
 
   const issues: TransferProofIssue[] = [];
   if (hasCompletedTransfer === false) issues.push("NO_COMPLETED_TRANSFER");
+  if (!recipientEmail) issues.push("MISSING_RECIPIENT");
+  if (!eventTitle || (!eventDate && !venue)) issues.push("MISSING_EVENT_INFO");
+  if (ticketQuantity == null || !ticketDetails) issues.push("MISSING_TICKET_INFO");
   if (recipientEmail && normalizeEmail(expected.expectedBuyerEmail) && recipientEmail !== normalizeEmail(expected.expectedBuyerEmail)) {
     issues.push("RECIPIENT_EMAIL_MISMATCH");
   }
@@ -185,6 +195,7 @@ function transferReviewFromParsed(
     venue,
     eventDate,
     ticketQuantity,
+    ticketDetails,
     confirmationId: normalizeString(parsed.confirmationId),
     rawTextSummary: normalizeString(parsed.rawTextSummary),
     confidence,
@@ -212,6 +223,9 @@ function outputText(data: unknown): string {
 export function transferProofIssueMessage(issue: TransferProofIssue) {
   const messages: Record<TransferProofIssue, string> = {
     NO_COMPLETED_TRANSFER: "the upload does not show a completed ticket transfer",
+    MISSING_RECIPIENT: "the upload does not clearly show who received the tickets",
+    MISSING_EVENT_INFO: "the upload does not clearly show the event name and its date or venue",
+    MISSING_TICKET_INFO: "the upload does not clearly show the ticket quantity and ticket details",
     RECIPIENT_EMAIL_MISMATCH: "the visible recipient email does not match the buyer",
     EVENT_TITLE_MISMATCH: "the visible event name does not match this order",
     VENUE_MISMATCH: "the visible venue does not match this order",
@@ -230,6 +244,7 @@ export async function analyzeTransferProof({
   expectedVenue,
   expectedEventDate,
   expectedTicketCount,
+  expectedTicketDetails,
   sellerNote,
 }: AnalyzeTransferProofInput): Promise<TransferProofReview> {
   if (!proofDataUrl) return unavailable("missing-transfer-proof");
@@ -251,6 +266,7 @@ export async function analyzeTransferProof({
       "venue",
       "eventDate",
       "ticketQuantity",
+      "ticketDetails",
       "confirmationId",
       "confidence",
       "rawTextSummary",
@@ -263,6 +279,10 @@ export async function analyzeTransferProof({
       venue: { type: ["string", "null"] },
       eventDate: { type: ["string", "null"], description: "YYYY-MM-DD when visible." },
       ticketQuantity: { type: ["number", "null"] },
+      ticketDetails: {
+        type: ["string", "null"],
+        description: "Visible ticket-identifying information such as section, row, seat numbers, ticket type, or general-admission designation.",
+      },
       confirmationId: { type: ["string", "null"] },
       confidence: { type: "number" },
       rawTextSummary: { type: ["string", "null"] },
@@ -291,9 +311,11 @@ export async function analyzeTransferProof({
                   `Expected event title(s): ${expectedEventTitles.join(" | ") || "unknown"}. ` +
                   `Expected venue: ${expectedVenue || "unknown"}. Expected date: ${expectedEventDate || "unknown"}. ` +
                   `Expected ticket count: ${expectedTicketCount ?? "unknown"}. Seller note/reference: ${sellerNote || "none"}. ` +
+                  `Expected ticket details: ${expectedTicketDetails?.join(" | ") || "unknown"}. ` +
                   "Only report values visibly present in the proof. Do not infer hidden values. " +
                   "Set hasCompletedTransfer true only when the upload visibly indicates the tickets were sent, transferred, completed, accepted, or delivery was initiated to the recipient. " +
-                  "Return null for fields that are not visible. Use confidence 0 to 1 for how clearly the visible proof supports the extracted values.",
+                  "Return null for fields that are not visible. ticketDetails must contain only visible ticket-identifying information such as section, row, seat, ticket type, or general admission. " +
+                  "Use confidence 0 to 1 for how clearly the visible proof supports the extracted values.",
               },
               proofInputContent(proofDataUrl, proofFileName),
             ],
@@ -326,6 +348,7 @@ export async function analyzeTransferProof({
       expectedVenue,
       expectedEventDate,
       expectedTicketCount,
+      expectedTicketDetails,
       sellerNote,
     });
   } catch (err) {

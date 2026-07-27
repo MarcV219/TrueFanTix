@@ -240,7 +240,14 @@ function OrderCard({
                 Transfer all tickets in this order to{" "}
                 <span style={{ fontWeight: 900 }}>{order.buyer?.email || "the buyer email shown above"}</span>.
               </li>
-              <li>After the platform confirms the transfer, upload the confirmation proof below.</li>
+              <li>
+                After the platform confirms the transfer, upload proof that clearly shows:
+                <ul style={{ marginTop: 4, paddingLeft: 20 }}>
+                  <li>the event name and date or venue;</li>
+                  <li>the ticket quantity and identifying details, such as section, row, seats, or general admission; and</li>
+                  <li>the buyer email shown above as the transfer recipient.</li>
+                </ul>
+              </li>
             </ol>
             <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75, lineHeight: 1.4 }}>
               This button does not send the tickets. It checks the uploaded proof for obvious mismatches before the buyer is notified.
@@ -278,7 +285,7 @@ function OrderCard({
               style={inputStyle}
             />
             <span style={{ fontSize: 12, opacity: 0.7, fontWeight: 700 }}>
-              Upload the confirmation screen or email showing the completed transfer, buyer email, event, date, and ticket count where visible.
+              Required: the completed transfer, recipient email, event name and date or venue, plus ticket quantity and identifying details (section, row, seats, or general admission). Proof missing any of these details will not be accepted.
             </span>
             {proofFileName ? (
               <span style={{ fontSize: 12, color: "rgba(22, 101, 52, 1)", fontWeight: 900 }}>
