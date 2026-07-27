@@ -32,7 +32,7 @@ type SellerHoldingOrder = {
   }[];
 };
 
-const proofTypes = ["Transfer ID", "Email Confirmation", "Screenshot", "Other"];
+const proofTypes = ["Email Confirmation", "Screenshot", "Other"];
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -73,7 +73,6 @@ function statusLabel(order: SellerHoldingOrder) {
 }
 
 function proofHelpText(proofType: string) {
-  if (proofType === "Transfer ID") return "Paste the confirmation/reference number from the ticket platform.";
   if (proofType === "Email Confirmation") return "Paste the key confirmation text from the transfer email.";
   if (proofType === "Screenshot") return "Add any caption or context for the screenshot.";
   return "Describe the transfer proof clearly enough for the admin team to understand it.";
