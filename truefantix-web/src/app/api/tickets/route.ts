@@ -898,6 +898,7 @@ export async function POST(req: Request) {
     });
 
     let linkedEventId = created.eventId;
+    let shouldBackfillSiblingTickets = false;
 
     if (typeof official.soldOut === "boolean") {
       const selloutStatus = official.soldOut ? "SOLD_OUT" : "NOT_SOLD_OUT";
@@ -907,9 +908,10 @@ export async function POST(req: Request) {
           where: { id: linkedEventId },
           data: { selloutStatus },
         });
+        shouldBackfillSiblingTickets = true;
       } else {
         const existingEvent = await prisma.event.findFirst({
-          where: { title, date },
+          where: { title, date, venue },
           select: { id: true },
         });
 
@@ -919,13 +921,24 @@ export async function POST(req: Request) {
             where: { id: existingEvent.id },
             data: { selloutStatus, venue },
           });
+          shouldBackfillSiblingTickets = true;
         } else {
           const ev = await prisma.event.create({
             data: { title, date, venue, selloutStatus },
             select: { id: true },
           });
           linkedEventId = ev.id;
+          shouldBackfillSiblingTickets = true;
         }
+      }
+    } else if (!linkedEventId) {
+      const existingEvent = await prisma.event.findFirst({
+        where: { title, date, venue },
+        select: { id: true },
+      });
+
+      if (existingEvent) {
+        linkedEventId = existingEvent.id;
       }
     }
 
@@ -972,6 +985,18 @@ export async function POST(req: Request) {
         }),
       },
     });
+
+    if (linkedEventId && shouldBackfillSiblingTickets) {
+      await prisma.ticket.updateMany({
+        where: {
+          title,
+          date,
+          venue,
+          eventId: null,
+        },
+        data: { eventId: linkedEventId },
+      });
+    }
 
     const verified = await autoVerifyTicketById(prisma, created.id);
 
