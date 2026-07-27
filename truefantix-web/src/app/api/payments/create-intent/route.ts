@@ -20,6 +20,10 @@ function normalizeCurrency(value: unknown): "CAD" | "USD" {
   return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
 }
 
+function isReusablePaymentIntentStatus(status: string) {
+  return ["requires_payment_method", "requires_confirmation", "requires_action", "processing"].includes(status);
+}
+
 export async function POST(req: Request) {
   const rlResult = await applyRateLimit(req, "payments:create-intent");
   if (!rlResult.ok) return rlResult.response;
@@ -38,6 +42,7 @@ export async function POST(req: Request) {
       where: { id: orderId },
       include: {
         items: { include: { ticket: true } },
+        payment: true,
         seller: true,
       },
     });
@@ -124,6 +129,38 @@ export async function POST(req: Request) {
     const stripe = await getStripe();
     const currency = normalizeCurrency((order as any).currency);
 
+    if (order.payment?.provider === "STRIPE" && order.payment.providerRef) {
+      const existingIntent = await stripe.paymentIntents.retrieve(order.payment.providerRef);
+      if (
+        existingIntent.amount === order.totalCents &&
+        existingIntent.currency.toUpperCase() === currency &&
+        isReusablePaymentIntentStatus(existingIntent.status) &&
+        existingIntent.client_secret
+      ) {
+        return NextResponse.json(
+          {
+            ok: true,
+            clientSecret: existingIntent.client_secret,
+            amount: order.totalCents,
+            currency,
+            reused: true,
+          },
+          { status: 200 }
+        );
+      }
+
+      if (existingIntent.status === "succeeded") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "PAYMENT_ALREADY_SUCCEEDED",
+            message: "Stripe has already accepted payment for this order. Please wait a moment and refresh your order status.",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     // Create PaymentIntent
     const paymentIntent = await stripe.paymentIntents.create({
       amount: order.totalCents,
@@ -136,6 +173,25 @@ export async function POST(req: Request) {
         currency,
       },
       description: `TrueFanTix Order #${order.id.slice(0, 8)}`,
+    });
+
+    await prisma.payment.upsert({
+      where: { orderId: order.id },
+      create: {
+        orderId: order.id,
+        amountCents: paymentIntent.amount,
+        currency,
+        status: "REQUIRES_PAYMENT",
+        provider: "STRIPE",
+        providerRef: paymentIntent.id,
+      },
+      update: {
+        amountCents: paymentIntent.amount,
+        currency,
+        status: "REQUIRES_PAYMENT",
+        provider: "STRIPE",
+        providerRef: paymentIntent.id,
+      },
     });
 
     return NextResponse.json(
