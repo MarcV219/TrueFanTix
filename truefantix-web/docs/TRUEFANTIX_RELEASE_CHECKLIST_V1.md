@@ -30,7 +30,9 @@ Set or verify these in Vercel for `truefantix-web` before release testing.
 - [x] `PASSWORD_RESET_SECRET` is set and at least 32 characters.
 - [x] `CRON_SECRET` is set if using cron header auth.
 - [x] `APP_ORIGIN` is set to the exact app origin, for example `https://truefantix-web.vercel.app` for dev.
-- [x] `STRIPE_WEBHOOK_SECRET` matches the Stripe webhook endpoint secret.
+- [ ] Stripe mode matches the current testing stage:
+  - Pre-launch QA on `https://truefantix-web.vercel.app`: use sandbox/test Stripe keys (`STRIPE_SECRET_KEY=sk_test_...`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...`) and the sandbox webhook signing secret (`STRIPE_WEBHOOK_SECRET=whsec_...`) for `https://truefantix-web.vercel.app/api/webhooks/stripe`.
+  - Public launch: switch deliberately to live Stripe keys (`sk_live_...`, `pk_live_...`) only after live Connect setup, account verification, and live webhook setup are complete.
 - [x] `UPSTASH_REDIS_REST_URL` is set for durable Vercel rate limiting.
 - [x] `UPSTASH_REDIS_REST_TOKEN` is set with the matching Upstash token.
 - [x] `TWILIO_ACCOUNT_SID` is set.
@@ -61,6 +63,10 @@ Use this section when replacing the public Coming Soon page with the full app.
   - `APP_ORIGIN=https://www.truefantix.com`
   - `NEXT_PUBLIC_APP_URL=https://www.truefantix.com`
   - `APP_ALLOWED_ORIGINS` includes `https://truefantix.com` and `https://www.truefantix.com`.
+- [ ] Switch Stripe env from sandbox/test to live mode only after Stripe live Connect is ready:
+  - `STRIPE_SECRET_KEY=sk_live_...`
+  - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...`
+  - `STRIPE_WEBHOOK_SECRET=whsec_...` from the live webhook endpoint.
 - [ ] Redeploy `truefantix-web` after changing env vars.
 - [ ] Update Stripe webhook endpoint to `https://www.truefantix.com/api/webhooks/stripe`.
 - [ ] Set optional GitHub repo variable `TRUEFANTIX_APP_URL=https://www.truefantix.com` for transfer reminders.
