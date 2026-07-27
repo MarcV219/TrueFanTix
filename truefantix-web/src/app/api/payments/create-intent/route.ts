@@ -69,6 +69,43 @@ export async function POST(req: Request) {
     // Check reservation hasn't expired
     const now = new Date();
     const tickets = order.items.map((item: any) => item.ticket);
+    const hasExpiredReservation = tickets.some(
+      (ticket: any) =>
+        ticket.status === "RESERVED" &&
+        ticket.reservedByOrderId === orderId &&
+        (!ticket.reservedUntil || ticket.reservedUntil <= now)
+    );
+
+    if (hasExpiredReservation) {
+      await prisma.$transaction(async (tx: any) => {
+        await tx.order.updateMany({
+          where: { id: orderId, status: "PENDING" },
+          data: { status: "CANCELLED" },
+        });
+
+        await tx.ticket.updateMany({
+          where: {
+            status: "RESERVED",
+            reservedByOrderId: orderId,
+          },
+          data: {
+            status: "AVAILABLE",
+            reservedByOrderId: null,
+            reservedUntil: null,
+          },
+        });
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "RESERVATION_EXPIRED",
+          message: "This checkout reservation expired before payment was completed. Please start checkout again.",
+        },
+        { status: 409 }
+      );
+    }
+
     for (const ticket of tickets) {
       if (ticket.status !== "RESERVED" || ticket.reservedByOrderId !== orderId) {
         return NextResponse.json(
