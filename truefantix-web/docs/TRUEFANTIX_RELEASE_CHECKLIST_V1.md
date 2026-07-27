@@ -44,6 +44,35 @@ Set or verify these in Vercel for `truefantix-web` before release testing.
 - [x] GitHub Actions workflow `Transfer reminders` has been run manually once and returns `ok: true`.
 - [x] Vercel Cron is not used for six-hour transfer reminders, keeping the Vercel Hobby plan viable.
 
+## Launch Domain Cutover
+
+Use this section when replacing the public Coming Soon page with the full app.
+
+- [ ] Confirm final manual QA has passed on `https://truefantix-web.vercel.app`.
+- [ ] Confirm team/public-launch approval.
+- [ ] Attach public domains to the `truefantix-web` project:
+  - `truefantix.com`
+  - `www.truefantix.com`
+  - `truefantix.ca`
+  - `www.truefantix.ca`
+- [ ] Remove those public domains from the `true-fan-tix-coming-soon` project if Vercel does not move them automatically.
+- [ ] Keep `COMING_SOON_MODE` unset on `truefantix-web`.
+- [ ] Update `truefantix-web` Production env:
+  - `APP_ORIGIN=https://www.truefantix.com`
+  - `NEXT_PUBLIC_APP_URL=https://www.truefantix.com`
+  - `APP_ALLOWED_ORIGINS` includes `https://truefantix.com` and `https://www.truefantix.com`.
+- [ ] Redeploy `truefantix-web` after changing env vars.
+- [ ] Update Stripe webhook endpoint to `https://www.truefantix.com/api/webhooks/stripe`.
+- [ ] Set optional GitHub repo variable `TRUEFANTIX_APP_URL=https://www.truefantix.com` for transfer reminders.
+- [ ] Request fresh email verification and forgot-password emails; old links can still contain the pre-cutover origin.
+- [ ] Verify public app routes:
+  - `https://www.truefantix.com/` shows the full app home page.
+  - `https://www.truefantix.com/login` shows login, not Coming Soon.
+  - `https://www.truefantix.com/reset-password?...` reaches the reset form from a fresh email link.
+  - `GET https://www.truefantix.com/api/health` returns healthy.
+  - `GET https://www.truefantix.com/api/health/verification` returns healthy.
+  - Unsigned `POST https://www.truefantix.com/api/webhooks/stripe` returns controlled `400 MISSING_SIGNATURE`.
+
 ## Verification Gates
 
 - [x] Redeploy `truefantix-web` after env changes.
