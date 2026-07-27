@@ -87,7 +87,8 @@ export async function GET() {
     const cardPaymentsActive = isActiveCapability(cap?.card_payments);
     const transfersActive = isActiveCapability(cap?.transfers);
 
-    // “Enabled” for our platform = can accept payments + can transfer/payout
+    // TrueFanTix charges buyers on the platform account and releases funds to
+    // sellers later, so seller readiness only depends on transfer/payout access.
     const chargesEnabled = chargesEnabledLegacy || cardPaymentsActive;
     const payoutsEnabled = payoutsEnabledLegacy || transfersActive;
 
@@ -104,7 +105,7 @@ export async function GET() {
         }
       : null;
 
-    const fullyEnabled = detailsSubmitted && chargesEnabled && payoutsEnabled;
+    const fullyEnabled = detailsSubmitted && payoutsEnabled;
 
     // Store what Stripe says (source of truth)
     await prisma.seller.update({

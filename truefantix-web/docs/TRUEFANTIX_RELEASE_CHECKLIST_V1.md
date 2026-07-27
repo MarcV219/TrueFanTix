@@ -97,6 +97,7 @@ Use this section when replacing the public Coming Soon page with the full app.
 - [x] `npm run build` passes.
 - [ ] Manual auth flow passes: register, verify email/phone, login, forgot/reset password.
 - [ ] Manual seller flow passes: onboarding state, create listing, listing appears in account.
+- [ ] Seller Stripe onboarding only asks for information needed for individual payout recipients. New Express accounts should request `transfers` only, not `card_payments`, unless the payment flow changes to direct or destination charges.
 - [ ] Manual buyer flow passes: browse ticket, initialize purchase, Stripe checkout form renders.
 - [ ] Manual community flow passes: create thread, reply, validation errors render clearly.
 - [ ] No new regressions appear in dev logs.

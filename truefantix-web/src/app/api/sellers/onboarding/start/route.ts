@@ -162,7 +162,6 @@ export async function POST(req: Request) {
         country,
         ...prefill,
         capabilities: {
-          card_payments: { requested: true },
           transfers: { requested: true },
         },
         metadata: {
