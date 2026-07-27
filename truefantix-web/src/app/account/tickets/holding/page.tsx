@@ -52,6 +52,110 @@ function fulfillmentLabel(ticket: HoldingTicket) {
   return ticket.orderStatus;
 }
 
+function fulfillmentTooltip(ticket: HoldingTicket) {
+  if (ticket.orderStatus === "PAID" && ticket.buyerConfirmationStatus === "DISPUTED") {
+    return "A dispute is open, so seller payout stays paused while the issue is reviewed.";
+  }
+  if (ticket.orderStatus === "PAID" && ticket.transferVerificationStatus === "PENDING") {
+    return "The seller submitted transfer proof. Confirm receipt only after the tickets are visible in your ticket provider account, or open a dispute if something is wrong.";
+  }
+  if (ticket.orderStatus === "PAID") {
+    return "Your payment was accepted and the seller has 24 hours to transfer the tickets through the original ticket provider. You will be prompted to confirm receipt after transfer proof is submitted.";
+  }
+  if (ticket.orderStatus === "DELIVERED" && ticket.buyerConfirmationStatus === "CONFIRMED") {
+    return "You confirmed receipt of the transferred tickets. This order is waiting for final completion.";
+  }
+  if (ticket.orderStatus === "DELIVERED") {
+    return "The seller has submitted transfer proof. Confirm receipt after the tickets are in your account, or open a dispute before the confirmation window ends.";
+  }
+  return "This is the current order status.";
+}
+
+function StatusPillWithTooltip({
+  children,
+  tooltip,
+  tone,
+}: {
+  children: React.ReactNode;
+  tooltip: string;
+  tone: "blue" | "green";
+}) {
+  const [open, setOpen] = useState(false);
+  const tooltipId = React.useId();
+  const colors =
+    tone === "green"
+      ? {
+          background: "rgba(240, 253, 244, 1)",
+          color: "rgba(22, 101, 52, 1)",
+          border: "1px solid rgba(34, 197, 94, 0.28)",
+        }
+      : {
+          background: "rgba(219, 234, 254, 1)",
+          color: "rgba(30, 64, 175, 1)",
+          border: "1px solid rgba(59, 130, 246, 0.28)",
+        };
+
+  return (
+    <span
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        justifyContent: "center",
+        width: "100%",
+      }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      <span
+        tabIndex={0}
+        aria-describedby={tooltipId}
+        style={{
+          width: "100%",
+          padding: "6px 12px",
+          borderRadius: 999,
+          fontSize: 12,
+          fontWeight: 900,
+          background: colors.background,
+          color: colors.color,
+          border: colors.border,
+          textAlign: "center",
+          cursor: "help",
+          outlineOffset: 2,
+        }}
+      >
+        {children}
+      </span>
+      {open ? (
+        <span
+          id={tooltipId}
+          role="tooltip"
+          style={{
+            position: "absolute",
+            zIndex: 20,
+            right: 0,
+            bottom: "calc(100% + 8px)",
+            width: "min(320px, 78vw)",
+            padding: 10,
+            borderRadius: 8,
+            border: "1px solid rgba(15, 23, 42, 0.14)",
+            background: "rgba(15, 23, 42, 0.96)",
+            color: "white",
+            boxShadow: "0 12px 28px rgba(15, 23, 42, 0.20)",
+            fontSize: 12,
+            fontWeight: 700,
+            lineHeight: 1.35,
+            textAlign: "left",
+          }}
+        >
+          {tooltip}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirmed: () => void }) {
   const [busy, setBusy] = useState(false);
   const [disputeOpen, setDisputeOpen] = useState(false);
@@ -141,32 +245,15 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
           </p>
         </div>
         <div style={{ display: "grid", gap: 8, alignContent: "center", minWidth: 180 }}>
-          <span
-            style={{
-              padding: "6px 12px",
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 900,
-              background: "rgba(219, 234, 254, 1)",
-              color: "rgba(30, 64, 175, 1)",
-              textAlign: "center",
-            }}
-          >
+          <StatusPillWithTooltip tooltip={fulfillmentTooltip(ticket)} tone="blue">
             {fulfillmentLabel(ticket)}
-          </span>
-          <span
-            style={{
-              padding: "6px 12px",
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 900,
-              background: "rgba(240, 253, 244, 1)",
-              color: "rgba(22, 101, 52, 1)",
-              textAlign: "center",
-            }}
+          </StatusPillWithTooltip>
+          <StatusPillWithTooltip
+            tooltip="Your payment is held by TrueFanTix while the seller transfers the tickets. Seller payout is not released until you confirm receipt, the 24-hour confirmation window ends without a dispute, or an admin resolves the case."
+            tone="green"
           >
             Payment protected until delivery
-          </span>
+          </StatusPillWithTooltip>
           <p style={{ margin: 0, fontSize: 12, opacity: 0.62, textAlign: "center" }}>
             Purchased {new Date(ticket.orderDate).toLocaleDateString()}
           </p>
