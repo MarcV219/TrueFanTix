@@ -161,6 +161,7 @@ function ToolLink({
 }
 
 type TicketOverview = {
+  pendingCheckout: { count: number; orderId: string | null };
   holding: { count: number; actionRequired: number };
   selling: { count: number };
   sellerHolding: { count: number; actionRequired: number };
@@ -169,6 +170,7 @@ type TicketOverview = {
 };
 
 const emptyTicketOverview: TicketOverview = {
+  pendingCheckout: { count: 0, orderId: null },
   holding: { count: 0, actionRequired: 0 },
   selling: { count: 0 },
   sellerHolding: { count: 0, actionRequired: 0 },
@@ -789,6 +791,20 @@ function AccountHub({ me }: { me: MeUser }) {
             </div>
           ) : null}
           <div style={{ display: "grid", gap: 10 }}>
+            {ticketOverview.pendingCheckout.count > 0 ? (
+              <ToolLink
+                label="Checkout incomplete"
+                hint="Payment has not been completed yet. Finish checkout or let the reservation expire before treating these tickets as bought."
+                href={
+                  ticketOverview.pendingCheckout.orderId
+                    ? `/checkout?orderId=${encodeURIComponent(ticketOverview.pendingCheckout.orderId)}`
+                    : "/account/transactions"
+                }
+                count={ticketOverview.pendingCheckout.count}
+                attention="required"
+                attentionLabel="Payment required"
+              />
+            ) : null}
             <ToolLink
               label="Holding (incoming / transferred to you)"
               hint={

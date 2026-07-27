@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { formatTaxRate } from "@/lib/tax-rates";
 import { formatCents, normalizeCurrency } from "@/lib/ticketsView";
+import { getCheckoutCompletionState } from "@/lib/orderPresentation";
 
 function taxLineLabel(order: any) {
   const label = order?.taxLabel || "Tax";
@@ -80,6 +81,77 @@ function SuccessContent() {
         <div style={{ marginTop: 16, textAlign: "center" }}>
           <Link href="/account/tickets/bought" style={{ textDecoration: "underline" }}>
             View your tickets
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const completionState = getCheckoutCompletionState(order);
+  const orderStatus = String(order?.status ?? "PENDING");
+  const paymentStatus = String(order?.payment?.status ?? "REQUIRES_PAYMENT");
+
+  if (completionState !== "complete") {
+    const isFailed = completionState === "failed";
+    return (
+      <div style={{ maxWidth: 600, margin: "40px auto", padding: 16 }}>
+        <div
+          role="alert"
+          style={{
+            padding: 24,
+            borderRadius: 12,
+            border: isFailed ? "1px solid rgba(220, 38, 38, 0.35)" : "1px solid rgba(217, 119, 6, 0.45)",
+            background: isFailed ? "rgba(254, 242, 242, 1)" : "rgba(255, 251, 235, 1)",
+            color: isFailed ? "rgba(153, 27, 27, 1)" : "rgba(146, 64, 14, 1)",
+          }}
+        >
+          <div style={{ fontWeight: 900, fontSize: 24, marginBottom: 8 }}>
+            {isFailed ? "Checkout was not completed" : "Payment still needs attention"}
+          </div>
+          <div style={{ lineHeight: 1.5 }}>
+            {isFailed
+              ? "This order cannot be treated as bought because payment did not complete successfully."
+              : "This order is reserved, but payment has not been confirmed yet. Complete payment before expecting ticket transfer instructions or email notifications."}
+          </div>
+          <div style={{ marginTop: 12, display: "grid", gap: 4, fontSize: 13 }}>
+            <div>
+              Order status: <b>{orderStatus}</b>
+            </div>
+            <div>
+              Payment status: <b>{paymentStatus}</b>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center", marginTop: 16 }}>
+          {!isFailed ? (
+            <Link
+              href={`/checkout?orderId=${encodeURIComponent(orderId || "")}`}
+              style={{
+                padding: "12px 24px",
+                borderRadius: 10,
+                border: "1px solid rgba(217, 119, 6, 0.45)",
+                background: "rgba(217, 119, 6, 1)",
+                color: "white",
+                textDecoration: "none",
+                fontWeight: 800,
+              }}
+            >
+              Finish Payment
+            </Link>
+          ) : null}
+          <Link
+            href="/account"
+            style={{
+              padding: "12px 24px",
+              borderRadius: 10,
+              border: "1px solid rgba(0,0,0,0.18)",
+              background: "rgba(248, 250, 252, 1)",
+              color: "rgba(15, 23, 42, 1)",
+              textDecoration: "none",
+              fontWeight: 800,
+            }}
+          >
+            Back to Account
           </Link>
         </div>
       </div>

@@ -31,6 +31,7 @@ export async function GET(req: Request) {
       return NextResponse.json({
         ok: true,
         tickets: {
+          pendingCheckout: { count: 0, orderId: null },
           holding: { count: 0, actionRequired: 0 },
           selling: { count: 0 },
           sellerHolding: { count: 0, actionRequired: 0 },
@@ -42,7 +43,7 @@ export async function GET(req: Request) {
 
     await withdrawExpiredAvailableTickets(now);
 
-    const [buyerOrders, sellerHoldingOrders, activeSellingCount, soldCompletedCount] = await Promise.all([
+    const [buyerOrders, pendingCheckoutOrders, sellerHoldingOrders, activeSellingCount, soldCompletedCount] = await Promise.all([
       prisma.order.findMany({
         where: {
           buyerSellerId: user.seller.id,
@@ -62,6 +63,17 @@ export async function GET(req: Request) {
               },
             },
           },
+        },
+      }),
+      prisma.order.findMany({
+        where: {
+          buyerSellerId: user.seller.id,
+          status: "PENDING",
+        },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          items: { select: { id: true } },
         },
       }),
       prisma.order.findMany({
@@ -93,6 +105,7 @@ export async function GET(req: Request) {
     const completedBuyerOrders = buyerOrders.filter((order) => order.status === "COMPLETED");
     const holdingTicketCount = holdingOrders.reduce((total, order) => total + order.items.length, 0);
     const completedBuyerTicketCount = completedBuyerOrders.reduce((total, order) => total + order.items.length, 0);
+    const pendingCheckoutTicketCount = pendingCheckoutOrders.reduce((total, order) => total + order.items.length, 0);
 
     const holdingActionRequired = holdingOrders.filter(
       (order) =>
@@ -113,6 +126,10 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       tickets: {
+        pendingCheckout: {
+          count: pendingCheckoutTicketCount,
+          orderId: pendingCheckoutOrders[0]?.id ?? null,
+        },
         holding: {
           count: holdingTicketCount,
           actionRequired: holdingActionRequired,

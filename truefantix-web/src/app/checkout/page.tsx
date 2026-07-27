@@ -142,8 +142,8 @@ function CheckoutContent() {
           <div>{error}</div>
         </div>
         <div style={{ marginTop: 16, textAlign: "center" }}>
-          <Link href="/account/tickets/bought" style={{ textDecoration: "underline" }}>
-            View your orders
+          <Link href="/account" style={{ textDecoration: "underline" }}>
+            Back to Account
           </Link>
         </div>
       </div>
