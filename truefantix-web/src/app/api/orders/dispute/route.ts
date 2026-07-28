@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.orderOpenDispute)(req);
     if (!validation.success) return validation.response;
 
-    const { orderId, reason, evidence } = validation.data;
+    const { orderId, ticketIds, reason, evidence } = validation.data;
     const now = new Date();
 
     const order = await prisma.order.findUnique({
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
         disputeWindowEndsAt: true,
         seller: { select: { user: { select: { id: true } } } },
         buyerSeller: { select: { user: { select: { id: true } } } },
-        items: { select: { id: true } },
+        items: { select: { ticketId: true } },
       },
     });
 
@@ -64,10 +64,24 @@ export async function POST(req: Request) {
       );
     }
 
+    const orderTicketIds = new Set(order.items.map((item) => item.ticketId));
+    if (ticketIds.some((ticketId) => !orderTicketIds.has(ticketId))) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "INVALID_TICKET_SELECTION",
+          message: "Every disputed ticket must belong to this purchase.",
+        },
+        { status: 400 }
+      );
+    }
+
     const disputeRecord = {
       type: "BUYER_DISPUTE",
       openedAt: now.toISOString(),
       openedByUserId: gate.user.id,
+      ticketIds,
+      ticketCount: ticketIds.length,
       reason,
       evidence: evidence || null,
     };
@@ -102,7 +116,7 @@ export async function POST(req: Request) {
       await createNotification({
         userId: order.seller.user.id,
         type: "DISPUTE_OPENED",
-        message: `A buyer opened a dispute for order ${order.id}. Seller payout is paused while admin reviews it.`,
+        message: `A buyer opened a dispute for ${ticketIds.length} ticket${ticketIds.length === 1 ? "" : "s"} in order ${order.id}. Seller payout is paused while admin reviews it.`,
         link: `/account/tickets/seller-holding`,
       });
     }
@@ -118,7 +132,7 @@ export async function POST(req: Request) {
         createNotification({
           userId: admin.id,
           type: "DISPUTE_OPENED",
-          message: `Buyer dispute opened for order ${order.id}.`,
+          message: `Buyer dispute opened for ${ticketIds.length} ticket${ticketIds.length === 1 ? "" : "s"} in order ${order.id}.`,
           link: `/admin/orders/${encodeURIComponent(order.id)}`,
         })
       )

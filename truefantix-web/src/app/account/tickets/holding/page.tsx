@@ -10,6 +10,9 @@ type HoldingTicket = {
   title: string;
   venue: string;
   date: string;
+  section: string | null;
+  row: string | null;
+  seat: string | null;
   price: number;
   image: string;
   status: string;
@@ -156,11 +159,29 @@ function StatusPillWithTooltip({
   );
 }
 
-function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirmed: () => void }) {
+function ticketSelectionLabel(ticket: HoldingTicket) {
+  const seatDetails = [
+    ticket.section ? `Section ${ticket.section}` : null,
+    ticket.row ? `Row ${ticket.row}` : null,
+    ticket.seat ? `Seat ${ticket.seat}` : null,
+  ].filter(Boolean);
+  return seatDetails.length ? `${ticket.title} — ${seatDetails.join(", ")}` : `${ticket.title} — $${ticket.price.toFixed(2)}`;
+}
+
+function TicketCard({
+  ticket,
+  orderTickets,
+  onConfirmed,
+}: {
+  ticket: HoldingTicket;
+  orderTickets: HoldingTicket[];
+  onConfirmed: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [disputeOpen, setDisputeOpen] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
   const [disputeEvidence, setDisputeEvidence] = useState("");
+  const [disputedTicketIds, setDisputedTicketIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const canConfirm =
@@ -200,6 +221,7 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId: ticket.orderId,
+          ticketIds: disputedTicketIds,
           reason: disputeReason,
           evidence: disputeEvidence || null,
         }),
@@ -304,6 +326,47 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
           ) : null}
           {disputeOpen ? (
             <div style={{ display: "grid", gap: 8, minWidth: 260 }}>
+              <fieldset
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  margin: 0,
+                  padding: 10,
+                  borderRadius: 8,
+                  border: "1px solid rgba(0,0,0,0.16)",
+                }}
+              >
+                <legend style={{ padding: "0 4px", fontWeight: 900, fontSize: 13 }}>
+                  Which tickets are you disputing?
+                </legend>
+                <p style={{ margin: 0, fontSize: 12, opacity: 0.72 }}>
+                  Select every ticket affected by this issue.
+                </p>
+                {orderTickets.map((orderTicket) => {
+                  const checkboxId = `dispute-${ticket.id}-${orderTicket.id}`;
+                  return (
+                    <label
+                      key={orderTicket.id}
+                      htmlFor={checkboxId}
+                      style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, cursor: "pointer" }}
+                    >
+                      <input
+                        id={checkboxId}
+                        type="checkbox"
+                        checked={disputedTicketIds.includes(orderTicket.id)}
+                        onChange={(event) =>
+                          setDisputedTicketIds((current) =>
+                            event.target.checked
+                              ? [...current, orderTicket.id]
+                              : current.filter((ticketId) => ticketId !== orderTicket.id)
+                          )
+                        }
+                      />
+                      <span>{ticketSelectionLabel(orderTicket)}</span>
+                    </label>
+                  );
+                })}
+              </fieldset>
               <textarea
                 value={disputeReason}
                 onChange={(event) => setDisputeReason(event.target.value)}
@@ -320,15 +383,19 @@ function TicketCard({ ticket, onConfirmed }: { ticket: HoldingTicket; onConfirme
               <button
                 type="button"
                 onClick={openDispute}
-                disabled={busy || disputeReason.trim().length < 10}
+                disabled={busy || disputedTicketIds.length === 0 || disputeReason.trim().length < 10}
                 style={{
                   minHeight: 38,
                   border: 0,
                   borderRadius: 8,
-                  background: disputeReason.trim().length >= 10 ? "rgba(185, 28, 28, 1)" : "rgba(148, 163, 184, 1)",
+                  background:
+                    disputedTicketIds.length > 0 && disputeReason.trim().length >= 10
+                      ? "rgba(185, 28, 28, 1)"
+                      : "rgba(148, 163, 184, 1)",
                   color: "white",
                   fontWeight: 900,
-                  cursor: disputeReason.trim().length >= 10 ? "pointer" : "not-allowed",
+                  cursor:
+                    disputedTicketIds.length > 0 && disputeReason.trim().length >= 10 ? "pointer" : "not-allowed",
                 }}
               >
                 {busy ? "Opening..." : "Submit dispute"}
@@ -462,7 +529,12 @@ function Body() {
         {tickets.length} ticket{tickets.length !== 1 ? "s" : ""} pending transfer or final completion.
       </p>
       {tickets.map((ticket) => (
-        <TicketCard key={`${ticket.orderId}-${ticket.id}`} ticket={ticket} onConfirmed={refetchTickets} />
+        <TicketCard
+          key={`${ticket.orderId}-${ticket.id}`}
+          ticket={ticket}
+          orderTickets={tickets.filter((candidate) => candidate.orderId === ticket.orderId)}
+          onConfirmed={refetchTickets}
+        />
       ))}
     </div>
   );

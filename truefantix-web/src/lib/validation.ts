@@ -246,6 +246,10 @@ export const schemas = {
   // Used by POST /api/orders/dispute
   orderOpenDispute: z.object({
     orderId: z.string().trim().cuid(),
+    ticketIds: z.array(z.string().trim().cuid()).min(1).max(100).refine(
+      (ticketIds) => new Set(ticketIds).size === ticketIds.length,
+      { message: "ticketIds must not contain duplicates." }
+    ),
     reason: z.string().trim().min(10).max(2000),
     evidence: z.string().trim().max(2048).optional().nullable(),
   }),
