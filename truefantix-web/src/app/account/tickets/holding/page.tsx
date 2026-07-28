@@ -24,6 +24,8 @@ type HoldingTicket = {
   orderDate: string;
 };
 
+type DisputeScope = "ALL" | "SPECIFIC" | null;
+
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ maxWidth: 860, margin: "40px auto", padding: 16 }}>
@@ -164,6 +166,8 @@ function TicketCard({
   disputeFormTicketId,
   selectedTicketIds,
   disputeSelectionActive,
+  disputeScope,
+  onChooseDisputeScope,
   onOpenDispute,
   onToggleDisputeTicket,
   onConfirmed,
@@ -172,13 +176,14 @@ function TicketCard({
   disputeFormTicketId: string | null;
   selectedTicketIds: string[];
   disputeSelectionActive: boolean;
+  disputeScope: DisputeScope;
+  onChooseDisputeScope: (scope: Exclude<DisputeScope, null>) => void;
   onOpenDispute: (ticket: HoldingTicket) => void;
   onToggleDisputeTicket: (ticketId: string) => void;
   onConfirmed: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
-  const [disputeEvidence, setDisputeEvidence] = useState("");
   const [disputeEvidenceFile, setDisputeEvidenceFile] = useState<string | null>(null);
   const [disputeEvidenceFileName, setDisputeEvidenceFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -224,7 +229,6 @@ function TicketCard({
           orderId: ticket.orderId,
           ticketIds: selectedTicketIds,
           reason: disputeReason,
-          evidence: disputeEvidence || null,
           evidenceFile: disputeEvidenceFile,
           evidenceFileName: disputeEvidenceFileName,
         }),
@@ -294,8 +298,10 @@ function TicketCard({
               {disputeSelectionActive ? (
                 <button
                   type="button"
-                  onClick={() => onToggleDisputeTicket(ticket.id)}
-                  disabled={busy}
+                  onClick={() => {
+                    if (disputeScope === "SPECIFIC") onToggleDisputeTicket(ticket.id);
+                  }}
+                  disabled={busy || disputeScope !== "SPECIFIC"}
                   aria-pressed={selectedForDispute}
                   style={{
                     minHeight: 38,
@@ -304,10 +310,17 @@ function TicketCard({
                     background: selectedForDispute ? "rgba(37, 99, 235, 1)" : "white",
                     color: selectedForDispute ? "white" : "rgba(30, 64, 175, 1)",
                     fontWeight: 900,
-                    cursor: "pointer",
+                    cursor: disputeScope === "SPECIFIC" ? "pointer" : "default",
+                    opacity: disputeScope ? 1 : 0.72,
                   }}
                 >
-                  {selectedForDispute ? "✓ Selected" : "Select ticket"}
+                  {disputeScope === "ALL"
+                    ? "✓ Included — all tickets"
+                    : disputeScope === "SPECIFIC"
+                      ? selectedForDispute
+                        ? "✓ Selected"
+                        : "Select ticket"
+                      : "Choose all or specific tickets below"}
                 </button>
               ) : (
                 <>
@@ -353,8 +366,65 @@ function TicketCard({
           ) : null}
           {disputeOpen ? (
             <div style={{ display: "grid", gap: 8, minWidth: 260 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(30, 64, 175, 1)" }}>
-                Use the Select ticket buttons on the ticket cards, then describe the issue below.
+              <div
+                role="group"
+                aria-labelledby={`dispute-scope-${ticket.id}`}
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  padding: 10,
+                  borderRadius: 8,
+                  border: "1px solid rgba(37, 99, 235, 0.28)",
+                  background: "white",
+                }}
+              >
+                <div id={`dispute-scope-${ticket.id}`} style={{ fontSize: 13, fontWeight: 900 }}>
+                  Is this dispute about all tickets in this order?
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => onChooseDisputeScope("ALL")}
+                    aria-pressed={disputeScope === "ALL"}
+                    style={{
+                      minHeight: 38,
+                      border: disputeScope === "ALL" ? 0 : "1px solid rgba(37, 99, 235, 0.35)",
+                      borderRadius: 8,
+                      background: disputeScope === "ALL" ? "rgba(37, 99, 235, 1)" : "white",
+                      color: disputeScope === "ALL" ? "white" : "rgba(30, 64, 175, 1)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Yes — all tickets
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onChooseDisputeScope("SPECIFIC")}
+                    aria-pressed={disputeScope === "SPECIFIC"}
+                    style={{
+                      minHeight: 38,
+                      border: disputeScope === "SPECIFIC" ? 0 : "1px solid rgba(37, 99, 235, 0.35)",
+                      borderRadius: 8,
+                      background: disputeScope === "SPECIFIC" ? "rgba(37, 99, 235, 1)" : "white",
+                      color: disputeScope === "SPECIFIC" ? "white" : "rgba(30, 64, 175, 1)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    No — specific tickets
+                  </button>
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>
+                  {disputeScope === "ALL"
+                    ? "All tickets in this order are selected."
+                    : disputeScope === "SPECIFIC"
+                      ? "Use the Select ticket buttons on the affected ticket cards."
+                      : "Choose one option before continuing."}
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(153, 27, 27, 1)" }}>
+                  Opening a dispute pauses seller payout for the entire order while the issue is reviewed.
+                </div>
               </div>
               <textarea
                 value={disputeReason}
@@ -363,28 +433,29 @@ function TicketCard({
                 rows={4}
                 style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", resize: "vertical" }}
               />
-              <input
-                value={disputeEvidence}
-                onChange={(event) => setDisputeEvidence(event.target.value)}
-                placeholder="Optional evidence link or transfer details"
-                style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)" }}
-              />
               <label
+                htmlFor={`dispute-file-${ticket.id}`}
                 style={{
-                  display: "grid",
-                  gap: 6,
-                  padding: 10,
+                  display: "inline-flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  minHeight: 40,
+                  padding: "8px 12px",
                   borderRadius: 8,
-                  border: "1px dashed rgba(37, 99, 235, 0.45)",
-                  background: "rgba(248, 250, 252, 1)",
-                  fontSize: 12,
-                  fontWeight: 800,
+                  border: "1px solid rgba(37, 99, 235, 0.45)",
+                  background: "white",
+                  color: "rgba(30, 64, 175, 1)",
+                  fontSize: 13,
+                  fontWeight: 900,
+                  cursor: "pointer",
                 }}
               >
-                Optional supporting document
+                {disputeEvidenceFileName ? "Change supporting document" : "Upload supporting document (optional)"}
                 <input
+                  id={`dispute-file-${ticket.id}`}
                   type="file"
                   accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,image/jpeg,image/png,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", opacity: 0 }}
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     setError(null);
@@ -407,26 +478,35 @@ function TicketCard({
                     reader.readAsDataURL(file);
                   }}
                 />
-                <span style={{ opacity: 0.65, fontWeight: 600 }}>
-                  JPG, PNG, WebP, PDF, DOC, or DOCX — maximum 2 MB.
-                </span>
               </label>
+              <div style={{ fontSize: 12, opacity: 0.68, textAlign: "center" }}>
+                {disputeEvidenceFileName
+                  ? `Attached: ${disputeEvidenceFileName}`
+                  : "JPG, PNG, WebP, PDF, DOC, or DOCX — maximum 2 MB."}
+              </div>
               <button
                 type="button"
                 onClick={openDispute}
-                disabled={busy || selectedTicketIds.length === 0 || disputeReason.trim().length < 10}
+                disabled={
+                  busy ||
+                  disputeScope === null ||
+                  selectedTicketIds.length === 0 ||
+                  disputeReason.trim().length < 10
+                }
                 style={{
                   minHeight: 38,
                   border: 0,
                   borderRadius: 8,
                   background:
-                    selectedTicketIds.length > 0 && disputeReason.trim().length >= 10
+                    disputeScope !== null && selectedTicketIds.length > 0 && disputeReason.trim().length >= 10
                       ? "rgba(185, 28, 28, 1)"
                       : "rgba(148, 163, 184, 1)",
                   color: "white",
                   fontWeight: 900,
                   cursor:
-                    selectedTicketIds.length > 0 && disputeReason.trim().length >= 10 ? "pointer" : "not-allowed",
+                    disputeScope !== null && selectedTicketIds.length > 0 && disputeReason.trim().length >= 10
+                      ? "pointer"
+                      : "not-allowed",
                 }}
               >
                 {busy ? "Opening..." : "Submit dispute"}
@@ -473,6 +553,7 @@ function Body() {
   const [error, setError] = useState<string | null>(null);
   const [disputeFormTicketId, setDisputeFormTicketId] = useState<string | null>(null);
   const [disputeOrderId, setDisputeOrderId] = useState<string | null>(null);
+  const [disputeScope, setDisputeScope] = useState<DisputeScope>(null);
   const [selectedDisputeTicketIds, setSelectedDisputeTicketIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -499,6 +580,7 @@ function Body() {
   async function refetchTickets() {
     setDisputeFormTicketId(null);
     setDisputeOrderId(null);
+    setDisputeScope(null);
     setSelectedDisputeTicketIds([]);
     setLoading(true);
     setError(null);
@@ -572,10 +654,22 @@ function Body() {
           disputeFormTicketId={disputeFormTicketId}
           selectedTicketIds={selectedDisputeTicketIds}
           disputeSelectionActive={disputeOrderId === ticket.orderId}
+          disputeScope={disputeOrderId === ticket.orderId ? disputeScope : null}
           onOpenDispute={(openedTicket) => {
             setDisputeFormTicketId(openedTicket.id);
             setDisputeOrderId(openedTicket.orderId);
-            setSelectedDisputeTicketIds([openedTicket.id]);
+            setDisputeScope(null);
+            setSelectedDisputeTicketIds([]);
+          }}
+          onChooseDisputeScope={(scope) => {
+            setDisputeScope(scope);
+            setSelectedDisputeTicketIds(
+              scope === "ALL"
+                ? tickets
+                    .filter((candidate) => candidate.orderId === disputeOrderId)
+                    .map((candidate) => candidate.id)
+                : []
+            );
           }}
           onToggleDisputeTicket={(ticketId) =>
             setSelectedDisputeTicketIds((current) =>
