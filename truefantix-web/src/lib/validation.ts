@@ -252,21 +252,30 @@ export const schemas = {
     ),
     reason: z.string().trim().min(10).max(2000),
     evidence: z.string().trim().max(2048).optional().nullable(),
-    evidenceFile: z
-      .string()
-      .trim()
-      .max(3_000_000)
+    evidenceFiles: z
+      .array(
+        z.object({
+          data: z
+            .string()
+            .trim()
+            .max(3_000_000)
+            .refine(
+              (value) =>
+                /^data:(image\/(jpeg|jpg|png|webp)|application\/(pdf|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document));base64,/i.test(
+                  value
+                ),
+              { message: "Evidence must be a JPG, PNG, WebP, PDF, DOC, or DOCX file." }
+            ),
+          fileName: z.string().trim().min(1).max(255),
+        })
+      )
+      .max(5)
       .refine(
-        (value) =>
-          !value ||
-          /^data:(image\/(jpeg|jpg|png|webp)|application\/(pdf|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document));base64,/i.test(
-            value
-          ),
-        { message: "Evidence must be a JPG, PNG, WebP, PDF, DOC, or DOCX file." }
+        (files) => files.reduce((total, file) => total + file.data.length, 0) <= 2_700_000,
+        { message: "Supporting documents must be 2 MB or smaller in total." }
       )
       .optional()
-      .nullable(),
-    evidenceFileName: z.string().trim().max(255).optional().nullable(),
+      .default([]),
   }),
 
   // Used by POST /api/admin/orders/[id]/resolve-dispute

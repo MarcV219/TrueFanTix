@@ -54,6 +54,7 @@ function parseDisputeRecord(value: unknown) {
       evidence?: string | null;
       evidenceFile?: string | null;
       evidenceFileName?: string | null;
+      evidenceFiles?: Array<{ data?: string; fileName?: string }>;
       openedAt?: string;
     };
     return parsed?.type === "BUYER_DISPUTE" ? parsed : null;
@@ -92,6 +93,12 @@ export default function AdminOrderDetailPage() {
   }, [load]);
 
   const disputeRecord = parseDisputeRecord(order?.transferVerificationReason);
+  const disputeEvidenceFiles = disputeRecord
+    ? disputeRecord.evidenceFiles?.filter((file) => file?.data) ||
+      (disputeRecord.evidenceFile
+        ? [{ data: disputeRecord.evidenceFile, fileName: disputeRecord.evidenceFileName || undefined }]
+        : [])
+    : [];
 
   async function resolveDispute(action: "RELEASE_PAYOUT" | "MARK_REFUND_REQUIRED" | "KEEP_UNDER_REVIEW") {
     setDecisionBusy(true);
@@ -165,18 +172,19 @@ export default function AdminOrderDetailPage() {
                   <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
                     <Field label="Affected ticket IDs" value={disputeRecord.ticketIds?.join(", ") || "-"} />
                     <Field label="Buyer’s explanation" value={disputeRecord.reason || "-"} />
-                    <Field label="Evidence link or transfer details" value={disputeRecord.evidence || "-"} />
-                    {disputeRecord.evidenceFile ? (
+                    {disputeEvidenceFiles.map((file, index) => (
                       <a
-                        href={disputeRecord.evidenceFile}
-                        download={disputeRecord.evidenceFileName || "dispute-evidence"}
+                        key={`${file.fileName || "dispute-evidence"}-${index}`}
+                        href={file.data}
+                        download={file.fileName || `dispute-evidence-${index + 1}`}
                         target="_blank"
                         rel="noreferrer"
                         style={{ fontWeight: 900, textDecoration: "underline" }}
                       >
-                        Open supporting document{disputeRecord.evidenceFileName ? `: ${disputeRecord.evidenceFileName}` : ""}
+                        Open supporting document {index + 1}
+                        {file.fileName ? `: ${file.fileName}` : ""}
                       </a>
-                    ) : null}
+                    ))}
                   </div>
                 ) : null}
                 <textarea

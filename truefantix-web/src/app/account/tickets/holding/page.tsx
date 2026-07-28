@@ -184,8 +184,11 @@ function TicketCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
-  const [disputeEvidenceFile, setDisputeEvidenceFile] = useState<string | null>(null);
-  const [disputeEvidenceFileName, setDisputeEvidenceFileName] = useState<string | null>(null);
+  const [disputeEvidenceFiles, setDisputeEvidenceFiles] = useState<Array<{
+    data: string;
+    fileName: string;
+    size: number;
+  }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const disputeOpen = disputeFormTicketId === ticket.id;
@@ -229,8 +232,7 @@ function TicketCard({
           orderId: ticket.orderId,
           ticketIds: selectedTicketIds,
           reason: disputeReason,
-          evidenceFile: disputeEvidenceFile,
-          evidenceFileName: disputeEvidenceFileName,
+          evidenceFiles: disputeEvidenceFiles.map(({ data, fileName }) => ({ data, fileName })),
         }),
       });
       const data = await res.json();
@@ -450,39 +452,97 @@ function TicketCard({
                   cursor: "pointer",
                 }}
               >
-                {disputeEvidenceFileName ? "Change supporting document" : "Upload supporting document (optional)"}
+                Upload supporting documents (optional)
                 <input
                   id={`dispute-file-${ticket.id}`}
                   type="file"
+                  multiple
                   accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,image/jpeg,image/png,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", opacity: 0 }}
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
+                  onChange={async (event) => {
+                    const files = Array.from(event.target.files || []);
                     setError(null);
-                    if (!file) {
-                      setDisputeEvidenceFile(null);
-                      setDisputeEvidenceFileName(null);
+                    event.target.value = "";
+                    if (files.length === 0) {
                       return;
                     }
-                    if (file.size > 2_000_000) {
-                      setError("Supporting documents must be 2 MB or smaller.");
-                      event.target.value = "";
+                    if (disputeEvidenceFiles.length + files.length > 5) {
+                      setError("You can attach up to 5 supporting documents.");
                       return;
                     }
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                      setDisputeEvidenceFile(typeof reader.result === "string" ? reader.result : null);
-                      setDisputeEvidenceFileName(file.name);
-                    };
-                    reader.onerror = () => setError("Could not read the selected supporting document.");
-                    reader.readAsDataURL(file);
+                    const totalSize =
+                      disputeEvidenceFiles.reduce((sum, file) => sum + file.size, 0) +
+                      files.reduce((sum, file) => sum + file.size, 0);
+                    if (totalSize > 2_000_000) {
+                      setError("Supporting documents must be 2 MB or smaller in total.");
+                      return;
+                    }
+                    try {
+                      const uploaded = await Promise.all(
+                        files.map(
+                          (file) =>
+                            new Promise<{ data: string; fileName: string; size: number }>((resolve, reject) => {
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                if (typeof reader.result !== "string") {
+                                  reject(new Error("Could not read file."));
+                                  return;
+                                }
+                                resolve({ data: reader.result, fileName: file.name, size: file.size });
+                              };
+                              reader.onerror = () => reject(new Error("Could not read file."));
+                              reader.readAsDataURL(file);
+                            })
+                        )
+                      );
+                      setDisputeEvidenceFiles((current) => [...current, ...uploaded]);
+                    } catch {
+                      setError("Could not read one or more selected supporting documents.");
+                    }
                   }}
                 />
               </label>
+              {disputeEvidenceFiles.length > 0 ? (
+                <div style={{ display: "grid", gap: 6 }}>
+                  {disputeEvidenceFiles.map((file, index) => (
+                    <div
+                      key={`${file.fileName}-${index}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        padding: "7px 9px",
+                        borderRadius: 7,
+                        background: "rgba(239, 246, 255, 1)",
+                        fontSize: 12,
+                      }}
+                    >
+                      <span style={{ overflowWrap: "anywhere" }}>Attached: {file.fileName}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDisputeEvidenceFiles((current) =>
+                            current.filter((_, fileIndex) => fileIndex !== index)
+                          )
+                        }
+                        aria-label={`Remove ${file.fileName}`}
+                        style={{
+                          border: 0,
+                          background: "transparent",
+                          color: "rgba(185, 28, 28, 1)",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <div style={{ fontSize: 12, opacity: 0.68, textAlign: "center" }}>
-                {disputeEvidenceFileName
-                  ? `Attached: ${disputeEvidenceFileName}`
-                  : "JPG, PNG, WebP, PDF, DOC, or DOCX — maximum 2 MB."}
+                Select up to 5 JPG, PNG, WebP, PDF, DOC, or DOCX files — maximum 2 MB total.
               </div>
               <button
                 type="button"

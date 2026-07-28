@@ -60,12 +60,20 @@ describe("high-risk schema contracts", () => {
       ).toBe(false);
     });
 
-    it("accepts an optional supporting document", () => {
+    it("accepts multiple optional supporting documents", () => {
       expect(
         schemas.orderOpenDispute.safeParse({
           ...validPayload,
-          evidenceFile: "data:application/pdf;base64,JVBERi0xLjQ=",
-          evidenceFileName: "transfer-evidence.pdf",
+          evidenceFiles: [
+            {
+              data: "data:application/pdf;base64,JVBERi0xLjQ=",
+              fileName: "transfer-evidence.pdf",
+            },
+            {
+              data: "data:image/png;base64,iVBORw0KGgo=",
+              fileName: "ticket.png",
+            },
+          ],
         }).success
       ).toBe(true);
     });
@@ -74,8 +82,24 @@ describe("high-risk schema contracts", () => {
       expect(
         schemas.orderOpenDispute.safeParse({
           ...validPayload,
-          evidenceFile: "data:text/html;base64,PGgxPk5vPC9oMT4=",
-          evidenceFileName: "unsafe.html",
+          evidenceFiles: [
+            {
+              data: "data:text/html;base64,PGgxPk5vPC9oMT4=",
+              fileName: "unsafe.html",
+            },
+          ],
+        }).success
+      ).toBe(false);
+    });
+
+    it("rejects more than five supporting documents", () => {
+      expect(
+        schemas.orderOpenDispute.safeParse({
+          ...validPayload,
+          evidenceFiles: Array.from({ length: 6 }, (_, index) => ({
+            data: "data:application/pdf;base64,JVBERi0xLjQ=",
+            fileName: `evidence-${index}.pdf`,
+          })),
         }).success
       ).toBe(false);
     });
