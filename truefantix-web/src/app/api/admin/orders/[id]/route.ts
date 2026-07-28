@@ -70,7 +70,7 @@ export async function GET(req: Request) {
         buyerConfirmationStatus: true,
         buyerConfirmationAt: true,
         disputeWindowEndsAt: true,
-        seller: { select: { id: true, name: true } },
+        seller: { select: { id: true, name: true, user: { select: { email: true, firstName: true, lastName: true } } } },
         buyerSeller: { select: { id: true, name: true, user: { select: { email: true, firstName: true, lastName: true } } } },
         payment: {
           select: {
@@ -135,10 +135,37 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
+    const [auditLogs, emailDeliveries, ticketEscrows, accessTokenTransactions, payouts, conversation] = await Promise.all([
+      prisma.auditLog.findMany({ where: { targetType: "Order", targetId: order.id }, orderBy: { createdAt: "asc" }, take: 500 }),
+      prisma.emailDelivery.findMany({ where: { orderId: order.id }, orderBy: { sentAt: "asc" } }),
+      prisma.ticketEscrow.findMany({ where: { orderId: order.id }, orderBy: { createdAt: "asc" } }),
+      prisma.accessTokenTransaction.findMany({ where: { orderId: order.id }, orderBy: { createdAt: "asc" } }),
+      prisma.payout.findMany({ where: { providerRef: `order:${order.id}` }, orderBy: { createdAt: "asc" } }),
+      prisma.conversation.findUnique({
+        where: { orderId: order.id },
+        include: {
+          messages: {
+            orderBy: { createdAt: "asc" },
+            include: { sender: { select: { id: true, email: true, firstName: true, lastName: true } }, attachments: true },
+          },
+        },
+      }),
+    ]);
+
     return NextResponse.json({
       ok: true,
       order: {
         ...order,
+        caseHistory: {
+          orderCreatedAt: order.createdAt,
+          payment: order.payment,
+          auditLogs: auditLogs.map((log) => ({ ...log, metadata: parseJson(log.metadata) })),
+          emailDeliveries,
+          ticketEscrows,
+          accessTokenTransactions,
+          payouts,
+          messages: conversation?.messages || [],
+        },
         items: order.items.map((item: any) => {
           const parsedEvidence = parseJson(item.ticket?.verificationEvidence ?? null);
           return {

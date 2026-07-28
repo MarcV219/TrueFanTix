@@ -105,6 +105,36 @@ describe("high-risk schema contracts", () => {
     });
   });
 
+  describe("orderDisputeEvidence", () => {
+    const orderId = "ckx1234567890abcdef123458";
+
+    it("accepts comments, documents, or both", () => {
+      expect(schemas.orderDisputeEvidence.safeParse({ orderId, comments: "Additional context." }).success).toBe(true);
+      expect(schemas.orderDisputeEvidence.safeParse({
+        orderId,
+        evidenceFiles: [{ data: "data:application/pdf;base64,JVBERi0xLjQ=", fileName: "proof.pdf" }],
+      }).success).toBe(true);
+    });
+
+    it("rejects an empty update", () => {
+      expect(schemas.orderDisputeEvidence.safeParse({ orderId, comments: "", evidenceFiles: [] }).success).toBe(false);
+    });
+
+    it("rejects unsupported files and more than five documents", () => {
+      expect(schemas.orderDisputeEvidence.safeParse({
+        orderId,
+        evidenceFiles: [{ data: "data:text/html;base64,PGgxPk5vPC9oMT4=", fileName: "unsafe.html" }],
+      }).success).toBe(false);
+      expect(schemas.orderDisputeEvidence.safeParse({
+        orderId,
+        evidenceFiles: Array.from({ length: 6 }, (_, index) => ({
+          data: "data:application/pdf;base64,JVBERi0xLjQ=",
+          fileName: `proof-${index}.pdf`,
+        })),
+      }).success).toBe(false);
+    });
+  });
+
   describe("ticketPurchaseQuery", () => {
     it("accepts buyerSellerId with optional idempotencyKey", () => {
       const parsed = schemas.ticketPurchaseQuery.safeParse({

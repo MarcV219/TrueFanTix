@@ -278,6 +278,30 @@ export const schemas = {
       .default([]),
   }),
 
+  // Used by POST /api/orders/dispute/evidence
+  orderDisputeEvidence: z.object({
+    orderId: z.string().trim().cuid(),
+    comments: z.string().trim().max(2000).optional().default(""),
+    evidenceFiles: z
+      .array(
+        z.object({
+          data: z.string().trim().max(3_000_000).refine(
+            (value) => /^data:(image\/(jpeg|jpg|png|webp)|application\/(pdf|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document));base64,/i.test(value),
+            { message: "Evidence must be a JPG, PNG, WebP, PDF, DOC, or DOCX file." }
+          ),
+          fileName: z.string().trim().min(1).max(255),
+        })
+      )
+      .max(5)
+      .refine((files) => files.reduce((total, file) => total + file.data.length, 0) <= 2_700_000, {
+        message: "Supporting documents must be 2 MB or smaller in total.",
+      })
+      .optional()
+      .default([]),
+  }).refine((value) => value.comments.length > 0 || value.evidenceFiles.length > 0, {
+    message: "Add comments or at least one supporting document.",
+  }),
+
   // Used by POST /api/admin/orders/[id]/resolve-dispute
   adminResolveDispute: z.object({
     action: z.enum(["RELEASE_PAYOUT", "MARK_REFUND_REQUIRED", "KEEP_UNDER_REVIEW"]),

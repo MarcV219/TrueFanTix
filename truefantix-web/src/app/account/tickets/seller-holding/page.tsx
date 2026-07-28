@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AccountGate from "@/app/account/_components/accountgate";
+import DisputeUpdateForm from "@/app/account/_components/dispute-update-form";
 import { apiFetch } from "@/lib/api-fetch";
 
 type SellerHoldingOrder = {
@@ -66,6 +67,7 @@ function formatDate(value: string | null) {
 }
 
 function statusLabel(order: SellerHoldingOrder) {
+  if (order.buyerConfirmationStatus === "DISPUTED") return "Dispute opened — payout paused";
   if (!order.transferProofType) return "Transfer required";
   if (order.buyerConfirmationStatus === "CONFIRMED") return "Buyer confirmed";
   if (order.buyerConfirmationStatus === "AUTO_CONFIRMED") return "Auto-confirmed after 24 hours";
@@ -304,6 +306,9 @@ function OrderCard({
           Transfer confirmed by seller. Buyer confirmation is now pending.
         </div>
       )}
+      {order.buyerConfirmationStatus === "DISPUTED" ? (
+        <DisputeUpdateForm orderId={order.id} onSubmitted={onSubmitted} />
+      ) : null}
     </div>
   );
 }

@@ -43,21 +43,32 @@ function parseTransferProofData(value: unknown) {
   }
 }
 
-function parseDisputeRecord(value: unknown) {
+type DisputeRecord = {
+  type?: string;
+  ticketIds?: string[];
+  ticketCount?: number;
+  reason?: string;
+  evidence?: string | null;
+  evidenceFile?: string | null;
+  evidenceFileName?: string | null;
+  evidenceFiles?: Array<{ data?: string; fileName?: string }>;
+  openedAt?: string;
+  submissions?: Array<{
+    id?: string;
+    submittedAt?: string;
+    submittedByRole?: string;
+    comments?: string | null;
+    evidenceFiles?: Array<{ data?: string; fileName?: string }>;
+  }>;
+};
+
+function parseDisputeRecord(value: unknown): DisputeRecord | null {
   if (typeof value !== "string") return null;
   try {
-    const parsed = JSON.parse(value) as {
-      type?: string;
-      ticketIds?: string[];
-      ticketCount?: number;
-      reason?: string;
-      evidence?: string | null;
-      evidenceFile?: string | null;
-      evidenceFileName?: string | null;
-      evidenceFiles?: Array<{ data?: string; fileName?: string }>;
-      openedAt?: string;
-    };
-    return parsed?.type === "BUYER_DISPUTE" ? parsed : null;
+    const parsed = JSON.parse(value) as DisputeRecord & { dispute?: DisputeRecord };
+    if (parsed?.type === "BUYER_DISPUTE") return parsed;
+    const nested = parsed?.dispute;
+    return nested?.type === "BUYER_DISPUTE" ? nested : null;
   } catch {
     return null;
   }
@@ -185,6 +196,20 @@ export default function AdminOrderDetailPage() {
                         {file.fileName ? `: ${file.fileName}` : ""}
                       </a>
                     ))}
+                    {(disputeRecord.submissions || []).map((submission, submissionIndex) => (
+                      <div key={submission.id || submissionIndex} style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,.12)", background: "white" }}>
+                        <div style={{ fontWeight: 900 }}>
+                          {submission.submittedByRole || "Party"} update
+                          {submission.submittedAt ? ` — ${new Date(submission.submittedAt).toLocaleString()}` : ""}
+                        </div>
+                        <div style={{ marginTop: 5, whiteSpace: "pre-wrap" }}>{submission.comments || "(documents only)"}</div>
+                        {(submission.evidenceFiles || []).map((file, fileIndex) => file.data ? (
+                          <a key={`${file.fileName}-${fileIndex}`} href={file.data} download={file.fileName || `dispute-update-${fileIndex + 1}`} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 6, fontWeight: 900, textDecoration: "underline" }}>
+                            Open document: {file.fileName || `Attachment ${fileIndex + 1}`}
+                          </a>
+                        ) : null)}
+                      </div>
+                    ))}
                   </div>
                 ) : null}
                 <textarea
@@ -223,6 +248,13 @@ export default function AdminOrderDetailPage() {
                 {decisionMessage ? <div style={{ marginTop: 10, color: "rgba(22,101,52,1)", fontWeight: 800 }}>{decisionMessage}</div> : null}
               </div>
             ) : null}
+            <details style={{ marginTop: 12 }}>
+              <summary style={{ cursor: "pointer", fontWeight: 900 }}>Complete transaction and case history</summary>
+              <p style={{ fontSize: 13, opacity: .72 }}>
+                Order creation, payment, emails, audit events, escrow activity, access-token transactions, payout records, and order messages.
+              </p>
+              <JsonBlock value={order.caseHistory} />
+            </details>
             {order.transferProofData ? (() => {
               const transferProof = parseTransferProofData(order.transferProofData);
               const proofUpload = transferProof?.proofUpload ?? null;

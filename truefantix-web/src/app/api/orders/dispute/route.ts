@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { createNotification } from "@/lib/notifications/service";
+import { DISPUTE_SUPPORT_EMAIL, sendDisputeEmails } from "@/lib/disputes";
 import { schemas, validateRequest } from "@/lib/validation";
 
 export async function POST(req: Request) {
@@ -28,9 +29,14 @@ export async function POST(req: Request) {
         transferVerificationStatus: true,
         buyerConfirmationStatus: true,
         disputeWindowEndsAt: true,
-        seller: { select: { user: { select: { id: true } } } },
-        buyerSeller: { select: { user: { select: { id: true } } } },
-        items: { select: { ticketId: true } },
+        seller: { select: { user: { select: { id: true, email: true, firstName: true } } } },
+        buyerSeller: { select: { user: { select: { id: true, email: true, firstName: true } } } },
+        items: {
+          select: {
+            ticketId: true,
+            ticket: { select: { title: true, venue: true, date: true, row: true, seat: true } },
+          },
+        },
       },
     });
 
@@ -138,6 +144,31 @@ export async function POST(req: Request) {
         })
       )
     );
+
+    const buyer = order.buyerSeller.user;
+    const seller = order.seller.user;
+    const disputedTicketDetails = order.items
+      .filter((item) => ticketIds.includes(item.ticketId))
+      .map((item) => {
+        const location = [item.ticket.row ? `Row ${item.ticket.row}` : null, item.ticket.seat ? `Seat ${item.ticket.seat}` : null]
+          .filter(Boolean)
+          .join(", ");
+        return `${item.ticket.title} — ${item.ticket.venue} — ${item.ticket.date}${location ? ` — ${location}` : ""} (ticket ${item.ticketId})`;
+      });
+    await sendDisputeEmails({
+      orderId: order.id,
+      kind: "OPENED",
+      submittedBy: "Buyer",
+      comments: reason,
+      ticketCount: ticketIds.length,
+      tickets: disputedTicketDetails,
+      fileNames: evidenceFiles.map((file) => file.fileName),
+      parties: [
+        ...(buyer?.email ? [{ email: buyer.email, firstName: buyer.firstName, role: "Buyer" as const }] : []),
+        ...(seller?.email ? [{ email: seller.email, firstName: seller.firstName, role: "Seller" as const }] : []),
+        { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
+      ],
+    });
 
     return NextResponse.json(
       { ok: true, order: updatedOrder, message: "Dispute opened. Seller payout is paused for admin review." },

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AccountGate from "@/app/account/_components/accountgate";
+import DisputeUpdateForm from "@/app/account/_components/dispute-update-form";
 import { apiFetch } from "@/lib/api-fetch";
 
 type HoldingTicket = {
@@ -167,6 +168,7 @@ function TicketCard({
   selectedTicketIds,
   disputeSelectionActive,
   disputeScope,
+  disputeUpdateVisible,
   onChooseDisputeScope,
   onOpenDispute,
   onToggleDisputeTicket,
@@ -177,6 +179,7 @@ function TicketCard({
   selectedTicketIds: string[];
   disputeSelectionActive: boolean;
   disputeScope: DisputeScope;
+  disputeUpdateVisible: boolean;
   onChooseDisputeScope: (scope: Exclude<DisputeScope, null>) => void;
   onOpenDispute: (ticket: HoldingTicket) => void;
   onToggleDisputeTicket: (ticketId: string) => void;
@@ -573,6 +576,7 @@ function TicketCard({
               </button>
             </div>
           ) : null}
+          {disputeUpdateVisible ? <DisputeUpdateForm orderId={ticket.orderId} /> : null}
           {success ? (
             <div
               role="status"
@@ -715,6 +719,10 @@ function Body() {
           selectedTicketIds={selectedDisputeTicketIds}
           disputeSelectionActive={disputeOrderId === ticket.orderId}
           disputeScope={disputeOrderId === ticket.orderId ? disputeScope : null}
+          disputeUpdateVisible={
+            ticket.buyerConfirmationStatus === "DISPUTED" &&
+            tickets.find((candidate) => candidate.orderId === ticket.orderId)?.id === ticket.id
+          }
           onOpenDispute={(openedTicket) => {
             setDisputeFormTicketId(openedTicket.id);
             setDisputeOrderId(openedTicket.orderId);
