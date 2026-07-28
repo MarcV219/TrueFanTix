@@ -56,6 +56,7 @@ export type AuditAction =
   
   // Dispute/Resolution actions
   | "DISPUTE_OPEN"
+  | "DISPUTE_CANCEL"
   | "DISPUTE_EVIDENCE_SUBMIT"
   | "DISPUTE_RESOLVE"
   | "DISPUTE_APPEAL"

@@ -302,6 +302,12 @@ export const schemas = {
     message: "Add comments or at least one supporting document.",
   }),
 
+  // Used by POST /api/orders/dispute/cancel
+  orderCancelDispute: z.object({
+    orderId: z.string().trim().cuid(),
+    satisfactorilyResolved: z.literal(true),
+  }),
+
   // Used by POST /api/admin/orders/[id]/resolve-dispute
   adminResolveDispute: z.object({
     action: z.enum(["RELEASE_PAYOUT", "MARK_REFUND_REQUIRED", "KEEP_UNDER_REVIEW"]),

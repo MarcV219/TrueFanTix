@@ -135,6 +135,16 @@ describe("high-risk schema contracts", () => {
     });
   });
 
+  describe("orderCancelDispute", () => {
+    const orderId = "ckx1234567890abcdef123458";
+
+    it("requires the buyer’s satisfactory-resolution acknowledgement", () => {
+      expect(schemas.orderCancelDispute.safeParse({ orderId, satisfactorilyResolved: true }).success).toBe(true);
+      expect(schemas.orderCancelDispute.safeParse({ orderId, satisfactorilyResolved: false }).success).toBe(false);
+      expect(schemas.orderCancelDispute.safeParse({ orderId }).success).toBe(false);
+    });
+  });
+
   describe("ticketPurchaseQuery", () => {
     it("accepts buyerSellerId with optional idempotencyKey", () => {
       const parsed = schemas.ticketPurchaseQuery.safeParse({

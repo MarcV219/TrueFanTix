@@ -53,6 +53,11 @@ type DisputeRecord = {
   evidenceFileName?: string | null;
   evidenceFiles?: Array<{ data?: string; fileName?: string }>;
   openedAt?: string;
+  cancellation?: {
+    cancelledAt?: string;
+    cancelledByUserId?: string;
+    satisfactorilyResolved?: boolean;
+  };
   submissions?: Array<{
     id?: string;
     submittedAt?: string;
@@ -171,6 +176,12 @@ export default function AdminOrderDetailPage() {
                     : `${order.transferVerificationStatus || "-"} ${order.transferVerificationReason || ""}`
                 }
               />
+              {disputeRecord?.cancellation ? (
+                <Field
+                  label="Buyer dispute cancellation"
+                  value={`${disputeRecord.cancellation.satisfactorilyResolved ? "Satisfactorily resolved" : "Cancelled"}${disputeRecord.cancellation.cancelledAt ? ` — ${new Date(disputeRecord.cancellation.cancelledAt).toLocaleString()}` : ""}`}
+                />
+              ) : null}
               <Field label="Buyer Confirmation" value={`${order.buyerConfirmationStatus || "-"} ${order.buyerConfirmationAt ? new Date(order.buyerConfirmationAt).toLocaleString() : ""}`} />
             </div>
             {order.buyerConfirmationStatus === "DISPUTED" ? (

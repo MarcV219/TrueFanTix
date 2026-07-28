@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AccountGate from "@/app/account/_components/accountgate";
+import DisputeCancelForm from "@/app/account/_components/dispute-cancel-form";
 import DisputeUpdateForm from "@/app/account/_components/dispute-update-form";
 import { apiFetch } from "@/lib/api-fetch";
 
@@ -576,7 +577,12 @@ function TicketCard({
               </button>
             </div>
           ) : null}
-          {disputeUpdateVisible ? <DisputeUpdateForm orderId={ticket.orderId} /> : null}
+          {disputeUpdateVisible ? (
+            <>
+              <DisputeUpdateForm orderId={ticket.orderId} />
+              <DisputeCancelForm orderId={ticket.orderId} onCancelled={onConfirmed} />
+            </>
+          ) : null}
           {success ? (
             <div
               role="status"
