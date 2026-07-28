@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.orderOpenDispute)(req);
     if (!validation.success) return validation.response;
 
-    const { orderId, ticketIds, reason, evidence } = validation.data;
+    const { orderId, ticketIds, reason, evidence, evidenceFile, evidenceFileName } = validation.data;
     const now = new Date();
 
     const order = await prisma.order.findUnique({
@@ -84,6 +84,8 @@ export async function POST(req: Request) {
       ticketCount: ticketIds.length,
       reason,
       evidence: evidence || null,
+      evidenceFile: evidenceFile || null,
+      evidenceFileName: evidenceFileName || null,
     };
 
     const updatedOrder = await prisma.order.update({

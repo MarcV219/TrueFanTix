@@ -59,6 +59,26 @@ describe("high-risk schema contracts", () => {
         }).success
       ).toBe(false);
     });
+
+    it("accepts an optional supporting document", () => {
+      expect(
+        schemas.orderOpenDispute.safeParse({
+          ...validPayload,
+          evidenceFile: "data:application/pdf;base64,JVBERi0xLjQ=",
+          evidenceFileName: "transfer-evidence.pdf",
+        }).success
+      ).toBe(true);
+    });
+
+    it("rejects an unsupported evidence file type", () => {
+      expect(
+        schemas.orderOpenDispute.safeParse({
+          ...validPayload,
+          evidenceFile: "data:text/html;base64,PGgxPk5vPC9oMT4=",
+          evidenceFileName: "unsafe.html",
+        }).success
+      ).toBe(false);
+    });
   });
 
   describe("ticketPurchaseQuery", () => {

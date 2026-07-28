@@ -43,6 +43,25 @@ function parseTransferProofData(value: unknown) {
   }
 }
 
+function parseDisputeRecord(value: unknown) {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as {
+      type?: string;
+      ticketIds?: string[];
+      ticketCount?: number;
+      reason?: string;
+      evidence?: string | null;
+      evidenceFile?: string | null;
+      evidenceFileName?: string | null;
+      openedAt?: string;
+    };
+    return parsed?.type === "BUYER_DISPUTE" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function AdminOrderDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -71,6 +90,8 @@ export default function AdminOrderDetailPage() {
   React.useEffect(() => {
     load();
   }, [load]);
+
+  const disputeRecord = parseDisputeRecord(order?.transferVerificationReason);
 
   async function resolveDispute(action: "RELEASE_PAYOUT" | "MARK_REFUND_REQUIRED" | "KEEP_UNDER_REVIEW") {
     setDecisionBusy(true);
@@ -124,7 +145,14 @@ export default function AdminOrderDetailPage() {
               <Field label="Total" value={money(order.totalCents, order.currency)} />
               <Field label="Payment" value={order.payment ? `${order.payment.status} / ${order.payment.provider} / ${order.payment.providerRef}` : "No payment"} />
               <Field label="Transfer Proof" value={order.transferProofType || "-"} />
-              <Field label="Transfer Verification" value={`${order.transferVerificationStatus || "-"} ${order.transferVerificationReason || ""}`} />
+              <Field
+                label="Transfer Verification"
+                value={
+                  disputeRecord
+                    ? `${order.transferVerificationStatus || "-"} — buyer dispute affecting ${disputeRecord.ticketCount || disputeRecord.ticketIds?.length || 0} ticket(s)`
+                    : `${order.transferVerificationStatus || "-"} ${order.transferVerificationReason || ""}`
+                }
+              />
               <Field label="Buyer Confirmation" value={`${order.buyerConfirmationStatus || "-"} ${order.buyerConfirmationAt ? new Date(order.buyerConfirmationAt).toLocaleString() : ""}`} />
             </div>
             {order.buyerConfirmationStatus === "DISPUTED" ? (
@@ -133,6 +161,24 @@ export default function AdminOrderDetailPage() {
                 <p style={{ margin: "0 0 10px", opacity: 0.8 }}>
                   Seller payout is paused while this order is disputed. Add an admin note before making a decision.
                 </p>
+                {disputeRecord ? (
+                  <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+                    <Field label="Affected ticket IDs" value={disputeRecord.ticketIds?.join(", ") || "-"} />
+                    <Field label="Buyer’s explanation" value={disputeRecord.reason || "-"} />
+                    <Field label="Evidence link or transfer details" value={disputeRecord.evidence || "-"} />
+                    {disputeRecord.evidenceFile ? (
+                      <a
+                        href={disputeRecord.evidenceFile}
+                        download={disputeRecord.evidenceFileName || "dispute-evidence"}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontWeight: 900, textDecoration: "underline" }}
+                      >
+                        Open supporting document{disputeRecord.evidenceFileName ? `: ${disputeRecord.evidenceFileName}` : ""}
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
                 <textarea
                   value={decisionNote}
                   onChange={(event) => setDecisionNote(event.target.value)}

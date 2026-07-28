@@ -252,6 +252,21 @@ export const schemas = {
     ),
     reason: z.string().trim().min(10).max(2000),
     evidence: z.string().trim().max(2048).optional().nullable(),
+    evidenceFile: z
+      .string()
+      .trim()
+      .max(3_000_000)
+      .refine(
+        (value) =>
+          !value ||
+          /^data:(image\/(jpeg|jpg|png|webp)|application\/(pdf|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document));base64,/i.test(
+            value
+          ),
+        { message: "Evidence must be a JPG, PNG, WebP, PDF, DOC, or DOCX file." }
+      )
+      .optional()
+      .nullable(),
+    evidenceFileName: z.string().trim().max(255).optional().nullable(),
   }),
 
   // Used by POST /api/admin/orders/[id]/resolve-dispute

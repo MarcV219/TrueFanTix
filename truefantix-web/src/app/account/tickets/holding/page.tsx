@@ -159,31 +159,32 @@ function StatusPillWithTooltip({
   );
 }
 
-function ticketSelectionLabel(ticket: HoldingTicket) {
-  const seatDetails = [
-    ticket.section ? `Section ${ticket.section}` : null,
-    ticket.row ? `Row ${ticket.row}` : null,
-    ticket.seat ? `Seat ${ticket.seat}` : null,
-  ].filter(Boolean);
-  return seatDetails.length ? `${ticket.title} — ${seatDetails.join(", ")}` : `${ticket.title} — $${ticket.price.toFixed(2)}`;
-}
-
 function TicketCard({
   ticket,
-  orderTickets,
+  disputeFormTicketId,
+  selectedTicketIds,
+  disputeSelectionActive,
+  onOpenDispute,
+  onToggleDisputeTicket,
   onConfirmed,
 }: {
   ticket: HoldingTicket;
-  orderTickets: HoldingTicket[];
+  disputeFormTicketId: string | null;
+  selectedTicketIds: string[];
+  disputeSelectionActive: boolean;
+  onOpenDispute: (ticket: HoldingTicket) => void;
+  onToggleDisputeTicket: (ticketId: string) => void;
   onConfirmed: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [disputeOpen, setDisputeOpen] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
   const [disputeEvidence, setDisputeEvidence] = useState("");
-  const [disputedTicketIds, setDisputedTicketIds] = useState<string[]>([]);
+  const [disputeEvidenceFile, setDisputeEvidenceFile] = useState<string | null>(null);
+  const [disputeEvidenceFileName, setDisputeEvidenceFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const disputeOpen = disputeFormTicketId === ticket.id;
+  const selectedForDispute = selectedTicketIds.includes(ticket.id);
   const canConfirm =
     ticket.orderStatus === "PAID" &&
     ticket.transferVerificationStatus === "PENDING" &&
@@ -221,9 +222,11 @@ function TicketCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId: ticket.orderId,
-          ticketIds: disputedTicketIds,
+          ticketIds: selectedTicketIds,
           reason: disputeReason,
           evidence: disputeEvidence || null,
+          evidenceFile: disputeEvidenceFile,
+          evidenceFileName: disputeEvidenceFileName,
         }),
       });
       const data = await res.json();
@@ -231,7 +234,6 @@ function TicketCard({
         throw new Error(data?.message || data?.error || "Could not open dispute.");
       }
       setSuccess("Dispute opened. Seller payout is paused while admin reviews it.");
-      setDisputeOpen(false);
       onConfirmed();
     } catch (err: any) {
       setError(err.message || "Could not open dispute.");
@@ -245,8 +247,11 @@ function TicketCard({
       style={{
         padding: 16,
         borderRadius: 12,
-        border: "1px solid rgba(0,0,0,0.10)",
-        background: "white",
+        border: selectedForDispute
+          ? "2px solid rgba(37, 99, 235, 0.85)"
+          : "1px solid rgba(0,0,0,0.10)",
+        background: selectedForDispute ? "rgba(239, 246, 255, 1)" : "white",
+        boxShadow: selectedForDispute ? "0 0 0 3px rgba(59, 130, 246, 0.12)" : "none",
         marginBottom: 16,
       }}
     >
@@ -286,87 +291,71 @@ function TicketCard({
           ) : null}
           {canConfirm ? (
             <div style={{ display: "grid", gap: 8 }}>
-              <button
-                type="button"
-                onClick={confirmReceipt}
-                disabled={busy}
-                style={{
-                  minHeight: 38,
-                  border: 0,
-                  borderRadius: 8,
-                  background: "rgba(6, 74, 147, 1)",
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                {busy ? "Working..." : "Confirm received"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDisputeOpen((current) => !current);
-                  setError(null);
-                  setSuccess(null);
-                }}
-                disabled={busy}
-                style={{
-                  minHeight: 38,
-                  border: "1px solid rgba(185, 28, 28, 0.35)",
-                  borderRadius: 8,
-                  background: "white",
-                  color: "rgba(185, 28, 28, 1)",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                Open dispute
-              </button>
+              {disputeSelectionActive ? (
+                <button
+                  type="button"
+                  onClick={() => onToggleDisputeTicket(ticket.id)}
+                  disabled={busy}
+                  aria-pressed={selectedForDispute}
+                  style={{
+                    minHeight: 38,
+                    border: selectedForDispute ? 0 : "1px solid rgba(37, 99, 235, 0.45)",
+                    borderRadius: 8,
+                    background: selectedForDispute ? "rgba(37, 99, 235, 1)" : "white",
+                    color: selectedForDispute ? "white" : "rgba(30, 64, 175, 1)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  {selectedForDispute ? "✓ Selected" : "Select ticket"}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={confirmReceipt}
+                    disabled={busy}
+                    style={{
+                      minHeight: 38,
+                      border: 0,
+                      borderRadius: 8,
+                      background: "rgba(6, 74, 147, 1)",
+                      color: "white",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {busy ? "Working..." : "Confirm received"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenDispute(ticket);
+                      setError(null);
+                      setSuccess(null);
+                    }}
+                    disabled={busy}
+                    style={{
+                      minHeight: 38,
+                      border: "1px solid rgba(185, 28, 28, 0.35)",
+                      borderRadius: 8,
+                      background: "white",
+                      color: "rgba(185, 28, 28, 1)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Open dispute
+                  </button>
+                </>
+              )}
             </div>
           ) : null}
           {disputeOpen ? (
             <div style={{ display: "grid", gap: 8, minWidth: 260 }}>
-              <fieldset
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  margin: 0,
-                  padding: 10,
-                  borderRadius: 8,
-                  border: "1px solid rgba(0,0,0,0.16)",
-                }}
-              >
-                <legend style={{ padding: "0 4px", fontWeight: 900, fontSize: 13 }}>
-                  Which tickets are you disputing?
-                </legend>
-                <p style={{ margin: 0, fontSize: 12, opacity: 0.72 }}>
-                  Select every ticket affected by this issue.
-                </p>
-                {orderTickets.map((orderTicket) => {
-                  const checkboxId = `dispute-${ticket.id}-${orderTicket.id}`;
-                  return (
-                    <label
-                      key={orderTicket.id}
-                      htmlFor={checkboxId}
-                      style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, cursor: "pointer" }}
-                    >
-                      <input
-                        id={checkboxId}
-                        type="checkbox"
-                        checked={disputedTicketIds.includes(orderTicket.id)}
-                        onChange={(event) =>
-                          setDisputedTicketIds((current) =>
-                            event.target.checked
-                              ? [...current, orderTicket.id]
-                              : current.filter((ticketId) => ticketId !== orderTicket.id)
-                          )
-                        }
-                      />
-                      <span>{ticketSelectionLabel(orderTicket)}</span>
-                    </label>
-                  );
-                })}
-              </fieldset>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(30, 64, 175, 1)" }}>
+                Use the Select ticket buttons on the ticket cards, then describe the issue below.
+              </div>
               <textarea
                 value={disputeReason}
                 onChange={(event) => setDisputeReason(event.target.value)}
@@ -380,22 +369,64 @@ function TicketCard({
                 placeholder="Optional evidence link or transfer details"
                 style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)" }}
               />
+              <label
+                style={{
+                  display: "grid",
+                  gap: 6,
+                  padding: 10,
+                  borderRadius: 8,
+                  border: "1px dashed rgba(37, 99, 235, 0.45)",
+                  background: "rgba(248, 250, 252, 1)",
+                  fontSize: 12,
+                  fontWeight: 800,
+                }}
+              >
+                Optional supporting document
+                <input
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,image/jpeg,image/png,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    setError(null);
+                    if (!file) {
+                      setDisputeEvidenceFile(null);
+                      setDisputeEvidenceFileName(null);
+                      return;
+                    }
+                    if (file.size > 2_000_000) {
+                      setError("Supporting documents must be 2 MB or smaller.");
+                      event.target.value = "";
+                      return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      setDisputeEvidenceFile(typeof reader.result === "string" ? reader.result : null);
+                      setDisputeEvidenceFileName(file.name);
+                    };
+                    reader.onerror = () => setError("Could not read the selected supporting document.");
+                    reader.readAsDataURL(file);
+                  }}
+                />
+                <span style={{ opacity: 0.65, fontWeight: 600 }}>
+                  JPG, PNG, WebP, PDF, DOC, or DOCX — maximum 2 MB.
+                </span>
+              </label>
               <button
                 type="button"
                 onClick={openDispute}
-                disabled={busy || disputedTicketIds.length === 0 || disputeReason.trim().length < 10}
+                disabled={busy || selectedTicketIds.length === 0 || disputeReason.trim().length < 10}
                 style={{
                   minHeight: 38,
                   border: 0,
                   borderRadius: 8,
                   background:
-                    disputedTicketIds.length > 0 && disputeReason.trim().length >= 10
+                    selectedTicketIds.length > 0 && disputeReason.trim().length >= 10
                       ? "rgba(185, 28, 28, 1)"
                       : "rgba(148, 163, 184, 1)",
                   color: "white",
                   fontWeight: 900,
                   cursor:
-                    disputedTicketIds.length > 0 && disputeReason.trim().length >= 10 ? "pointer" : "not-allowed",
+                    selectedTicketIds.length > 0 && disputeReason.trim().length >= 10 ? "pointer" : "not-allowed",
                 }}
               >
                 {busy ? "Opening..." : "Submit dispute"}
@@ -440,6 +471,9 @@ function Body() {
   const [tickets, setTickets] = useState<HoldingTicket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [disputeFormTicketId, setDisputeFormTicketId] = useState<string | null>(null);
+  const [disputeOrderId, setDisputeOrderId] = useState<string | null>(null);
+  const [selectedDisputeTicketIds, setSelectedDisputeTicketIds] = useState<string[]>([]);
 
   useEffect(() => {
     async function fetchTickets() {
@@ -463,6 +497,9 @@ function Body() {
   }, []);
 
   async function refetchTickets() {
+    setDisputeFormTicketId(null);
+    setDisputeOrderId(null);
+    setSelectedDisputeTicketIds([]);
     setLoading(true);
     setError(null);
     try {
@@ -532,7 +569,21 @@ function Body() {
         <TicketCard
           key={`${ticket.orderId}-${ticket.id}`}
           ticket={ticket}
-          orderTickets={tickets.filter((candidate) => candidate.orderId === ticket.orderId)}
+          disputeFormTicketId={disputeFormTicketId}
+          selectedTicketIds={selectedDisputeTicketIds}
+          disputeSelectionActive={disputeOrderId === ticket.orderId}
+          onOpenDispute={(openedTicket) => {
+            setDisputeFormTicketId(openedTicket.id);
+            setDisputeOrderId(openedTicket.orderId);
+            setSelectedDisputeTicketIds([openedTicket.id]);
+          }}
+          onToggleDisputeTicket={(ticketId) =>
+            setSelectedDisputeTicketIds((current) =>
+              current.includes(ticketId)
+                ? current.filter((selectedId) => selectedId !== ticketId)
+                : [...current, ticketId]
+            )
+          }
           onConfirmed={refetchTickets}
         />
       ))}
