@@ -56,6 +56,7 @@ export default function DisputeUpdateForm({
       setComments("");
       setFiles([]);
       setMessage("Your comments and documents were added to the dispute. TrueFanTix Support has been notified.");
+      window.dispatchEvent(new Event("tft:user-actions-changed"));
       onSubmitted?.();
     } catch (err: any) {
       setError(err?.message || "Could not submit dispute information.");

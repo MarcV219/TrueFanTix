@@ -27,6 +27,14 @@ type MeResponse =
   | { ok: true; user: MeUser | null }
   | { ok: false; error: string; message?: string };
 
+type UserAction = {
+  key: string;
+  label: string;
+  detail: string;
+  href: string;
+  count: number;
+};
+
 function normalizePath(p: string | null) {
   if (!p) return null;
   return p.split("?")[0].split("#")[0];
@@ -98,6 +106,8 @@ export default function AppHeader() {
   const [meLoaded, setMeLoaded] = React.useState(false);
   const [logoutBusy, setLogoutBusy] = React.useState(false);
   const [adminQueueCount, setAdminQueueCount] = React.useState<number | null>(null);
+  const [userActions, setUserActions] = React.useState<UserAction[]>([]);
+  const [userActionCount, setUserActionCount] = React.useState(0);
 
   const isLoggedIn = !!me;
 
@@ -200,6 +210,46 @@ export default function AppHeader() {
     };
   }, [me?.flags?.isAdmin, pathname]);
 
+  React.useEffect(() => {
+    let alive = true;
+
+    async function loadUserActions() {
+      if (!me) {
+        if (alive) {
+          setUserActions([]);
+          setUserActionCount(0);
+        }
+        return;
+      }
+      try {
+        const { res, data } = await fetchJson("/api/account/action-required", {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (!alive) return;
+        if (!res.ok || !data?.ok) {
+          setUserActions([]);
+          setUserActionCount(0);
+          return;
+        }
+        setUserActions(Array.isArray(data.items) ? data.items : []);
+        setUserActionCount(Number(data.total || 0));
+      } catch {
+        if (alive) {
+          setUserActions([]);
+          setUserActionCount(0);
+        }
+      }
+    }
+
+    loadUserActions();
+    window.addEventListener("tft:user-actions-changed", loadUserActions);
+    return () => {
+      alive = false;
+      window.removeEventListener("tft:user-actions-changed", loadUserActions);
+    };
+  }, [me?.id, pathname]);
+
   async function handleLogout() {
     if (logoutBusy) return;
     setLogoutBusy(true);
@@ -252,7 +302,11 @@ export default function AppHeader() {
           <NavPill href="/" label="Home" active={isHome} />
           <NavPill href="/tickets" label="Tickets" active={isTickets} />
           <NavPill href="/forum" label="Forum" active={isForum} />
-          <NavPill href="/account" label="Account" active={isAccount} />
+          <NavPill
+            href="/account"
+            label={`Account${userActionCount > 0 ? ` (${userActionCount})` : ""}`}
+            active={isAccount}
+          />
           {me?.flags?.isAdmin ? (
             <>
               <NavPill
@@ -323,6 +377,29 @@ export default function AppHeader() {
           )}
         </div>
       </div>
+
+      {isLoggedIn && userActions.length > 0 ? (
+        <div className="border-t border-amber-300 bg-amber-50">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3">
+            <div className="font-black text-amber-950">
+              Action required — {userActionCount} item{userActionCount === 1 ? "" : "s"} waiting for you
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {userActions.map((action) => (
+                <Link
+                  key={action.key}
+                  href={action.href}
+                  className="block rounded-lg border border-amber-300 bg-white px-3 py-2 no-underline text-amber-950 hover:bg-amber-100"
+                >
+                  <div className="font-extrabold">{action.label}</div>
+                  <div className="mt-0.5 text-xs text-amber-900/80">{action.detail}</div>
+                  <div className="mt-1 text-xs font-black text-[var(--tft-navy)]">Resolve now →</div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Mobile back row */}
       {showBack ? (

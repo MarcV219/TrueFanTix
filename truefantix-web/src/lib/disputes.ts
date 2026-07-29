@@ -175,3 +175,17 @@ export function visibleAdminRequests(
       message: request.message,
     }));
 }
+
+export function pendingAdminRequests(
+  value: string | null,
+  role: "BUYER" | "SELLER"
+): VisibleAdminRequest[] {
+  const dispute = parseDisputeCase(value);
+  if (!dispute?.adminRequests?.length) return [];
+  const latestReplyAt = (dispute.submissions || [])
+    .filter((submission) => submission.submittedByRole === role)
+    .reduce((latest, submission) => Math.max(latest, Date.parse(submission.submittedAt) || 0), 0);
+  return visibleAdminRequests(value, role).filter(
+    (request) => (Date.parse(request.requestedAt) || 0) > latestReplyAt
+  );
+}
