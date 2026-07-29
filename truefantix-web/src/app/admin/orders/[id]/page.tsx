@@ -65,6 +65,13 @@ type DisputeRecord = {
     comments?: string | null;
     evidenceFiles?: Array<{ data?: string; fileName?: string }>;
   }>;
+  adminRequests?: Array<{
+    id?: string;
+    requestedAt?: string;
+    recipient?: "BUYER" | "SELLER" | "BOTH";
+    message?: string;
+    deliveries?: Array<{ role?: string; email?: string; status?: string }>;
+  }>;
 };
 
 function parseDisputeRecord(value: unknown): DisputeRecord | null {
@@ -88,6 +95,10 @@ export default function AdminOrderDetailPage() {
   const [decisionNote, setDecisionNote] = React.useState("");
   const [decisionBusy, setDecisionBusy] = React.useState(false);
   const [decisionMessage, setDecisionMessage] = React.useState<string | null>(null);
+  const [requestRecipient, setRequestRecipient] = React.useState<"BUYER" | "SELLER" | "BOTH">("BUYER");
+  const [requestMessage, setRequestMessage] = React.useState("");
+  const [requestBusy, setRequestBusy] = React.useState(false);
+  const [requestResult, setRequestResult] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -135,6 +146,28 @@ export default function AdminOrderDetailPage() {
       setError(err?.message || "Could not resolve dispute.");
     } finally {
       setDecisionBusy(false);
+    }
+  }
+
+  async function requestInformation() {
+    setRequestBusy(true);
+    setError(null);
+    setRequestResult(null);
+    try {
+      const res = await fetch(`/api/admin/orders/${encodeURIComponent(id)}/request-information`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipient: requestRecipient, message: requestMessage }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.message || json?.error || "Could not send the information request.");
+      setRequestResult(json.message || "Information request sent.");
+      setRequestMessage("");
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "Could not send the information request.");
+    } finally {
+      setRequestBusy(false);
     }
   }
 
@@ -221,8 +254,57 @@ export default function AdminOrderDetailPage() {
                         ) : null)}
                       </div>
                     ))}
+                    {(disputeRecord.adminRequests || []).map((request, requestIndex) => (
+                      <div key={request.id || requestIndex} style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(37,99,235,.22)", background: "rgba(239,246,255,1)" }}>
+                        <div style={{ fontWeight: 900 }}>
+                          ADMIN requested information from {request.recipient === "BOTH" ? "BUYER AND SELLER" : request.recipient || "PARTY"}
+                          {request.requestedAt ? ` — ${new Date(request.requestedAt).toLocaleString()}` : ""}
+                        </div>
+                        <div style={{ marginTop: 5, whiteSpace: "pre-wrap" }}>{request.message || "-"}</div>
+                        <div style={{ marginTop: 5, fontSize: 12, opacity: 0.72 }}>
+                          {(request.deliveries || []).map((delivery) => `${delivery.role}: ${delivery.status}`).join(" • ")}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : null}
+                <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, border: "1px solid rgba(37,99,235,0.24)", background: "white" }}>
+                  <h4 style={{ margin: "0 0 8px" }}>Request more information / supporting backup</h4>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                    {(["BUYER", "SELLER", "BOTH"] as const).map((recipient) => (
+                      <button
+                        key={recipient}
+                        type="button"
+                        onClick={() => setRequestRecipient(recipient)}
+                        style={{
+                          padding: "7px 10px",
+                          borderRadius: 999,
+                          border: requestRecipient === recipient ? "1px solid rgba(37,99,235,.55)" : "1px solid rgba(0,0,0,.14)",
+                          background: requestRecipient === recipient ? "rgba(239,246,255,1)" : "white",
+                          fontWeight: 800,
+                        }}
+                      >
+                        {recipient === "BOTH" ? "Buyer and seller" : recipient === "BUYER" ? "Buyer" : "Seller"}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={requestMessage}
+                    onChange={(event) => setRequestMessage(event.target.value)}
+                    rows={4}
+                    placeholder="Explain exactly what information or supporting documents are required"
+                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", resize: "vertical" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={requestInformation}
+                    disabled={requestBusy || requestMessage.trim().length < 10}
+                    style={{ marginTop: 8, padding: "9px 12px", borderRadius: 8, border: 0, background: "rgba(6,74,147,1)", color: "white", fontWeight: 900, opacity: requestBusy || requestMessage.trim().length < 10 ? 0.55 : 1 }}
+                  >
+                    {requestBusy ? "Sending request..." : `Send request to ${requestRecipient === "BOTH" ? "buyer and seller" : requestRecipient.toLowerCase()}`}
+                  </button>
+                  {requestResult ? <div style={{ marginTop: 8, color: "rgba(22,101,52,1)", fontWeight: 800 }}>{requestResult}</div> : null}
+                </div>
                 <textarea
                   value={decisionNote}
                   onChange={(event) => setDecisionNote(event.target.value)}

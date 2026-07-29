@@ -314,6 +314,12 @@ export const schemas = {
     note: z.string().trim().min(3).max(2000),
   }),
 
+  // Used by POST /api/admin/orders/[id]/request-information
+  adminRequestDisputeInformation: z.object({
+    recipient: z.enum(["BUYER", "SELLER", "BOTH"]),
+    message: z.string().trim().min(10).max(3000),
+  }),
+
   // Profile update schemas
   profileUpdate: z.object({
     firstName: z.string().trim().min(1).max(100).optional(),

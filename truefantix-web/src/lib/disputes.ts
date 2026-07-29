@@ -128,6 +128,14 @@ export type DisputeCase = {
     comments: string | null;
     evidenceFiles: Array<{ data: string; fileName: string }>;
   }>;
+  adminRequests?: Array<{
+    id: string;
+    requestedAt: string;
+    requestedByUserId: string;
+    recipient: "BUYER" | "SELLER" | "BOTH";
+    message: string;
+    deliveries: Array<{ role: "BUYER" | "SELLER"; email: string; status: "SENT" | "FAILED" }>;
+  }>;
   cancellation?: {
     cancelledAt: string;
     cancelledByUserId: string;
