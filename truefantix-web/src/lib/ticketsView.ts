@@ -303,6 +303,7 @@ const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
   buffalo: { lat: 42.8864, lon: -78.8784 },
   orchardpark: { lat: 42.7676, lon: -78.7439 },
   greenbay: { lat: 44.5133, lon: -88.0133 },
+  rosemont: { lat: 41.9953, lon: -87.884 },
   southbend: { lat: 41.6764, lon: -86.252 },
   foxborough: { lat: 42.0654, lon: -71.2478 },
   eastrutherford: { lat: 40.8337, lon: -74.0971 },

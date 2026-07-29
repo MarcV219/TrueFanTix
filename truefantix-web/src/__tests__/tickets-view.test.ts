@@ -1,6 +1,17 @@
 import { groupTicketsByEvent, inferCoordsFromCity, isTicketWithinRadius, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
 
 describe("tickets view", () => {
+  it("recognizes Rosemont ticket locations for Browse radius filtering", () => {
+    expect(inferCoordsFromCity("Rosemont")).toEqual({ lat: 41.9953, lon: -87.884 });
+    expect(
+      isTicketWithinRadius(
+        { city: "Rosemont", venue: "Allstate Arena" },
+        { lat: 44.5133, lon: -88.0133 },
+        3000
+      )
+    ).toBe(true);
+  });
+
   it("prefers catalog venue location over venue-name fallback", () => {
     const card = mapApiTicketToCard({
       id: "ticket-1",
