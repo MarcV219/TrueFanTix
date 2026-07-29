@@ -12,6 +12,8 @@ export type ApiTicketLike = {
     city?: string | null;
     region?: string | null;
     country?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
   } | null;
   section?: string | null;
   row?: string | null;
@@ -51,6 +53,8 @@ export type TicketCardView = {
   city: string;
   province: string;
   country: string;
+  latitude: number | null;
+  longitude: number | null;
   section: string | null;
   row: string | null;
   seat: string | null;
@@ -354,12 +358,22 @@ export function haversineKm(a: { lat: number; lon: number }, b: { lat: number; l
   return R * c;
 }
 
-export function inferTicketCoords(ticket: Pick<TicketCardView, "city" | "venue">): { lat: number; lon: number } | null {
+export function inferTicketCoords(
+  ticket: Pick<TicketCardView, "city" | "venue"> & Partial<Pick<TicketCardView, "latitude" | "longitude">>
+): { lat: number; lon: number } | null {
+  if (
+    typeof ticket.latitude === "number" &&
+    Number.isFinite(ticket.latitude) &&
+    typeof ticket.longitude === "number" &&
+    Number.isFinite(ticket.longitude)
+  ) {
+    return { lat: ticket.latitude, lon: ticket.longitude };
+  }
   return inferCoordsFromCity(ticket.city) ?? inferCityCoordsFromVenue(ticket.venue);
 }
 
 export function isTicketWithinRadius(
-  ticket: Pick<TicketCardView, "city" | "venue">,
+  ticket: Pick<TicketCardView, "city" | "venue"> & Partial<Pick<TicketCardView, "latitude" | "longitude">>,
   center: { lat: number; lon: number },
   radiusKm: number
 ): boolean {
@@ -624,6 +638,14 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
     city: venueInfo.city,
     province: venueInfo.province,
     country: venueInfo.country,
+    latitude:
+      typeof t.venueLocation?.latitude === "number" && Number.isFinite(t.venueLocation.latitude)
+        ? t.venueLocation.latitude
+        : null,
+    longitude:
+      typeof t.venueLocation?.longitude === "number" && Number.isFinite(t.venueLocation.longitude)
+        ? t.venueLocation.longitude
+        : null,
     section: t.section ?? null,
     row: t.row ?? null,
     seat: t.seat ?? null,
@@ -651,7 +673,9 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
   };
 }
 
-export function sortTicketsByPriority<T extends Pick<TicketCardView, 'venue' | 'city' | 'isSoldOut' | 'date'>>(
+export function sortTicketsByPriority<
+  T extends Pick<TicketCardView, 'venue' | 'city' | 'latitude' | 'longitude' | 'isSoldOut' | 'date'>
+>(
   tickets: T[],
   userCoords: { lat: number; lon: number } | null
 ): T[] {

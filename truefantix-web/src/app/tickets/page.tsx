@@ -10,6 +10,7 @@ import {
   formatMoney,
   groupTicketsByEvent,
   inferCoordsFromCity,
+  inferTicketCoords,
   isTicketWithinRadius,
   mapApiTicketToCard,
   sortTicketsByPriority,
@@ -534,7 +535,9 @@ export default function TicketsPage() {
       const searchable = `${ticket.title} ${ticket.venue} ${ticket.city} ${ticket.eventTypeLabel}`.toLowerCase();
       const textMatchesSearch = !query || searchable.includes(query);
       const radiusMatchesSearch =
-        !hasRadiusFilter || (distanceCenter && radiusKm && isTicketWithinRadius(ticket, distanceCenter, radiusKm));
+        !hasRadiusFilter ||
+        !inferTicketCoords(ticket) ||
+        (distanceCenter && radiusKm && isTicketWithinRadius(ticket, distanceCenter, radiusKm));
 
       if (query) {
         if (searchCenter) {

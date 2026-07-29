@@ -1,4 +1,4 @@
-import { groupTicketsByEvent, inferCoordsFromCity, isTicketWithinRadius, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
+import { groupTicketsByEvent, inferCoordsFromCity, inferTicketCoords, isTicketWithinRadius, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
 
 describe("tickets view", () => {
   it("recognizes Rosemont ticket locations for Browse radius filtering", () => {
@@ -10,6 +10,29 @@ describe("tickets view", () => {
         3000
       )
     ).toBe(true);
+  });
+
+  it("uses provider venue coordinates for cities outside the fallback list", () => {
+    const card = mapApiTicketToCard({
+      id: "ticket-provider-coordinates",
+      title: "Touring Show",
+      date: "2026-09-01 7:00 PM",
+      venue: "Example Arena",
+      venueLocation: {
+        address: "1 Arena Way",
+        city: "Unmapped City",
+        region: "OH",
+        country: "US",
+        latitude: 39.9612,
+        longitude: -82.9988,
+      },
+      priceCents: 5000,
+      currency: "USD",
+      sellerId: "seller-1",
+    });
+
+    expect(inferTicketCoords(card)).toEqual({ lat: 39.9612, lon: -82.9988 });
+    expect(isTicketWithinRadius(card, { lat: 39.9612, lon: -82.9988 }, 5)).toBe(true);
   });
 
   it("prefers catalog venue location over venue-name fallback", () => {

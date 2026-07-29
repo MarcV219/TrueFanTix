@@ -238,6 +238,7 @@ function fromCatalogEntity(entity: any): ProviderCatalogSuggestion {
     country: entity.country ?? undefined,
     aliases: parseAliases(entity.aliases),
     sourceUrl: entity.sourceUrl ?? undefined,
+    metadata: entity.metadata ?? undefined,
   };
 }
 

@@ -73,14 +73,43 @@ function parseAliases(value: unknown): string[] {
   return raw.split(/[|,;]/).map((item) => item.trim()).filter(Boolean);
 }
 
-type VenueLocation = { address: string | null; city: string | null; region: string | null; country: string | null };
+type VenueLocation = {
+  address: string | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+function venueCoordinatesFromMetadata(metadata: unknown) {
+  try {
+    const parsed = typeof metadata === "string" ? JSON.parse(metadata) : metadata;
+    const latitude = Number(parsed?.latitude ?? parsed?.lat);
+    const longitude = Number(parsed?.longitude ?? parsed?.lon ?? parsed?.lng);
+    return {
+      latitude: Number.isFinite(latitude) && latitude >= -90 && latitude <= 90 ? latitude : null,
+      longitude: Number.isFinite(longitude) && longitude >= -180 && longitude <= 180 ? longitude : null,
+    };
+  } catch {
+    return { latitude: null, longitude: null };
+  }
+}
 
 function venueLocationScore(location: VenueLocation) {
-  return [location.address, location.city, location.region, location.country].filter((part) => String(part ?? "").trim()).length;
+  const coordinateScore = location.latitude != null && location.longitude != null ? 2 : 0;
+  return [location.address, location.city, location.region, location.country].filter((part) => String(part ?? "").trim()).length + coordinateScore;
 }
 
 function hasUsableVenueLocation(location: VenueLocation | undefined) {
-  return venueLocationScore(location ?? { address: null, city: null, region: null, country: null }) >= 2;
+  return venueLocationScore(location ?? {
+    address: null,
+    city: null,
+    region: null,
+    country: null,
+    latitude: null,
+    longitude: null,
+  }) >= 2;
 }
 
 async function loadVenueLocations(venues: string[]) {
@@ -102,6 +131,7 @@ async function loadVenueLocations(venues: string[]) {
       city: true,
       region: true,
       country: true,
+      metadata: true,
       popularity: true,
       lastSeenAt: true,
     },
@@ -113,11 +143,13 @@ async function loadVenueLocations(venues: string[]) {
   const wanted = new Set(uniqueVenues.map(normalizeVenueKey));
 
   for (const entity of entities) {
+    const coordinates = venueCoordinatesFromMetadata(entity.metadata);
     const location = {
       address: entity.address,
       city: entity.city,
       region: entity.region,
       country: entity.country,
+      ...coordinates,
     };
     const names = [entity.canonicalName, ...parseAliases(entity.aliases)];
 
@@ -148,6 +180,7 @@ async function loadVenueLocations(venues: string[]) {
       city: best.city ?? null,
       region: best.region ?? null,
       country: best.country ?? null,
+      ...venueCoordinatesFromMetadata(best.metadata),
     };
     if (hasUsableVenueLocation(location)) {
       byVenue.set(normalizeVenueKey(venue), location);
