@@ -5,9 +5,9 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import Footer from "@/components/Footer";
-import TicketCard from "@/components/tickets/TicketCard";
+import EventTicketGroupCard from "@/components/tickets/EventTicketGroupCard";
 import { fetchJson } from "@/lib/api-fetch";
-import { formatMoney, inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
+import { formatMoney, groupTicketsByEvent, inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
 import type { FeaturedTicketPreference, TicketCardView } from "@/lib/ticketsView";
 
 type ApiTicket = {
@@ -277,11 +277,19 @@ export default function Page() {
     [allTickets, notificationPreferences, notificationRadiusKm, userCoords]
   );
 
-  const displayedTickets = React.useMemo(
-    () => sortedTickets.slice(currentIndex, currentIndex + TICKETS_PER_PAGE),
-    [sortedTickets, currentIndex, TICKETS_PER_PAGE]
+  const featuredEventGroups = React.useMemo(
+    () => groupTicketsByEvent(sortedTickets),
+    [sortedTickets]
   );
-  const maxFeaturedIndex = Math.max(0, sortedTickets.length - TICKETS_PER_PAGE);
+  const displayedGroups = React.useMemo(
+    () => featuredEventGroups.slice(currentIndex, currentIndex + TICKETS_PER_PAGE),
+    [featuredEventGroups, currentIndex, TICKETS_PER_PAGE]
+  );
+  const displayedTickets = React.useMemo(
+    () => displayedGroups.flatMap((group) => group.tickets),
+    [displayedGroups]
+  );
+  const maxFeaturedIndex = Math.max(0, featuredEventGroups.length - TICKETS_PER_PAGE);
 
   React.useEffect(() => {
     setCurrentIndex((index) => Math.min(index, maxFeaturedIndex));
@@ -305,17 +313,17 @@ export default function Page() {
   };
 
   const handleNext = () => {
-    const newIndex = Math.min(sortedTickets.length - TICKETS_PER_PAGE, currentIndex + TICKETS_PER_PAGE);
+    const newIndex = Math.min(featuredEventGroups.length - TICKETS_PER_PAGE, currentIndex + TICKETS_PER_PAGE);
     if (newIndex > currentIndex) {
       setCurrentIndex(newIndex);
     }
   };
 
   const canGoPrev = currentIndex > 0;
-  const canGoNext = currentIndex + TICKETS_PER_PAGE < sortedTickets.length;
-  const showFeaturedControls = sortedTickets.length > 0;
-  const featuredStart = sortedTickets.length ? currentIndex + 1 : 0;
-  const featuredEnd = Math.min(currentIndex + TICKETS_PER_PAGE, sortedTickets.length);
+  const canGoNext = currentIndex + TICKETS_PER_PAGE < featuredEventGroups.length;
+  const showFeaturedControls = featuredEventGroups.length > 0;
+  const featuredStart = featuredEventGroups.length ? currentIndex + 1 : 0;
+  const featuredEnd = Math.min(currentIndex + TICKETS_PER_PAGE, featuredEventGroups.length);
 
   function buildIdempotencyKey(ticketIds: string[]) {
     const random =
@@ -498,7 +506,7 @@ export default function Page() {
                   {selectedTicketIds.length} selected · {formatMoney(selectedTotal, selectedCurrency)} {selectedCurrency} subtotal
                 </p>
                 <p className={`text-xs font-semibold ${BRAND.subtle}`}>
-                  Showing {featuredStart}-{featuredEnd} of {sortedTickets.length} ranked featured tickets
+                  Showing {featuredStart}-{featuredEnd} of {featuredEventGroups.length} featured events • {sortedTickets.length} tickets available
                 </p>
                 {checkoutError ? <p className="mt-1 text-sm font-semibold text-red-600">{checkoutError}</p> : null}
               </div>
@@ -544,48 +552,16 @@ export default function Page() {
                 </button>
               ) : null}
 
-              <div className="flex-1 min-w-0 flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory sm:grid sm:grid-cols-2 sm:gap-6 sm:overflow-visible sm:pb-0 lg:grid-cols-4">
-                {displayedTickets.map((ticket) => {
-                  const selected = selectedTicketIds.includes(ticket.id);
-
-                  return (
-                    <div key={ticket.id} className="min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
-                      <label className="mb-2 inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-bold text-gray-900 shadow ring-1 ring-gray-200 dark:bg-gray-900 dark:text-white dark:ring-gray-700">
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={() => toggleTicketSelection(ticket)}
-                          className="h-5 w-5 rounded border-gray-300"
-                        />
-                        Select
-                      </label>
-                      <TicketCard ticket={ticket} />
-                      {ticket.featuredReasons.length > 0 ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {ticket.featuredReasons.slice(0, 2).map((reason) => (
-                            <span
-                              key={reason}
-                              className="rounded-full bg-[rgba(6,74,147,0.08)] px-2.5 py-1 text-xs font-bold text-[var(--tft-navy)] ring-1 ring-[rgba(6,74,147,0.16)] dark:bg-white/10 dark:text-white dark:ring-white/15"
-                            >
-                              {reason}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => toggleTicketSelection(ticket)}
-                        className={`mt-2 w-full rounded-lg border px-4 py-2 text-sm font-bold transition ${
-                          selected
-                            ? "border-[#064a93] bg-[#064a93] text-white hover:bg-blue-900"
-                            : "border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700"
-                        }`}
-                      >
-                        {selected ? "Selected" : "Select ticket"}
-                      </button>
-                    </div>
-                  );
-                })}
+              <div className="grid min-w-0 flex-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+                {displayedGroups.map((group) => (
+                  <EventTicketGroupCard
+                    key={group.key}
+                    tickets={group.tickets}
+                    selectedTicketIds={selectedTicketIds}
+                    onToggleTicket={toggleTicketSelection}
+                    reasons={group.tickets.flatMap((ticket) => ticket.featuredReasons)}
+                  />
+                ))}
               </div>
 
               {showFeaturedControls ? (

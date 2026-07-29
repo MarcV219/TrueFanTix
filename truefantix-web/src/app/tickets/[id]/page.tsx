@@ -258,7 +258,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
               <div className="absolute top-4 left-4 flex flex-wrap gap-2">
                 {isSoldOut && (
                   <span className="bg-amber-500 text-white px-3 py-1 rounded-full font-semibold text-sm">
-                    ⭐ Exclusive: Sold Out Event
+                    Box office sold out • Resale tickets available
                   </span>
                 )}
                 {isBelowFaceValue && (

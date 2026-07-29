@@ -1,4 +1,4 @@
-import { inferCoordsFromCity, isTicketWithinRadius, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
+import { groupTicketsByEvent, inferCoordsFromCity, isTicketWithinRadius, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
 
 describe("tickets view", () => {
   it("prefers catalog venue location over venue-name fallback", () => {
@@ -110,5 +110,32 @@ describe("tickets view", () => {
     expect(ranked[0].id).toBe("ticket-favorite");
     expect(ranked[0].featuredReasons).toEqual(expect.arrayContaining(["Matches your favorites", "Near you", "Below face value"]));
     expect(ranked[0].featuredScore).toBeGreaterThan(ranked[1].featuredScore);
+  });
+
+  it("groups same-event listings and orders each event by price", () => {
+    const makeTicket = (id: string, title: string, priceCents: number) =>
+      mapApiTicketToCard({
+        id,
+        title,
+        date: "2026-09-19 1:00 PM",
+        venue: "Allstate Arena",
+        venueLocation: { address: null, city: "Rosemont", region: "IL", country: "US" },
+        section: "213",
+        priceCents,
+        currency: "USD",
+        image: "/default.jpg",
+        sellerId: `seller-${id}`,
+        seller: null,
+      });
+
+    const groups = groupTicketsByEvent([
+      makeTicket("monster-high", "Monster Jam", 8500),
+      makeTicket("packers", "Green Bay Packers", 12000),
+      makeTicket("monster-low", "Monster Jam", 4000),
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0].tickets.map((ticket) => ticket.id)).toEqual(["monster-low", "monster-high"]);
+    expect(groups[1].tickets.map((ticket) => ticket.id)).toEqual(["packers"]);
   });
 });

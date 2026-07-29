@@ -17,8 +17,8 @@ export default function TicketCard({
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition flex flex-col border border-gray-200 dark:border-gray-700 overflow-hidden">
       {ticket.isSoldOut && (
-        <div className="border-b border-amber-700 bg-amber-500 px-3 py-2 text-center text-sm font-extrabold uppercase tracking-wide text-white shadow-sm">
-          Sold Out Event
+        <div className="border-b border-amber-700 bg-amber-500 px-3 py-2 text-center text-sm font-extrabold tracking-wide text-white shadow-sm">
+          Box office sold out • Resale tickets available
         </div>
       )}
       <div className="relative">

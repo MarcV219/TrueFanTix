@@ -78,6 +78,11 @@ export type TicketCardView = {
   verifiedAt: string | null;
 };
 
+export type TicketEventGroup<T extends TicketCardView = TicketCardView> = {
+  key: string;
+  tickets: T[];
+};
+
 export type FeaturedTicketPreference = {
   type: string;
   value: string;
@@ -408,8 +413,24 @@ function containsTerm(haystack: string, terms: string[]) {
   return terms.some((term) => haystack === term || haystack.includes(term) || term.includes(haystack));
 }
 
-function ticketEventKey(ticket: Pick<TicketCardView, "title" | "date" | "venue">) {
+export function ticketEventKey(ticket: Pick<TicketCardView, "title" | "date" | "venue">) {
   return [ticket.title, ticket.date, ticket.venue].map(normalizeMatchText).join("|");
+}
+
+export function groupTicketsByEvent<T extends TicketCardView>(tickets: T[]): TicketEventGroup<T>[] {
+  const groups = new Map<string, T[]>();
+
+  for (const ticket of tickets) {
+    const key = ticketEventKey(ticket);
+    const existing = groups.get(key);
+    if (existing) existing.push(ticket);
+    else groups.set(key, [ticket]);
+  }
+
+  return Array.from(groups, ([key, eventTickets]) => ({
+    key,
+    tickets: [...eventTickets].sort((a, b) => a.price - b.price),
+  }));
 }
 
 function daysUntil(date: string) {

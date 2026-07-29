@@ -4,10 +4,11 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Footer from "@/components/Footer";
-import TicketCard from "@/components/tickets/TicketCard";
+import EventTicketGroupCard from "@/components/tickets/EventTicketGroupCard";
 import { fetchJson } from "@/lib/api-fetch";
 import {
   formatMoney,
+  groupTicketsByEvent,
   inferCoordsFromCity,
   isTicketWithinRadius,
   mapApiTicketToCard,
@@ -593,6 +594,10 @@ export default function TicketsPage() {
     () => sortTicketsByPriority(filteredTickets, distanceCenter),
     [filteredTickets, distanceCenter]
   );
+  const filteredEventGroups = React.useMemo(
+    () => groupTicketsByEvent(sortedFilteredTickets),
+    [sortedFilteredTickets]
+  );
 
   const selectedTickets = React.useMemo(() => {
     const selected = new Set(selectedTicketIds);
@@ -939,7 +944,9 @@ export default function TicketsPage() {
             <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-gray-600 dark:text-gray-400">
-                  {loading ? "Loading tickets..." : `${sortedFilteredTickets.length} ticket${sortedFilteredTickets.length !== 1 ? "s" : ""} found`}
+                  {loading
+                    ? "Loading tickets..."
+                    : `${filteredEventGroups.length} event${filteredEventGroups.length !== 1 ? "s" : ""} • ${sortedFilteredTickets.length} ticket${sortedFilteredTickets.length !== 1 ? "s" : ""} available`}
                 </p>
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">
                   {selectedTicketIds.length} selected · {formatMoney(selectedTotal, selectedCurrency)} {selectedCurrency} subtotal
@@ -1004,36 +1011,16 @@ export default function TicketsPage() {
           )}
 
           {!loading && !error && sortedFilteredTickets.length > 0 && (
-            <div className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory sm:grid sm:grid-cols-2 sm:gap-6 sm:overflow-visible sm:pb-0 lg:grid-cols-3 xl:grid-cols-4">
-              {sortedFilteredTickets.map((ticket) => {
-                const selected = selectedTicketIds.includes(ticket.id);
-
-                return (
-                  <div key={ticket.id} className="min-w-[18rem] max-w-[18rem] snap-start sm:min-w-0 sm:max-w-none">
-                    <label className="mb-2 inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-bold text-gray-900 shadow ring-1 ring-gray-200 dark:bg-gray-900 dark:text-white dark:ring-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => toggleTicketSelection(ticket)}
-                        className="h-5 w-5 rounded border-gray-300"
-                      />
-                      Select
-                    </label>
-                    <TicketCard ticket={ticket} onViewTicket={rememberReturnFilters} />
-                    <button
-                      type="button"
-                      onClick={() => toggleTicketSelection(ticket)}
-                      className={`mt-2 w-full rounded-lg border px-4 py-2 text-sm font-bold transition ${
-                        selected
-                          ? "border-[#064a93] bg-[#064a93] text-white hover:bg-blue-900"
-                          : "border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700"
-                      }`}
-                    >
-                      {selected ? "Selected" : "Select ticket"}
-                    </button>
-                  </div>
-                );
-              })}
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {filteredEventGroups.map((group) => (
+                <EventTicketGroupCard
+                  key={group.key}
+                  tickets={group.tickets}
+                  selectedTicketIds={selectedTicketIds}
+                  onToggleTicket={toggleTicketSelection}
+                  onViewTicket={rememberReturnFilters}
+                />
+              ))}
             </div>
           )}
         </div>
