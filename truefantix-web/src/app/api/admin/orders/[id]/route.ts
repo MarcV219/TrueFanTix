@@ -31,6 +31,33 @@ function parseJson(value: string | null) {
   }
 }
 
+async function loadConversationHistory(orderId: string) {
+  try {
+    return await prisma.conversation.findUnique({
+      where: { orderId },
+      include: {
+        messages: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            sender: { select: { id: true, email: true, firstName: true, lastName: true } },
+            attachments: true,
+          },
+        },
+      },
+    });
+  } catch (err: unknown) {
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? String((err as { code?: unknown }).code ?? "")
+        : "";
+    if (code === "P2021") {
+      console.warn("Admin order review: conversation history table is unavailable; continuing without messages.");
+      return null;
+    }
+    throw err;
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const adminGate = await requireAdmin(req);
@@ -141,15 +168,7 @@ export async function GET(req: Request) {
       prisma.ticketEscrow.findMany({ where: { orderId: order.id }, orderBy: { createdAt: "asc" } }),
       prisma.accessTokenTransaction.findMany({ where: { orderId: order.id }, orderBy: { createdAt: "asc" } }),
       prisma.payout.findMany({ where: { providerRef: `order:${order.id}` }, orderBy: { createdAt: "asc" } }),
-      prisma.conversation.findUnique({
-        where: { orderId: order.id },
-        include: {
-          messages: {
-            orderBy: { createdAt: "asc" },
-            include: { sender: { select: { id: true, email: true, firstName: true, lastName: true } }, attachments: true },
-          },
-        },
-      }),
+      loadConversationHistory(order.id),
     ]);
 
     return NextResponse.json({
