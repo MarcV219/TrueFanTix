@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { apiFetch } from "@/lib/api-fetch";
 
 function money(cents: number | null | undefined, currency = "CAD") {
   if (cents == null) return "-";
@@ -132,7 +133,7 @@ export default function AdminOrderDetailPage() {
     setError(null);
     setDecisionMessage(null);
     try {
-      const res = await fetch(`/api/admin/orders/${encodeURIComponent(id)}/resolve-dispute`, {
+      const res = await apiFetch(`/api/admin/orders/${encodeURIComponent(id)}/resolve-dispute`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, note: decisionNote }),
@@ -154,7 +155,8 @@ export default function AdminOrderDetailPage() {
     setError(null);
     setRequestResult(null);
     try {
-      const res = await fetch(`/api/admin/orders/${encodeURIComponent(id)}/request-information`, {
+      setRequestResult("Sending request...");
+      const res = await apiFetch(`/api/admin/orders/${encodeURIComponent(id)}/request-information`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recipient: requestRecipient, message: requestMessage }),
@@ -165,7 +167,7 @@ export default function AdminOrderDetailPage() {
       setRequestMessage("");
       await load();
     } catch (err: any) {
-      setError(err?.message || "Could not send the information request.");
+      setRequestResult(`Request failed: ${err?.message || "Could not send the information request."}`);
     } finally {
       setRequestBusy(false);
     }
@@ -313,7 +315,19 @@ export default function AdminOrderDetailPage() {
                   >
                     {requestBusy ? "Sending request..." : `Send request to ${requestRecipient === "BOTH" ? "buyer and seller" : requestRecipient.toLowerCase()}`}
                   </button>
-                  {requestResult ? <div style={{ marginTop: 8, color: "rgba(22,101,52,1)", fontWeight: 800 }}>{requestResult}</div> : null}
+                  {requestResult ? (
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      style={{
+                        marginTop: 8,
+                        color: requestResult.startsWith("Request failed") ? "rgba(153,27,27,1)" : "rgba(22,101,52,1)",
+                        fontWeight: 800,
+                      }}
+                    >
+                      {requestResult}
+                    </div>
+                  ) : null}
                 </div>
                 <textarea
                   value={decisionNote}
