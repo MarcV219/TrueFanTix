@@ -243,18 +243,8 @@ function OrderCard({
                 Transfer all tickets in this order to{" "}
                 <span style={{ fontWeight: 900 }}>{order.buyer?.email || "the buyer email shown above"}</span>.
               </li>
-              <li>
-                After the platform confirms the transfer, upload proof that clearly shows:
-                <ul style={{ marginTop: 4, paddingLeft: 20 }}>
-                  <li>the event name and date or venue;</li>
-                  <li>the ticket quantity and identifying details, such as section, row, seats, or general admission; and</li>
-                  <li>the buyer email shown above as the transfer recipient.</li>
-                </ul>
-              </li>
+              <li>After the platform confirms the transfer, upload proof below.</li>
             </ol>
-            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75, lineHeight: 1.4 }}>
-              This button does not send the tickets. It checks the uploaded proof for obvious mismatches before the buyer is notified.
-            </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(160px, 220px) 1fr", gap: 10 }}>
             <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 800 }}>
