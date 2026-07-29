@@ -296,7 +296,12 @@ export default function AdminOrderDetailPage() {
                     <img src={proofUpload} alt="Transfer proof upload" style={{ maxWidth: 520, width: "100%", borderRadius: 8, border: "1px solid rgba(0,0,0,0.12)" }} />
                   ) : null}
                   {isPdfProof ? (
-                    <a href={proofUpload} target="_blank" rel="noreferrer" style={{ textDecoration: "underline", fontWeight: 900 }}>
+                    <a
+                      href={`/api/admin/orders/${encodeURIComponent(id)}/transfer-proof`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ textDecoration: "underline", fontWeight: 900 }}
+                    >
                       Open transfer proof PDF
                     </a>
                   ) : null}
