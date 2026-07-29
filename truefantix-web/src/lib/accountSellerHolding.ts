@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
-import { visibleAdminRequests } from "@/lib/disputes";
+import { visibleAdminRequests } from "@/lib/dispute-case";
 
 function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));

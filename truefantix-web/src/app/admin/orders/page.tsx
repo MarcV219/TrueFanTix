@@ -19,6 +19,7 @@ type AdminOrder = {
   taxLabel: string | null;
   totalCents: number;
   transferVerificationStatus: string | null;
+  transferVerificationReason: string | null;
   buyerConfirmationStatus: string | null;
   disputeWindowEndsAt: string | null;
   seller: { id: string; name: string };
@@ -94,6 +95,15 @@ function AdminOrdersContent() {
         </div>
       </div>
 
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <Link href="/admin/orders?status=DISPUTED" style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid rgba(185,28,28,.28)", background: "rgba(254,242,242,1)", color: "inherit", textDecoration: "none", fontWeight: 900 }}>
+          Open disputes
+        </Link>
+        <Link href="/admin/orders?status=RESOLVED_DISPUTES" style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid rgba(22,101,52,.28)", background: "rgba(240,253,244,1)", color: "inherit", textDecoration: "none", fontWeight: 900 }}>
+          Disputes resolved
+        </Link>
+      </div>
+
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -113,7 +123,9 @@ function AdminOrdersContent() {
           style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)" }}
         >
           <option value="">All statuses</option>
-          {["PENDING", "PAID", "DISPUTED", "DELIVERED", "COMPLETED", "CANCELLED", "REFUNDED", "FAILED"].map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="DISPUTED">OPEN DISPUTES</option>
+          <option value="RESOLVED_DISPUTES">DISPUTES RESOLVED</option>
+          {["PENDING", "PAID", "DELIVERED", "COMPLETED", "CANCELLED", "REFUNDED", "FAILED"].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <button style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)", background: "white", fontWeight: 800 }}>
           Search
@@ -134,6 +146,10 @@ function AdminOrdersContent() {
                 {order.buyerConfirmationStatus === "DISPUTED" ? (
                   <div style={{ display: "inline-block", marginTop: 6, padding: "4px 8px", borderRadius: 999, background: "rgba(254,226,226,1)", color: "rgba(153,27,27,1)", fontSize: 12, fontWeight: 900 }}>
                     Dispute open
+                  </div>
+                ) : order.transferVerificationReason?.includes?.("BUYER_DISPUTE") ? (
+                  <div style={{ display: "inline-block", marginTop: 6, padding: "4px 8px", borderRadius: 999, background: "rgba(220,252,231,1)", color: "rgba(22,101,52,1)", fontSize: 12, fontWeight: 900 }}>
+                    Dispute resolved
                   </div>
                 ) : null}
                 <div style={{ opacity: 0.75, fontSize: 13 }}>Created {new Date(order.createdAt).toLocaleString()}</div>

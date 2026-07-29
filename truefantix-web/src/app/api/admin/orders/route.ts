@@ -20,6 +20,9 @@ export async function GET(req: Request) {
   const where: any = {};
   if (status === "DISPUTED") {
     where.buyerConfirmationStatus = "DISPUTED";
+  } else if (status === "RESOLVED_DISPUTES") {
+    where.buyerConfirmationStatus = { not: "DISPUTED" };
+    where.transferVerificationReason = { contains: "\"type\":\"BUYER_DISPUTE\"" };
   } else if (status) {
     where.status = status;
   }
@@ -56,6 +59,7 @@ export async function GET(req: Request) {
       taxLabel: true,
       totalCents: true,
       transferVerificationStatus: true,
+      transferVerificationReason: true,
       buyerConfirmationStatus: true,
       disputeWindowEndsAt: true,
       seller: { select: { id: true, name: true } },

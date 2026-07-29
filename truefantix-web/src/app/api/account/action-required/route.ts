@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { pendingAdminRequests } from "@/lib/disputes";
+import { pendingAdminRequests } from "@/lib/dispute-case";
 
 export async function GET(req: Request) {
   const gate = await requireVerifiedUser(req);

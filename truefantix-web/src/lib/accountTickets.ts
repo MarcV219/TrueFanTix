@@ -1,6 +1,6 @@
 import type { OrderStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { visibleAdminRequests } from "@/lib/disputes";
+import { visibleAdminRequests } from "@/lib/dispute-case";
 
 function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));

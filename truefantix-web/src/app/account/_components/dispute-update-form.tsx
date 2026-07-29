@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { apiFetch } from "@/lib/api-fetch";
-import type { VisibleAdminRequest } from "@/lib/disputes";
+import type { VisibleAdminRequest } from "@/lib/dispute-case";
 
 export default function DisputeUpdateForm({
   orderId,

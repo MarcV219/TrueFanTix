@@ -78,10 +78,15 @@ type DisputeRecord = {
 function parseDisputeRecord(value: unknown): DisputeRecord | null {
   if (typeof value !== "string") return null;
   try {
-    const parsed = JSON.parse(value) as DisputeRecord & { dispute?: DisputeRecord };
-    if (parsed?.type === "BUYER_DISPUTE") return parsed;
-    const nested = parsed?.dispute;
-    return nested?.type === "BUYER_DISPUTE" ? nested : null;
+    let parsed = JSON.parse(value) as (DisputeRecord & { dispute?: unknown }) | null;
+    for (let depth = 0; parsed && depth < 10; depth += 1) {
+      if (parsed.type === "BUYER_DISPUTE") return parsed;
+      parsed =
+        typeof parsed.dispute === "object" && parsed.dispute !== null
+          ? parsed.dispute as DisputeRecord & { dispute?: unknown }
+          : null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -96,6 +101,7 @@ export default function AdminOrderDetailPage() {
   const [decisionNote, setDecisionNote] = React.useState("");
   const [decisionBusy, setDecisionBusy] = React.useState(false);
   const [decisionMessage, setDecisionMessage] = React.useState<string | null>(null);
+  const [pendingDecision, setPendingDecision] = React.useState<"RELEASE_PAYOUT" | "MARK_REFUND_REQUIRED" | null>(null);
   const [requestRecipient, setRequestRecipient] = React.useState<"BUYER" | "SELLER" | "BOTH">("BUYER");
   const [requestMessage, setRequestMessage] = React.useState("");
   const [requestBusy, setRequestBusy] = React.useState(false);
@@ -127,11 +133,42 @@ export default function AdminOrderDetailPage() {
         ? [{ data: disputeRecord.evidenceFile, fileName: disputeRecord.evidenceFileName || undefined }]
         : [])
     : [];
+  const disputeTimeline = disputeRecord
+    ? [
+        ...(disputeRecord.openedAt
+          ? [{
+              kind: "OPENED" as const,
+              id: "dispute-opened",
+              at: disputeRecord.openedAt,
+              label: "BUYER opened dispute",
+              message: disputeRecord.reason || "-",
+              files: disputeEvidenceFiles,
+            }]
+          : []),
+        ...(disputeRecord.submissions || []).map((submission, index) => ({
+          kind: "SUBMISSION" as const,
+          id: submission.id || `submission-${index}`,
+          at: submission.submittedAt || "",
+          label: `${submission.submittedByRole || "PARTY"} update`,
+          message: submission.comments || "(documents only)",
+          files: submission.evidenceFiles || [],
+        })),
+        ...(disputeRecord.adminRequests || []).map((request, index) => ({
+          kind: "ADMIN_REQUEST" as const,
+          id: request.id || `admin-request-${index}`,
+          at: request.requestedAt || "",
+          label: `ADMIN requested information from ${request.recipient === "BOTH" ? "BUYER AND SELLER" : request.recipient || "PARTY"}`,
+          message: request.message || "-",
+          files: [] as Array<{ data?: string; fileName?: string }>,
+          deliveries: request.deliveries || [],
+        })),
+      ].sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0))
+    : [];
 
   async function resolveDispute(action: "RELEASE_PAYOUT" | "MARK_REFUND_REQUIRED" | "KEEP_UNDER_REVIEW") {
     setDecisionBusy(true);
     setError(null);
-    setDecisionMessage(null);
+    setDecisionMessage("Updating dispute...");
     try {
       const res = await apiFetch(`/api/admin/orders/${encodeURIComponent(id)}/resolve-dispute`, {
         method: "POST",
@@ -142,12 +179,26 @@ export default function AdminOrderDetailPage() {
       if (!res.ok || !json?.ok) throw new Error(json?.message || json?.error || "Could not resolve dispute.");
       setDecisionMessage(json.message || "Dispute updated.");
       setDecisionNote("");
+      setPendingDecision(null);
       await load();
     } catch (err: any) {
-      setError(err?.message || "Could not resolve dispute.");
+      setDecisionMessage(`Decision failed: ${err?.message || "Could not resolve dispute."}`);
     } finally {
       setDecisionBusy(false);
     }
+  }
+
+  function beginDecision(action: "RELEASE_PAYOUT" | "MARK_REFUND_REQUIRED" | "KEEP_UNDER_REVIEW") {
+    if (decisionNote.trim().length < 3) {
+      setDecisionMessage("Enter an Admin decision note of at least 3 characters.");
+      return;
+    }
+    setDecisionMessage(null);
+    if (action === "KEEP_UNDER_REVIEW") {
+      resolveDispute(action);
+      return;
+    }
+    setPendingDecision(action);
   }
 
   async function requestInformation() {
@@ -229,43 +280,32 @@ export default function AdminOrderDetailPage() {
                   <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
                     <Field label="Affected ticket IDs" value={disputeRecord.ticketIds?.join(", ") || "-"} />
                     <Field label="Buyer’s explanation" value={disputeRecord.reason || "-"} />
-                    {disputeEvidenceFiles.map((file, index) => (
-                      <a
-                        key={`${file.fileName || "dispute-evidence"}-${index}`}
-                        href={file.data}
-                        download={file.fileName || `dispute-evidence-${index + 1}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ fontWeight: 900, textDecoration: "underline" }}
+                    <h4 style={{ margin: "6px 0 0" }}>Communications — earliest to latest</h4>
+                    {disputeTimeline.map((entry) => (
+                      <div
+                        key={entry.id}
+                        style={{
+                          padding: 10,
+                          borderRadius: 8,
+                          border: entry.kind === "ADMIN_REQUEST" ? "1px solid rgba(37,99,235,.22)" : "1px solid rgba(0,0,0,.12)",
+                          background: entry.kind === "ADMIN_REQUEST" ? "rgba(239,246,255,1)" : "white",
+                        }}
                       >
-                        Open supporting document {index + 1}
-                        {file.fileName ? `: ${file.fileName}` : ""}
-                      </a>
-                    ))}
-                    {(disputeRecord.submissions || []).map((submission, submissionIndex) => (
-                      <div key={submission.id || submissionIndex} style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,.12)", background: "white" }}>
                         <div style={{ fontWeight: 900 }}>
-                          {submission.submittedByRole || "Party"} update
-                          {submission.submittedAt ? ` — ${new Date(submission.submittedAt).toLocaleString()}` : ""}
+                          {entry.label}
+                          {entry.at ? ` — ${new Date(entry.at).toLocaleString()}` : ""}
                         </div>
-                        <div style={{ marginTop: 5, whiteSpace: "pre-wrap" }}>{submission.comments || "(documents only)"}</div>
-                        {(submission.evidenceFiles || []).map((file, fileIndex) => file.data ? (
-                          <a key={`${file.fileName}-${fileIndex}`} href={file.data} download={file.fileName || `dispute-update-${fileIndex + 1}`} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 6, fontWeight: 900, textDecoration: "underline" }}>
+                        <div style={{ marginTop: 5, whiteSpace: "pre-wrap" }}>{entry.message}</div>
+                        {entry.files.map((file, fileIndex) => file.data ? (
+                          <a key={`${file.fileName}-${fileIndex}`} href={file.data} download={file.fileName || `dispute-document-${fileIndex + 1}`} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 6, fontWeight: 900, textDecoration: "underline" }}>
                             Open document: {file.fileName || `Attachment ${fileIndex + 1}`}
                           </a>
                         ) : null)}
-                      </div>
-                    ))}
-                    {(disputeRecord.adminRequests || []).map((request, requestIndex) => (
-                      <div key={request.id || requestIndex} style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(37,99,235,.22)", background: "rgba(239,246,255,1)" }}>
-                        <div style={{ fontWeight: 900 }}>
-                          ADMIN requested information from {request.recipient === "BOTH" ? "BUYER AND SELLER" : request.recipient || "PARTY"}
-                          {request.requestedAt ? ` — ${new Date(request.requestedAt).toLocaleString()}` : ""}
-                        </div>
-                        <div style={{ marginTop: 5, whiteSpace: "pre-wrap" }}>{request.message || "-"}</div>
-                        <div style={{ marginTop: 5, fontSize: 12, opacity: 0.72 }}>
-                          {(request.deliveries || []).map((delivery) => `${delivery.role}: ${delivery.status}`).join(" • ")}
-                        </div>
+                        {entry.kind === "ADMIN_REQUEST" ? (
+                          <div style={{ marginTop: 5, fontSize: 12, opacity: 0.72 }}>
+                            {(entry.deliveries || []).map((delivery) => `${delivery.role}: ${delivery.status}`).join(" • ")}
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -331,38 +371,97 @@ export default function AdminOrderDetailPage() {
                 </div>
                 <textarea
                   value={decisionNote}
-                  onChange={(event) => setDecisionNote(event.target.value)}
+                  onChange={(event) => {
+                    setDecisionNote(event.target.value);
+                    setDecisionMessage(null);
+                    setPendingDecision(null);
+                  }}
                   rows={4}
                   placeholder="Admin decision note"
                   style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", resize: "vertical" }}
                 />
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.72 }}>
+                  {decisionNote.trim().length < 3
+                    ? "Enter an Admin decision note (at least 3 characters) before choosing an action."
+                    : "Decision note ready."}
+                </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                   <button
                     type="button"
-                    onClick={() => resolveDispute("KEEP_UNDER_REVIEW")}
-                    disabled={decisionBusy || decisionNote.trim().length < 3}
+                    onClick={() => beginDecision("KEEP_UNDER_REVIEW")}
+                    disabled={decisionBusy}
                     style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", background: "white", fontWeight: 900 }}
                   >
                     Keep under review
                   </button>
                   <button
                     type="button"
-                    onClick={() => resolveDispute("MARK_REFUND_REQUIRED")}
-                    disabled={decisionBusy || decisionNote.trim().length < 3}
+                    onClick={() => beginDecision("MARK_REFUND_REQUIRED")}
+                    disabled={decisionBusy}
                     style={{ padding: "10px 12px", borderRadius: 8, border: 0, background: "rgba(185,28,28,1)", color: "white", fontWeight: 900 }}
                   >
                     Mark refund required
                   </button>
                   <button
                     type="button"
-                    onClick={() => resolveDispute("RELEASE_PAYOUT")}
-                    disabled={decisionBusy || decisionNote.trim().length < 3}
+                    onClick={() => beginDecision("RELEASE_PAYOUT")}
+                    disabled={decisionBusy}
                     style={{ padding: "10px 12px", borderRadius: 8, border: 0, background: "rgba(22,101,52,1)", color: "white", fontWeight: 900 }}
                   >
                     Release seller payout
                   </button>
                 </div>
-                {decisionMessage ? <div style={{ marginTop: 10, color: "rgba(22,101,52,1)", fontWeight: 800 }}>{decisionMessage}</div> : null}
+                {pendingDecision ? (
+                  <div style={{ marginTop: 10, padding: 12, borderRadius: 8, border: "1px solid rgba(245,158,11,.4)", background: "rgba(255,251,235,1)" }}>
+                    <strong>Confirm this decision</strong>
+                    <div style={{ marginTop: 4, fontSize: 13 }}>
+                      {pendingDecision === "RELEASE_PAYOUT"
+                        ? "This closes the dispute, completes the order, and places the seller payout in the pending payout queue."
+                        : "This flags the order as refund required and keeps seller payout paused. The dispute stays open until the refund workflow is completed."}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <button type="button" onClick={() => resolveDispute(pendingDecision)} disabled={decisionBusy} style={{ padding: "8px 11px", borderRadius: 8, border: 0, background: pendingDecision === "RELEASE_PAYOUT" ? "rgba(22,101,52,1)" : "rgba(185,28,28,1)", color: "white", fontWeight: 900 }}>
+                        {decisionBusy ? "Applying..." : "Yes, apply decision"}
+                      </button>
+                      <button type="button" onClick={() => setPendingDecision(null)} disabled={decisionBusy} style={{ padding: "8px 11px", borderRadius: 8, border: "1px solid rgba(0,0,0,.14)", background: "white", fontWeight: 900 }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {decisionMessage ? (
+                  <div role="status" aria-live="polite" style={{ marginTop: 10, color: decisionMessage.includes("failed") || decisionMessage.startsWith("Enter") ? "rgba(153,27,27,1)" : "rgba(22,101,52,1)", fontWeight: 800 }}>
+                    {decisionMessage}
+                  </div>
+                ) : null}
+              </div>
+            ) : disputeRecord ? (
+              <div style={{ marginTop: 12, padding: 14, borderRadius: 10, border: "1px solid rgba(22,101,52,.28)", background: "rgba(240,253,244,1)" }}>
+                <h3 style={{ margin: "0 0 6px", color: "rgba(22,101,52,1)" }}>Dispute resolved</h3>
+                <p style={{ margin: 0 }}>The complete dispute record remains preserved below and in the Disputes resolved section.</p>
+                <details style={{ marginTop: 8 }}>
+                  <summary style={{ cursor: "pointer", fontWeight: 900 }}>
+                    Archived communications ({disputeTimeline.length})
+                  </summary>
+                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                    {disputeTimeline.map((entry) => (
+                      <div key={entry.id} style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,.1)", background: "white" }}>
+                        <div style={{ fontWeight: 900 }}>
+                          {entry.label}{entry.at ? ` — ${new Date(entry.at).toLocaleString()}` : ""}
+                        </div>
+                        <div style={{ marginTop: 4, whiteSpace: "pre-wrap" }}>{entry.message}</div>
+                        {entry.files.map((file, index) => file.data ? (
+                          <a key={`${entry.id}-${index}`} href={file.data} download={file.fileName || `dispute-document-${index + 1}`} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 5, fontWeight: 900, textDecoration: "underline" }}>
+                            Open document: {file.fileName || `Attachment ${index + 1}`}
+                          </a>
+                        ) : null)}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+                <Link href="/admin/orders?status=RESOLVED_DISPUTES" style={{ display: "inline-block", marginTop: 8, fontWeight: 900, textDecoration: "underline" }}>
+                  View disputes resolved
+                </Link>
               </div>
             ) : null}
             <details style={{ marginTop: 12 }}>
