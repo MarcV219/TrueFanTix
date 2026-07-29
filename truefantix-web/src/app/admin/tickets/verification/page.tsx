@@ -24,6 +24,44 @@ type QueueTicket = {
   seller?: { id: string; name: string; rating: number; reviews: number };
 };
 
+type AttentionCounts = {
+  pending: number;
+  needsReview: number;
+  rejected: number;
+  catalogRequests: number;
+  sellerStripe: number;
+  suspendedSellers: number;
+  expiredReservations: number;
+  openEscrows: number;
+  disputes: number;
+  failedPayments: number;
+  pendingPayouts: number;
+  failedEmails: number;
+  moderatedForumItems: number;
+  actionable: number;
+};
+
+const ATTENTION_ITEMS: Array<{
+  key: keyof AttentionCounts;
+  label: string;
+  description: string;
+  href: string;
+  urgent?: boolean;
+}> = [
+  { key: "pending", label: "Ticket verification pending", description: "New listings waiting for an approval decision.", href: "#ticket-verification" },
+  { key: "needsReview", label: "Tickets needing review", description: "Listings flagged for manual investigation.", href: "#ticket-verification", urgent: true },
+  { key: "disputes", label: "Open disputes", description: "Buyer disputes with seller payout paused.", href: "/admin/orders?status=DISPUTED", urgent: true },
+  { key: "catalogRequests", label: "Catalog requests", description: "Requested artists, teams, venues, or cities to review.", href: "/admin/catalog-requests" },
+  { key: "sellerStripe", label: "Seller / Stripe attention", description: "Seller approval or Stripe onboarding is incomplete.", href: "/admin/users?filter=seller-stripe-attention" },
+  { key: "suspendedSellers", label: "Suspended sellers", description: "Restricted seller accounts to monitor or review.", href: "/admin/users?filter=sellers", urgent: true },
+  { key: "expiredReservations", label: "Expired reservations", description: "Reserved tickets whose hold time has elapsed.", href: "/admin/orders?status=PENDING", urgent: true },
+  { key: "openEscrows", label: "Open payment holds", description: "Ticket access or funds remain in escrow.", href: "/admin/orders" },
+  { key: "failedPayments", label: "Failed payments", description: "Payment attempts that require investigation.", href: "/admin/orders?status=FAILED", urgent: true },
+  { key: "pendingPayouts", label: "Pending payouts", description: "Seller payouts waiting to be processed.", href: "/admin/users?filter=pending-payouts" },
+  { key: "failedEmails", label: "Failed emails (24 hours)", description: "Recent email deliveries that did not succeed.", href: "/admin/audit?action=EMAIL_FAILED", urgent: true },
+  { key: "moderatedForumItems", label: "Moderated forum items", description: "Hidden or deleted threads and posts for oversight.", href: "/forum" },
+];
+
 function money(cents: number) {
   return `$${(Number(cents || 0) / 100).toFixed(2)}`;
 }
@@ -32,6 +70,7 @@ export default function TicketVerificationAdminPage() {
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
   const [status, setStatus] = React.useState("PENDING");
   const [tickets, setTickets] = React.useState<QueueTicket[]>([]);
+  const [counts, setCounts] = React.useState<AttentionCounts | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
@@ -49,15 +88,22 @@ export default function TicketVerificationAdminPage() {
         return;
       }
 
-      const res = await fetch(`/api/admin/tickets/verification-queue?status=${encodeURIComponent(status)}&take=100`, {
-        cache: "no-store",
-      });
-      const data = await res.json();
-      if (!res.ok || !data?.ok) {
-        const details = Array.isArray(data?.details) ? data.details : null;
-        throw new Error(data?.message || data?.error || (details?.length ? details[0] : null) || "Failed to load queue");
+      const [queueRes, countRes] = await Promise.all([
+        fetch(`/api/admin/tickets/verification-queue?status=${encodeURIComponent(status)}&take=100`, {
+          cache: "no-store",
+        }),
+        fetch("/api/admin/tickets/verification-count", { cache: "no-store" }),
+      ]);
+      const [queueData, countData] = await Promise.all([queueRes.json(), countRes.json()]);
+      if (!queueRes.ok || !queueData?.ok) {
+        const details = Array.isArray(queueData?.details) ? queueData.details : null;
+        throw new Error(queueData?.message || queueData?.error || (details?.length ? details[0] : null) || "Failed to load queue");
       }
-      setTickets(Array.isArray(data.tickets) ? data.tickets : []);
+      if (!countRes.ok || !countData?.ok) {
+        throw new Error(countData?.message || countData?.error || "Failed to load admin attention counts");
+      }
+      setTickets(Array.isArray(queueData.tickets) ? queueData.tickets : []);
+      setCounts(countData.counts);
     } catch (e: any) {
       setError(e?.message || "Failed to load queue.");
     } finally {
@@ -96,7 +142,8 @@ export default function TicketVerificationAdminPage() {
     <div style={{ maxWidth: 1100, margin: "40px auto", padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin — Ticket Verification Queue</h1>
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 950 }}>Admin Queue</h1>
+          <div style={{ marginTop: 5, opacity: 0.75 }}>Everything currently requiring Admin attention in one place.</div>
           <div style={{ marginTop: 6, opacity: 0.8 }}>
             <Link href="/admin" style={{ textDecoration: "underline" }}>← Back to Admin</Link>
           </div>
@@ -106,8 +153,53 @@ export default function TicketVerificationAdminPage() {
         ) : null}
       </div>
 
+      {canViewQueue && counts ? (
+        <section style={{ marginTop: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0, fontSize: 21 }}>Needs attention</h2>
+            <strong style={{ color: counts.actionable > 0 ? "rgba(180,83,9,1)" : "rgba(22,101,52,1)" }}>
+              {counts.actionable} total
+            </strong>
+          </div>
+          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(245px, 1fr))", gap: 10 }}>
+            {ATTENTION_ITEMS.map((item) => {
+              const value = Number(counts[item.key] || 0);
+              const active = value > 0;
+              return (
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  style={{
+                    color: "inherit",
+                    textDecoration: "none",
+                    padding: 14,
+                    borderRadius: 10,
+                    border: active
+                      ? `1px solid ${item.urgent ? "rgba(239,68,68,0.35)" : "rgba(245,158,11,0.38)"}`
+                      : "1px solid rgba(0,0,0,0.09)",
+                    background: active
+                      ? item.urgent ? "rgba(254,242,242,1)" : "rgba(255,251,235,1)"
+                      : "rgba(248,250,252,1)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <strong>{item.label}</strong>
+                    <span style={{ fontSize: 20, fontWeight: 950 }}>{value}</span>
+                  </div>
+                  <div style={{ marginTop: 5, fontSize: 12, opacity: 0.72 }}>{item.description}</div>
+                  <div style={{ marginTop: 8, fontSize: 12, fontWeight: 800 }}>{active ? "Review now →" : "Open →"}</div>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
       {canViewQueue ? (
-        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <section id="ticket-verification" style={{ marginTop: 24, scrollMarginTop: 100 }}>
+          <h2 style={{ margin: "0 0 4px", fontSize: 21 }}>Ticket verification</h2>
+          <div style={{ opacity: 0.72, fontSize: 13 }}>Review current listings or view previous decisions.</div>
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
           {(["PENDING", "NEEDS_REVIEW", "REJECTED", "VERIFIED"] as const).map((s) => (
             <button
               key={s}
@@ -121,9 +213,13 @@ export default function TicketVerificationAdminPage() {
               }}
             >
               {s}
+              {counts && s !== "VERIFIED"
+                ? ` (${s === "PENDING" ? counts.pending : s === "NEEDS_REVIEW" ? counts.needsReview : counts.rejected})`
+                : ""}
             </button>
           ))}
-        </div>
+          </div>
+        </section>
       ) : null}
 
       {error ? <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1px solid rgba(255,0,0,0.35)", background: "rgba(254,242,242,1)", color: "rgba(153,27,27,1)" }}>{error}</div> : null}
