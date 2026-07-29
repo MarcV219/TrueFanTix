@@ -90,7 +90,7 @@ export async function GET(req: Request) {
       prisma.ticket.count({
         where: {
           sellerId: user.seller.id,
-          status: { in: ["AVAILABLE", "RESERVED"] },
+          status: "AVAILABLE",
         },
       }),
       prisma.order.count({

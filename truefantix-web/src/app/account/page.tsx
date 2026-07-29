@@ -823,7 +823,7 @@ function AccountHub({ me }: { me: MeUser }) {
               label="Selling (active listings)"
               hint={
                 ticketOverview.selling.count > 0
-                  ? "Tickets currently listed or reserved for sale."
+                  ? "Tickets currently available for sale."
                   : sellerEligible
                   ? "Tickets currently listed for sale."
                   : "Locked until seller verification is complete (email + phone + Stripe)."
