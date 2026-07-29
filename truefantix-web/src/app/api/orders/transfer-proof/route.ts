@@ -90,6 +90,10 @@ export async function POST(req: Request) {
     const review = await analyzeTransferProof({
       proofDataUrl: transferProofImage,
       proofFileName: transferProofFileName,
+      expectedBuyerName: [
+        order.buyerSeller.user?.firstName,
+        order.buyerSeller.user?.lastName,
+      ].filter(Boolean).join(" ") || null,
       expectedBuyerEmail: order.buyerSeller.user?.email ?? null,
       expectedEventTitles: Array.from(new Set(order.items.map((item) => item.ticket.title).filter(Boolean))),
       expectedVenue: firstTicket?.venue ?? null,

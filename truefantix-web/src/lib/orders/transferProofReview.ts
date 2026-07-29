@@ -17,6 +17,7 @@ export type TransferProofReview = {
   model: string | null;
   reason: string | null;
   hasCompletedTransfer: boolean | null;
+  recipientName: string | null;
   recipientEmail: string | null;
   eventTitle: string | null;
   venue: string | null;
@@ -32,6 +33,7 @@ export type TransferProofReview = {
 type AnalyzeTransferProofInput = {
   proofDataUrl: string | null;
   proofFileName?: string | null;
+  expectedBuyerName?: string | null;
   expectedBuyerEmail?: string | null;
   expectedEventTitles?: string[];
   expectedVenue?: string | null;
@@ -49,6 +51,7 @@ function unavailable(reason: string, status: TransferProofReview["status"] = "un
     model: null,
     reason,
     hasCompletedTransfer: null,
+    recipientName: null,
     recipientEmail: null,
     eventTitle: null,
     venue: null,
@@ -99,6 +102,29 @@ function normalizeNumber(value: unknown): number | null {
 
 function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() || null;
+}
+
+function normalizeName(value: string | null | undefined) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function recipientNameMatches(visibleName: string | null, expectedName?: string | null) {
+  const visible = normalizeName(visibleName);
+  const expected = normalizeName(expectedName);
+  if (!visible || !expected) return false;
+  if (visible === expected) return true;
+
+  const visibleWords = visible.split(" ");
+  const expectedWords = expected.split(" ");
+  if (visibleWords.length === 1) return expectedWords.includes(visible);
+  if (expectedWords.length === 1) return visibleWords.includes(expected);
+  return overlapScore(visible, expected) >= 1;
 }
 
 function ymd(value: string | null | undefined): string | null {
@@ -152,6 +178,7 @@ function transferReviewFromParsed(
 ): TransferProofReview {
   const confidence = Math.max(0, Math.min(1, normalizeNumber(parsed.confidence) ?? 0));
   const hasCompletedTransfer = normalizeBoolean(parsed.hasCompletedTransfer);
+  const recipientName = normalizeString(parsed.recipientName);
   const recipientEmail = normalizeEmail(normalizeString(parsed.recipientEmail));
   const eventTitle = normalizeString(parsed.eventTitle);
   const venue = normalizeString(parsed.venue);
@@ -159,13 +186,18 @@ function transferReviewFromParsed(
   const ticketQuantity = normalizeNumber(parsed.ticketQuantity);
   const ticketDetails = normalizeString(parsed.ticketDetails);
   const expectedTicketCount = Math.max(0, expected.expectedTicketCount ?? 0);
+  const expectedBuyerEmail = normalizeEmail(expected.expectedBuyerEmail);
+  const emailMatches = Boolean(recipientEmail && expectedBuyerEmail && recipientEmail === expectedBuyerEmail);
+  const nameMatches = recipientNameMatches(recipientName, expected.expectedBuyerName);
+  const hasVisibleRecipient = Boolean(recipientName || recipientEmail);
+  const hasExpectedRecipient = Boolean(expectedBuyerEmail || normalizeName(expected.expectedBuyerName));
 
   const issues: TransferProofIssue[] = [];
   if (hasCompletedTransfer === false) issues.push("NO_COMPLETED_TRANSFER");
-  if (!recipientEmail) issues.push("MISSING_RECIPIENT");
+  if (!hasVisibleRecipient) issues.push("MISSING_RECIPIENT");
   if (!eventTitle || (!eventDate && !venue)) issues.push("MISSING_EVENT_INFO");
   if (ticketQuantity == null || !ticketDetails) issues.push("MISSING_TICKET_INFO");
-  if (recipientEmail && normalizeEmail(expected.expectedBuyerEmail) && recipientEmail !== normalizeEmail(expected.expectedBuyerEmail)) {
+  if (hasVisibleRecipient && hasExpectedRecipient && !emailMatches && !nameMatches) {
     issues.push("RECIPIENT_EMAIL_MISMATCH");
   }
   if (!titleMatches(eventTitle, expected.expectedEventTitles)) issues.push("EVENT_TITLE_MISMATCH");
@@ -190,6 +222,7 @@ function transferReviewFromParsed(
     model,
     reason: normalizeString(parsed.reason),
     hasCompletedTransfer,
+    recipientName,
     recipientEmail,
     eventTitle,
     venue,
@@ -226,7 +259,7 @@ export function transferProofIssueMessage(issue: TransferProofIssue) {
     MISSING_RECIPIENT: "the upload does not clearly show who received the tickets",
     MISSING_EVENT_INFO: "the upload does not clearly show the event name and its date or venue",
     MISSING_TICKET_INFO: "the upload does not clearly show the ticket quantity and ticket details",
-    RECIPIENT_EMAIL_MISMATCH: "the visible recipient email does not match the buyer",
+    RECIPIENT_EMAIL_MISMATCH: "the visible recipient name or email does not match the buyer",
     EVENT_TITLE_MISMATCH: "the visible event name does not match this order",
     VENUE_MISMATCH: "the visible venue does not match this order",
     EVENT_DATE_MISMATCH: "the visible event date does not match this order",
@@ -239,6 +272,7 @@ export function transferProofIssueMessage(issue: TransferProofIssue) {
 export async function analyzeTransferProof({
   proofDataUrl,
   proofFileName,
+  expectedBuyerName,
   expectedBuyerEmail,
   expectedEventTitles = [],
   expectedVenue,
@@ -261,6 +295,7 @@ export async function analyzeTransferProof({
     additionalProperties: false,
     required: [
       "hasCompletedTransfer",
+      "recipientName",
       "recipientEmail",
       "eventTitle",
       "venue",
@@ -274,6 +309,10 @@ export async function analyzeTransferProof({
     ],
     properties: {
       hasCompletedTransfer: { type: ["boolean", "null"] },
+      recipientName: {
+        type: ["string", "null"],
+        description: "The recipient's visible name, when shown.",
+      },
       recipientEmail: { type: ["string", "null"] },
       eventTitle: { type: ["string", "null"] },
       venue: { type: ["string", "null"] },
@@ -307,11 +346,13 @@ export async function analyzeTransferProof({
                 type: "input_text",
                 text:
                   `Review this seller's ticket transfer proof for obvious mismatches or falsehoods. File name: ${proofFileName || "transfer-proof"}. ` +
+                  `Expected buyer name: ${expectedBuyerName || "unknown"}. ` +
                   `Expected buyer email: ${expectedBuyerEmail || "unknown"}. ` +
                   `Expected event title(s): ${expectedEventTitles.join(" | ") || "unknown"}. ` +
                   `Expected venue: ${expectedVenue || "unknown"}. Expected date: ${expectedEventDate || "unknown"}. ` +
                   `Expected ticket count: ${expectedTicketCount ?? "unknown"}. Seller note/reference: ${sellerNote || "none"}. ` +
                   `Expected ticket details: ${expectedTicketDetails?.join(" | ") || "unknown"}. ` +
+                  "The transfer recipient is valid when either the visible recipient name matches the expected buyer name or the visible recipient email matches the expected buyer email. " +
                   "Only report values visibly present in the proof. Do not infer hidden values. " +
                   "Set hasCompletedTransfer true only when the upload visibly indicates the tickets were sent, transferred, completed, accepted, or delivery was initiated to the recipient. " +
                   "Return null for fields that are not visible. ticketDetails must contain only visible ticket-identifying information such as section, row, seat, ticket type, or general admission. " +
@@ -343,6 +384,7 @@ export async function analyzeTransferProof({
 
     const parsed = JSON.parse(text) as Record<string, unknown>;
     return transferReviewFromParsed(parsed, model, {
+      expectedBuyerName,
       expectedBuyerEmail,
       expectedEventTitles,
       expectedVenue,

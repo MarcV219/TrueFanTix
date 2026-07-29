@@ -2,6 +2,7 @@ import { analyzeTransferProof } from "@/lib/orders/transferProofReview";
 
 const baseOpenAiPayload = {
   hasCompletedTransfer: true,
+  recipientName: "Buyer Example",
   recipientEmail: "buyer@example.com",
   eventTitle: "Ice Cube",
   venue: "Casino Rama Resort",
@@ -39,6 +40,7 @@ describe("transfer proof review", () => {
     const result = await analyzeTransferProof({
       proofDataUrl: "data:image/png;base64,cHJvb2Y=",
       proofFileName: "transfer.png",
+      expectedBuyerName: "Buyer Example",
       expectedBuyerEmail: "buyer@example.com",
       expectedEventTitles: ["Ice Cube"],
       expectedVenue: "Casino Rama Resort",
@@ -58,6 +60,7 @@ describe("transfer proof review", () => {
       image_url: "data:image/png;base64,cHJvb2Y=",
     });
     expect(payload.input[0].content[0].text).toContain("Expected buyer email: buyer@example.com");
+    expect(payload.input[0].content[0].text).toContain("Expected buyer name: Buyer Example");
     expect(payload.input[0].content[0].text).toContain("Expected ticket count: 2");
     expect(payload.input[0].content[0].text).toContain("Expected ticket details: Row A, Seat 1 | Row A, Seat 2");
   });
@@ -65,12 +68,14 @@ describe("transfer proof review", () => {
   it("flags proof sent to the wrong visible recipient", async () => {
     mockOpenAi({
       ...baseOpenAiPayload,
+      recipientName: "Someone Else",
       recipientEmail: "someone-else@example.com",
     });
 
     const result = await analyzeTransferProof({
       proofDataUrl: "data:application/pdf;base64,JVBERi0=",
       proofFileName: "transfer.pdf",
+      expectedBuyerName: "Buyer Example",
       expectedBuyerEmail: "buyer@example.com",
       expectedEventTitles: ["Ice Cube"],
       expectedVenue: "Casino Rama Resort",
@@ -90,6 +95,52 @@ describe("transfer proof review", () => {
     });
   });
 
+  it("accepts a matching buyer name when the recipient email is not visible", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      recipientName: "Buyer Example",
+      recipientEmail: null,
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:application/pdf;base64,JVBERi0=",
+      proofFileName: "transfer.pdf",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.recipientName).toBe("Buyer Example");
+    expect(result.recipientEmail).toBeNull();
+    expect(result.issues).not.toContain("MISSING_RECIPIENT");
+    expect(result.issues).not.toContain("RECIPIENT_EMAIL_MISMATCH");
+  });
+
+  it("accepts a matching buyer email when the visible recipient name differs", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      recipientName: "Preferred Ticketmaster Name",
+      recipientEmail: "buyer@example.com",
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).not.toContain("RECIPIENT_EMAIL_MISMATCH");
+  });
+
   it("rejects unsupported proof upload formats before review", async () => {
     const result = await analyzeTransferProof({
       proofDataUrl: "data:text/plain;base64,cHJvb2Y=",
@@ -104,6 +155,7 @@ describe("transfer proof review", () => {
   it("rejects proof that omits required recipient, event, or ticket information", async () => {
     mockOpenAi({
       ...baseOpenAiPayload,
+      recipientName: null,
       recipientEmail: null,
       eventTitle: null,
       eventDate: null,
