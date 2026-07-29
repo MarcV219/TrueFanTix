@@ -317,7 +317,7 @@ export const schemas = {
   // Used by POST /api/admin/orders/[id]/request-information
   adminRequestDisputeInformation: z.object({
     recipient: z.enum(["BUYER", "SELLER", "BOTH"]),
-    message: z.string().trim().min(10).max(3000),
+    message: z.string().trim().min(3).max(3000),
   }),
 
   // Profile update schemas

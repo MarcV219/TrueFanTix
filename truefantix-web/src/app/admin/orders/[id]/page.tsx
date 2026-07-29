@@ -290,16 +290,26 @@ export default function AdminOrderDetailPage() {
                   </div>
                   <textarea
                     value={requestMessage}
-                    onChange={(event) => setRequestMessage(event.target.value)}
+                    onChange={(event) => {
+                      setRequestMessage(event.target.value);
+                      setRequestResult(null);
+                    }}
                     rows={4}
                     placeholder="Explain exactly what information or supporting documents are required"
                     style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.16)", resize: "vertical" }}
                   />
+                  <div style={{ marginTop: 4, fontSize: 12, opacity: 0.7 }}>
+                    {requestMessage.trim().length === 0
+                      ? "Enter a message to send."
+                      : requestMessage.trim().length < 3
+                        ? "Enter at least 3 characters."
+                        : "Ready to send."}
+                  </div>
                   <button
                     type="button"
                     onClick={requestInformation}
-                    disabled={requestBusy || requestMessage.trim().length < 10}
-                    style={{ marginTop: 8, padding: "9px 12px", borderRadius: 8, border: 0, background: "rgba(6,74,147,1)", color: "white", fontWeight: 900, opacity: requestBusy || requestMessage.trim().length < 10 ? 0.55 : 1 }}
+                    disabled={requestBusy || requestMessage.trim().length < 3}
+                    style={{ marginTop: 8, padding: "9px 12px", borderRadius: 8, border: 0, background: "rgba(6,74,147,1)", color: "white", fontWeight: 900, opacity: requestBusy || requestMessage.trim().length < 3 ? 0.45 : 1, cursor: requestBusy || requestMessage.trim().length < 3 ? "not-allowed" : "pointer" }}
                   >
                     {requestBusy ? "Sending request..." : `Send request to ${requestRecipient === "BOTH" ? "buyer and seller" : requestRecipient.toLowerCase()}`}
                   </button>
