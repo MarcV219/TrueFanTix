@@ -325,14 +325,25 @@ export default function TicketsPage() {
     async function fetchTickets() {
       try {
         setLoading(true);
-        const res = await fetch("/api/tickets?status=AVAILABLE&take=500", { cache: "no-store" });
-        const json = await res.json();
-        
-        if (!res.ok) {
-          throw new Error(json?.error || `Failed to fetch tickets (${res.status})`);
-        }
+        const rawTickets: any[] = [];
+        let cursor: string | null = null;
 
-        const rawTickets = json.tickets || json;
+        do {
+          const params = new URLSearchParams({ status: "AVAILABLE", take: "500" });
+          if (cursor) params.set("cursor", cursor);
+
+          const res = await fetch(`/api/tickets?${params.toString()}`, { cache: "no-store" });
+          const json = await res.json();
+
+          if (!res.ok) {
+            throw new Error(json?.error || `Failed to fetch tickets (${res.status})`);
+          }
+
+          rawTickets.push(...(Array.isArray(json) ? json : Array.isArray(json?.tickets) ? json.tickets : []));
+          cursor = !Array.isArray(json) && typeof json?.nextCursor === "string" && json.nextCursor
+            ? json.nextCursor
+            : null;
+        } while (cursor);
         
         const normalized: Ticket[] = rawTickets.map((t: any) => mapApiTicketToCard(t) as Ticket);
 

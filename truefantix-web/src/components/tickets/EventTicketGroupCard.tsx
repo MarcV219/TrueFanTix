@@ -63,9 +63,9 @@ export default function EventTicketGroupCard<T extends TicketCardView>({
   const imageSrc = image.startsWith("http://") || image.startsWith("https://") ? image : `${image}?v=2`;
 
   return (
-    <article className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg transition hover:shadow-xl dark:border-gray-700 dark:bg-gray-800">
+    <article className="relative flex h-full flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg transition hover:shadow-xl dark:border-gray-700 dark:bg-gray-800">
       {lead.isSoldOut ? (
-        <div className="border-b border-amber-700 bg-amber-500 px-3 py-2 text-center text-sm font-extrabold tracking-wide text-white shadow-sm">
+        <div className="absolute z-10 w-full border-b border-amber-700 bg-amber-500 px-3 py-2 text-center text-sm font-extrabold tracking-wide text-white shadow-sm">
           Box office sold out <span aria-hidden="true">•</span> Resale tickets available
         </div>
       ) : null}
@@ -84,13 +84,15 @@ export default function EventTicketGroupCard<T extends TicketCardView>({
         </span>
       </div>
 
-      <div className="p-4">
-        <h3 className="text-lg font-bold text-gray-900 dark:text-white">{lead.title}</h3>
-        <p className="text-sm text-gray-600 dark:text-gray-300">{lead.date}</p>
-        <p className="text-sm text-gray-500">{lead.venue}</p>
-        {venueLocation ? <p className="text-xs text-gray-500">{venueLocation}</p> : null}
+      <div className="flex flex-1 flex-col p-4">
+        <div className="min-h-[7.5rem]">
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white">{lead.title}</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-300">{lead.date}</p>
+          <p className="text-sm text-gray-500">{lead.venue}</p>
+          {venueLocation ? <p className="text-xs text-gray-500">{venueLocation}</p> : null}
+        </div>
 
-        <div className="my-4 rounded-lg bg-blue-50 p-3 ring-1 ring-blue-100 dark:bg-blue-950/40 dark:ring-blue-900">
+        <div className="mb-4 min-h-[8.5rem] rounded-lg bg-blue-50 p-3 ring-1 ring-blue-100 dark:bg-blue-950/40 dark:ring-blue-900">
           <p className="font-extrabold text-[#064a93] dark:text-blue-300">
             {tickets.length} {plural(tickets.length, "ticket")} available <span aria-hidden="true">•</span>{" "}
             {tickets.length} {plural(tickets.length, "listing")}
@@ -106,15 +108,16 @@ export default function EventTicketGroupCard<T extends TicketCardView>({
           </div>
         </div>
 
-        {reasons.length ? (
-          <div className="mb-3 flex flex-wrap gap-2">
-            {Array.from(new Set(reasons)).slice(0, 2).map((reason) => (
-              <span key={reason} className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-[#064a93] ring-1 ring-blue-100 dark:bg-white/10 dark:text-white dark:ring-white/15">
-                {reason}
-              </span>
-            ))}
-          </div>
-        ) : null}
+        <div className="mt-auto">
+          {reasons.length ? (
+            <div className="mb-3 flex min-h-7 flex-wrap gap-2">
+              {Array.from(new Set(reasons)).slice(0, 2).map((reason) => (
+                <span key={reason} className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-[#064a93] ring-1 ring-blue-100 dark:bg-white/10 dark:text-white dark:ring-white/15">
+                  {reason}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
         <button
           type="button"
@@ -122,7 +125,7 @@ export default function EventTicketGroupCard<T extends TicketCardView>({
           className="w-full rounded-lg bg-[#064a93] px-4 py-2.5 font-bold text-white transition hover:bg-blue-900"
           aria-expanded={expanded}
         >
-          {expanded ? "Hide listings" : `Choose tickets (${tickets.length})`}
+          {expanded ? "Hide tickets" : `View Tickets (${tickets.length})`}
         </button>
 
         {selectedCount ? (
@@ -180,6 +183,7 @@ export default function EventTicketGroupCard<T extends TicketCardView>({
             })}
           </div>
         ) : null}
+        </div>
       </div>
     </article>
   );
