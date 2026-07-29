@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
+import { visibleAdminRequests } from "@/lib/disputes";
 
 function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));
@@ -43,6 +44,7 @@ export async function getSellerHoldingOrders(userId: string) {
     buyerConfirmationStatus: order.buyerConfirmationStatus,
     buyerConfirmationAt: order.buyerConfirmationAt?.toISOString() ?? null,
     buyerConfirmationDeadline: order.disputeWindowEndsAt?.toISOString() ?? null,
+    adminRequests: visibleAdminRequests(order.transferVerificationReason, "SELLER"),
     buyer: order.buyerSeller.user
       ? {
           name:

@@ -19,6 +19,7 @@ type SellerHoldingOrder = {
   buyerConfirmationStatus: string | null;
   buyerConfirmationAt: string | null;
   buyerConfirmationDeadline: string | null;
+  adminRequests: Array<{ id: string; requestedAt: string; message: string }>;
   buyer: { name: string; email: string } | null;
   tickets: {
     id: string;
@@ -307,7 +308,7 @@ function OrderCard({
         </div>
       )}
       {order.buyerConfirmationStatus === "DISPUTED" ? (
-        <DisputeUpdateForm orderId={order.id} onSubmitted={onSubmitted} />
+        <DisputeUpdateForm orderId={order.id} adminRequests={order.adminRequests} onSubmitted={onSubmitted} />
       ) : null}
     </div>
   );

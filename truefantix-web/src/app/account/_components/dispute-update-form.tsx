@@ -2,8 +2,17 @@
 
 import React, { useState } from "react";
 import { apiFetch } from "@/lib/api-fetch";
+import type { VisibleAdminRequest } from "@/lib/disputes";
 
-export default function DisputeUpdateForm({ orderId, onSubmitted }: { orderId: string; onSubmitted?: () => void }) {
+export default function DisputeUpdateForm({
+  orderId,
+  adminRequests = [],
+  onSubmitted,
+}: {
+  orderId: string;
+  adminRequests?: VisibleAdminRequest[];
+  onSubmitted?: () => void;
+}) {
   const [comments, setComments] = useState("");
   const [files, setFiles] = useState<Array<{ data: string; fileName: string; size: number }>>([]);
   const [busy, setBusy] = useState(false);
@@ -57,7 +66,21 @@ export default function DisputeUpdateForm({ orderId, onSubmitted }: { orderId: s
 
   return (
     <form onSubmit={submit} style={{ display: "grid", gap: 8, marginTop: 12, padding: 12, borderRadius: 10, border: "1px solid rgba(185,28,28,.22)", background: "rgba(255,247,237,1)" }}>
-      <strong>Add comments or supporting documents</strong>
+      {adminRequests.length ? (
+        <section style={{ display: "grid", gap: 8, marginBottom: 4 }}>
+          <strong style={{ color: "rgba(6,74,147,1)" }}>Messages from TrueFanTix Support</strong>
+          {adminRequests.map((request) => (
+            <div key={request.id} style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(37,99,235,.25)", background: "rgba(239,246,255,1)" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.72 }}>
+                Information requested {new Date(request.requestedAt).toLocaleString()}
+              </div>
+              <div style={{ marginTop: 5, whiteSpace: "pre-wrap", fontWeight: 800 }}>{request.message}</div>
+            </div>
+          ))}
+          <div style={{ fontSize: 12, opacity: 0.75 }}>Reply below and attach any requested supporting documents.</div>
+        </section>
+      ) : null}
+      <strong>{adminRequests.length ? "Reply with comments or supporting documents" : "Add comments or supporting documents"}</strong>
       <textarea value={comments} onChange={(event) => setComments(event.target.value)} rows={3} maxLength={2000} placeholder="Add information that may help support review your case" style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,.18)" }} />
       <label style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(37,99,235,.4)", color: "rgba(30,64,175,1)", background: "white", fontWeight: 900, textAlign: "center", cursor: "pointer" }}>
         Attach supporting documents (optional)

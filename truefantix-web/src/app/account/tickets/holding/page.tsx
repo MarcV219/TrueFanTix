@@ -24,6 +24,7 @@ type HoldingTicket = {
   buyerConfirmationDeadline: string | null;
   orderId: string;
   orderDate: string;
+  adminRequests: Array<{ id: string; requestedAt: string; message: string }>;
 };
 
 type DisputeScope = "ALL" | "SPECIFIC" | null;
@@ -579,7 +580,7 @@ function TicketCard({
           ) : null}
           {disputeUpdateVisible ? (
             <>
-              <DisputeUpdateForm orderId={ticket.orderId} />
+              <DisputeUpdateForm orderId={ticket.orderId} adminRequests={ticket.adminRequests} />
               <DisputeCancelForm orderId={ticket.orderId} onCancelled={onConfirmed} />
             </>
           ) : null}

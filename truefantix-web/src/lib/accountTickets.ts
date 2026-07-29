@@ -1,5 +1,6 @@
 import type { OrderStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { visibleAdminRequests } from "@/lib/disputes";
 
 function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));
@@ -46,6 +47,7 @@ export async function getBuyerTickets(userId: string, statuses: OrderStatus[]) {
       transferVerificationStatus: order.transferVerificationStatus,
       buyerConfirmationStatus: order.buyerConfirmationStatus,
       buyerConfirmationDeadline: order.disputeWindowEndsAt?.toISOString() ?? null,
+      adminRequests: visibleAdminRequests(order.transferVerificationReason, "BUYER"),
       orderId: order.id,
       orderDate: order.createdAt.toISOString(),
       qrCodeUrl: `/api/tickets/${item.ticket.id}/qr`,

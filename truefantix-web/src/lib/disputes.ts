@@ -154,3 +154,24 @@ export function parseDisputeCase(value: string | null): DisputeCase | null {
     return null;
   }
 }
+
+export type VisibleAdminRequest = {
+  id: string;
+  requestedAt: string;
+  message: string;
+};
+
+export function visibleAdminRequests(
+  value: string | null,
+  role: "BUYER" | "SELLER"
+): VisibleAdminRequest[] {
+  const dispute = parseDisputeCase(value);
+  if (!dispute?.adminRequests?.length) return [];
+  return dispute.adminRequests
+    .filter((request) => request.recipient === role || request.recipient === "BOTH")
+    .map((request) => ({
+      id: request.id,
+      requestedAt: request.requestedAt,
+      message: request.message,
+    }));
+}
