@@ -298,7 +298,15 @@ function OrderCard({
           </label>
           {error ? <div role="alert" style={errorStyle}>{error}</div> : null}
           {ok ? <div role="status" style={okStyle}>{ok}</div> : null}
-          <button type="submit" disabled={busy || !proofImage} style={buttonStyle}>
+          <button
+            type="submit"
+            disabled={busy || !proofImage}
+            aria-disabled={busy || !proofImage}
+            style={{
+              ...buttonStyle,
+              ...((busy || !proofImage) ? disabledButtonStyle : {}),
+            }}
+          >
             {busy ? "Checking proof..." : "I transferred the tickets - check and submit proof"}
           </button>
         </form>
@@ -353,6 +361,13 @@ const buttonStyle: React.CSSProperties = {
   color: "white",
   fontWeight: 900,
   cursor: "pointer",
+};
+
+const disabledButtonStyle: React.CSSProperties = {
+  background: "rgba(156, 163, 175, 1)",
+  color: "rgba(255, 255, 255, 0.92)",
+  cursor: "not-allowed",
+  opacity: 0.8,
 };
 
 const errorStyle: React.CSSProperties = {
