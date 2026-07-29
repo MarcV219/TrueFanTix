@@ -112,8 +112,15 @@ export default function EventTicketGroupCard<T extends TicketCardView>({
           {reasons.length ? (
             <div className="mb-3 flex min-h-7 flex-wrap gap-2">
               {Array.from(new Set(reasons)).slice(0, 2).map((reason) => (
-                <span key={reason} className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-[#064a93] ring-1 ring-blue-100 dark:bg-white/10 dark:text-white dark:ring-white/15">
-                  {reason}
+                <span
+                  key={reason}
+                  className={
+                    reason === "Below face value"
+                      ? "rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-extrabold uppercase tracking-wide text-white shadow-sm ring-2 ring-emerald-200 dark:bg-emerald-500 dark:ring-emerald-800"
+                      : "rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-[#064a93] ring-1 ring-blue-100 dark:bg-white/10 dark:text-white dark:ring-white/15"
+                  }
+                >
+                  {reason === "Below face value" ? "↓ Below face value" : reason}
                 </span>
               ))}
             </div>
