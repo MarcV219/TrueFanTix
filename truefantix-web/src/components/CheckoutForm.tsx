@@ -20,6 +20,10 @@ export function buildCheckoutReturnUrl(origin: string, orderId: string) {
   return `${origin}/checkout/success?orderId=${encodeURIComponent(orderId)}`;
 }
 
+export function buildCheckoutHoldingUrl(orderId: string) {
+  return `/account/tickets/holding?purchase=success&orderId=${encodeURIComponent(orderId)}`;
+}
+
 export function CheckoutForm({ orderId, amount, currency, onSuccess, onError }: CheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();

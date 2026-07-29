@@ -626,8 +626,12 @@ function Body() {
   const [disputeOrderId, setDisputeOrderId] = useState<string | null>(null);
   const [disputeScope, setDisputeScope] = useState<DisputeScope>(null);
   const [selectedDisputeTicketIds, setSelectedDisputeTicketIds] = useState<string[]>([]);
+  const [purchaseConfirmed, setPurchaseConfirmed] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setPurchaseConfirmed(params.get("purchase") === "success");
+
     async function fetchTickets() {
       try {
         const res = await fetch("/api/account/tickets/holding", { cache: "no-store" });
@@ -715,6 +719,24 @@ function Body() {
 
   return (
     <div>
+      {purchaseConfirmed ? (
+        <div
+          role="status"
+          style={{
+            marginBottom: 16,
+            padding: 16,
+            borderRadius: 12,
+            border: "1px solid rgba(34, 197, 94, 0.35)",
+            background: "rgba(240, 253, 244, 1)",
+            color: "rgba(22, 101, 52, 1)",
+          }}
+        >
+          <div style={{ fontWeight: 900 }}>Purchase complete</div>
+          <div style={{ marginTop: 4 }}>
+            Your tickets are now in Holding while the seller completes the transfer. Your payment remains protected.
+          </div>
+        </div>
+      ) : null}
       <p style={{ marginBottom: 16, opacity: 0.8 }}>
         {tickets.length} ticket{tickets.length !== 1 ? "s" : ""} pending transfer or final completion.
       </p>
