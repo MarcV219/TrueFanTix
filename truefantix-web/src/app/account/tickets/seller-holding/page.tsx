@@ -69,6 +69,7 @@ function formatDate(value: string | null) {
 
 function statusLabel(order: SellerHoldingOrder) {
   if (order.buyerConfirmationStatus === "DISPUTED") return "Dispute opened — payout paused";
+  if (order.transferVerificationStatus === "MANUAL_REVIEW") return "Human review requested";
   if (!order.transferProofType) return "Transfer required";
   if (order.buyerConfirmationStatus === "CONFIRMED") return "Buyer confirmed";
   if (order.buyerConfirmationStatus === "AUTO_CONFIRMED") return "Auto-confirmed after 24 hours";
@@ -93,6 +94,8 @@ function OrderCard({
   const [proofImage, setProofImage] = useState<string | null>(null);
   const [proofFileName, setProofFileName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [canRequestHumanReview, setCanRequestHumanReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const transferSubmitted = !!order.transferProofType;
@@ -101,6 +104,7 @@ function OrderCard({
     const file = event.target.files?.[0];
     setError(null);
     setOk(null);
+    setCanRequestHumanReview(false);
     setProofImage(null);
     setProofFileName(null);
 
@@ -154,6 +158,7 @@ function OrderCard({
       });
       const data = await res.json();
       if (!res.ok || !data?.ok) {
+        setCanRequestHumanReview(data?.error === "TRANSFER_PROOF_MISMATCH");
         throw new Error(data?.message || data?.error || "Could not confirm transfer.");
       }
       setOk("Transfer proof checked and accepted. The buyer has been notified and has 24 hours to confirm receipt.");
@@ -165,6 +170,43 @@ function OrderCard({
       setError(err.message || "Could not confirm transfer.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function requestHumanReview() {
+    if (!proofImage) {
+      setError("Upload the documentation you want TrueFanTix Support to review.");
+      return;
+    }
+
+    setReviewBusy(true);
+    setError(null);
+    setOk(null);
+    try {
+      const res = await apiFetch("/api/orders/transfer-proof/human-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: order.id,
+          transferProofType: proofType,
+          transferProofData: proofData,
+          transferProofImage: proofImage,
+          transferProofFileName: proofFileName,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || data?.error || "Could not request human review.");
+      }
+      setCanRequestHumanReview(false);
+      setOk(data?.alreadyRequested
+        ? "Human review has already been requested. This order is in the Admin Queue."
+        : "Human review requested. Support has been emailed and this order is now in the Admin Queue.");
+      onSubmitted();
+    } catch (err: any) {
+      setError(err.message || "Could not request human review.");
+    } finally {
+      setReviewBusy(false);
     }
   }
 
@@ -286,7 +328,16 @@ function OrderCard({
               </span>
             ) : null}
           </label>
-          {error ? <div role="alert" style={errorStyle}>{error}</div> : null}
+          {error ? (
+            <div role="alert" style={errorStyle}>
+              <div>{error}</div>
+              {canRequestHumanReview ? (
+                <div style={{ marginTop: 8 }}>
+                  Upload clearer or additional supporting documentation and try again. If you believe the current documentation is correct and complete, request a human review below.
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {ok ? <div role="status" style={okStyle}>{ok}</div> : null}
           <button
             type="submit"
@@ -299,10 +350,32 @@ function OrderCard({
           >
             {busy ? "Checking proof..." : "I transferred the tickets - check and submit proof"}
           </button>
+          {canRequestHumanReview ? (
+            <button
+              type="button"
+              onClick={requestHumanReview}
+              disabled={reviewBusy || busy}
+              style={{
+                ...buttonStyle,
+                background: "rgba(180, 83, 9, 1)",
+                ...((reviewBusy || busy) ? disabledButtonStyle : {}),
+              }}
+            >
+              {reviewBusy ? "Requesting human review..." : "Request Human Review"}
+            </button>
+          ) : null}
         </form>
       ) : (
-        <div style={{ marginTop: 16, padding: 12, borderRadius: 10, background: "rgba(240, 253, 244, 1)", color: "rgba(22, 101, 52, 1)" }}>
-          Transfer confirmed by seller. Buyer confirmation is now pending.
+        <div style={{
+          marginTop: 16,
+          padding: 12,
+          borderRadius: 10,
+          background: order.transferVerificationStatus === "MANUAL_REVIEW" ? "rgba(255, 247, 237, 1)" : "rgba(240, 253, 244, 1)",
+          color: order.transferVerificationStatus === "MANUAL_REVIEW" ? "rgba(154, 52, 18, 1)" : "rgba(22, 101, 52, 1)",
+        }}>
+          {order.transferVerificationStatus === "MANUAL_REVIEW"
+            ? "Human review requested. Your documentation is in the Admin Queue and Support has been notified."
+            : "Transfer confirmed by seller. Buyer confirmation is now pending."}
         </div>
       )}
       {order.buyerConfirmationStatus === "DISPUTED" ? (

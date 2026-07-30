@@ -28,6 +28,7 @@ export async function GET(req: Request) {
     suspendedSellers,
     openEscrows,
     disputedOrders,
+    transferProofReviews,
     expiredReservations,
     pendingOrders,
     paidOrders,
@@ -60,6 +61,7 @@ export async function GET(req: Request) {
     prisma.seller.count({ where: { status: "SUSPENDED" } }),
     prisma.ticketEscrow.count({ where: { state: "IN_ESCROW" } }),
     prisma.order.count({ where: { buyerConfirmationStatus: "DISPUTED" } }),
+    prisma.order.count({ where: { transferVerificationStatus: "MANUAL_REVIEW" } }),
     prisma.ticket.count({
       where: {
         status: "RESERVED",
@@ -148,6 +150,7 @@ export async function GET(req: Request) {
       suspendedSellers,
       openEscrows,
       disputedOrders,
+      transferProofReviews,
       expiredReservations,
       pendingOrders,
       paidOrders,

@@ -36,6 +36,7 @@ function parseTransferProofData(value: unknown) {
       proofUpload?: string | null;
       review?: unknown;
       reviewedAt?: string;
+      manualReviewRequestedAt?: string;
     };
     if (!parsed || typeof parsed !== "object") return null;
     return parsed;
@@ -494,6 +495,9 @@ export default function AdminOrderDetailPage() {
                       <div><strong>File:</strong> {transferProof.fileName || "-"}</div>
                       <div><strong>Seller note:</strong> {transferProof.sellerNote || "-"}</div>
                       <div><strong>Reviewed:</strong> {transferProof.reviewedAt ? new Date(transferProof.reviewedAt).toLocaleString() : "-"}</div>
+                      {transferProof.manualReviewRequestedAt ? (
+                        <div><strong>Human review requested:</strong> {new Date(transferProof.manualReviewRequestedAt).toLocaleString()}</div>
+                      ) : null}
                     </div>
                   </div>
                   {isImageProof ? (

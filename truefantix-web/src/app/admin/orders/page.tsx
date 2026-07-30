@@ -102,6 +102,9 @@ function AdminOrdersContent() {
         <Link href="/admin/orders?status=RESOLVED_DISPUTES" style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid rgba(22,101,52,.28)", background: "rgba(240,253,244,1)", color: "inherit", textDecoration: "none", fontWeight: 900 }}>
           Disputes resolved
         </Link>
+        <Link href="/admin/orders?status=HUMAN_REVIEW" style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid rgba(180,83,9,.28)", background: "rgba(255,247,237,1)", color: "inherit", textDecoration: "none", fontWeight: 900 }}>
+          Transfer proof reviews
+        </Link>
       </div>
 
       <form
@@ -125,6 +128,7 @@ function AdminOrdersContent() {
           <option value="">All statuses</option>
           <option value="DISPUTED">OPEN DISPUTES</option>
           <option value="RESOLVED_DISPUTES">DISPUTES RESOLVED</option>
+          <option value="HUMAN_REVIEW">TRANSFER PROOF HUMAN REVIEW</option>
           {["PENDING", "PAID", "DELIVERED", "COMPLETED", "CANCELLED", "REFUNDED", "FAILED"].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <button style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.14)", background: "white", fontWeight: 800 }}>
@@ -146,6 +150,10 @@ function AdminOrdersContent() {
                 {order.buyerConfirmationStatus === "DISPUTED" ? (
                   <div style={{ display: "inline-block", marginTop: 6, padding: "4px 8px", borderRadius: 999, background: "rgba(254,226,226,1)", color: "rgba(153,27,27,1)", fontSize: 12, fontWeight: 900 }}>
                     Dispute open
+                  </div>
+                ) : order.transferVerificationStatus === "MANUAL_REVIEW" ? (
+                  <div style={{ display: "inline-block", marginTop: 6, padding: "4px 8px", borderRadius: 999, background: "rgba(255,237,213,1)", color: "rgba(154,52,18,1)", fontSize: 12, fontWeight: 900 }}>
+                    Transfer proof — human review requested
                   </div>
                 ) : order.transferVerificationReason?.includes?.("BUYER_DISPUTE") ? (
                   <div style={{ display: "inline-block", marginTop: 6, padding: "4px 8px", borderRadius: 999, background: "rgba(220,252,231,1)", color: "rgba(22,101,52,1)", fontSize: 12, fontWeight: 900 }}>

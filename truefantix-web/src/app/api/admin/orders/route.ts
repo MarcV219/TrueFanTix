@@ -20,6 +20,8 @@ export async function GET(req: Request) {
   const where: any = {};
   if (status === "DISPUTED") {
     where.buyerConfirmationStatus = "DISPUTED";
+  } else if (status === "HUMAN_REVIEW") {
+    where.transferVerificationStatus = "MANUAL_REVIEW";
   } else if (status === "RESOLVED_DISPUTES") {
     where.buyerConfirmationStatus = { not: "DISPUTED" };
     where.transferVerificationReason = { contains: "\"type\":\"BUYER_DISPUTE\"" };
