@@ -452,3 +452,78 @@ The TrueFanTix Team`;
 
   return { subject, text, html };
 }
+
+export function generateSellerTransferReminderEmail(
+  orderId: string,
+  firstName: string | null,
+  ticketCount: number,
+  deadline: Date
+) {
+  const overdue = deadline.getTime() <= Date.now();
+  const ticketWord = ticketCount === 1 ? "ticket" : "tickets";
+  const deadlineText = new Intl.DateTimeFormat("en-CA", {
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(deadline);
+  const holdingUrl = `${process.env.NEXT_PUBLIC_APP_URL || "https://truefantix-web.vercel.app"}/account/tickets/seller-holding`;
+  const subject = overdue
+    ? "Action overdue: confirm your ticket transfer"
+    : "Reminder: transfer and confirm your sold tickets";
+
+  const text = `Hi ${firstName || "there"},
+
+${overdue ? "Your 24-hour transfer deadline has passed." : "Your sold tickets are still awaiting transfer confirmation."}
+
+Order ID: ${orderId}
+Tickets: ${ticketCount} ${ticketWord}
+Transfer deadline: ${deadlineText}
+
+Transfer the tickets through the original ticket provider, then upload your transfer proof and confirm the transfer in Seller Holding:
+
+${holdingUrl}
+
+The buyer's payment remains protected while the transfer is incomplete. You will continue receiving reminders every 6 hours until you confirm the transfer.
+
+Thanks,
+The TrueFanTix Team`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: ${overdue ? "#b91c1c" : "#064a93"}; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
+    .details { background: white; padding: 18px; border-radius: 8px; margin: 20px 0; }
+    .button { display: inline-block; background: #064a93; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
+    .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header"><h1>${overdue ? "Transfer overdue" : "Transfer reminder"}</h1></div>
+    <div class="content">
+      <p>Hi ${firstName || "there"},</p>
+      <p>${overdue ? "Your 24-hour transfer deadline has passed." : "Your sold tickets are still awaiting transfer confirmation."}</p>
+      <div class="details">
+        <p><strong>Order ID:</strong> ${orderId}</p>
+        <p><strong>Tickets:</strong> ${ticketCount} ${ticketWord}</p>
+        <p><strong>Transfer deadline:</strong> ${deadlineText}</p>
+      </div>
+      <p>Transfer the tickets through the original ticket provider, then upload your transfer proof and confirm the transfer in Seller Holding.</p>
+      <div style="text-align: center;"><a href="${holdingUrl}" class="button">Open Seller Holding</a></div>
+      <p>The buyer's payment remains protected while the transfer is incomplete. You will continue receiving reminders every 6 hours until you confirm the transfer.</p>
+      <p>Thanks,<br>The TrueFanTix Team</p>
+    </div>
+    <div class="footer"><p>This is an automated message from TrueFanTix. Please do not reply to this email.</p></div>
+  </div>
+</body>
+</html>`;
+
+  return { subject, text, html };
+}

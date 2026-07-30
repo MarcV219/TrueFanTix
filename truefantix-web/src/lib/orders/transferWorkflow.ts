@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import { generateBuyerTransferConfirmationRequiredEmail, sendEmail } from "@/lib/email";
+import {
+  generateBuyerTransferConfirmationRequiredEmail,
+  generateSellerTransferReminderEmail,
+  sendEmail,
+} from "@/lib/email";
 import { createNotification, createNotificationOncePerWindow } from "@/lib/notifications/service";
 
 export const SELLER_TRANSFER_DEADLINE_HOURS = 24;
@@ -37,6 +41,7 @@ export async function notifySellerTransferRequired(params: {
   orderId: string;
   ticketCount: number;
   deadline: Date;
+  sendEmail?: boolean;
   now?: Date;
 }) {
   const overdue = params.deadline.getTime() <= (params.now ?? new Date()).getTime();
@@ -45,13 +50,35 @@ export async function notifySellerTransferRequired(params: {
     ? `Transfer ${params.ticketCount} sold ${ticketWord} now. The 24-hour transfer deadline passed at ${formatDeadline(params.deadline)}.`
     : `Transfer ${params.ticketCount} sold ${ticketWord} to the buyer by ${formatDeadline(params.deadline)}. Payment stays protected until transfer is confirmed.`;
 
-  return createNotificationOncePerWindow({
+  const notification = await createNotificationOncePerWindow({
     userId: params.sellerUserId,
     type: "TRANSFER_REQUIRED",
     message,
     link: "/account/tickets/seller-holding",
     windowStart: reminderWindowStart(params.now),
   });
+
+  if (params.sendEmail && notification.ok && !("skipped" in notification)) {
+    const seller = await prisma.user.findUnique({
+      where: { id: params.sellerUserId },
+      select: { email: true, firstName: true },
+    });
+
+    if (seller?.email) {
+      const email = generateSellerTransferReminderEmail(
+        params.orderId,
+        seller.firstName,
+        params.ticketCount,
+        params.deadline
+      );
+      const result = await sendEmail({ to: seller.email, ...email });
+      if (!result.ok) {
+        console.error("[EMAIL] Seller transfer reminder email failed:", result.error);
+      }
+    }
+  }
+
+  return notification;
 }
 
 export async function notifyBuyerTransferConfirmationRequired(params: {
@@ -261,6 +288,7 @@ export async function runTransferReminderWorkflow(now = new Date()) {
       orderId: order.id,
       ticketCount: order.items.length,
       deadline: sellerTransferDeadline(order),
+      sendEmail: true,
       now,
     });
     if (result.ok && !("skipped" in result)) sellerReminders += 1;
