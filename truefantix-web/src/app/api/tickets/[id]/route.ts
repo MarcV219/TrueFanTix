@@ -8,6 +8,7 @@ import { getTicketImage } from "@/lib/imageSearch";
 import { getEventType } from "@/lib/ticketsView";
 import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
 import { analyzeReceiptProof, type ReceiptOcrReview } from "@/lib/tickets/receiptOcr";
+import { pastEventListingMessage } from "@/lib/tickets/expiry";
 
 function normalizeId(value: unknown) {
   try {
@@ -291,6 +292,8 @@ export async function PATCH(req: Request) {
     if (title.length < 1 || title.length > 120) return badRequest("Title is required.");
     if (venue.length < 1 || venue.length > 200) return badRequest("Venue is required.");
     if (date.length < 1 || date.length > 100) return badRequest("Date is required.");
+    const pastEventMessage = pastEventListingMessage({ date, venue }, now);
+    if (pastEventMessage) return badRequest(pastEventMessage);
     if (section && section.length > 80) return badRequest("Section must be 80 characters or less.");
     if (row && row.length > 80) return badRequest("Row must be 80 characters or less.");
     if (seat && seat.length > 80) return badRequest("Seat must be 80 characters or less.");

@@ -15,6 +15,7 @@ import { fetchOfficialSnapshot } from "@/lib/officialPricing";
 import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
 import { analyzeReceiptProof } from "@/lib/tickets/receiptOcr";
 import { withdrawExpiredAvailableTickets } from "@/lib/tickets/expireListings";
+import { pastEventListingMessage } from "@/lib/tickets/expiry";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -709,6 +710,11 @@ export async function POST(req: Request) {
   ]);
   if (!eventTypeOverride || !allowed.has(eventTypeOverride)) {
     return badRequest("Choose a valid ticket category.");
+  }
+
+  const pastEventMessage = pastEventListingMessage({ date, venue });
+  if (pastEventMessage) {
+    return badRequest(pastEventMessage);
   }
 
   const seatingParts = [section, row, seat].filter(Boolean);

@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import AccountGate, { MeUser } from "@/app/account/_components/accountgate";
 import { fetchJson } from "@/lib/api-fetch";
+import { pastEventListingMessage } from "@/lib/tickets/expiry";
 
 type CreateTicketBody = {
   title: string;
@@ -286,6 +287,13 @@ function formatEventDateTime(datePart: string, hour: string, minute: string, per
 
   if (!cleanDate || !cleanHour || !cleanMinute || !cleanPeriod) return "";
   return `${cleanDate} ${Number(cleanHour)}:${cleanMinute.padStart(2, "0")} ${cleanPeriod}`;
+}
+
+function localDateInputValue(now = new Date()) {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function parseListingDateTimeToPicker(v: string): string {
@@ -1539,6 +1547,8 @@ function Body({ me }: { me: MeUser }) {
       }
     }
     if (!d) return setError("Date is required.");
+    const pastEventMessage = pastEventListingMessage({ date: d, venue: v });
+    if (pastEventMessage) return setError(pastEventMessage);
 
     const priceCents = parseDollarsToCents(price);
     if (priceCents == null) return setError("List price must be a number greater than 0.");
@@ -2300,15 +2310,36 @@ function Body({ me }: { me: MeUser }) {
                 <input
                   type="date"
                   value={date}
+                  min={localDateInputValue()}
                   onChange={(e) => {
                     setDate(e.target.value);
                     clearSourceIssuesFor(["date"]);
+                    setError(null);
                   }}
                   disabled={busy}
                   style={inputStyle(fDate)}
                   onFocus={() => setFDate(true)}
                   onBlur={() => setFDate(false)}
                 />
+                {pastEventListingMessage({
+                  date: formatEventDateTime(date, eventHour, eventMinute, eventPeriod),
+                  venue,
+                }) ? (
+                  <div
+                    role="alert"
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid rgba(220, 38, 38, 0.35)",
+                      background: "rgba(254, 242, 242, 1)",
+                      color: "rgba(153, 27, 27, 1)",
+                      fontSize: 13,
+                      fontWeight: 850,
+                    }}
+                  >
+                    This event has already started or passed. Choose an upcoming event date and time.
+                  </div>
+                ) : null}
               </label>
 
               <div

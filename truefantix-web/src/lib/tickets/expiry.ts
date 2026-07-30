@@ -106,3 +106,12 @@ export function isTicketEventExpired(
   if (event.ymd > current.ymd) return false;
   return event.minuteOfDay <= current.minuteOfDay;
 }
+
+export function pastEventListingMessage(
+  ticket: { date?: string | null; venue?: string | null; city?: string | null; province?: string | null; country?: string | null },
+  now = new Date()
+) {
+  return isTicketEventExpired(ticket, now)
+    ? "This event has already started or passed. Tickets can only be listed for upcoming events."
+    : null;
+}
