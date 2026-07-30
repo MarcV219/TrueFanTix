@@ -321,6 +321,8 @@ export default function TicketsPage() {
   const [homeCoords, setHomeCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [searchSuggestions, setSearchSuggestions] = useState<CatalogSuggestion[]>([]);
   const [searchSuggestionCoords, setSearchSuggestionCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [selectedSearchSuggestion, setSelectedSearchSuggestion] = useState<CatalogSuggestion | null>(null);
+  const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
 
   useEffect(() => {
     async function fetchTickets() {
@@ -519,7 +521,14 @@ export default function TicketsPage() {
     setTickets(updatedTickets);
   }
 
-  const searchCenter = React.useMemo(() => searchSuggestionCoords ?? inferCoordsFromCity(searchQuery), [searchQuery, searchSuggestionCoords]);
+  const selectedSuggestionCoords = React.useMemo(() => {
+    if (!selectedSearchSuggestion || !["CITY", "VENUE"].includes(selectedSearchSuggestion.type)) return null;
+    return parseSuggestionCoords(selectedSearchSuggestion);
+  }, [selectedSearchSuggestion]);
+  const searchCenter = React.useMemo(
+    () => selectedSuggestionCoords ?? searchSuggestionCoords ?? inferCoordsFromCity(searchQuery),
+    [searchQuery, searchSuggestionCoords, selectedSuggestionCoords]
+  );
   const distanceCenter = searchCenter ?? homeCoords;
   const radiusKm = React.useMemo(() => {
     const value = Number(radiusValue);
@@ -768,6 +777,8 @@ export default function TicketsPage() {
 
   const clearFilters = () => {
     setSearchQuery("");
+    setSelectedSearchSuggestion(null);
+    setShowSearchSuggestions(false);
     setPriceRange("all");
     setEventType("all");
     setPriceTagFilter("all");
@@ -815,23 +826,63 @@ export default function TicketsPage() {
       <section className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 py-6">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex flex-col lg:flex-row gap-4">
-            <input
-              type="text"
-              placeholder="Search events, venues, artists, towns, cities..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              list="browse-ticket-search-suggestions"
-              className="flex-1 px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-            />
-            <datalist id="browse-ticket-search-suggestions">
-              {searchSuggestions.map((suggestion) => (
-                <option
-                  key={`${suggestion.type}:${suggestion.label}:${suggestion.subtitle || ""}`}
-                  value={suggestion.label}
-                  label={`${suggestion.type}${suggestion.subtitle ? ` - ${suggestion.subtitle}` : ""}`}
-                />
-              ))}
-            </datalist>
+            <div className="relative flex-1">
+              <input
+                type="text"
+                placeholder="Search events, venues, artists, teams, shows, towns or cities..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setSelectedSearchSuggestion(null);
+                  setShowSearchSuggestions(true);
+                }}
+                onFocus={() => setShowSearchSuggestions(true)}
+                onBlur={() => window.setTimeout(() => setShowSearchSuggestions(false), 150)}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={showSearchSuggestions && searchSuggestions.length > 0}
+                aria-controls="browse-ticket-search-suggestions"
+                className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              />
+              {showSearchSuggestions && searchSuggestions.length > 0 ? (
+                <div
+                  id="browse-ticket-search-suggestions"
+                  role="listbox"
+                  className="absolute z-30 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
+                >
+                  {searchSuggestions.map((suggestion) => (
+                    <button
+                      type="button"
+                      role="option"
+                      key={`${suggestion.type}:${suggestion.label}:${suggestion.subtitle || ""}`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setSearchQuery(suggestion.label);
+                        setSelectedSearchSuggestion(suggestion);
+                        setShowSearchSuggestions(false);
+                      }}
+                      className="flex w-full items-start gap-3 border-b border-gray-100 px-4 py-3 text-left last:border-b-0 hover:bg-blue-50 dark:border-gray-700 dark:hover:bg-gray-700"
+                    >
+                      <span className="mt-0.5 rounded bg-blue-100 px-2 py-0.5 text-xs font-bold text-[#064a93] dark:bg-blue-900 dark:text-blue-100">
+                        {suggestion.type === "CITY" ? "LOCATION" : suggestion.type}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-gray-900 dark:text-white">{suggestion.label}</span>
+                        {suggestion.subtitle ? (
+                          <span className="block truncate text-sm text-gray-600 dark:text-gray-300">{suggestion.subtitle}</span>
+                        ) : null}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {selectedSearchSuggestion ? (
+                <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                  Selected {selectedSearchSuggestion.type.toLowerCase()}: {selectedSearchSuggestion.label}
+                  {selectedSearchSuggestion.subtitle ? ` — ${selectedSearchSuggestion.subtitle}` : ""}
+                </p>
+              ) : null}
+            </div>
 
             <div className="flex items-end gap-2">
               <div>

@@ -35,6 +35,34 @@ describe("tickets view", () => {
     expect(isTicketWithinRadius(card, { lat: 39.9612, lon: -82.9988 }, 5)).toBe(true);
   });
 
+  it("rejects placeholder zero coordinates and falls back to the ticket city", () => {
+    const barrie = inferCoordsFromCity("Barrie");
+    const scarborough = inferCoordsFromCity("Scarborough");
+
+    expect(barrie).toEqual(expect.any(Object));
+    expect(scarborough).toEqual(expect.any(Object));
+    expect(
+      inferTicketCoords({
+        city: "Scarborough",
+        venue: "Toronto Pan Am Sports Centre",
+        latitude: 0,
+        longitude: 0,
+      })
+    ).toEqual(scarborough);
+    expect(
+      isTicketWithinRadius(
+        {
+          city: "Scarborough",
+          venue: "Toronto Pan Am Sports Centre",
+          latitude: 0,
+          longitude: 0,
+        },
+        barrie!,
+        1000
+      )
+    ).toBe(true);
+  });
+
   it("prefers catalog venue location over venue-name fallback", () => {
     const card = mapApiTicketToCard({
       id: "ticket-1",

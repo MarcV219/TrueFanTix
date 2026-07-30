@@ -282,6 +282,7 @@ export function venueInfoFromLocation(
 const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
   toronto: { lat: 43.6532, lon: -79.3832 },
   barrie: { lat: 44.3894, lon: -79.6903 },
+  scarborough: { lat: 43.7764, lon: -79.2318 },
   portcarling: { lat: 45.1177, lon: -79.5787 },
   hamilton: { lat: 43.2557, lon: -79.8711 },
   mississauga: { lat: 43.589, lon: -79.6441 },
@@ -361,13 +362,21 @@ export function haversineKm(a: { lat: number; lon: number }, b: { lat: number; l
 export function inferTicketCoords(
   ticket: Pick<TicketCardView, "city" | "venue"> & Partial<Pick<TicketCardView, "latitude" | "longitude">>
 ): { lat: number; lon: number } | null {
-  if (
+  const hasValidProviderCoords =
     typeof ticket.latitude === "number" &&
     Number.isFinite(ticket.latitude) &&
+    ticket.latitude >= -90 &&
+    ticket.latitude <= 90 &&
     typeof ticket.longitude === "number" &&
-    Number.isFinite(ticket.longitude)
+    Number.isFinite(ticket.longitude) &&
+    ticket.longitude >= -180 &&
+    ticket.longitude <= 180 &&
+    !(ticket.latitude === 0 && ticket.longitude === 0);
+
+  if (
+    hasValidProviderCoords
   ) {
-    return { lat: ticket.latitude, lon: ticket.longitude };
+    return { lat: ticket.latitude!, lon: ticket.longitude! };
   }
   return inferCoordsFromCity(ticket.city) ?? inferCityCoordsFromVenue(ticket.venue);
 }
