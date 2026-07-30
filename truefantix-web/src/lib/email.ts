@@ -306,9 +306,11 @@ export function generateBuyerTransferConfirmationRequiredEmail(
     minute: "2-digit",
     timeZoneName: "short",
   }).format(deadline);
-  const subject = "Action Required: Confirm Your Ticket Transfer";
+  const subject = "ACTION REQUIRED: Confirm or Dispute Your Ticket Transfer";
 
-  const text = `Hi ${firstName || "there"},
+  const text = `ACTION REQUIRED
+
+Hi ${firstName || "there"},
 
 The seller has confirmed that ${ticketCount} ${ticketWord} for order ${orderId} ${ticketCount === 1 ? "has" : "have"} been transferred to you.
 
@@ -340,10 +342,15 @@ The TrueFanTix Team`;
 <body>
   <div class="container">
     <div class="header">
-      <h1>Transfer Confirmation Required</h1>
+      <p style="margin: 0 0 6px; font-size: 14px; font-weight: bold; letter-spacing: 1.5px;">ACTION REQUIRED</p>
+      <h1 style="margin: 0;">Confirm Your Ticket Transfer</h1>
     </div>
     <div class="content">
       <p>Hi ${firstName || "there"},</p>
+      <div style="background: #fff7ed; border: 2px solid #f97316; color: #9a3412; padding: 18px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: bold;">You need to respond by ${deadlineText}</p>
+        <p style="margin: 6px 0 0;">Confirm that you received the tickets, or open a dispute if you did not.</p>
+      </div>
       <div class="notice">
         <p>The seller has confirmed that <strong>${ticketCount} ${ticketWord}</strong> for order <strong>${orderId}</strong> ${ticketCount === 1 ? "has" : "have"} been transferred to you.</p>
       </div>
@@ -373,11 +380,13 @@ export function generateSaleNotificationEmail(
   ticketTitle: string,
   amount: string
 ) {
-  const subject = "Your Ticket Sold on TrueFanTix!";
+  const subject = "ACTION REQUIRED: Ticket Sold — Transfer It Within 24 Hours";
   
-  const text = `Hi ${firstName || "there"},
+  const text = `ACTION REQUIRED
 
-Great news! Your ticket has been sold.
+Hi ${firstName || "there"},
+
+Your ticket sold. You must transfer it to the buyer, upload proof, and confirm the transfer within 24 hours.
 
 Order ID: ${orderId}
 Ticket: ${ticketTitle}
@@ -401,7 +410,7 @@ The TrueFanTix Team`;
   <style>
     body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: #22c55e; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .header { background: #c2410c; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
     .sale-info { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
     .process { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 18px; border-radius: 8px; margin: 20px 0; }
@@ -413,11 +422,17 @@ The TrueFanTix Team`;
 <body>
   <div class="container">
     <div class="header">
-      <h1>🎉 Ticket Sold!</h1>
+      <p style="margin: 0 0 6px; font-size: 14px; font-weight: bold; letter-spacing: 1.5px;">ACTION REQUIRED</p>
+      <h1 style="margin: 0;">Transfer Your Sold Ticket</h1>
     </div>
     <div class="content">
       <p>Hi ${firstName || "there"},</p>
       <p>Great news! Your ticket has been sold on TrueFanTix.</p>
+
+      <div style="background: #fff7ed; border: 2px solid #f97316; color: #9a3412; padding: 18px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0; font-size: 20px; font-weight: bold;">Transfer required within 24 hours</p>
+        <p style="margin: 6px 0 0;">Transfer the ticket to the buyer, upload proof, and confirm the transfer in Seller Holding.</p>
+      </div>
       
       <div class="sale-info">
         <p><strong>Order ID:</strong> ${orderId}</p>
@@ -438,7 +453,7 @@ The TrueFanTix Team`;
       </div>
 
       <div style="text-align: center;">
-        <a href="${process.env.NEXT_PUBLIC_APP_URL}/account/tickets/seller-holding" class="button">Open Seller Holding</a>
+        <a href="${process.env.NEXT_PUBLIC_APP_URL}/account/tickets/seller-holding" class="button">Transfer Tickets Now</a>
       </div>
       
       <p>Thanks,<br>The TrueFanTix Team</p>
@@ -470,10 +485,12 @@ export function generateSellerTransferReminderEmail(
   }).format(deadline);
   const holdingUrl = `${process.env.NEXT_PUBLIC_APP_URL || "https://truefantix-web.vercel.app"}/account/tickets/seller-holding`;
   const subject = overdue
-    ? "Action overdue: confirm your ticket transfer"
-    : "Reminder: transfer and confirm your sold tickets";
+    ? "ACTION OVERDUE: Transfer and Confirm Your Sold Tickets"
+    : "ACTION REQUIRED: Transfer and Confirm Your Sold Tickets";
 
-  const text = `Hi ${firstName || "there"},
+  const text = `${overdue ? "ACTION OVERDUE" : "ACTION REQUIRED"}
+
+Hi ${firstName || "there"},
 
 ${overdue ? "Your 24-hour transfer deadline has passed." : "Your sold tickets are still awaiting transfer confirmation."}
 
@@ -506,17 +523,23 @@ The TrueFanTix Team`;
 </head>
 <body>
   <div class="container">
-    <div class="header"><h1>${overdue ? "Transfer overdue" : "Transfer reminder"}</h1></div>
+    <div class="header">
+      <p style="margin: 0 0 6px; font-size: 14px; font-weight: bold; letter-spacing: 1.5px;">${overdue ? "ACTION OVERDUE" : "ACTION REQUIRED"}</p>
+      <h1 style="margin: 0;">Transfer Your Sold Tickets</h1>
+    </div>
     <div class="content">
       <p>Hi ${firstName || "there"},</p>
-      <p>${overdue ? "Your 24-hour transfer deadline has passed." : "Your sold tickets are still awaiting transfer confirmation."}</p>
+      <div style="background: ${overdue ? "#fef2f2" : "#fff7ed"}; border: 2px solid ${overdue ? "#dc2626" : "#f97316"}; color: ${overdue ? "#991b1b" : "#9a3412"}; padding: 18px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: bold;">${overdue ? "Your 24-hour deadline has passed" : "Your transfer is still waiting"}</p>
+        <p style="margin: 6px 0 0;">Transfer the tickets, upload proof, and confirm the transfer now.</p>
+      </div>
       <div class="details">
         <p><strong>Order ID:</strong> ${orderId}</p>
         <p><strong>Tickets:</strong> ${ticketCount} ${ticketWord}</p>
         <p><strong>Transfer deadline:</strong> ${deadlineText}</p>
       </div>
       <p>Transfer the tickets through the original ticket provider, then upload your transfer proof and confirm the transfer in Seller Holding.</p>
-      <div style="text-align: center;"><a href="${holdingUrl}" class="button">Open Seller Holding</a></div>
+      <div style="text-align: center;"><a href="${holdingUrl}" class="button">Transfer Tickets Now</a></div>
       <p>The buyer's payment remains protected while the transfer is incomplete. You will continue receiving reminders every 6 hours until you confirm the transfer.</p>
       <p>Thanks,<br>The TrueFanTix Team</p>
     </div>
