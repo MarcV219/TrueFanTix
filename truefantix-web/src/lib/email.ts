@@ -13,6 +13,12 @@ function cleanSecret(value: string | undefined) {
   return value?.trim().replace(/^['"]|['"]$/g, "");
 }
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character] || character
+  ));
+}
+
 function resendErrorMessage(status: number, body: string) {
   if (status === 401 || /api key is invalid/i.test(body)) {
     return "Email provider rejected the Resend API key. Update RESEND_API_KEY in Vercel.";
@@ -366,6 +372,71 @@ The TrueFanTix Team`;
     </div>
     <div class="footer">
       <p>This is an automated message from TrueFanTix. Please do not reply to this email.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  return { subject, text, html };
+}
+
+export function generateDisputeInformationRequestEmail({
+  orderId,
+  firstName,
+  requestMessage,
+  responseUrl,
+}: {
+  orderId: string;
+  firstName: string | null;
+  requestMessage: string;
+  responseUrl: string;
+}) {
+  const subject = `ACTION REQUIRED: More Information Needed for Dispute ${orderId}`;
+  const text = `ACTION REQUIRED
+
+Hi ${firstName || "there"},
+
+TrueFanTix Support needs more information from you for dispute ${orderId}.
+
+Request from Support:
+${requestMessage}
+
+Submit your comments and supporting documents:
+${responseUrl}
+
+Seller payout remains paused while this dispute is reviewed.
+
+TrueFanTix Support`;
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #c2410c; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
+    .button { display: inline-block; padding: 14px 24px; background: #064a93; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <p style="margin: 0 0 6px; font-size: 14px; font-weight: bold; letter-spacing: 1.5px;">ACTION REQUIRED</p>
+      <h1 style="margin: 0;">Support Needs More Information</h1>
+    </div>
+    <div class="content">
+      <p>Hi ${escapeHtml(firstName || "there")},</p>
+      <div style="background: #fff7ed; border: 2px solid #f97316; color: #9a3412; padding: 18px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0; font-size: 18px; font-weight: bold;">Your response is required</p>
+        <p style="margin: 6px 0 0;">TrueFanTix Support needs additional information or documents for dispute <strong>${escapeHtml(orderId)}</strong>.</p>
+      </div>
+      <p><strong>Request from Support:</strong></p>
+      <div style="white-space: pre-wrap; padding: 14px; background: white; border-left: 4px solid #064a93; border-radius: 8px; margin: 16px 0;">${escapeHtml(requestMessage)}</div>
+      <div style="text-align: center; margin: 24px 0;">
+        <a href="${escapeHtml(responseUrl)}" class="button">Respond and Upload Documents</a>
+      </div>
+      <p>Seller payout remains paused while this dispute is reviewed.</p>
+      <p>TrueFanTix Support</p>
     </div>
   </div>
 </body>

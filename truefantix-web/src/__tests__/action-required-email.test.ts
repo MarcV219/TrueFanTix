@@ -1,5 +1,6 @@
 import {
   generateBuyerTransferConfirmationRequiredEmail,
+  generateDisputeInformationRequestEmail,
   generateSaleNotificationEmail,
   generateSellerTransferReminderEmail,
 } from "@/lib/email";
@@ -36,5 +37,21 @@ describe("action-required email prominence", () => {
     expect(email.html).toContain("ACTION REQUIRED");
     expect(email.html).toContain("You need to respond by");
     expect(email.html).toContain("Confirm or Dispute Transfer");
+  });
+
+  it("makes Support information requests clearly action-required", () => {
+    const email = generateDisputeInformationRequestEmail({
+      orderId: "order-1",
+      firstName: "Pam",
+      requestMessage: "Please upload proof showing the transferred seats.",
+      responseUrl: "https://truefantix-web.vercel.app/account/tickets/holding",
+    });
+
+    expect(email.subject).toMatch(/^ACTION REQUIRED:/);
+    expect(email.text).toMatch(/^ACTION REQUIRED/);
+    expect(email.text).toContain("needs more information from you");
+    expect(email.html).toContain("ACTION REQUIRED");
+    expect(email.html).toContain("Your response is required");
+    expect(email.html).toContain("Respond and Upload Documents");
   });
 });

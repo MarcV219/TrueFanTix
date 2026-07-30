@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
-import { sendEmail } from "@/lib/email";
+import { generateDisputeInformationRequestEmail, sendEmail } from "@/lib/email";
 import { parseDisputeCase } from "@/lib/disputes";
 import { createNotification } from "@/lib/notifications/service";
 import { schemas, validateRequest } from "@/lib/validation";
@@ -17,12 +17,6 @@ function orderIdFromUrl(req: Request) {
 
 function appOrigin() {
   return (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN || "https://truefantix-web.vercel.app").replace(/\/$/, "");
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character] || character
-  ));
 }
 
 export async function POST(req: Request) {
@@ -84,28 +78,14 @@ export async function POST(req: Request) {
 
     const requestId = crypto.randomUUID();
     const requestedAt = new Date().toISOString();
-    const subject = `More information requested for TrueFanTix dispute ${order.id}`;
     const deliveries = await Promise.all(targets.map(async (target) => {
-      const text = `Hi ${target.firstName || (target.role === "BUYER" ? "Buyer" : "Seller")},
-
-TrueFanTix Support needs more information for dispute ${order.id}.
-
-Request from Admin:
-${message}
-
-Please use the link below to add comments and upload supporting documents:
-${target.link}
-
-Seller payout remains paused while this dispute is reviewed.
-
-TrueFanTix Support`;
-      const html = `<p>Hi ${escapeHtml(target.firstName || (target.role === "BUYER" ? "Buyer" : "Seller"))},</p>
-<p>TrueFanTix Support needs more information for dispute <strong>${escapeHtml(order.id)}</strong>.</p>
-<p><strong>Request from Admin:</strong></p>
-<div style="white-space:pre-wrap;padding:12px;background:#f8fafc;border-radius:8px">${escapeHtml(message)}</div>
-<p><a href="${target.link}" style="display:inline-block;padding:12px 18px;background:#064a93;color:white;text-decoration:none;border-radius:8px;font-weight:bold">Submit comments or documents</a></p>
-<p>Seller payout remains paused while this dispute is reviewed.</p>`;
-      const result = await sendEmail({ to: target.email, subject, text, html });
+      const email = generateDisputeInformationRequestEmail({
+        orderId: order.id,
+        firstName: target.firstName || (target.role === "BUYER" ? "Buyer" : "Seller"),
+        requestMessage: message,
+        responseUrl: target.link,
+      });
+      const result = await sendEmail({ to: target.email, ...email });
       const status = result.ok ? "SENT" as const : "FAILED" as const;
       await prisma.emailDelivery.create({
         data: {
