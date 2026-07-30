@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { createNotification } from "@/lib/notifications/service";
+import { DISPUTE_SUPPORT_EMAIL, parseDisputeCase, sendDisputeEmails } from "@/lib/disputes";
 import { schemas, validateRequest } from "@/lib/validation";
 
 function normalizeId(value: unknown) {
@@ -157,16 +158,6 @@ export async function POST(req: Request) {
       });
     }
 
-    const auditContext = createAuditContext(req);
-    await auditLog({
-      action: "DISPUTE_RESOLVE",
-      userId: gate.user.id,
-      targetType: "Order",
-      targetId: order.id,
-      metadata: resolution,
-      ...auditContext,
-    });
-
     const message =
       action === "RELEASE_PAYOUT"
         ? `Admin resolved dispute for order ${order.id}: seller payout released to pending payout queue.`
@@ -174,8 +165,25 @@ export async function POST(req: Request) {
           ? `Admin resolved dispute for order ${order.id}: refund required. Payout remains paused.`
           : `Admin reviewed dispute for order ${order.id}: more review is required. Payout remains paused.`;
 
-    await Promise.all(
-      [order.seller.user?.id, order.buyerSeller.user?.id]
+    const dispute = parseDisputeCase(order.transferVerificationReason);
+    const disputedTicketDetails = order.items
+      .filter((item: any) => !dispute?.ticketIds?.length || dispute.ticketIds.includes(item.ticketId))
+      .map((item: any) => {
+        const location = [item.ticket.row ? `Row ${item.ticket.row}` : null, item.ticket.seat ? `Seat ${item.ticket.seat}` : null]
+          .filter(Boolean)
+          .join(", ");
+        return `${item.ticket.title} — ${item.ticket.venue} — ${item.ticket.date}${location ? ` — ${location}` : ""} (ticket ${item.ticketId})`;
+      });
+    const followUps: Promise<unknown>[] = [
+      auditLog({
+        action: "DISPUTE_RESOLVE",
+        userId: gate.user.id,
+        targetType: "Order",
+        targetId: order.id,
+        metadata: resolution,
+        ...createAuditContext(req),
+      }),
+      ...[order.seller.user?.id, order.buyerSeller.user?.id]
         .filter((userId): userId is string => Boolean(userId))
         .map((userId) =>
           createNotification({
@@ -184,8 +192,32 @@ export async function POST(req: Request) {
             message,
             link: userId === order.seller.user?.id ? "/account/tickets/seller-holding" : "/account/tickets/holding",
           })
-        )
-    );
+        ),
+    ];
+    if (action === "RELEASE_PAYOUT") {
+      followUps.push(
+        sendDisputeEmails({
+          orderId: order.id,
+          kind: "RESOLVED",
+          submittedBy: "TrueFanTix Support",
+          comments: note,
+          ticketCount: dispute?.ticketCount || dispute?.ticketIds?.length || order.items.length,
+          tickets: disputedTicketDetails,
+          fileNames: [],
+          parties: [
+            ...(order.buyerSeller.user?.email ? [{ email: order.buyerSeller.user.email, firstName: order.buyerSeller.user.firstName, role: "Buyer" as const }] : []),
+            ...(order.seller.user?.email ? [{ email: order.seller.user.email, firstName: order.seller.user.firstName, role: "Seller" as const }] : []),
+            { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
+          ],
+        })
+      );
+    }
+    const followUpResults = await Promise.allSettled(followUps);
+    followUpResults.forEach((result, index) => {
+      if (result.status === "rejected") {
+        console.error(`Dispute resolution follow-up ${index + 1} failed for order ${order.id}:`, result.reason);
+      }
+    });
 
     return NextResponse.json({ ok: true, order: updatedOrder, message }, { status: 200 });
   } catch (err) {

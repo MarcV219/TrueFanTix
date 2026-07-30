@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { createNotification } from "@/lib/notifications/service";
 import { DISPUTE_SUPPORT_EMAIL, parseDisputeCase, sendDisputeEmails } from "@/lib/disputes";
+import { canBuyerCancelDispute } from "@/lib/dispute-case";
 import { schemas, validateRequest } from "@/lib/validation";
 
 export async function POST(req: Request) {
@@ -32,7 +33,7 @@ export async function POST(req: Request) {
     if (order.buyerSellerId !== gate.user.sellerId) {
       return NextResponse.json({ ok: false, error: "FORBIDDEN", message: "Only this order’s buyer may cancel the dispute." }, { status: 403 });
     }
-    if (order.buyerConfirmationStatus !== "DISPUTED" || order.transferVerificationStatus !== "MANUAL_REVIEW") {
+    if (!canBuyerCancelDispute(order.buyerConfirmationStatus, order.transferVerificationStatus)) {
       return NextResponse.json({ ok: false, error: "INVALID_STATE", message: "This dispute is no longer open." }, { status: 409 });
     }
 
@@ -102,25 +103,7 @@ export async function POST(req: Request) {
       });
     });
 
-    await auditLog({
-      action: "DISPUTE_CANCEL",
-      userId: gate.user.id,
-      targetType: "Order",
-      targetId: order.id,
-      metadata: cancellation,
-      ...createAuditContext(req),
-    });
-
     const sellerUserId = order.seller.user?.id;
-    if (sellerUserId) {
-      await createNotification({
-        userId: sellerUserId,
-        type: "DISPUTE_OPENED",
-        message: `The buyer cancelled dispute ${order.id} and confirmed it was satisfactorily resolved. Seller payout is now pending.`,
-        link: "/account/tickets/seller-holding",
-      });
-    }
-
     const disputedTicketDetails = order.items
       .filter((item: any) => dispute.ticketIds?.includes(item.ticketId))
       .map((item: any) => {
@@ -129,19 +112,42 @@ export async function POST(req: Request) {
           .join(", ");
         return `${item.ticket.title} — ${item.ticket.venue} — ${item.ticket.date}${location ? ` — ${location}` : ""} (ticket ${item.ticketId})`;
       });
-    await sendDisputeEmails({
-      orderId: order.id,
-      kind: "CANCELLED",
-      submittedBy: "Buyer",
-      comments: "The buyer confirmed that the dispute was satisfactorily resolved.",
-      ticketCount: dispute.ticketCount || dispute.ticketIds?.length || 0,
-      tickets: disputedTicketDetails,
-      fileNames: [],
-      parties: [
-        ...(order.buyerSeller.user?.email ? [{ email: order.buyerSeller.user.email, firstName: order.buyerSeller.user.firstName, role: "Buyer" as const }] : []),
-        ...(order.seller.user?.email ? [{ email: order.seller.user.email, firstName: order.seller.user.firstName, role: "Seller" as const }] : []),
-        { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
-      ],
+    const sideEffects = await Promise.allSettled([
+      auditLog({
+        action: "DISPUTE_CANCEL",
+        userId: gate.user.id,
+        targetType: "Order",
+        targetId: order.id,
+        metadata: cancellation,
+        ...createAuditContext(req),
+      }),
+      sellerUserId
+        ? createNotification({
+            userId: sellerUserId,
+            type: "DISPUTE_OPENED",
+            message: `The buyer cancelled dispute ${order.id} and confirmed it was satisfactorily resolved. Seller payout is now pending.`,
+            link: "/account/tickets/seller-holding",
+          })
+        : Promise.resolve(),
+      sendDisputeEmails({
+        orderId: order.id,
+        kind: "CANCELLED",
+        submittedBy: "Buyer",
+        comments: "The buyer confirmed that the dispute was satisfactorily resolved.",
+        ticketCount: dispute.ticketCount || dispute.ticketIds?.length || 0,
+        tickets: disputedTicketDetails,
+        fileNames: [],
+        parties: [
+          ...(order.buyerSeller.user?.email ? [{ email: order.buyerSeller.user.email, firstName: order.buyerSeller.user.firstName, role: "Buyer" as const }] : []),
+          ...(order.seller.user?.email ? [{ email: order.seller.user.email, firstName: order.seller.user.firstName, role: "Seller" as const }] : []),
+          { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
+        ],
+      }),
+    ]);
+    sideEffects.forEach((result, index) => {
+      if (result.status === "rejected") {
+        console.error(`Dispute cancellation follow-up ${index + 1} failed for order ${order.id}:`, result.reason);
+      }
     });
 
     return NextResponse.json({

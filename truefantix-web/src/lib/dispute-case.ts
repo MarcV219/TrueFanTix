@@ -47,6 +47,16 @@ export function parseDisputeCase(value: string | null): DisputeCase | null {
   }
 }
 
+export function canBuyerCancelDispute(
+  buyerConfirmationStatus: string | null,
+  transferVerificationStatus: string | null
+) {
+  return (
+    buyerConfirmationStatus === "DISPUTED" &&
+    (transferVerificationStatus === "MANUAL_REVIEW" || transferVerificationStatus === "REFUND_REQUIRED")
+  );
+}
+
 export type VisibleAdminRequest = {
   id: string;
   requestedAt: string;
