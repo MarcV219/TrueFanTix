@@ -343,6 +343,7 @@ export async function runTransferReminderWorkflow(now = new Date()) {
       orderId: order.id,
       ticketCount: order.items.length,
       deadline: order.disputeWindowEndsAt,
+      sendEmail: true,
       now,
     });
     if (result.ok && !("skipped" in result)) buyerReminders += 1;
