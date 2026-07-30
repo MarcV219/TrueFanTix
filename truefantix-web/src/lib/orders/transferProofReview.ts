@@ -165,10 +165,27 @@ function titleMatches(visibleTitle: string | null, expectedTitles: string[]) {
 
 function venueMatches(visibleVenue: string | null, expectedVenue?: string | null) {
   if (!visibleVenue || !expectedVenue) return true;
-  return overlapScore(visibleVenue, expectedVenue) >= 0.5;
+  const genericVenueWords = new Set([
+    "arena", "center", "centre", "complex", "event", "events", "hall",
+    "park", "pavilion", "stadium", "theater", "theatre", "venue",
+  ]);
+  const meaningfulWords = (value: string) => Array.from(words(value))
+    .map((word) => word === "centre" ? "center" : word)
+    .filter((word) => !genericVenueWords.has(word));
+  const visibleWords = new Set(meaningfulWords(visibleVenue));
+  const expectedWords = meaningfulWords(expectedVenue);
+
+  if (visibleWords.size && expectedWords.length) {
+    return expectedWords.some((word) => visibleWords.has(word));
+  }
+
+  const normalizedVisible = normalizeName(visibleVenue).replace(/\bcentre\b/g, "center");
+  const normalizedExpected = normalizeName(expectedVenue).replace(/\bcentre\b/g, "center");
+  return normalizedVisible === normalizedExpected;
 }
 
 type AssignedSeat = {
+  section: string | null;
   row: string;
   seat: string;
 };
@@ -179,10 +196,15 @@ function normalizeSeatValue(value: string) {
 
 function expectedAssignedSeats(details: string[] | undefined): AssignedSeat[] {
   return (details ?? []).flatMap((detail) => {
+    const section = detail.match(/\bsection\s*[:#-]?\s*([a-z0-9-]+)/i)?.[1];
     const row = detail.match(/\brow\s*[:#-]?\s*([a-z0-9-]+)/i)?.[1];
     const seat = detail.match(/\bseats?\s*[:#-]?\s*([a-z0-9-]+)/i)?.[1];
     if (!row || !seat) return [];
-    return [{ row: normalizeSeatValue(row), seat: normalizeSeatValue(seat) }];
+    return [{
+      section: section ? normalizeSeatValue(section) : null,
+      row: normalizeSeatValue(row),
+      seat: normalizeSeatValue(seat),
+    }];
   });
 }
 
@@ -221,9 +243,18 @@ function assignedTicketDetailsMatch(ticketDetails: string | null, expectedDetail
       .map((match) => normalizeSeatValue(match[1]))
       .filter(Boolean)
   );
+  const visibleSections = new Set(
+    Array.from(ticketDetails.matchAll(/\bsection\s*[:#-]?\s*([a-z0-9-]+)/gi))
+      .map((match) => normalizeSeatValue(match[1]))
+      .filter(Boolean)
+  );
   const visibleSeats = visibleSeatValues(ticketDetails);
 
-  return expectedSeats.every(({ row, seat }) => visibleRows.has(row) && visibleSeats.has(seat));
+  return expectedSeats.every(({ section, row, seat }) =>
+    (!section || visibleSections.has(section)) &&
+    visibleRows.has(row) &&
+    visibleSeats.has(seat)
+  );
 }
 
 function uniqueIssues(issues: TransferProofIssue[]) {
@@ -326,7 +357,7 @@ export function transferProofIssueMessage(issue: TransferProofIssue) {
     VENUE_MISMATCH: "the visible venue does not match this order",
     EVENT_DATE_MISMATCH: "the visible event date does not match this order",
     TICKET_COUNT_MISMATCH: "the visible ticket quantity is lower than this order",
-    TICKET_DETAILS_MISMATCH: "the visible row or seat numbers do not match this order",
+    TICKET_DETAILS_MISMATCH: "the visible section, row, or seat numbers do not match this order",
     LOW_CONFIDENCE: "the proof is too unclear to verify automatically",
   };
   return messages[issue];

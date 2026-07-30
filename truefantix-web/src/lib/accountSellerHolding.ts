@@ -60,6 +60,7 @@ export async function getSellerHoldingOrders(userId: string) {
       date: item.ticket.date,
       price: centsToDollars(item.priceCents),
       image: item.ticket.image,
+      section: item.ticket.section,
       row: item.ticket.row,
       seat: item.ticket.seat,
       status: item.ticket.status,

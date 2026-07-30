@@ -28,6 +28,7 @@ type SellerHoldingOrder = {
     date: string;
     price: number;
     image: string;
+    section: string | null;
     row: string | null;
     seat: string | null;
     status: string;
@@ -265,7 +266,11 @@ function OrderCard({
               <div style={{ fontWeight: 900 }}>{ticket.title}</div>
               <div style={{ fontSize: 13, opacity: 0.7 }}>{ticket.venue} - {ticket.date}</div>
               <div style={{ fontSize: 13, opacity: 0.7 }}>
-                {[ticket.row ? `Row ${ticket.row}` : null, ticket.seat ? `Seat ${ticket.seat}` : null].filter(Boolean).join(", ") || "General admission"}
+                {[
+                  ticket.section ? `Section ${ticket.section}` : null,
+                  ticket.row ? `Row ${ticket.row}` : null,
+                  ticket.seat ? `Seat ${ticket.seat}` : null,
+                ].filter(Boolean).join(", ") || "General admission"}
               </div>
             </div>
             <div style={{ fontWeight: 800 }}>${ticket.price.toFixed(2)}</div>

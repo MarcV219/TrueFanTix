@@ -163,6 +163,27 @@ describe("transfer proof review", () => {
     expect(result.issues).toContain("TICKET_DETAILS_MISMATCH");
   });
 
+  it("rejects a different venue that shares only a generic venue word", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      venue: "Rogers Centre",
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Avenir Centre",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 2,
+      expectedTicketDetails: ["Section 101, Row A, Seat 1", "Section 101, Row A, Seat 2"],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain("VENUE_MISMATCH");
+  });
+
   it("accepts a visible seat range covering every assigned seat", async () => {
     mockOpenAi({
       ...baseOpenAiPayload,
@@ -199,6 +220,27 @@ describe("transfer proof review", () => {
       expectedEventDate: "2026-06-26",
       expectedTicketCount: 2,
       expectedTicketDetails: ["Row D, Seat 1", "Row D, Seat 2"],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain("TICKET_DETAILS_MISMATCH");
+  });
+
+  it("rejects proof that omits the ordered section", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      ticketDetails: "Row A, Seats 1-2",
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 2,
+      expectedTicketDetails: ["Section 101, Row A, Seat 1", "Section 101, Row A, Seat 2"],
     });
 
     expect(result.ok).toBe(false);

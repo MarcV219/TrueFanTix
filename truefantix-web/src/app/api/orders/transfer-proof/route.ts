@@ -39,6 +39,7 @@ export async function POST(req: Request) {
                 title: true,
                 venue: true,
                 date: true,
+                section: true,
                 row: true,
                 seat: true,
               },
@@ -101,6 +102,7 @@ export async function POST(req: Request) {
       expectedTicketCount: order.items.length,
       expectedTicketDetails: order.items.map((item) =>
         [
+          item.ticket.section ? `Section ${item.ticket.section}` : null,
           item.ticket.row ? `Row ${item.ticket.row}` : null,
           item.ticket.seat ? `Seat ${item.ticket.seat}` : null,
         ].filter(Boolean).join(", ") || "General admission"
