@@ -8,6 +8,7 @@ export type TransferProofIssue =
   | "VENUE_MISMATCH"
   | "EVENT_DATE_MISMATCH"
   | "TICKET_COUNT_MISMATCH"
+  | "TICKET_DETAILS_MISMATCH"
   | "LOW_CONFIDENCE";
 
 export type TransferProofReview = {
@@ -167,6 +168,64 @@ function venueMatches(visibleVenue: string | null, expectedVenue?: string | null
   return overlapScore(visibleVenue, expectedVenue) >= 0.5;
 }
 
+type AssignedSeat = {
+  row: string;
+  seat: string;
+};
+
+function normalizeSeatValue(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function expectedAssignedSeats(details: string[] | undefined): AssignedSeat[] {
+  return (details ?? []).flatMap((detail) => {
+    const row = detail.match(/\brow\s*[:#-]?\s*([a-z0-9-]+)/i)?.[1];
+    const seat = detail.match(/\bseats?\s*[:#-]?\s*([a-z0-9-]+)/i)?.[1];
+    if (!row || !seat) return [];
+    return [{ row: normalizeSeatValue(row), seat: normalizeSeatValue(seat) }];
+  });
+}
+
+function visibleSeatValues(ticketDetails: string) {
+  const values = new Set<string>();
+  const seatSegments = ticketDetails.matchAll(/\bseats?\s*[:#-]?\s*([a-z0-9]+(?:\s*(?:-|–|—|,|&|and|to)\s*[a-z0-9]+)*)/gi);
+
+  for (const match of seatSegments) {
+    const segment = match[1];
+    const numericRange = segment.match(/^\s*(\d+)\s*(?:-|–|—|to)\s*(\d+)\s*$/i);
+    if (numericRange) {
+      const start = Number(numericRange[1]);
+      const end = Number(numericRange[2]);
+      if (end >= start && end - start <= 100) {
+        for (let seat = start; seat <= end; seat += 1) values.add(String(seat));
+        continue;
+      }
+    }
+
+    for (const value of segment.split(/\s*(?:,|&|and)\s*/i)) {
+      const normalized = normalizeSeatValue(value);
+      if (normalized) values.add(normalized);
+    }
+  }
+
+  return values;
+}
+
+function assignedTicketDetailsMatch(ticketDetails: string | null, expectedDetails?: string[]) {
+  const expectedSeats = expectedAssignedSeats(expectedDetails);
+  if (!expectedSeats.length) return true;
+  if (!ticketDetails) return false;
+
+  const visibleRows = new Set(
+    Array.from(ticketDetails.matchAll(/\brow\s*[:#-]?\s*([a-z0-9-]+)/gi))
+      .map((match) => normalizeSeatValue(match[1]))
+      .filter(Boolean)
+  );
+  const visibleSeats = visibleSeatValues(ticketDetails);
+
+  return expectedSeats.every(({ row, seat }) => visibleRows.has(row) && visibleSeats.has(seat));
+}
+
 function uniqueIssues(issues: TransferProofIssue[]) {
   return Array.from(new Set(issues));
 }
@@ -209,6 +268,9 @@ function transferReviewFromParsed(
 
   if (ticketQuantity != null && expectedTicketCount > 0 && ticketQuantity < expectedTicketCount) {
     issues.push("TICKET_COUNT_MISMATCH");
+  }
+  if (!assignedTicketDetailsMatch(ticketDetails, expected.expectedTicketDetails)) {
+    issues.push("TICKET_DETAILS_MISMATCH");
   }
   if (confidence < 0.45) issues.push("LOW_CONFIDENCE");
 
@@ -264,6 +326,7 @@ export function transferProofIssueMessage(issue: TransferProofIssue) {
     VENUE_MISMATCH: "the visible venue does not match this order",
     EVENT_DATE_MISMATCH: "the visible event date does not match this order",
     TICKET_COUNT_MISMATCH: "the visible ticket quantity is lower than this order",
+    TICKET_DETAILS_MISMATCH: "the visible row or seat numbers do not match this order",
     LOW_CONFIDENCE: "the proof is too unclear to verify automatically",
   };
   return messages[issue];

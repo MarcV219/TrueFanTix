@@ -141,6 +141,70 @@ describe("transfer proof review", () => {
     expect(result.issues).not.toContain("RECIPIENT_EMAIL_MISMATCH");
   });
 
+  it("rejects proof showing different assigned seats", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      ticketDetails: "Section 101, Row D, Seats 3-4",
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 2,
+      expectedTicketDetails: ["Row D, Seat 1", "Row D, Seat 2"],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("needs_review");
+    expect(result.issues).toContain("TICKET_DETAILS_MISMATCH");
+  });
+
+  it("accepts a visible seat range covering every assigned seat", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      ticketDetails: "Section 101, Row D, Seats 1-2",
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 2,
+      expectedTicketDetails: ["Row D, Seat 1", "Row D, Seat 2"],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).not.toContain("TICKET_DETAILS_MISMATCH");
+  });
+
+  it("rejects proof that omits seat details for assigned seating", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      ticketDetails: "Two reserved tickets",
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 2,
+      expectedTicketDetails: ["Row D, Seat 1", "Row D, Seat 2"],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain("TICKET_DETAILS_MISMATCH");
+  });
+
   it("rejects unsupported proof upload formats before review", async () => {
     const result = await analyzeTransferProof({
       proofDataUrl: "data:text/plain;base64,cHJvb2Y=",
