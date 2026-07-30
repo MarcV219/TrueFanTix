@@ -400,7 +400,7 @@ export default function AdminOrderDetailPage() {
                     disabled={decisionBusy}
                     style={{ padding: "10px 12px", borderRadius: 8, border: 0, background: "rgba(185,28,28,1)", color: "white", fontWeight: 900 }}
                   >
-                    Mark refund required
+                    Refund buyer and close dispute
                   </button>
                   <button
                     type="button"
@@ -417,7 +417,7 @@ export default function AdminOrderDetailPage() {
                     <div style={{ marginTop: 4, fontSize: 13 }}>
                       {pendingDecision === "RELEASE_PAYOUT"
                         ? "This closes the dispute, completes the order, and places the seller payout in the pending payout queue."
-                        : "This flags the order as refund required and keeps seller payout paused. The dispute stays open until the refund workflow is completed."}
+                        : "This immediately issues a full Stripe refund, closes the dispute for buyer, seller, and Support, cancels any pending seller payout, and withdraws the tickets from sale."}
                     </div>
                     <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                       <button type="button" onClick={() => resolveDispute(pendingDecision)} disabled={decisionBusy} style={{ padding: "8px 11px", borderRadius: 8, border: 0, background: pendingDecision === "RELEASE_PAYOUT" ? "rgba(22,101,52,1)" : "rgba(185,28,28,1)", color: "white", fontWeight: 900 }}>

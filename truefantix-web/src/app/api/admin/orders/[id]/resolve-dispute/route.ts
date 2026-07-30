@@ -38,6 +38,14 @@ function appendResolutionNote(existing: string | null, resolution: Record<string
   return JSON.stringify({ dispute: parsed, resolution });
 }
 
+async function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("Missing STRIPE_SECRET_KEY in environment.");
+  const mod: any = await import("stripe");
+  const StripeCtor = mod?.default ?? mod;
+  return new StripeCtor(key, { apiVersion: "2024-06-20" });
+}
+
 export async function POST(req: Request) {
   try {
     const gate = await requireAdmin(req);
@@ -84,6 +92,7 @@ export async function POST(req: Request) {
     };
 
     let updatedOrder;
+    let refundId: string | null = null;
 
     if (action === "RELEASE_PAYOUT") {
       updatedOrder = await prisma.$transaction(async (tx: any) => {
@@ -146,12 +155,99 @@ export async function POST(req: Request) {
           select: { id: true, status: true, buyerConfirmationStatus: true, transferVerificationStatus: true },
         });
       });
+    } else if (action === "MARK_REFUND_REQUIRED") {
+      if (!order.payment || order.payment.status !== "SUCCEEDED") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "PAYMENT_NOT_REFUNDABLE",
+            message: order.payment?.status === "REFUNDED"
+              ? "This payment has already been refunded."
+              : "The payment is not in a refundable state.",
+          },
+          { status: 409 }
+        );
+      }
+      if (order.payment.provider !== "STRIPE" || !order.payment.providerRef) {
+        return NextResponse.json(
+          { ok: false, error: "PAYMENT_NOT_REFUNDABLE", message: "This payment cannot be refunded automatically." },
+          { status: 409 }
+        );
+      }
+
+      const stripe = await getStripe();
+      const refund = await stripe.refunds.create(
+        {
+          payment_intent: order.payment.providerRef,
+          reason: "requested_by_customer",
+          metadata: {
+            orderId: order.id,
+            disputeResolution: "REFUND_REQUIRED",
+            resolvedByUserId: gate.user.id,
+          },
+        },
+        { idempotencyKey: `dispute-refund:${order.id}` }
+      );
+      if (refund.status === "failed" || refund.status === "canceled") {
+        throw new Error(`Stripe did not accept the refund (${refund.status}).`);
+      }
+      refundId = refund.id;
+
+      updatedOrder = await prisma.$transaction(async (tx: any) => {
+        const ticketIds = order.items.map((item: any) => item.ticketId);
+
+        await tx.payment.update({
+          where: { orderId: order.id },
+          data: { status: "REFUNDED" },
+        });
+        await tx.payout.updateMany({
+          where: {
+            sellerId: order.sellerId,
+            providerRef: `order:${order.id}`,
+            status: "PENDING",
+          },
+          data: { status: "CANCELED" },
+        });
+        await tx.ticket.updateMany({
+          where: { id: { in: ticketIds } },
+          data: {
+            status: "WITHDRAWN",
+            reservedByOrderId: null,
+            reservedUntil: null,
+          },
+        });
+        await tx.ticketEscrow.updateMany({
+          where: { orderId: order.id },
+          data: {
+            state: "RELEASED_BACK_TO_SELLER",
+            releasedTo: order.sellerId,
+            releasedAt: now,
+            failureReason: null,
+          },
+        });
+
+        return tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: "REFUNDED",
+            buyerConfirmationStatus: "REFUNDED",
+            buyerConfirmationAt: now,
+            transferVerificationStatus: "REFUNDED",
+            transferVerificationReason: appendResolutionNote(order.transferVerificationReason, {
+              ...resolution,
+              stripeRefundId: refund.id,
+              stripeRefundStatus: refund.status,
+            }),
+          },
+          select: { id: true, status: true, buyerConfirmationStatus: true, transferVerificationStatus: true },
+        });
+      });
     } else {
       updatedOrder = await prisma.order.update({
         where: { id: order.id },
         data: {
           buyerConfirmationStatus: "DISPUTED",
-          transferVerificationStatus: action === "MARK_REFUND_REQUIRED" ? "REFUND_REQUIRED" : "MANUAL_REVIEW",
+          transferVerificationStatus: "MANUAL_REVIEW",
           transferVerificationReason: appendResolutionNote(order.transferVerificationReason, resolution),
         },
         select: { id: true, status: true, buyerConfirmationStatus: true, transferVerificationStatus: true },
@@ -162,7 +258,7 @@ export async function POST(req: Request) {
       action === "RELEASE_PAYOUT"
         ? `Admin resolved dispute for order ${order.id}: seller payout released to pending payout queue.`
         : action === "MARK_REFUND_REQUIRED"
-          ? `Admin resolved dispute for order ${order.id}: refund required. Payout remains paused.`
+          ? `Admin refunded the buyer and closed dispute for order ${order.id}.`
           : `Admin reviewed dispute for order ${order.id}: more review is required. Payout remains paused.`;
 
     const dispute = parseDisputeCase(order.transferVerificationReason);
@@ -194,13 +290,15 @@ export async function POST(req: Request) {
           })
         ),
     ];
-    if (action === "RELEASE_PAYOUT") {
+    if (action === "RELEASE_PAYOUT" || action === "MARK_REFUND_REQUIRED") {
       followUps.push(
         sendDisputeEmails({
           orderId: order.id,
-          kind: "RESOLVED",
+          kind: action === "MARK_REFUND_REQUIRED" ? "REFUNDED" : "RESOLVED",
           submittedBy: "TrueFanTix Support",
-          comments: note,
+          comments: action === "MARK_REFUND_REQUIRED" && refundId
+            ? `${note}\nStripe refund reference: ${refundId}`
+            : note,
           ticketCount: dispute?.ticketCount || dispute?.ticketIds?.length || order.items.length,
           tickets: disputedTicketDetails,
           fileNames: [],
