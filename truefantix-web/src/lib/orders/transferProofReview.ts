@@ -233,6 +233,29 @@ function visibleSeatValues(ticketDetails: string) {
   return values;
 }
 
+function visibleSectionValues(ticketDetails: string) {
+  const values = new Set(
+    Array.from(ticketDetails.matchAll(/\bsec(?:tion)?\.?\s*[:#-]?\s*([a-z0-9-]+)/gi))
+      .map((match) => normalizeSeatValue(match[1]))
+      .filter(Boolean)
+  );
+
+  // Ticket providers commonly show a compact seating line such as
+  // "FL2, Row 4, Seat 2" without labeling the first value as the section.
+  // Only treat a bare value as a section when it begins a seating segment and
+  // is immediately followed by a Row label, so unrelated proof text cannot
+  // satisfy the section check accidentally.
+  const bareSections = ticketDetails.matchAll(
+    /(?:^|[\n\r;|])\s*([a-z0-9][a-z0-9-]*)\s*(?:,|\/|[·•])\s*row\b/gi
+  );
+  for (const match of bareSections) {
+    const normalized = normalizeSeatValue(match[1]);
+    if (normalized) values.add(normalized);
+  }
+
+  return values;
+}
+
 function assignedTicketDetailsMatch(ticketDetails: string | null, expectedDetails?: string[]) {
   const expectedSeats = expectedAssignedSeats(expectedDetails);
   if (!expectedSeats.length) return true;
@@ -243,11 +266,7 @@ function assignedTicketDetailsMatch(ticketDetails: string | null, expectedDetail
       .map((match) => normalizeSeatValue(match[1]))
       .filter(Boolean)
   );
-  const visibleSections = new Set(
-    Array.from(ticketDetails.matchAll(/\bsection\s*[:#-]?\s*([a-z0-9-]+)/gi))
-      .map((match) => normalizeSeatValue(match[1]))
-      .filter(Boolean)
-  );
+  const visibleSections = visibleSectionValues(ticketDetails);
   const visibleSeats = visibleSeatValues(ticketDetails);
 
   return expectedSeats.every(({ section, row, seat }) =>
