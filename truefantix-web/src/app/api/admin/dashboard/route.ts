@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
+import { loadAdminQueueCounts } from "@/lib/adminQueueService";
 
 function centsToDollars(cents: number | null | undefined) {
   return Number(((cents ?? 0) / 100).toFixed(2));
@@ -21,22 +22,9 @@ export async function GET(req: Request) {
   const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   const [
-    pendingTicketVerification,
-    needsReviewTickets,
-    pendingCatalogRequests,
-    pendingSellerStripe,
-    suspendedSellers,
-    openEscrows,
-    disputedOrders,
-    transferProofReviews,
-    expiredReservations,
+    queueCounts,
     pendingOrders,
     paidOrders,
-    failedPayments,
-    pendingPayouts,
-    failedEmails,
-    hiddenForumThreads,
-    hiddenForumPosts,
     newUsers24h,
     newTickets24h,
     ordersToday,
@@ -45,36 +33,9 @@ export async function GET(req: Request) {
     recentUsers,
     recentAuditLogs,
   ] = await Promise.all([
-    prisma.ticket.count({ where: { verificationStatus: "PENDING" } }),
-    prisma.ticket.count({ where: { verificationStatus: "NEEDS_REVIEW" } }),
-    prisma.catalogRequest.count({ where: { status: "PENDING" } }),
-    prisma.seller.count({
-      where: {
-        OR: [
-          { status: "PENDING" },
-          { stripeDetailsSubmitted: false },
-          { stripeChargesEnabled: false },
-          { stripePayoutsEnabled: false },
-        ],
-      },
-    }),
-    prisma.seller.count({ where: { status: "SUSPENDED" } }),
-    prisma.ticketEscrow.count({ where: { state: "IN_ESCROW" } }),
-    prisma.order.count({ where: { buyerConfirmationStatus: "DISPUTED" } }),
-    prisma.order.count({ where: { transferVerificationStatus: "MANUAL_REVIEW" } }),
-    prisma.ticket.count({
-      where: {
-        status: "RESERVED",
-        reservedUntil: { not: null, lt: now },
-      },
-    }),
+    loadAdminQueueCounts(now),
     prisma.order.count({ where: { status: "PENDING" } }),
     prisma.order.count({ where: { status: "PAID" } }),
-    prisma.payment.count({ where: { status: "FAILED" } }),
-    prisma.payout.count({ where: { status: "PENDING" } }),
-    prisma.emailDelivery.count({ where: { status: "FAILED", sentAt: { gte: dayAgo } } }),
-    prisma.forumThread.count({ where: { visibility: { not: "VISIBLE" } } }),
-    prisma.forumPost.count({ where: { visibility: { not: "VISIBLE" } } }),
     prisma.user.count({ where: { createdAt: { gte: dayAgo } } }),
     prisma.ticket.count({ where: { createdAt: { gte: dayAgo } } }),
     prisma.order.count({ where: { createdAt: { gte: today } } }),
@@ -143,22 +104,22 @@ export async function GET(req: Request) {
     ok: true,
     generatedAt: now.toISOString(),
     queues: {
-      pendingTicketVerification,
-      needsReviewTickets,
-      pendingCatalogRequests,
-      pendingSellerStripe,
-      suspendedSellers,
-      openEscrows,
-      disputedOrders,
-      transferProofReviews,
-      expiredReservations,
+      pendingTicketVerification: queueCounts.pending,
+      needsReviewTickets: queueCounts.needsReview,
+      pendingCatalogRequests: queueCounts.catalogRequests,
+      pendingSellerStripe: queueCounts.sellerStripe,
+      suspendedSellers: queueCounts.suspendedSellers,
+      openEscrows: queueCounts.openEscrows,
+      disputedOrders: queueCounts.disputes,
+      transferProofReviews: queueCounts.transferProofReviews,
+      expiredReservations: queueCounts.expiredReservations,
       pendingOrders,
       paidOrders,
-      failedPayments,
-      pendingPayouts,
-      failedEmails,
-      hiddenForumThreads,
-      hiddenForumPosts,
+      failedPayments: queueCounts.failedPayments,
+      pendingPayouts: queueCounts.pendingPayouts,
+      failedEmails: queueCounts.failedEmails,
+      hiddenForumThreads: queueCounts.hiddenForumThreads,
+      hiddenForumPosts: queueCounts.hiddenForumPosts,
     },
     activity: {
       newUsers24h,
