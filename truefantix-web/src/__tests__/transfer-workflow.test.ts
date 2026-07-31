@@ -79,6 +79,23 @@ describe("seller transfer reminder email", () => {
     expect(findUser).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();
   });
+
+  it("uses a fixed six-hour window so delayed scheduler runs do not suppress the next reminder", async () => {
+    createNotificationOncePerWindow.mockResolvedValue({ ok: true, notification: { id: "notice-3" } });
+
+    await notifySellerTransferRequired({
+      sellerUserId: "seller-user",
+      orderId: "order-1",
+      ticketCount: 2,
+      deadline: new Date("2026-07-31T16:00:00.000Z"),
+      sendEmail: true,
+      now: new Date("2026-07-31T14:28:22.000Z"),
+    });
+
+    expect(createNotificationOncePerWindow).toHaveBeenCalledWith(
+      expect.objectContaining({ windowStart: new Date("2026-07-31T12:00:00.000Z") })
+    );
+  });
 });
 
 describe("buyer transfer confirmation reminder email", () => {
@@ -129,5 +146,22 @@ describe("buyer transfer confirmation reminder email", () => {
 
     expect(findUser).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("places a delayed buyer run in the current fixed six-hour window", async () => {
+    createNotificationOncePerWindow.mockResolvedValue({ ok: true, notification: { id: "notice-4" } });
+
+    await notifyBuyerTransferConfirmationRequired({
+      buyerUserId: "buyer-user",
+      orderId: "order-2",
+      ticketCount: 2,
+      deadline: new Date("2026-08-01T12:00:00.000Z"),
+      sendEmail: true,
+      now: new Date("2026-07-31T09:13:58.000Z"),
+    });
+
+    expect(createNotificationOncePerWindow).toHaveBeenCalledWith(
+      expect.objectContaining({ windowStart: new Date("2026-07-31T06:00:00.000Z") })
+    );
   });
 });

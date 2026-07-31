@@ -33,7 +33,8 @@ export function buyerConfirmationDeadline(transferSubmittedAt: Date) {
 }
 
 function reminderWindowStart(now = new Date()) {
-  return new Date(now.getTime() - TRANSFER_REMINDER_INTERVAL_HOURS * 60 * 60 * 1000);
+  const intervalMs = TRANSFER_REMINDER_INTERVAL_HOURS * 60 * 60 * 1000;
+  return new Date(Math.floor(now.getTime() / intervalMs) * intervalMs);
 }
 
 export async function notifySellerTransferRequired(params: {
