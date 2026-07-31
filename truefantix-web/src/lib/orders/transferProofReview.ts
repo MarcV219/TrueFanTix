@@ -256,10 +256,57 @@ function visibleSectionValues(ticketDetails: string) {
   return values;
 }
 
+function expandedSeatValues(value: string) {
+  const values = new Set<string>();
+  const numericRange = value.match(/^\s*(\d+)\s*(?:-|–|—|to)\s*(\d+)\s*$/i);
+  if (numericRange) {
+    const start = Number(numericRange[1]);
+    const end = Number(numericRange[2]);
+    if (end >= start && end - start <= 100) {
+      for (let seat = start; seat <= end; seat += 1) values.add(String(seat));
+      return values;
+    }
+  }
+
+  for (const seat of value.split(/\s*(?:,|&|and)\s*/i)) {
+    const normalized = normalizeSeatValue(seat);
+    if (normalized) values.add(normalized);
+  }
+  return values;
+}
+
+function visibleSeatingTriples(ticketDetails: string) {
+  const triples: Array<{ section: string; row: string; seats: Set<string> }> = [];
+  const separator = String.raw`\s*(?:,|\/|[·•])\s*`;
+  const value = String.raw`([a-z0-9][a-z0-9-]*)`;
+  const seats = String.raw`([a-z0-9]+(?:\s*(?:-|–|—|,|&|and|to)\s*[a-z0-9]+)*)`;
+  const patterns = [
+    new RegExp(String.raw`\bsec(?:tion)?\.?\s*[:#-]?\s*${value}${separator}(?:row|r)\.?\s*[:#-]?\s*${value}${separator}(?:seats?|s)\.?\s*[:#-]?\s*${seats}`, "gi"),
+    new RegExp(String.raw`(?:^|[\n\r;|])\s*${value}${separator}(?:(?:row|r)\.?\s*[:#-]?\s*)?${value}${separator}(?:(?:seats?|s)\.?\s*[:#-]?\s*)?${seats}`, "gi"),
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of ticketDetails.matchAll(pattern)) {
+      const section = normalizeSeatValue(match[1]);
+      const row = normalizeSeatValue(match[2]);
+      const visibleSeats = expandedSeatValues(match[3]);
+      if (section && row && visibleSeats.size) triples.push({ section, row, seats: visibleSeats });
+    }
+  }
+  return triples;
+}
+
 function assignedTicketDetailsMatch(ticketDetails: string | null, expectedDetails?: string[]) {
   const expectedSeats = expectedAssignedSeats(expectedDetails);
   if (!expectedSeats.length) return true;
   if (!ticketDetails) return false;
+
+  const seatingTriples = visibleSeatingTriples(ticketDetails);
+  if (seatingTriples.length && expectedSeats.every(({ section, row, seat }) =>
+    seatingTriples.some((visible) =>
+      (!section || visible.section === section) && visible.row === row && visible.seats.has(seat)
+    )
+  )) return true;
 
   const visibleRows = new Set(
     Array.from(ticketDetails.matchAll(/\brow\s*[:#-]?\s*([a-z0-9-]+)/gi))

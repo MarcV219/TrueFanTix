@@ -269,6 +269,55 @@ describe("transfer proof review", () => {
     expect(result.issues).not.toContain("TICKET_DETAILS_MISMATCH");
   });
 
+  it.each([
+    "FL2, R4, S2",
+    "FL2, 4, 2",
+    "Section FL2 / R 4 / S 2",
+    "Sec. FL2 • Row 4 • Seat 2",
+  ])("accepts flexible compact seating wording: %s", async (ticketDetails) => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      ticketQuantity: 1,
+      ticketDetails,
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 1,
+      expectedTicketDetails: ["Section FL2, Row 4, Seat 2"],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).not.toContain("TICKET_DETAILS_MISMATCH");
+  });
+
+  it("rejects a flexible compact seating line when one key value differs", async () => {
+    mockOpenAi({
+      ...baseOpenAiPayload,
+      ticketQuantity: 1,
+      ticketDetails: "FL2, R4, S3",
+    });
+
+    const result = await analyzeTransferProof({
+      proofDataUrl: "data:image/png;base64,cHJvb2Y=",
+      expectedBuyerName: "Buyer Example",
+      expectedBuyerEmail: "buyer@example.com",
+      expectedEventTitles: ["Ice Cube"],
+      expectedVenue: "Casino Rama Resort",
+      expectedEventDate: "2026-06-26",
+      expectedTicketCount: 1,
+      expectedTicketDetails: ["Section FL2, Row 4, Seat 2"],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain("TICKET_DETAILS_MISMATCH");
+  });
+
   it("still rejects a wrong bare section in a compact seating line", async () => {
     mockOpenAi({
       ...baseOpenAiPayload,
