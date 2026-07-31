@@ -18,6 +18,10 @@ export const TRANSFER_PROOF_REVIEW_ORDER_WHERE = {
   transferVerificationStatus: "MANUAL_REVIEW",
 } as const;
 
+export const PENDING_PAYOUT_WHERE = {
+  status: "PENDING",
+} as const;
+
 export function totalAdminQueueActionable(counts: AdminQueueActionableCounts) {
   return Object.values(counts).reduce((total, count) => total + count, 0);
 }

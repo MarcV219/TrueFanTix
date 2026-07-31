@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
+import { PENDING_PAYOUT_WHERE } from "@/lib/adminQueueCounts";
 
 function normalizeQuery(value: string | null) {
   return String(value ?? "").trim();
@@ -52,7 +53,7 @@ export async function GET(req: Request) {
             },
           }
         : filter === "pending-payouts"
-          ? { seller: { is: { payouts: { some: { status: "PENDING" as const } } } } }
+          ? { seller: { is: { payouts: { some: PENDING_PAYOUT_WHERE } } } }
           : null;
   const clauses = [searchWhere, filterWhere].filter((clause): clause is Prisma.UserWhereInput => !!clause);
   const where: Prisma.UserWhereInput = clauses.length ? { AND: clauses } : {};
@@ -92,6 +93,21 @@ export async function GET(req: Request) {
           stripePayoutsEnabled: true,
           payoutHold: true,
           payoutHoldReason: true,
+          payouts: {
+            where: PENDING_PAYOUT_WHERE,
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              amountCents: true,
+              feeCents: true,
+              netCents: true,
+              status: true,
+              provider: true,
+              providerRef: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          },
         },
       },
       _count: {
@@ -103,12 +119,43 @@ export async function GET(req: Request) {
     },
   });
 
+  const orderIds = Array.from(new Set(users.flatMap((user) =>
+    (user.seller?.payouts || [])
+      .map((payout) => payout.providerRef?.startsWith("order:") ? payout.providerRef.slice("order:".length) : null)
+      .filter((orderId): orderId is string => !!orderId)
+  )));
+  const payoutOrders = orderIds.length ? await prisma.order.findMany({
+    where: { id: { in: orderIds } },
+    select: {
+      id: true,
+      currency: true,
+      createdAt: true,
+      buyerConfirmationAt: true,
+      items: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          ticket: {
+            select: { id: true, title: true, venue: true, date: true, section: true, row: true, seat: true },
+          },
+        },
+      },
+    },
+  }) : [];
+  const ordersById = new Map(payoutOrders.map((order) => [order.id, order]));
+
   return NextResponse.json({
     ok: true,
     q,
     filter,
     users: users.map((user) => ({
       ...user,
+      seller: user.seller ? {
+        ...user.seller,
+        payouts: user.seller.payouts.map((payout) => {
+          const orderId = payout.providerRef?.startsWith("order:") ? payout.providerRef.slice("order:".length) : null;
+          return { ...payout, orderId, order: orderId ? ordersById.get(orderId) || null : null };
+        }),
+      } : null,
       isVerified: !!user.emailVerifiedAt && !!user.phoneVerifiedAt,
     })),
   });

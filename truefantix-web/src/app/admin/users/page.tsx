@@ -32,6 +32,25 @@ type AdminUser = {
     stripePayoutsEnabled: boolean;
     payoutHold: boolean;
     payoutHoldReason: string | null;
+    payouts: Array<{
+      id: string;
+      amountCents: number;
+      feeCents: number;
+      netCents: number;
+      status: string;
+      provider: string | null;
+      providerRef: string | null;
+      createdAt: string;
+      updatedAt: string;
+      orderId: string | null;
+      order: null | {
+        id: string;
+        currency: string;
+        createdAt: string;
+        buyerConfirmationAt: string | null;
+        items: Array<{ ticket: { id: string; title: string; venue: string; date: string; section: string | null; row: string | null; seat: string | null } }>;
+      };
+    }>;
   };
   _count: { sessions: number; notificationPreferences: number };
 };
@@ -51,6 +70,14 @@ const FILTER_DESCRIPTIONS: Record<string, string> = {
 
 function normalizeFilter(value: string) {
   return Object.keys(FILTER_LABELS).includes(value) ? value : "all";
+}
+
+function money(cents: number, currency = "CAD") {
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency }).format(cents / 100);
+}
+
+function seatLabel(ticket: { section: string | null; row: string | null; seat: string | null }) {
+  return [ticket.section ? `Section ${ticket.section}` : null, ticket.row ? `Row ${ticket.row}` : null, ticket.seat ? `Seat ${ticket.seat}` : null].filter(Boolean).join(", ") || "General admission";
 }
 
 function AdminUsersContent() {
@@ -183,6 +210,45 @@ function AdminUsersContent() {
               <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(248,250,252,1)", fontSize: 13 }}>
                 <strong>Seller:</strong> {user.seller.name} | {user.seller.status} | Stripe: {user.seller.stripeAccountId ? "linked" : "not linked"} | Charges {user.seller.stripeChargesEnabled ? "on" : "off"} | Payouts {user.seller.stripePayoutsEnabled ? "on" : "off"}
                 {user.seller.payoutHold ? <div style={{ color: "rgba(153,27,27,1)" }}>Payout hold: {user.seller.payoutHoldReason || "No reason"}</div> : null}
+              </div>
+            ) : null}
+            {filter === "pending-payouts" && user.seller?.payouts.length ? (
+              <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                {user.seller.payouts.map((payout) => {
+                  const currency = payout.order?.currency || "CAD";
+                  return (
+                    <div key={payout.id} style={{ padding: 12, borderRadius: 8, border: "1px solid rgba(217,119,6,.28)", background: "rgba(255,251,235,1)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                        <div>
+                          <div style={{ fontWeight: 950 }}>Payout {money(payout.netCents, currency)} — {payout.status}</div>
+                          <div style={{ fontSize: 13, marginTop: 3 }}>
+                            Order: {payout.orderId ? <Link href={`/admin/orders/${encodeURIComponent(payout.orderId)}`} style={{ fontWeight: 900, textDecoration: "underline" }}>{payout.orderId}</Link> : "Order unavailable"}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", fontSize: 13 }}>
+                          <div><strong>Payout created:</strong> {new Date(payout.createdAt).toLocaleString()}</div>
+                          <div><strong>Last updated:</strong> {new Date(payout.updatedAt).toLocaleString()}</div>
+                          {payout.order?.buyerConfirmationAt ? <div><strong>Buyer confirmed:</strong> {new Date(payout.order.buyerConfirmationAt).toLocaleString()}</div> : null}
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 6, marginTop: 10, fontSize: 13 }}>
+                        <div><strong>Gross:</strong> {money(payout.amountCents, currency)}</div>
+                        <div><strong>Payout fee:</strong> {money(payout.feeCents, currency)}</div>
+                        <div><strong>Net payout:</strong> {money(payout.netCents, currency)}</div>
+                        <div><strong>Method:</strong> {payout.provider === "ESCROW_INTERNAL" ? "TrueFanTix escrow" : payout.provider || "Not assigned"}</div>
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <strong style={{ fontSize: 13 }}>Tickets ({payout.order?.items.length || 0})</strong>
+                        {payout.order?.items.length ? payout.order.items.map(({ ticket }) => (
+                          <div key={ticket.id} style={{ marginTop: 5, padding: 8, borderRadius: 7, background: "white", fontSize: 13 }}>
+                            <strong>{ticket.title}</strong> — {ticket.venue} — {ticket.date}<br />
+                            {seatLabel(ticket)}
+                          </div>
+                        )) : <div style={{ marginTop: 5, fontSize: 13, opacity: .72 }}>No linked order details are available for this payout.</div>}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
             {user.banReason ? <div style={{ marginTop: 8, color: "rgba(153,27,27,1)", fontSize: 13 }}>Ban reason: {user.banReason}</div> : null}

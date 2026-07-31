@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import {
   TRANSFER_PROOF_REVIEW_ORDER_WHERE,
+  PENDING_PAYOUT_WHERE,
   totalAdminQueueActionable,
   type AdminQueueActionableCounts,
 } from "@/lib/adminQueueCounts";
@@ -27,7 +28,7 @@ export async function loadAdminQueueCounts(now = new Date()) {
     prisma.order.count({ where: { buyerConfirmationStatus: "DISPUTED" } }),
     prisma.order.count({ where: TRANSFER_PROOF_REVIEW_ORDER_WHERE }),
     prisma.payment.count({ where: { status: "FAILED" } }),
-    prisma.payout.count({ where: { status: "PENDING" } }),
+    prisma.payout.count({ where: PENDING_PAYOUT_WHERE }),
     prisma.emailDelivery.count({ where: { status: "FAILED", sentAt: { gte: dayAgo } } }),
     prisma.forumThread.count({ where: { visibility: { not: "VISIBLE" } } }),
     prisma.forumPost.count({ where: { visibility: { not: "VISIBLE" } } }),

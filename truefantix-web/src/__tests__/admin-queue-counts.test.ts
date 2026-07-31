@@ -1,4 +1,4 @@
-import { totalAdminQueueActionable } from "@/lib/adminQueueCounts";
+import { PENDING_PAYOUT_WHERE, totalAdminQueueActionable } from "@/lib/adminQueueCounts";
 
 describe("admin queue counts", () => {
   it("includes transfer proof human reviews in the actionable total", () => {
@@ -17,5 +17,9 @@ describe("admin queue counts", () => {
       failedEmails: 0,
       moderatedForumItems: 0,
     })).toBe(10);
+  });
+
+  it("provides one canonical pending-payout condition", () => {
+    expect(PENDING_PAYOUT_WHERE).toEqual({ status: "PENDING" });
   });
 });
