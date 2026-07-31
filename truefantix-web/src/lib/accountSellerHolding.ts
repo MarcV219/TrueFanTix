@@ -6,6 +6,16 @@ function centsToDollars(cents: number) {
   return Number((cents / 100).toFixed(2));
 }
 
+function latestTransferProofAdminRequest(value: string | null) {
+  try {
+    const parsed = value ? JSON.parse(value) as { adminReviews?: Array<{ action?: string; note?: string; decidedAt?: string }> } : null;
+    const request = parsed?.adminReviews?.findLast((review) => review.action === "REQUEST_INFORMATION" || review.action === "REJECT");
+    return request?.note ? { message: request.note, requestedAt: request.decidedAt || null } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getSellerHoldingOrders(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -41,6 +51,7 @@ export async function getSellerHoldingOrders(userId: string) {
     transferProofType: order.transferProofType,
     transferProofData: order.transferProofData,
     transferVerificationStatus: order.transferVerificationStatus,
+    transferProofReviewRequest: latestTransferProofAdminRequest(order.transferProofData),
     buyerConfirmationStatus: order.buyerConfirmationStatus,
     buyerConfirmationAt: order.buyerConfirmationAt?.toISOString() ?? null,
     buyerConfirmationDeadline: order.disputeWindowEndsAt?.toISOString() ?? null,

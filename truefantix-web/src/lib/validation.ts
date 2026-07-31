@@ -320,6 +320,12 @@ export const schemas = {
     message: z.string().trim().min(3).max(3000),
   }),
 
+  // Used by POST /api/admin/orders/[id]/review-transfer-proof
+  adminReviewTransferProof: z.object({
+    action: z.enum(["APPROVE", "REJECT", "REQUEST_INFORMATION"]),
+    note: z.string().trim().min(3).max(3000),
+  }),
+
   // Profile update schemas
   profileUpdate: z.object({
     firstName: z.string().trim().min(1).max(100).optional(),

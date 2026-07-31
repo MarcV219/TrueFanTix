@@ -37,6 +37,12 @@ function parseTransferProofData(value: unknown) {
       review?: unknown;
       reviewedAt?: string;
       manualReviewRequestedAt?: string;
+      adminReviews?: Array<{
+        id?: string;
+        action?: "APPROVE" | "REJECT" | "REQUEST_INFORMATION";
+        note?: string;
+        decidedAt?: string;
+      }>;
     };
     if (!parsed || typeof parsed !== "object") return null;
     return parsed;
@@ -107,6 +113,10 @@ export default function AdminOrderDetailPage() {
   const [requestMessage, setRequestMessage] = React.useState("");
   const [requestBusy, setRequestBusy] = React.useState(false);
   const [requestResult, setRequestResult] = React.useState<string | null>(null);
+  const [proofReviewNote, setProofReviewNote] = React.useState("");
+  const [proofReviewBusy, setProofReviewBusy] = React.useState(false);
+  const [proofReviewResult, setProofReviewResult] = React.useState<string | null>(null);
+  const [pendingProofAction, setPendingProofAction] = React.useState<"APPROVE" | "REJECT" | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -222,6 +232,32 @@ export default function AdminOrderDetailPage() {
       setRequestResult(`Request failed: ${err?.message || "Could not send the information request."}`);
     } finally {
       setRequestBusy(false);
+    }
+  }
+
+  async function reviewTransferProof(action: "APPROVE" | "REJECT" | "REQUEST_INFORMATION") {
+    if (proofReviewNote.trim().length < 3) {
+      setProofReviewResult("Enter an Admin note of at least 3 characters.");
+      return;
+    }
+    setProofReviewBusy(true);
+    setProofReviewResult("Updating transfer-proof review...");
+    try {
+      const res = await apiFetch(`/api/admin/orders/${encodeURIComponent(id)}/review-transfer-proof`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, note: proofReviewNote }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.message || json?.error || "Could not update the transfer-proof review.");
+      setProofReviewResult(`${json.message || "Transfer-proof review updated."}${json.warning ? " The decision was saved, but the seller email failed to send." : ""}`);
+      setProofReviewNote("");
+      setPendingProofAction(null);
+      await load();
+    } catch (err: any) {
+      setProofReviewResult(`Review failed: ${err?.message || "Could not update the transfer-proof review."}`);
+    } finally {
+      setProofReviewBusy(false);
     }
   }
 
@@ -489,6 +525,54 @@ export default function AdminOrderDetailPage() {
 
               return (
                 <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                  {order.transferVerificationStatus === "MANUAL_REVIEW" && !disputeRecord ? (
+                    <div style={{ padding: 14, borderRadius: 10, border: "1px solid rgba(234,88,12,.35)", background: "rgba(255,247,237,1)" }}>
+                      <h3 style={{ margin: "0 0 6px", color: "rgba(154,52,18,1)" }}>Transfer-proof human review</h3>
+                      <p style={{ margin: "0 0 10px", opacity: .82 }}>
+                        Review the uploaded proof, record a note, then choose one standard outcome. Approve and reject remove it from this queue; requesting information keeps it here.
+                      </p>
+                      <textarea
+                        value={proofReviewNote}
+                        onChange={(event) => {
+                          setProofReviewNote(event.target.value);
+                          setProofReviewResult(null);
+                          setPendingProofAction(null);
+                        }}
+                        rows={4}
+                        placeholder="Explain the decision or specify exactly what supporting information is needed"
+                        style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,.16)", resize: "vertical" }}
+                      />
+                      <div style={{ marginTop: 4, fontSize: 12, opacity: .72 }}>
+                        {proofReviewNote.trim().length < 3 ? "Enter an Admin note of at least 3 characters." : "Admin note ready."}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                        <button type="button" onClick={() => setPendingProofAction("APPROVE")} disabled={proofReviewBusy || proofReviewNote.trim().length < 3} style={{ padding: "10px 12px", borderRadius: 8, border: 0, background: "rgba(22,101,52,1)", color: "white", fontWeight: 900, opacity: proofReviewBusy || proofReviewNote.trim().length < 3 ? .45 : 1 }}>
+                          Approve proof
+                        </button>
+                        <button type="button" onClick={() => setPendingProofAction("REJECT")} disabled={proofReviewBusy || proofReviewNote.trim().length < 3} style={{ padding: "10px 12px", borderRadius: 8, border: 0, background: "rgba(185,28,28,1)", color: "white", fontWeight: 900, opacity: proofReviewBusy || proofReviewNote.trim().length < 3 ? .45 : 1 }}>
+                          Reject proof
+                        </button>
+                        <button type="button" onClick={() => reviewTransferProof("REQUEST_INFORMATION")} disabled={proofReviewBusy || proofReviewNote.trim().length < 3} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(37,99,235,.35)", background: "white", color: "rgba(6,74,147,1)", fontWeight: 900, opacity: proofReviewBusy || proofReviewNote.trim().length < 3 ? .45 : 1 }}>
+                          Request more information
+                        </button>
+                      </div>
+                      {pendingProofAction ? (
+                        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,.14)", background: "white" }}>
+                          <strong>Confirm {pendingProofAction === "APPROVE" ? "approval" : "rejection"}?</strong>
+                          <div style={{ marginTop: 4, fontSize: 13 }}>
+                            {pendingProofAction === "APPROVE" ? "This removes the review from the queue and asks the buyer to confirm receipt." : "This removes the review from the queue and asks the seller to upload corrected proof."}
+                          </div>
+                          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                            <button type="button" onClick={() => reviewTransferProof(pendingProofAction)} disabled={proofReviewBusy} style={{ padding: "8px 11px", borderRadius: 8, border: 0, background: pendingProofAction === "APPROVE" ? "rgba(22,101,52,1)" : "rgba(185,28,28,1)", color: "white", fontWeight: 900 }}>
+                              {proofReviewBusy ? "Applying..." : "Yes, apply decision"}
+                            </button>
+                            <button type="button" onClick={() => setPendingProofAction(null)} disabled={proofReviewBusy} style={{ padding: "8px 11px", borderRadius: 8, border: "1px solid rgba(0,0,0,.14)", background: "white", fontWeight: 900 }}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : null}
+                      {proofReviewResult ? <div role="status" aria-live="polite" style={{ marginTop: 9, fontWeight: 800, color: proofReviewResult.startsWith("Review failed") || proofReviewResult.startsWith("Enter") ? "rgba(153,27,27,1)" : "rgba(22,101,52,1)" }}>{proofReviewResult}</div> : null}
+                    </div>
+                  ) : null}
                   <div>
                     <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 4 }}>Transfer proof</div>
                     <div style={{ padding: 10, borderRadius: 8, background: "rgba(248,250,252,1)", display: "grid", gap: 6 }}>
@@ -498,6 +582,11 @@ export default function AdminOrderDetailPage() {
                       {transferProof.manualReviewRequestedAt ? (
                         <div><strong>Human review requested:</strong> {new Date(transferProof.manualReviewRequestedAt).toLocaleString()}</div>
                       ) : null}
+                      {(transferProof.adminReviews || []).map((review, index) => (
+                        <div key={review.id || index}>
+                          <strong>Admin {review.action?.toLowerCase().replaceAll("_", " ") || "review"}:</strong> {review.note || "-"}{review.decidedAt ? ` — ${new Date(review.decidedAt).toLocaleString()}` : ""}
+                        </div>
+                      ))}
                     </div>
                   </div>
                   {isImageProof ? (

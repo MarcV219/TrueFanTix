@@ -16,6 +16,7 @@ type SellerHoldingOrder = {
   transferProofType: string | null;
   transferProofData: string | null;
   transferVerificationStatus: string | null;
+  transferProofReviewRequest: { message: string; requestedAt: string | null } | null;
   buyerConfirmationStatus: string | null;
   buyerConfirmationAt: string | null;
   buyerConfirmationDeadline: string | null;
@@ -280,6 +281,13 @@ function OrderCard({
 
       {!transferSubmitted ? (
         <form onSubmit={submitProof} style={{ marginTop: 16, display: "grid", gap: 10 }}>
+          {order.transferProofReviewRequest ? (
+            <div role="status" style={{ padding: 12, borderRadius: 10, border: "2px solid rgba(249,115,22,.5)", background: "rgba(255,247,237,1)", color: "rgba(154,52,18,1)" }}>
+              <div style={{ fontWeight: 950 }}>ACTION REQUIRED — Support needs updated transfer proof</div>
+              <div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{order.transferProofReviewRequest.message}</div>
+              {order.transferProofReviewRequest.requestedAt ? <div style={{ marginTop: 5, fontSize: 12 }}>Requested {formatDate(order.transferProofReviewRequest.requestedAt)}</div> : null}
+            </div>
+          ) : null}
           <div style={instructionStyle}>
             <div style={{ fontWeight: 950, color: "rgba(15, 23, 42, 1)" }}>
               Transfer the tickets outside TrueFanTix first
