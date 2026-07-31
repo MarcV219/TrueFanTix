@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
+import { totalAdminQueueActionable } from "@/lib/adminQueueCounts";
 
 export async function GET(req: Request) {
   const gate = await requireAdmin(req);
@@ -21,6 +22,7 @@ export async function GET(req: Request) {
       expiredReservations,
       openEscrows,
       disputes,
+      transferProofReviews,
       failedPayments,
       pendingPayouts,
       failedEmails,
@@ -50,6 +52,7 @@ export async function GET(req: Request) {
       }),
       prisma.ticketEscrow.count({ where: { state: "IN_ESCROW" } }),
       prisma.order.count({ where: { buyerConfirmationStatus: "DISPUTED" } }),
+      prisma.order.count({ where: { transferVerificationStatus: "MANUAL_REVIEW" } }),
       prisma.payment.count({ where: { status: "FAILED" } }),
       prisma.payout.count({ where: { status: "PENDING" } }),
       prisma.emailDelivery.count({ where: { status: "FAILED", sentAt: { gte: dayAgo } } }),
@@ -57,19 +60,21 @@ export async function GET(req: Request) {
       prisma.forumPost.count({ where: { visibility: { not: "VISIBLE" } } }),
     ]);
     const moderatedForumItems = hiddenForumThreads + hiddenForumPosts;
-    const actionable =
-      pending +
-      needsReview +
-      catalogRequests +
-      sellerStripe +
-      suspendedSellers +
-      expiredReservations +
-      openEscrows +
-      disputes +
-      failedPayments +
-      pendingPayouts +
-      failedEmails +
-      moderatedForumItems;
+    const actionable = totalAdminQueueActionable({
+      pending,
+      needsReview,
+      catalogRequests,
+      sellerStripe,
+      suspendedSellers,
+      expiredReservations,
+      openEscrows,
+      disputes,
+      transferProofReviews,
+      failedPayments,
+      pendingPayouts,
+      failedEmails,
+      moderatedForumItems,
+    });
 
     return NextResponse.json({
       ok: true,
@@ -83,6 +88,7 @@ export async function GET(req: Request) {
         expiredReservations,
         openEscrows,
         disputes,
+        transferProofReviews,
         failedPayments,
         pendingPayouts,
         failedEmails,

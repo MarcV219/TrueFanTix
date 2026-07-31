@@ -34,6 +34,7 @@ type AttentionCounts = {
   expiredReservations: number;
   openEscrows: number;
   disputes: number;
+  transferProofReviews: number;
   failedPayments: number;
   pendingPayouts: number;
   failedEmails: number;
@@ -51,6 +52,7 @@ const ATTENTION_ITEMS: Array<{
   { key: "pending", label: "Ticket verification pending", description: "New listings waiting for an approval decision.", href: "#ticket-verification" },
   { key: "needsReview", label: "Tickets needing review", description: "Listings flagged for manual investigation.", href: "#ticket-verification", urgent: true },
   { key: "disputes", label: "Open disputes", description: "Buyer disputes with seller payout paused.", href: "/admin/orders?status=DISPUTED", urgent: true },
+  { key: "transferProofReviews", label: "Transfer proof human reviews", description: "Seller transfer documentation waiting for an Admin decision.", href: "/admin/orders?status=HUMAN_REVIEW", urgent: true },
   { key: "catalogRequests", label: "Catalog requests", description: "Requested artists, teams, venues, or cities to review.", href: "/admin/catalog-requests" },
   { key: "sellerStripe", label: "Seller / Stripe attention", description: "Seller approval or Stripe onboarding is incomplete.", href: "/admin/users?filter=seller-stripe-attention" },
   { key: "suspendedSellers", label: "Suspended sellers", description: "Restricted seller accounts to monitor or review.", href: "/admin/users?filter=sellers", urgent: true },
