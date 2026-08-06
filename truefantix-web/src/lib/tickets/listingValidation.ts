@@ -532,7 +532,18 @@ export function validateListingPriceAgainstOfficial({
         });
       }
 
-      if (!sameMoney(receiptServiceFeesCents, normalizedAdminFeePaidCents)) {
+      if (receiptServiceFeesCents == null) {
+        if (sellerFaceValueCents != null && priceCents > sellerFaceValueCents) {
+          receiptIssues.push({
+            code: "RECEIPT_SERVICE_FEES_NOT_FOUND",
+            field: "serviceFees",
+            source: "Receipt",
+            entered: centsToDisplay(normalizedAdminFeePaidCents),
+            found: null,
+            message: "Receipt service fees were not found, so they cannot raise the maximum list price.",
+          });
+        }
+      } else if (!sameMoney(receiptServiceFeesCents, normalizedAdminFeePaidCents)) {
         receiptIssues.push({
           code: "RECEIPT_SERVICE_FEES_MISMATCH",
           field: "serviceFees",
@@ -723,7 +734,12 @@ export function validateListingPriceAgainstOfficial({
     });
   }
 
-  if (officialServiceFeesCents != null && !sameMoney(officialServiceFeesCents, normalizedAdminFeePaidCents)) {
+  const listingDependsOnEnteredFees = priceCents > official.officialFaceValueCents;
+  if (
+    officialServiceFeesCents != null &&
+    !sameMoney(officialServiceFeesCents, normalizedAdminFeePaidCents) &&
+    (receiptServiceFeesCents != null || listingDependsOnEnteredFees)
+  ) {
     issues.push({
       code: "OFFICIAL_SERVICE_FEES_MISMATCH",
       field: "serviceFees",

@@ -968,12 +968,36 @@ describe("listing validation", () => {
       adminFeePaidCents: 1250,
       hasReceiptProof: true,
       sellerConfirmedReceiptValues: true,
-      receiptReview: receipt(),
+      receiptReview: receipt({ serviceFeesCents: null, totalServiceFeesCents: null }),
       action: "list",
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBe("RECEIPT_SERVICE_FEES_MISMATCH");
+    if (!result.ok) expect(result.error).toBe("RECEIPT_SERVICE_FEES_NOT_FOUND");
+  });
+
+  it("allows a face-value listing when entered fees could not be extracted", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official(),
+      sellerTitle: "Example Event",
+      sellerDate: "2026-10-20 7:00 PM",
+      sellerVenue: "Example Venue",
+      sellerRow: "12",
+      sellerSeat: "8",
+      purchaseQuantity: 1,
+      priceCents: 10000,
+      sellerFaceValueCents: 10000,
+      adminFeePaidCents: 1250,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({ serviceFeesCents: null, totalServiceFeesCents: null }),
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.maxListPriceCents).toBe(10000);
+    }
   });
 
   it("rejects selected listing currency when the receipt shows a different currency", () => {
