@@ -16,7 +16,7 @@ import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValida
 import { analyzeReceiptProof } from "@/lib/tickets/receiptOcr";
 import { withdrawExpiredAvailableTickets } from "@/lib/tickets/expireListings";
 import { pastEventListingMessage } from "@/lib/tickets/expiry";
-import { canonicalizeEventTitle, duplicateSeatBlocksSeller } from "@/lib/tickets/eventIdentity";
+import { canonicalizeEventTitle, canonicalTitleFromConfirmedSource, duplicateSeatBlocksSeller } from "@/lib/tickets/eventIdentity";
 import { sendEmail } from "@/lib/email";
 import { DISPUTE_SUPPORT_EMAIL } from "@/lib/disputes";
 
@@ -683,7 +683,8 @@ export async function POST(req: Request) {
 
   const body = validation.data;
 
-  const title = canonicalizeEventTitle(body.title);
+  const enteredTitle = canonicalizeEventTitle(body.title);
+  let title = enteredTitle;
   const requestedImage = (body.image ?? "").trim();
   const venue = body.venue;
   const date = body.date;
@@ -881,6 +882,15 @@ export async function POST(req: Request) {
       ? listingCheck.maxListPriceCents
       : listingCheck.details?.maxListPriceCents ?? official.officialFaceValueCents ?? syncedFaceValueCents;
 
+    const receiptConfirmedTitle = canonicalTitleFromConfirmedSource(enteredTitle, receiptReview?.eventTitle);
+    const officialConfirmedTitle = canonicalTitleFromConfirmedSource(enteredTitle, official.officialEventTitle);
+    const canonicalTitleSource = receiptConfirmedTitle !== enteredTitle
+      ? "receipt"
+      : officialConfirmedTitle !== enteredTitle
+        ? "official"
+        : "seller";
+    title = canonicalTitleSource === "receipt" ? receiptConfirmedTitle : officialConfirmedTitle;
+
     const receiptCatalogEntity = await cacheReceiptConfirmedEventTitle({
       type: catalogRequestType,
       sellerTitle: title,
@@ -948,6 +958,9 @@ export async function POST(req: Request) {
           providerReason: providerCheck.reason,
           manualEventType: eventTypeOverride,
           inferredEventType,
+          enteredTitle,
+          canonicalTitle: title,
+          canonicalTitleSource,
           receiptProof: {
             provided: !!verificationImage,
             fileName: receiptFileName,

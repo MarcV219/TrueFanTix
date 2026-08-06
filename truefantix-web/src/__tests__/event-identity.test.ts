@@ -1,4 +1,4 @@
-import { canonicalizeEventTitle, duplicateSeatBlocksSeller, eventIdentityKey } from "@/lib/tickets/eventIdentity";
+import { canonicalizeEventTitle, canonicalTitleFromConfirmedSource, duplicateSeatBlocksSeller, eventIdentityKey } from "@/lib/tickets/eventIdentity";
 
 describe("event identity", () => {
   it.each([
@@ -22,5 +22,19 @@ describe("event identity", () => {
   it("allows a later owner to resell a sold seat but not the original seller", () => {
     expect(duplicateSeatBlocksSeller("SOLD", "seller-a", "seller-b")).toBe(false);
     expect(duplicateSeatBlocksSeller("SOLD", "seller-a", "seller-a")).toBe(true);
+  });
+
+  it("uses a close receipt-confirmed title and expands it to canonical teams", () => {
+    expect(canonicalTitleFromConfirmedSource(
+      "New York vs Toronto",
+      "New York Yankees vs Toronto Blue Jays",
+    )).toBe("New York Yankees vs. Toronto Blue Jays");
+  });
+
+  it("does not replace the title from an unrelated receipt", () => {
+    expect(canonicalTitleFromConfirmedSource(
+      "New York vs Toronto",
+      "Boston Red Sox vs Baltimore Orioles",
+    )).toBe("New York vs Toronto");
   });
 });

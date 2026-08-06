@@ -54,6 +54,38 @@ export function canonicalizeEventTitle(title: string) {
   return `${best[0].home.name} vs. ${best[0].away.name}`;
 }
 
+function titleTokens(value: string) {
+  return normalize(value)
+    .split(" ")
+    .filter((token) => token && !["vs", "versus", "v", "at", "the", "and"].includes(token));
+}
+
+/** Prefer a verified source title only when it clearly describes the seller-entered event. */
+export function canonicalTitleFromConfirmedSource(
+  enteredTitle: string,
+  ...confirmedTitles: Array<string | null | undefined>
+) {
+  const enteredTokens = Array.from(new Set(titleTokens(enteredTitle)));
+  if (!enteredTokens.length) return canonicalizeEventTitle(enteredTitle);
+
+  for (const confirmedTitle of confirmedTitles) {
+    const candidate = String(confirmedTitle ?? "").trim();
+    if (!candidate || candidate.length > 200) continue;
+    const confirmedTokens = Array.from(new Set(titleTokens(candidate)));
+    const confirmedSet = new Set(confirmedTokens);
+    const shared = enteredTokens.filter((token) => confirmedSet.has(token)).length;
+    const enteredCoverage = shared / enteredTokens.length;
+    const confirmedCoverage = confirmedTokens.length ? shared / confirmedTokens.length : 0;
+    const enoughSharedTerms = shared >= Math.min(2, enteredTokens.length);
+
+    if (enoughSharedTerms && enteredCoverage >= 0.75 && confirmedCoverage >= 0.45) {
+      return canonicalizeEventTitle(candidate);
+    }
+  }
+
+  return canonicalizeEventTitle(enteredTitle);
+}
+
 export function eventIdentityKey(title: string, date: string, venue: string) {
   return [canonicalizeEventTitle(title), date, venue].map(normalize).join("|");
 }
