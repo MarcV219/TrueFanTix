@@ -59,7 +59,7 @@ function stripeAccountPrefill(user: {
   region: string;
   postalCode: string;
   country: string;
-}, seller: { id: string }) {
+}, seller: { id: string }, origin: string) {
   const country = normalizeCountry(user.country);
   const address = {
     line1: user.streetAddress1 || undefined,
@@ -74,6 +74,11 @@ function stripeAccountPrefill(user: {
     email: user.email,
     business_type: "individual",
     business_profile: {
+      // Stripe still calls this section "Business details" for individual
+      // accounts. Prefill the two commercial-activity fields so personal
+      // ticket sellers do not have to choose an industry or supply a website.
+      mcc: "7922",
+      url: `${origin}/seller/${encodeURIComponent(seller.id)}`,
       product_description: "Individual seller listing personal event tickets at or below face value through the TrueFanTix marketplace.",
     },
     individual: {
@@ -100,6 +105,7 @@ export async function POST(req: Request) {
     if (!rateLimit.ok) return rateLimit.response;
 
     const userId = gate.user.id;
+    const origin = new URL(req.url).origin;
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -155,7 +161,7 @@ export async function POST(req: Request) {
     // Create Stripe account if needed
     if (!seller.stripeAccountId) {
       const country = normalizeCountry(user.country);
-      const prefill = stripeAccountPrefill(user, seller);
+      const prefill = stripeAccountPrefill(user, seller, origin);
 
       const account = await stripe.accounts.create({
         type: "express",
@@ -181,13 +187,11 @@ export async function POST(req: Request) {
       });
     } else {
       try {
-        await stripe.accounts.update(seller.stripeAccountId, stripeAccountPrefill(user, seller));
+        await stripe.accounts.update(seller.stripeAccountId, stripeAccountPrefill(user, seller, origin));
       } catch (err) {
         console.warn("Could not prefill existing Stripe connected account:", err);
       }
     }
-
-    const origin = new URL(req.url).origin;
 
     const link = await stripe.accountLinks.create({
       account: seller.stripeAccountId!,
