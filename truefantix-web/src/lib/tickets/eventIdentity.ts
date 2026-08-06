@@ -57,3 +57,11 @@ export function canonicalizeEventTitle(title: string) {
 export function eventIdentityKey(title: string, date: string, venue: string) {
   return [canonicalizeEventTitle(title), date, venue].map(normalize).join("|");
 }
+
+export function duplicateSeatBlocksSeller(
+  existingStatus: string,
+  existingSellerId: string,
+  listingSellerId: string
+) {
+  return existingStatus !== "SOLD" || existingSellerId === listingSellerId;
+}

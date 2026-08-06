@@ -16,7 +16,7 @@ import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValida
 import { analyzeReceiptProof } from "@/lib/tickets/receiptOcr";
 import { withdrawExpiredAvailableTickets } from "@/lib/tickets/expireListings";
 import { pastEventListingMessage } from "@/lib/tickets/expiry";
-import { canonicalizeEventTitle } from "@/lib/tickets/eventIdentity";
+import { canonicalizeEventTitle, duplicateSeatBlocksSeller } from "@/lib/tickets/eventIdentity";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -318,7 +318,6 @@ async function findDuplicateSeatListing(params: {
 
   const candidates = await prisma.ticket.findMany({
     where: {
-      sellerId: params.sellerId,
       status: { in: ["AVAILABLE", "RESERVED", "SOLD"] },
       AND: [
         { OR: [{ section: { not: null } }, { row: { not: null } }, { seat: { not: null } }] },
@@ -339,15 +338,19 @@ async function findDuplicateSeatListing(params: {
       seat: true,
       venue: true,
       status: true,
+      sellerId: true,
       eventId: true,
     },
-    take: 100,
   });
 
   return candidates.find((ticket) => {
     const sameEvent = params.eventId && ticket.eventId === params.eventId;
     const sameDateAndVenue = ticket.date === params.date && normalizeListingText(ticket.venue) === normalizedVenue;
+    // Active inventory is exclusive marketplace-wide. A SOLD seat only blocks the
+    // original seller, allowing its buyer to legitimately resell it later.
+    const blocksSeller = duplicateSeatBlocksSeller(ticket.status, ticket.sellerId, params.sellerId);
     return (
+      blocksSeller &&
       (sameEvent || sameDateAndVenue) &&
       normalizeListingText(ticket.section) === normalizedSection &&
       normalizeListingText(ticket.row) === normalizedRow &&
@@ -790,7 +793,7 @@ export async function POST(req: Request) {
           ok: false,
           error: "DUPLICATE_ACTIVE_SEAT",
           message:
-            "This seat is already listed by you for this event. Withdraw the existing listing before listing the same seat again.",
+            "This seat is already listed for this event. It cannot be listed again while the existing listing is active.",
           duplicateTicketId: duplicateSeat.id,
           duplicateStatus: duplicateSeat.status,
         },
