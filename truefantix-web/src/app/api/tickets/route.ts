@@ -16,6 +16,7 @@ import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValida
 import { analyzeReceiptProof } from "@/lib/tickets/receiptOcr";
 import { withdrawExpiredAvailableTickets } from "@/lib/tickets/expireListings";
 import { pastEventListingMessage } from "@/lib/tickets/expiry";
+import { canonicalizeEventTitle } from "@/lib/tickets/eventIdentity";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -300,20 +301,20 @@ function officialWithReceiptSelloutSignal<T extends { soldOut: boolean | null; s
 
 async function findDuplicateSeatListing(params: {
   sellerId: string;
-  title: string;
   date: string;
+  venue: string;
   section: string | null;
   row: string | null;
   seat: string | null;
   eventId?: string | null;
 }) {
-  const normalizedTitle = normalizeListingText(params.title);
+  const normalizedVenue = normalizeListingText(params.venue);
   const normalizedSection = normalizeListingText(params.section);
   const normalizedRow = normalizeListingText(params.row);
   const normalizedSeat = normalizeListingText(params.seat);
   const submittedParts = [normalizedSection, normalizedRow, normalizedSeat].filter(Boolean);
 
-  if (!normalizedTitle || !params.date || submittedParts.length < 2) return null;
+  if (!normalizedVenue || !params.date || submittedParts.length < 2) return null;
 
   const candidates = await prisma.ticket.findMany({
     where: {
@@ -336,6 +337,7 @@ async function findDuplicateSeatListing(params: {
       section: true,
       row: true,
       seat: true,
+      venue: true,
       status: true,
       eventId: true,
     },
@@ -344,9 +346,9 @@ async function findDuplicateSeatListing(params: {
 
   return candidates.find((ticket) => {
     const sameEvent = params.eventId && ticket.eventId === params.eventId;
-    const sameDateAndTitle = ticket.date === params.date && normalizeListingText(ticket.title) === normalizedTitle;
+    const sameDateAndVenue = ticket.date === params.date && normalizeListingText(ticket.venue) === normalizedVenue;
     return (
-      (sameEvent || sameDateAndTitle) &&
+      (sameEvent || sameDateAndVenue) &&
       normalizeListingText(ticket.section) === normalizedSection &&
       normalizeListingText(ticket.row) === normalizedRow &&
       normalizeListingText(ticket.seat) === normalizedSeat
@@ -676,7 +678,7 @@ export async function POST(req: Request) {
 
   const body = validation.data;
 
-  const title = body.title;
+  const title = canonicalizeEventTitle(body.title);
   const requestedImage = (body.image ?? "").trim();
   const venue = body.venue;
   const date = body.date;
@@ -774,8 +776,8 @@ export async function POST(req: Request) {
 
     const duplicateSeat = await findDuplicateSeatListing({
       sellerId,
-      title,
       date,
+      venue,
       section,
       row,
       seat,

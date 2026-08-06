@@ -200,4 +200,33 @@ describe("tickets view", () => {
     expect(groups[0].tickets.map((ticket) => ticket.id)).toEqual(["monster-low", "monster-high"]);
     expect(groups[1].tickets.map((ticket) => ticket.id)).toEqual(["packers"]);
   });
+
+  it("groups team-name variants and shares sold-out status across the event", () => {
+    const makeTicket = (id: string, title: string, soldOut: boolean) =>
+      mapApiTicketToCard({
+        id,
+        title,
+        date: "2026-10-29 7:15 PM",
+        venue: "Lambeau Field",
+        section: "104",
+        row: "2",
+        seat: id,
+        priceCents: 16000,
+        currency: "USD",
+        image: "/default.jpg",
+        sellerId: "seller",
+        seller: null,
+        event: { selloutStatus: soldOut ? "SOLD_OUT" : "NOT_SOLD_OUT" },
+      });
+
+    const groups = groupTicketsByEvent([
+      makeTicket("1", "Green Bay Packers vs. Carolina Panthers", true),
+      makeTicket("2", "Packers vs Panthers", false),
+      makeTicket("3", "Green Bay vs Carolina", false),
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].tickets.every((ticket) => ticket.title === "Green Bay Packers vs. Carolina Panthers")).toBe(true);
+    expect(groups[0].tickets.every((ticket) => ticket.isSoldOut)).toBe(true);
+  });
 });

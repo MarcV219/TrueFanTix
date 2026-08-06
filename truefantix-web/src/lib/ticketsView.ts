@@ -1,4 +1,5 @@
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
+import { canonicalizeEventTitle, eventIdentityKey } from "@/lib/tickets/eventIdentity";
 
 export type EventTypeInfo = { type: string; label: string; placeholder: string };
 
@@ -438,7 +439,7 @@ function containsTerm(haystack: string, terms: string[]) {
 }
 
 export function ticketEventKey(ticket: Pick<TicketCardView, "title" | "date" | "venue">) {
-  return [ticket.title, ticket.date, ticket.venue].map(normalizeMatchText).join("|");
+  return eventIdentityKey(ticket.title, ticket.date, ticket.venue);
 }
 
 export function groupTicketsByEvent<T extends TicketCardView>(tickets: T[]): TicketEventGroup<T>[] {
@@ -451,10 +452,15 @@ export function groupTicketsByEvent<T extends TicketCardView>(tickets: T[]): Tic
     else groups.set(key, [ticket]);
   }
 
-  return Array.from(groups, ([key, eventTickets]) => ({
-    key,
-    tickets: [...eventTickets].sort((a, b) => a.price - b.price),
-  }));
+  return Array.from(groups, ([key, eventTickets]) => {
+    const isSoldOut = eventTickets.some((ticket) => ticket.isSoldOut);
+    return {
+      key,
+      tickets: eventTickets
+        .map((ticket) => ({ ...ticket, title: canonicalizeEventTitle(ticket.title), isSoldOut }))
+        .sort((a, b) => a.price - b.price) as T[],
+    };
+  });
 }
 
 function daysUntil(date: string) {
@@ -640,7 +646,7 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
 
   return {
     id: t.id,
-    title: t.title,
+    title: canonicalizeEventTitle(t.title),
     date: t.date,
     venue: t.venue,
     venueAddress: venueInfo.address,
