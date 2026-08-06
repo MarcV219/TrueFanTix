@@ -27,7 +27,9 @@ const TEAM_MATCHES = LIVE_EVENT_CATALOG
 
 function teamCandidates(value: string) {
   const key = normalize(value);
-  return TEAM_MATCHES.filter((team) => team.terms.includes(key));
+  return TEAM_MATCHES.filter((team) =>
+    team.terms.some((term) => key === term || key.endsWith(` ${term}`))
+  );
 }
 
 /** Converts a recognizable two-team matchup to canonical full team names. */
@@ -71,7 +73,8 @@ export function canonicalTitleFromConfirmedSource(
   for (const confirmedTitle of confirmedTitles) {
     const candidate = String(confirmedTitle ?? "").trim();
     if (!candidate || candidate.length > 200) continue;
-    const confirmedTokens = Array.from(new Set(titleTokens(candidate)));
+    const canonicalCandidate = canonicalizeEventTitle(candidate);
+    const confirmedTokens = Array.from(new Set(titleTokens(canonicalCandidate)));
     const confirmedSet = new Set(confirmedTokens);
     const shared = enteredTokens.filter((token) => confirmedSet.has(token)).length;
     const enteredCoverage = shared / enteredTokens.length;
@@ -79,7 +82,7 @@ export function canonicalTitleFromConfirmedSource(
     const enoughSharedTerms = shared >= Math.min(2, enteredTokens.length);
 
     if (enoughSharedTerms && enteredCoverage >= 0.75 && confirmedCoverage >= 0.45) {
-      return canonicalizeEventTitle(candidate);
+      return canonicalCandidate;
     }
   }
 

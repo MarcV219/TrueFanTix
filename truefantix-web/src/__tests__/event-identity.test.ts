@@ -31,6 +31,13 @@ describe("event identity", () => {
     )).toBe("New York Yankees vs. Toronto Blue Jays");
   });
 
+  it("removes a receipt product prefix when canonicalizing a matchup", () => {
+    expect(canonicalTitleFromConfirmedSource(
+      "New York vs Toronto",
+      "Pinstripe Pass • New York Yankees v. Toronto Blue Jays",
+    )).toBe("New York Yankees vs. Toronto Blue Jays");
+  });
+
   it("does not replace the title from an unrelated receipt", () => {
     expect(canonicalTitleFromConfirmedSource(
       "New York vs Toronto",
