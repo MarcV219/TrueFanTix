@@ -676,6 +676,43 @@ describe("listing validation", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts a named admission pass as general admission receipt evidence", () => {
+    const result = validateListingPriceAgainstOfficial({
+      official: official({
+        officialFaceValueCents: 3000,
+        officialEventDate: "2026-08-22",
+        officialEventTime: "1:35 PM",
+        officialVenueName: "Yankee Stadium",
+      }),
+      sellerTitle: "New York Yankees vs Toronto Blue Jays",
+      sellerDate: "2026-08-22 1:35 PM",
+      sellerVenue: "Yankee Stadium",
+      sellerRow: "General Admission",
+      sellerSeat: "",
+      purchaseQuantity: 1,
+      priceCents: 3000,
+      sellerFaceValueCents: 3000,
+      adminFeePaidCents: 330,
+      hasReceiptProof: true,
+      sellerConfirmedReceiptValues: true,
+      receiptReview: receipt({
+        eventTitle: "New York Yankees vs Toronto Blue Jays",
+        venue: "Yankee Stadium",
+        eventDate: "2026-08-22",
+        eventTime: "1:35 PM",
+        faceValueCents: 3000,
+        totalFaceValueCents: 3000,
+        serviceFeesCents: 330,
+        totalServiceFeesCents: 330,
+        seats: [{ section: "PINSTRIPE PASS", row: null, seat: null }],
+      }),
+      sellerCurrency: "USD",
+      action: "list",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("accepts seller row and seat when receipt OCR places them across section and row", () => {
     const result = validateListingPriceAgainstOfficial({
       official: official(),

@@ -266,6 +266,11 @@ function isGeneralAdmissionText(value: string | null | undefined) {
   return /\b(ga|general admission|standing room|standing|floor)\b/.test(normalized);
 }
 
+function isGeneralAdmissionReceiptText(value: string | null | undefined) {
+  const normalized = normalizeSeatPart(value);
+  return isGeneralAdmissionText(normalized) || /\b(?:admission|standing room|sro|pass)\b/i.test(normalized);
+}
+
 function normalizeSeatPart(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase().replace(/[–—]/g, "-");
 }
@@ -297,9 +302,9 @@ function receiptHasSeat(receipt: ReceiptOcrReview, sellerSection: string | null,
     if (!receipt.seats.length) return true;
     return receipt.seats.some((item) => {
       return (
-        isGeneralAdmissionText(item.section) ||
-        isGeneralAdmissionText(item.row) ||
-        isGeneralAdmissionText(item.seat)
+        isGeneralAdmissionReceiptText(item.section) ||
+        isGeneralAdmissionReceiptText(item.row) ||
+        isGeneralAdmissionReceiptText(item.seat)
       );
     });
   }

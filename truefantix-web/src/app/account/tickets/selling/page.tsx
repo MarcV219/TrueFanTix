@@ -25,6 +25,8 @@ type CreateTicketBody = {
   verificationImage?: string | null;
   receiptFileName?: string | null;
   sellerConfirmedReceiptValues?: boolean;
+  requestManualReview?: boolean;
+  supportReviewNote?: string | null;
 };
 
 type PricingConfirmation = {
@@ -1497,8 +1499,8 @@ function Body({ me }: { me: MeUser }) {
     return "";
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit(e?: React.FormEvent, requestManualReview = false) {
+    e?.preventDefault();
     setError(null);
     setOk(null);
     setListingSuccessMessage(null);
@@ -1590,6 +1592,10 @@ function Body({ me }: { me: MeUser }) {
           verificationImage: receiptProofDataUrl,
           receiptFileName,
           sellerConfirmedReceiptValues,
+          requestManualReview,
+          supportReviewNote: requestManualReview
+            ? "Seller believes the automated receipt validation is incorrect and requests Admin review."
+            : null,
         };
 
         const { res, data } = await fetchJson("/api/tickets", {
@@ -1611,7 +1617,11 @@ function Body({ me }: { me: MeUser }) {
         }
       }
 
-      setListingSuccessMessage("Tickets successfully listed.");
+      setListingSuccessMessage(
+        requestManualReview
+          ? "Support review requested. The submission is in the Admin Queue and will not appear for sale unless Admin approves it."
+          : "Tickets successfully listed."
+      );
       setTitle("");
       setSelectedTitleSuggestion(null);
       setTitleSuggestions([]);
@@ -1721,6 +1731,21 @@ function Body({ me }: { me: MeUser }) {
               })}
             </div>
           ) : null}
+
+          <div style={{ display: "grid", gap: 6, padding: 10, borderRadius: 8, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(239,246,255,0.9)", color: "rgba(30,64,175,1)" }}>
+            <div>Think the automated review is wrong?</div>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>
+              Send the complete attempted listing, receipt, automated analysis, and errors to Support for Admin review.
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => submit(undefined, true)}
+              style={{ justifySelf: "start", padding: "8px 11px", borderRadius: 8, border: "1px solid rgba(37,99,235,0.35)", background: "white", color: "rgba(30,64,175,1)", fontWeight: 900 }}
+            >
+              {busy ? "Submitting…" : "Request support review"}
+            </button>
+          </div>
 
           <div
             style={{

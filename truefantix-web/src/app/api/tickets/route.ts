@@ -17,6 +17,8 @@ import { analyzeReceiptProof } from "@/lib/tickets/receiptOcr";
 import { withdrawExpiredAvailableTickets } from "@/lib/tickets/expireListings";
 import { pastEventListingMessage } from "@/lib/tickets/expiry";
 import { canonicalizeEventTitle, duplicateSeatBlocksSeller } from "@/lib/tickets/eventIdentity";
+import { sendEmail } from "@/lib/email";
+import { DISPUTE_SUPPORT_EMAIL } from "@/lib/disputes";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -696,6 +698,8 @@ export async function POST(req: Request) {
   const verificationImage = body.verificationImage ?? null;
   const receiptFileName = body.receiptFileName ?? null;
   const sellerConfirmedReceiptValues = body.sellerConfirmedReceiptValues === true;
+  const requestManualReview = body.requestManualReview === true;
+  const supportReviewNote = body.supportReviewNote ?? null;
   const purchaseQuantity = body.purchaseQuantity ?? 1;
   const eventTypeOverride = (body.eventTypeOverride ?? "").trim().toLowerCase() || null;
   const catalogRequestType = body.catalogRequestType ?? null;
@@ -846,7 +850,7 @@ export async function POST(req: Request) {
       action: "list",
     });
 
-    if (!listingCheck.ok) {
+    if (!listingCheck.ok && !requestManualReview) {
       return NextResponse.json(
         {
           ok: false,
@@ -858,6 +862,24 @@ export async function POST(req: Request) {
         { status: 422 }
       );
     }
+
+    const validationFailure = listingCheck.ok
+      ? null
+      : {
+          error: listingCheck.error,
+          message: listingCheck.message,
+          details: listingCheck.details ?? null,
+        };
+    const syncedFaceValueCents = listingCheck.ok
+      ? listingCheck.faceValueCents
+      : faceValueCents ?? official.officialFaceValueCents;
+    if (syncedFaceValueCents == null) {
+      return badRequest("Enter the ticket face value before requesting Support review.");
+    }
+    const faceValueSource = listingCheck.ok ? listingCheck.faceValueSource : "manual-review";
+    const verifiedMaxListPriceCents = listingCheck.ok
+      ? listingCheck.maxListPriceCents
+      : listingCheck.details?.maxListPriceCents ?? official.officialFaceValueCents ?? syncedFaceValueCents;
 
     const receiptCatalogEntity = await cacheReceiptConfirmedEventTitle({
       type: catalogRequestType,
@@ -914,7 +936,11 @@ export async function POST(req: Request) {
         barcodeText,
         verificationImage,
         status: "AVAILABLE",
-        verificationStatus: "PENDING",
+        verificationStatus: requestManualReview ? "NEEDS_REVIEW" : "PENDING",
+        verificationReason: requestManualReview
+          ? validationFailure?.message ?? "Seller requested Support review of automated listing validation."
+          : null,
+        verificationProvider: requestManualReview ? "seller-support-request" : null,
         verificationEvidence: JSON.stringify({
           barcodeProvided: !!barcodeHash,
           provider: providerCheck.provider,
@@ -930,6 +956,14 @@ export async function POST(req: Request) {
             ocr: receiptReview,
           },
           receiptConfirmedCatalogEntityId: receiptCatalogEntity?.id ?? null,
+          manualReviewRequest: requestManualReview
+            ? {
+                requestedAt: new Date().toISOString(),
+                requestedByUserId: gate.user.id,
+                sellerNote: supportReviewNote,
+                automatedValidation: validationFailure,
+              }
+            : null,
         }),
         barcodeHash,
         sellerId,
@@ -986,7 +1020,6 @@ export async function POST(req: Request) {
       }
     }
 
-    const syncedFaceValueCents = listingCheck.faceValueCents;
     const syncedPriceCents = priceCentsRaw;
 
     let existingEvidence: any = {};
@@ -1017,10 +1050,10 @@ export async function POST(req: Request) {
             officialFaceValueCents: official.officialFaceValueCents,
             officialServiceFeesCents: official.officialServiceFeesCents ?? null,
             officialServiceFeeSource: official.officialServiceFeeSource ?? null,
-            faceValueSource: listingCheck.faceValueSource,
+            faceValueSource,
             adminFeePaidCents,
-            verifiedServiceFeesCents: listingCheck.maxListPriceCents - listingCheck.faceValueCents,
-            maxListPriceCents: listingCheck.maxListPriceCents,
+            verifiedServiceFeesCents: Math.max(0, verifiedMaxListPriceCents - syncedFaceValueCents),
+            maxListPriceCents: verifiedMaxListPriceCents,
             officialStatusCode: official.officialStatusCode ?? null,
             soldOut: official.soldOut,
             soldOutSource: official.soldOutSource ?? null,
@@ -1042,12 +1075,23 @@ export async function POST(req: Request) {
       });
     }
 
-    const verified = await autoVerifyTicketById(prisma, created.id);
+    const verified = requestManualReview ? null : await autoVerifyTicketById(prisma, created.id);
 
     const finalTicket = await prisma.ticket.findUnique({
       where: { id: created.id },
       include: { event: true },
     });
+
+    if (requestManualReview) {
+      const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN || "https://truefantix-web.vercel.app").replace(/\/$/, "");
+      const reviewUrl = `${appUrl}/admin/tickets/${encodeURIComponent(created.id)}`;
+      const sellerName = created.seller?.name || "Seller";
+      await sendEmail({
+        to: DISPUTE_SUPPORT_EMAIL,
+        subject: `ACTION REQUIRED: Seller Listing Review — ${title}`,
+        text: `${sellerName} requested Admin review of an automated listing validation.\n\nEvent: ${title}\nVenue: ${venue}\nDate: ${date}\nSection/row/seat: ${section || "-"} / ${row || "-"} / ${seat || "-"}\nReason: ${validationFailure?.message || supportReviewNote || "Seller requested review"}\n\nReview all submitted details and receipt evidence:\n${reviewUrl}`,
+      });
+    }
 
     return NextResponse.json(
       {
@@ -1094,6 +1138,10 @@ export async function POST(req: Request) {
           sellerId: finalTicket?.sellerId ?? created.sellerId,
           createdAt: finalTicket?.createdAt ?? created.createdAt,
         },
+        manualReviewRequested: requestManualReview,
+        message: requestManualReview
+          ? "Support review requested. The listing is in the Admin Queue and is hidden from buyers unless Admin approves it."
+          : undefined,
       },
       { status: 201 }
     );

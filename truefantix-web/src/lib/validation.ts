@@ -85,6 +85,8 @@ export const schemas = {
       .nullable(),
     receiptFileName: z.string().trim().max(255).optional().nullable(),
     sellerConfirmedReceiptValues: z.boolean().optional(),
+    requestManualReview: z.boolean().optional(),
+    supportReviewNote: z.string().trim().max(1000).optional().nullable(),
   }),
 
   // Order schemas
