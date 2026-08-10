@@ -6,6 +6,7 @@ import { POST } from "@/app/api/webhooks/stripe/route";
 import { prisma } from "@/lib/prisma";
 
 const mockConstructEvent = jest.fn();
+const mockSendEmail = jest.fn();
 
 jest.mock("stripe", () => {
   return jest.fn().mockImplementation(() => ({
@@ -30,7 +31,7 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 jest.mock("@/lib/email", () => ({
-  sendEmail: jest.fn(),
+  sendEmail: (...args: unknown[]) => mockSendEmail(...args),
   generatePurchaseConfirmationEmail: jest.fn(() => ({ subject: "Purchase", text: "ok", html: "<p>ok</p>" })),
   generateSaleNotificationEmail: jest.fn(() => ({ subject: "Sale", text: "ok", html: "<p>ok</p>" })),
 }));
@@ -68,6 +69,7 @@ describe("Stripe webhook route", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSendEmail.mockResolvedValue({ ok: true });
     process.env = {
       ...originalEnv,
       STRIPE_SECRET_KEY: "sk_test_webhook",

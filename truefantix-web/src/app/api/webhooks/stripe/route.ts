@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { sendEmail, generatePurchaseConfirmationEmail, generateSaleNotificationEmail } from "@/lib/email";
 import { notifyTicketSold, notifyPurchaseConfirmed } from "@/lib/notifications/service";
 import { notifySellerTransferRequired, sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
+import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -213,6 +214,40 @@ export async function POST(req: Request) {
               },
             });
           }
+        }
+
+        const existingAdminEmail = await prisma.emailDelivery.findUnique({
+          where: {
+            orderId_emailType_recipient: {
+              orderId: updatedOrder.id,
+              emailType: "ADMIN_PURCHASE_COMPLETED",
+              recipient: ADMIN_ACTIVITY_EMAIL,
+            },
+          },
+        });
+        if (!existingAdminEmail) {
+          const adminEmailResult = await sendAdminActivityEmail({
+            activity: "TICKETS_PURCHASED",
+            summary: `Tickets purchased — order ${updatedOrder.id}`,
+            details: {
+              "Order ID": updatedOrder.id,
+              Buyer: updatedOrder.buyerSeller?.user?.email,
+              Seller: updatedOrder.seller?.user?.email,
+              "Ticket count": updatedOrder.items.length,
+              Total: `${String(updatedOrder.payment?.currency || paymentIntent.currency || "CAD").toUpperCase()} ${(updatedOrder.totalCents / 100).toFixed(2)}`,
+              Events: updatedOrder.items.map((item: any) => item.ticket?.title || "Ticket").join(", "),
+            },
+          });
+          await prisma.emailDelivery.create({
+            data: {
+              orderId: updatedOrder.id,
+              emailType: "ADMIN_PURCHASE_COMPLETED",
+              recipient: ADMIN_ACTIVITY_EMAIL,
+              provider: process.env.RESEND_API_KEY ? "RESEND" : process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE",
+              status: adminEmailResult.ok ? "SENT" : "FAILED",
+              error: adminEmailResult.error ?? null,
+            },
+          });
         }
 
         try {

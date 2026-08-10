@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
 import { notifySellerBuyerConfirmed } from "@/lib/orders/transferWorkflow";
+import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 
 // POST /api/orders/confirm-receipt
 // Allows a buyer to confirm receipt of tickets for a specific order.
@@ -132,6 +133,17 @@ export async function POST(req: Request) {
         ticketCount: order.items.length,
       });
     }
+    await sendAdminActivityEmail({
+      activity: "TRANSFER_CONFIRMED",
+      summary: `Buyer confirmed ticket transfer — order ${orderId}`,
+      details: {
+        "Order ID": orderId,
+        Seller: order.seller.user?.email,
+        "Ticket count": order.items.length,
+        "Order amount": `CAD ${(order.amountCents / 100).toFixed(2)}`,
+        "Confirmed at": now.toISOString(),
+      },
+    });
 
     return NextResponse.json(
       {

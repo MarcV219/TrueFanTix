@@ -19,6 +19,7 @@ import { pastEventListingMessage } from "@/lib/tickets/expiry";
 import { canonicalizeEventTitle, canonicalTitleFromConfirmedSource, duplicateSeatBlocksSeller } from "@/lib/tickets/eventIdentity";
 import { sendEmail } from "@/lib/email";
 import { DISPUTE_SUPPORT_EMAIL } from "@/lib/disputes";
+import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -1105,6 +1106,23 @@ export async function POST(req: Request) {
         text: `${sellerName} requested Admin review of an automated listing validation.\n\nEvent: ${title}\nVenue: ${venue}\nDate: ${date}\nSection/row/seat: ${section || "-"} / ${row || "-"} / ${seat || "-"}\nReason: ${validationFailure?.message || supportReviewNote || "Seller requested review"}\n\nReview all submitted details and receipt evidence:\n${reviewUrl}`,
       });
     }
+
+    await sendAdminActivityEmail({
+      activity: "TICKETS_LISTED",
+      summary: `Tickets listed — ${finalTicket?.title ?? created.title}`,
+      details: {
+        "Listing ID": finalTicket?.id ?? created.id,
+        Seller: created.seller?.name || gate.user.email,
+        Event: finalTicket?.title ?? created.title,
+        Venue: finalTicket?.venue ?? created.venue,
+        Date: finalTicket?.date ?? created.date,
+        Section: (finalTicket as any)?.section ?? (created as any).section,
+        Row: (finalTicket as any)?.row ?? created.row,
+        Seat: (finalTicket as any)?.seat ?? created.seat,
+        Price: `${normalizeCurrency((finalTicket as any)?.currency ?? (created as any).currency)} ${centsToDollars(finalTicket?.priceCents ?? created.priceCents).toFixed(2)}`,
+        "Verification status": (verified as any)?.verificationStatus ?? (finalTicket as any)?.verificationStatus ?? "PENDING",
+      },
+    });
 
     return NextResponse.json(
       {

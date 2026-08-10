@@ -9,6 +9,7 @@ import { createNotification } from "@/lib/notifications/service";
 import { BUYER_CONFIRMATION_DEADLINE_HOURS, addHours, notifyBuyerTransferConfirmationRequired } from "@/lib/orders/transferWorkflow";
 import { transferProofAdminActionMessage, transferProofStatusForAdminAction } from "@/lib/orders/transferProofAdminReview";
 import { schemas, validateRequest } from "@/lib/validation";
+import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 
 function orderIdFromUrl(req: Request) {
   const parts = new URL(req.url).pathname.split("/").filter(Boolean);
@@ -98,6 +99,11 @@ export async function POST(req: Request) {
     }
     if (action === "APPROVE" && order.buyerSeller.user?.id && disputeWindowEndsAt) {
       await notifyBuyerTransferConfirmationRequired({ buyerUserId: order.buyerSeller.user.id, orderId: order.id, ticketCount: order.items.length, deadline: disputeWindowEndsAt, sendEmail: true, now: decidedAt });
+      await sendAdminActivityEmail({
+        activity: "TICKETS_TRANSFERRED",
+        summary: `Ticket transfer approved — order ${order.id}`,
+        details: { "Order ID": order.id, Seller: sellerUser?.email, "Ticket count": order.items.length, "Buyer confirmation deadline": disputeWindowEndsAt.toISOString(), "Approved by": gate.user.email },
+      });
     }
     await auditLog({ action: "TRANSFER_PROOF_VERIFY", userId: gate.user.id, targetType: "Order", targetId: order.id, metadata: { ...decision, sellerEmailSent }, ...createAuditContext(req) });
 

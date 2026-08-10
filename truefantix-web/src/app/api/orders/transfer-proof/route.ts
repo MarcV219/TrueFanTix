@@ -10,6 +10,7 @@ import {
   notifyBuyerTransferConfirmationRequired,
 } from "@/lib/orders/transferWorkflow";
 import { analyzeTransferProof, transferProofIssueMessage } from "@/lib/orders/transferProofReview";
+import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 
 // POST /api/orders/transfer-proof
 // Allows a seller to submit proof of ticket transfer for a specific order.
@@ -195,6 +196,18 @@ export async function POST(req: Request) {
         now: submittedAt,
       });
     }
+    await sendAdminActivityEmail({
+      activity: "TICKETS_TRANSFERRED",
+      summary: `Ticket transfer submitted — order ${orderId}`,
+      details: {
+        "Order ID": orderId,
+        Seller: gate.user.email,
+        Buyer: order.buyerSeller.user?.email,
+        "Ticket count": order.items.length,
+        "Proof type": transferProofType,
+        "Buyer confirmation deadline": disputeWindowEndsAt.toISOString(),
+      },
+    });
     return NextResponse.json(
       {
         ok: true,

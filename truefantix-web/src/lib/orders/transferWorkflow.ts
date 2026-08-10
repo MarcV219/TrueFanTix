@@ -5,6 +5,7 @@ import {
   sendEmail,
 } from "@/lib/email";
 import { createNotification, createNotificationOncePerWindow } from "@/lib/notifications/service";
+import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 
 export const SELLER_TRANSFER_DEADLINE_HOURS = 24;
 export const BUYER_CONFIRMATION_DEADLINE_HOURS = 24;
@@ -75,6 +76,12 @@ export async function notifySellerTransferRequired(params: {
       const result = await sendEmail({ to: seller.email, ...email });
       if (!result.ok) {
         console.error("[EMAIL] Seller transfer reminder email failed:", result.error);
+      } else {
+        await sendAdminActivityEmail({
+          activity: "REMINDER_EMAIL_SENT",
+          summary: `Seller transfer reminder sent — order ${params.orderId}`,
+          details: { "Order ID": params.orderId, Recipient: seller.email, "Ticket count": params.ticketCount, Deadline: params.deadline.toISOString(), Overdue: overdue ? "Yes" : "No" },
+        });
       }
     }
   }
@@ -117,6 +124,12 @@ export async function notifyBuyerTransferConfirmationRequired(params: {
       const result = await sendEmail({ to: buyer.email, ...email });
       if (!result.ok) {
         console.error("[EMAIL] Buyer transfer confirmation email failed:", result.error);
+      } else {
+        await sendAdminActivityEmail({
+          activity: "REMINDER_EMAIL_SENT",
+          summary: `Buyer confirmation reminder sent — order ${params.orderId}`,
+          details: { "Order ID": params.orderId, Recipient: buyer.email, "Ticket count": params.ticketCount, Deadline: params.deadline.toISOString() },
+        });
       }
     }
   }
