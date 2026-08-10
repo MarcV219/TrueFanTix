@@ -54,7 +54,7 @@ const ATTENTION_ITEMS: Array<{
   { key: "disputes", label: "Open disputes", description: "Buyer disputes with seller payout paused.", href: "/admin/orders?status=DISPUTED", urgent: true },
   { key: "transferProofReviews", label: "Transfer proof human reviews", description: "Seller transfer documentation waiting for an Admin decision.", href: "/admin/orders?status=HUMAN_REVIEW", urgent: true },
   { key: "catalogRequests", label: "Catalog requests", description: "Requested artists, teams, venues, or cities to review.", href: "/admin/catalog-requests" },
-  { key: "sellerStripe", label: "Seller / Stripe attention", description: "Seller approval or Stripe onboarding is incomplete.", href: "/admin/users?filter=seller-stripe-attention" },
+  { key: "sellerStripe", label: "Seller / Stripe attention", description: "Seller approval or Stripe onboarding is incomplete.", href: "/admin/seller-attention" },
   { key: "suspendedSellers", label: "Suspended sellers", description: "Restricted seller accounts to monitor or review.", href: "/admin/users?filter=sellers", urgent: true },
   { key: "expiredReservations", label: "Expired reservations", description: "Reserved tickets whose hold time has elapsed.", href: "/admin/orders?status=PENDING", urgent: true },
   { key: "openEscrows", label: "Open payment holds", description: "Ticket access or funds remain in escrow.", href: "/admin/orders" },

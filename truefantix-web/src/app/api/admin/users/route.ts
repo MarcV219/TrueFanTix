@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
-import { PENDING_PAYOUT_WHERE } from "@/lib/adminQueueCounts";
+import { PENDING_PAYOUT_WHERE, SELLER_STRIPE_ATTENTION_WHERE } from "@/lib/adminQueueCounts";
 
 function normalizeQuery(value: string | null) {
   return String(value ?? "").trim();
@@ -42,14 +42,7 @@ export async function GET(req: Request) {
       : filter === "seller-stripe-attention"
         ? {
             seller: {
-              is: {
-                OR: [
-                  { status: "PENDING" as const },
-                  { stripeDetailsSubmitted: false },
-                  { stripeChargesEnabled: false },
-                  { stripePayoutsEnabled: false },
-                ],
-              },
+              is: SELLER_STRIPE_ATTENTION_WHERE,
             },
           }
         : filter === "pending-payouts"

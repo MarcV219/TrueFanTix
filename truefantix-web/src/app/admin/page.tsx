@@ -166,7 +166,7 @@ export default function AdminHomePage() {
                 <QueueItem label="Ticket verification pending" value={data.queues.pendingTicketVerification} href="/admin/tickets/verification" />
                 <QueueItem label="Tickets needing review" value={data.queues.needsReviewTickets} href="/admin/tickets/verification" />
                 <QueueItem label="Catalog requests" value={data.queues.pendingCatalogRequests} href="/admin/catalog-requests" />
-                <QueueItem label="Seller/Stripe attention" value={data.queues.pendingSellerStripe} href="/admin/users?filter=seller-stripe-attention" />
+                <QueueItem label="Seller/Stripe attention" value={data.queues.pendingSellerStripe} href="/admin/seller-attention" />
                 <QueueItem label="Expired reservations" value={data.queues.expiredReservations} href="/admin/orders?status=PENDING" />
                 <QueueItem label="Open payment holds" value={data.queues.openEscrows} href="/admin/orders" />
                 <QueueItem label="Open disputes" value={data.queues.disputedOrders ?? 0} href="/admin/orders?status=DISPUTED" />

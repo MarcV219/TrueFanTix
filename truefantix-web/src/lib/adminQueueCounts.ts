@@ -22,6 +22,32 @@ export const PENDING_PAYOUT_WHERE = {
   status: "PENDING",
 } as const;
 
+export const SELLER_STRIPE_ATTENTION_WHERE = {
+  OR: [
+    { status: "PENDING" },
+    { stripeDetailsSubmitted: false },
+    { stripePayoutsEnabled: false },
+  ],
+} satisfies Prisma.SellerWhereInput;
+
+export const SELLER_ATTENTION_ACKNOWLEDGED_ACTION = "SELLER_ATTENTION_ACKNOWLEDGED";
+
+export type SellerAttentionState = {
+  status: string;
+  stripeAccountId: string | null;
+  stripeDetailsSubmitted: boolean;
+  stripePayoutsEnabled: boolean;
+};
+
+export function sellerAttentionFingerprint(seller: SellerAttentionState) {
+  return [seller.status, seller.stripeAccountId ? "linked" : "unlinked", seller.stripeDetailsSubmitted ? "details" : "no-details", seller.stripePayoutsEnabled ? "payouts" : "no-payouts"].join(":");
+}
+
+export function sellerAttentionSeverity(seller: SellerAttentionState): "ACTION_REQUIRED" | "INCOMPLETE" {
+  return seller.status === "PENDING" && seller.stripeDetailsSubmitted ? "ACTION_REQUIRED" : "INCOMPLETE";
+}
+
 export function totalAdminQueueActionable(counts: AdminQueueActionableCounts) {
   return Object.values(counts).reduce((total, count) => total + count, 0);
 }
+import type { Prisma } from "@prisma/client";
