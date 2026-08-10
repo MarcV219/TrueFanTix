@@ -29,8 +29,10 @@ describe("tickets view", () => {
       priceCents: 5000,
       currency: "USD",
       sellerId: "seller-1",
+      seller: { name: "Marc Test", rating: 5, reviews: 2, badges: [] },
     });
 
+    expect(card.sellerName).toBe("Marc Test");
     expect(inferTicketCoords(card)).toEqual({ lat: 39.9612, lon: -82.9988 });
     expect(isTicketWithinRadius(card, { lat: 39.9612, lon: -82.9988 }, 5)).toBe(true);
   });

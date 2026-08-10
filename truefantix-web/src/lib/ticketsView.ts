@@ -33,6 +33,7 @@ export type ApiTicketLike = {
   isValidationMismatch?: boolean;
   isPriceUnconfirmed?: boolean;
   seller?: {
+    name?: string;
     badges?: string[];
     rating?: number;
     reviews?: number;
@@ -65,6 +66,7 @@ export type TicketCardView = {
   confirmedMaxListPriceCents: number | null;
   image: string;
   sellerId: string;
+  sellerName: string;
   badges: string[];
   rating: number;
   reviews: number;
@@ -670,6 +672,7 @@ export function mapApiTicketToCard(t: ApiTicketLike): TicketCardView {
     confirmedMaxListPriceCents: typeof t.confirmedMaxListPriceCents === "number" ? t.confirmedMaxListPriceCents : null,
     image: resolveTicketImageSrc(t.image),
     sellerId: t.sellerId || "",
+    sellerName: t.seller?.name?.trim() || "Seller",
     badges: t.seller?.badges ?? [],
     rating: t.seller?.rating ?? 0,
     reviews: t.seller?.reviews ?? 0,

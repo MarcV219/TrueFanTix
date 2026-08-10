@@ -158,6 +158,9 @@ export default function EventTicketGroupCard<T extends TicketCardView>({
                     <div>
                       <p className="text-sm font-bold text-gray-900 dark:text-white">{seatDetails}</p>
                       <p className="text-xs text-gray-500">{ticket.priceTag}</p>
+                      <p className="mt-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                        Seller: {ticket.sellerName}
+                      </p>
                     </div>
                     <p className="shrink-0 font-extrabold text-gray-900 dark:text-white">
                       {formatMoney(ticket.price, ticket.currency)} {ticket.currency}
