@@ -20,7 +20,7 @@ describe("admin queue counts", () => {
   });
 
   it("provides one canonical pending-payout condition", () => {
-    expect(PENDING_PAYOUT_WHERE).toEqual({ status: "PENDING" });
+    expect(PENDING_PAYOUT_WHERE).toEqual({ status: { in: ["PENDING", "FAILED"] } });
   });
 
   it("does not require Stripe charges for seller payout readiness", () => {

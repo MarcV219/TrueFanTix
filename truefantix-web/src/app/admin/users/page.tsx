@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { apiFetch } from "@/lib/api-fetch";
 
 type AdminUser = {
   id: string;
@@ -42,6 +43,11 @@ type AdminUser = {
       providerRef: string | null;
       createdAt: string;
       updatedAt: string;
+      stripeTransferId: string | null;
+      failureReason: string | null;
+      attemptCount: number;
+      lastAttemptAt: string | null;
+      paidAt: string | null;
       orderId: string | null;
       order: null | {
         id: string;
@@ -89,6 +95,7 @@ function AdminUsersContent() {
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [busyPayoutId, setBusyPayoutId] = React.useState<string | null>(null);
   const liveSearchReady = React.useRef(false);
 
   const load = React.useCallback(async (query: string, nextFilter: string) => {
@@ -128,6 +135,18 @@ function AdminUsersContent() {
 
   const title = FILTER_LABELS[filter] || FILTER_LABELS.all;
   const description = FILTER_DESCRIPTIONS[filter] || FILTER_DESCRIPTIONS.all;
+
+  async function processPayout(payoutId: string) {
+    if (!window.confirm("Release this payout to the seller's connected Stripe account? This sends funds and cannot be treated as a preview.")) return;
+    setBusyPayoutId(payoutId); setError(null);
+    try {
+      const res = await apiFetch(`/api/admin/payouts/${encodeURIComponent(payoutId)}/process`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) throw new Error(data?.message || data?.error || "Payout failed.");
+      await load(q, filter);
+    } catch (err: any) { setError(err?.message || "Payout failed."); }
+    finally { setBusyPayoutId(null); }
+  }
 
   return (
     <main style={{ maxWidth: 1180, margin: "40px auto", padding: 16 }}>
@@ -217,7 +236,7 @@ function AdminUsersContent() {
                 {user.seller.payouts.map((payout) => {
                   const currency = payout.order?.currency || "CAD";
                   return (
-                    <div key={payout.id} style={{ padding: 12, borderRadius: 8, border: "1px solid rgba(217,119,6,.28)", background: "rgba(255,251,235,1)" }}>
+                    <div key={payout.id} style={{ padding: 12, borderRadius: 8, border: `1px solid ${payout.status === "FAILED" ? "rgba(239,68,68,.4)" : "rgba(217,119,6,.28)"}`, background: payout.status === "FAILED" ? "rgba(255,241,242,1)" : "rgba(255,251,235,1)" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                         <div>
                           <div style={{ fontWeight: 950 }}>Payout {money(payout.netCents, currency)} — {payout.status}</div>
@@ -246,6 +265,15 @@ function AdminUsersContent() {
                           </div>
                         )) : <div style={{ marginTop: 5, fontSize: 13, opacity: .72 }}>No linked order details are available for this payout.</div>}
                       </div>
+                      {payout.failureReason ? <div role="alert" style={{ marginTop: 10, padding: 9, borderRadius: 7, background: "white", color: "#991b1b", fontSize: 13 }}><strong>Last failure:</strong> {payout.failureReason}</div> : null}
+                      <button
+                        type="button"
+                        onClick={() => processPayout(payout.id)}
+                        disabled={busyPayoutId === payout.id}
+                        style={{ marginTop: 10, padding: "9px 12px", border: 0, borderRadius: 8, background: payout.status === "FAILED" ? "#be123c" : "#064a93", color: "white", fontWeight: 900 }}
+                      >
+                        {busyPayoutId === payout.id ? "Processing…" : payout.status === "FAILED" ? "Retry Stripe payout" : "Review and release payout"}
+                      </button>
                     </div>
                   );
                 })}

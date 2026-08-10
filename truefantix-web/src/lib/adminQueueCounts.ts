@@ -19,8 +19,8 @@ export const TRANSFER_PROOF_REVIEW_ORDER_WHERE = {
 } as const;
 
 export const PENDING_PAYOUT_WHERE = {
-  status: "PENDING",
-} as const;
+  status: { in: ["PENDING", "FAILED"] },
+} satisfies Prisma.PayoutWhereInput;
 
 export const SELLER_STRIPE_ATTENTION_WHERE = {
   OR: [
