@@ -20,13 +20,10 @@ describe("Stripe payout transfer funding", () => {
     });
   });
 
-  it("converts at Stripe's original exchange rate when settlement differs", () => {
-    expect(stripeTransferFunding(charge("usd", "cad"), "USD", 8000)).toEqual({
-      source_transaction: "ch_test",
-      currency: "cad",
-      amount: 11272,
-      fundingMode: "SOURCE_LINKED_FX",
-    });
+  it("blocks rather than changing the seller payout currency when settlement differs", () => {
+    expect(() => stripeTransferFunding(charge("cad", "usd"), "CAD", 8000)).toThrow(
+      "TrueFanTix will not change the seller's payout currency"
+    );
   });
 
   it("blocks when the balance transaction was not expanded", () => {
