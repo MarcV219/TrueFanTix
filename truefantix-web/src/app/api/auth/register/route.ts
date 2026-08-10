@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { createSessionForUser } from "@/lib/auth/session";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
+import { grantEarlyAccessReward } from "@/lib/earlyAccessReward";
 
 function badRequest(message: string, details?: string[]) {
   return NextResponse.json(
@@ -78,8 +79,8 @@ export async function POST(req: Request) {
     const TERMS_VERSION = "v1";
     const PRIVACY_VERSION = "v1";
 
-    const createUser = () =>
-      prisma.user.create({
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
         data: {
           email: emailNorm,
           phone: phoneNorm,
@@ -118,10 +119,12 @@ export async function POST(req: Request) {
           canSell: true,
           role: true,
           createdAt: true,
+          sellerId: true,
         },
       });
-
-    const user = await createUser();
+      await grantEarlyAccessReward(tx, created);
+      return created;
+    });
 
     // Create session cookie so they are logged in immediately
     await createSessionForUser(user.id);

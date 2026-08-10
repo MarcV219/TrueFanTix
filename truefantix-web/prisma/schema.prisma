@@ -16,23 +16,23 @@ enum TicketStatus {
 }
 
 enum OrderStatus {
-  PENDING    // order created/reservation started
-  PAID       // payment captured/confirmed
-  DELIVERED  // ticket transfer confirmed
-  COMPLETED  // PAID + DELIVERED (final)
+  PENDING // order created/reservation started
+  PAID // payment captured/confirmed
+  DELIVERED // ticket transfer confirmed
+  COMPLETED // PAID + DELIVERED (final)
   CANCELLED
   REFUNDED
   FAILED
 }
 
 enum AccessTokenTxType {
-  EARNED      // seller earned access tokens (e.g., from sale)
-  SPENT       // seller spent access tokens (boosts/fees/etc.)
-  HELD        // access tokens reserved (e.g., pending payout)
-  RELEASED    // hold released (cancel/failed payout)
-  WITHDRAWN   // payout completed (access tokens converted/consumed)
-  ADJUSTMENT  // system/admin adjustment
-  REVERSAL    // reversal/chargeback/refund related
+  EARNED // seller earned access tokens (e.g., from sale)
+  SPENT // seller spent access tokens (boosts/fees/etc.)
+  HELD // access tokens reserved (e.g., pending payout)
+  RELEASED // hold released (cancel/failed payout)
+  WITHDRAWN // payout completed (access tokens converted/consumed)
+  ADJUSTMENT // system/admin adjustment
+  REVERSAL // reversal/chargeback/refund related
 }
 
 enum AccessTokenTxSource {
@@ -128,48 +128,48 @@ enum VerificationKind {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  lastLoginAt  DateTime?
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
 
   // Auth / login
-  email           String   @unique
-  passwordHash        String
-  emailVerifiedAt     DateTime?
-  emailVerificationToken String? @unique // For email verification links
+  email                  String    @unique
+  passwordHash           String
+  emailVerifiedAt        DateTime?
+  emailVerificationToken String?   @unique // For email verification links
 
   // For password reset flow
   passwordResetTokenHash String? @unique
 
   // Referral program
-  referralCode          String? @unique
+  referralCode String? @unique
 
   // Identity (basic)
-  firstName    String
-  lastName     String
+  firstName String
+  lastName  String
 
   // Community display identity
-  displayName  String?
+  displayName String?
 
   // Contact (REQUIRED)
-  phone           String   @unique
+  phone           String    @unique
   phoneVerifiedAt DateTime?
 
   // Address / location (REQUIRED) - used for merch shipping + "near me" notifications
-  streetAddress1 String
-  streetAddress2 String?
-  city           String
-  region         String   // e.g., "ON", "NY"
-  postalCode     String
-  country        String   // e.g., "CA", "US"
-  notificationRadiusKm Int?
-  notificationRadiusUnit String @default("KM")
+  streetAddress1         String
+  streetAddress2         String?
+  city                   String
+  region                 String // e.g., "ON", "NY"
+  postalCode             String
+  country                String // e.g., "CA", "US"
+  notificationRadiusKm   Int?
+  notificationRadiusUnit String  @default("KM")
 
   // Capabilities (simple gating)
-  canBuy       Boolean  @default(true)
-  canComment   Boolean  @default(true)
-  canSell      Boolean  @default(false) // typically set true when Seller.status becomes APPROVED
+  canBuy     Boolean @default(true)
+  canComment Boolean @default(true)
+  canSell    Boolean @default(false) // typically set true when Seller.status becomes APPROVED
 
   // Legal acceptance (versioned)
   termsAcceptedAt   DateTime?
@@ -178,21 +178,21 @@ model User {
   privacyVersion    String?
 
   // Moderation / safety controls
-  isBanned     Boolean @default(false)
-  banReason    String?
+  isBanned  Boolean @default(false)
+  banReason String?
 
   // Admin / staff role
-  role         UserRole @default(USER)
+  role UserRole @default(USER)
 
   // Link to a Seller record (only if the user has started seller onboarding)
-  sellerId     String?  @unique
-  seller       Seller?  @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+  sellerId String? @unique
+  seller   Seller? @relation(fields: [sellerId], references: [id], onDelete: SetNull)
 
   // Sessions (login persistence)
-  sessions     Session[]
+  sessions Session[]
 
   // Community (ticket/event comments - optional)
-  comments     CommunityComment[]
+  comments CommunityComment[]
 
   // Public forum
   forumThreads ForumThread[] @relation("ForumThreadsByAuthor")
@@ -208,25 +208,25 @@ model User {
   notifications           Notification[]
 
   // Audit logging
-  auditLogs               AuditLog[]
+  auditLogs AuditLog[]
 
   // Password reset tokens
-  passwordResetTokens     PasswordResetToken[]
+  passwordResetTokens PasswordResetToken[]
 
   // Waitlist entries
-  waitlistEntries         WaitlistEntry[]
+  waitlistEntries WaitlistEntry[]
 
   // Conversations
   conversationParticipants ConversationParticipant[]
   messages                 Message[]
-  reviewsWritten          Review[] @relation("ReviewAuthor")
+  reviewsWritten           Review[]                  @relation("ReviewAuthor")
 
   // Price alerts
-  priceAlerts             PriceAlert[]
+  priceAlerts PriceAlert[]
 
   // Referrals
-  referralsGiven          Referral[] @relation("Referrer")
-  referralReceived        Referral?  @relation("Referred")
+  referralsGiven   Referral[] @relation("Referrer")
+  referralReceived Referral?  @relation("Referred")
 
   @@index([role])
   @@index([createdAt])
@@ -265,10 +265,10 @@ model Seller {
   /**
    * Stripe Connect fields (placeholders for later implementation)
    */
-  stripeAccountId        String?  @unique
-  stripeDetailsSubmitted Boolean  @default(false)
-  stripeChargesEnabled   Boolean  @default(false)
-  stripePayoutsEnabled   Boolean  @default(false)
+  stripeAccountId        String? @unique
+  stripeDetailsSubmitted Boolean @default(false)
+  stripeChargesEnabled   Boolean @default(false)
+  stripePayoutsEnabled   Boolean @default(false)
 
   /**
    * Safety controls
@@ -277,15 +277,15 @@ model Seller {
   payoutHoldReason String?
 
   // Marketplace relations
-  tickets            Ticket[]
-  badges             SellerBadge[]
+  tickets                 Ticket[]
+  badges                  SellerBadge[]
   accessTokenTransactions AccessTokenTransaction[]
-  orders             Order[]
-  buyerOrders        Order[] @relation("BuyerOrders")
+  orders                  Order[]
+  buyerOrders             Order[]                  @relation("BuyerOrders")
 
-  payouts  Payout[]
-  metrics  SellerMetrics?
-  user     User?
+  payouts Payout[]
+  metrics SellerMetrics?
+  user    User?
 
   // Reviews received
   reviewsReceived Review[]
@@ -325,7 +325,7 @@ model Ticket {
   // price stored as integer cents
   priceCents        Int
   faceValueCents    Int?
-  adminFeePaidCents Int @default(0)
+  adminFeePaidCents Int    @default(0)
   currency          String @default("CAD")
 
   image String
@@ -337,7 +337,7 @@ model Ticket {
   seat    String?
 
   eventId String?
-  event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   // Keep as String for now to avoid breaking current input format.
   date String
@@ -352,11 +352,11 @@ model Ticket {
   withdrawnAt DateTime?
 
   // 2.a.i: Details for Image Analysis & Barcode Handling
-  primaryVendor      String? // e.g., "Ticketmaster", "AXS", "StubHub"
-  transferMethod     String? // e.g., "Ticketmaster Transfer", "PDF Upload", "Screenshot"
-  barcodeHash        String?  // SHA256 hash of the barcode/QR code image/data for fraud detection.
-  barcodeText        String?  // Extracted text/number from barcode/QR code for cross-referencing.
-  verificationImage  String?  // URL/path to the image provided for barcode/QR code verification.
+  primaryVendor     String? // e.g., "Ticketmaster", "AXS", "StubHub"
+  transferMethod    String? // e.g., "Ticketmaster Transfer", "PDF Upload", "Screenshot"
+  barcodeHash       String? // SHA256 hash of the barcode/QR code image/data for fraud detection.
+  barcodeText       String? // Extracted text/number from barcode/QR code for cross-referencing.
+  verificationImage String? // URL/path to the image provided for barcode/QR code verification.
 
   verificationStatus   TicketVerificationStatus @default(PENDING)
   verificationScore    Int?
@@ -425,7 +425,7 @@ model Order {
   transferVerificationReason String? // Details from automated check
 
   // 5.b: Buyer's Confirmation of Receipt
-  buyerConfirmationStatus String?  @default("PENDING") // e.g., "PENDING", "CONFIRMED", "DISPUTED"
+  buyerConfirmationStatus String?   @default("PENDING") // e.g., "PENDING", "CONFIRMED", "DISPUTED"
   buyerConfirmationAt     DateTime?
 
   // 5.c: Dispute Window
@@ -437,7 +437,7 @@ model Order {
   items   OrderItem[]
   payment Payment?
 
-  ticketEscrows TicketEscrow[]
+  ticketEscrows           TicketEscrow[]
   accessTokenTransactions AccessTokenTransaction[]
 
   // Conversation for this order
@@ -449,7 +449,6 @@ model Order {
   @@index([sellerId, createdAt])
   @@index([buyerSellerId, createdAt])
   @@index([status, createdAt])
-
   @@map("Order")
 }
 
@@ -457,7 +456,7 @@ model OrderItem {
   id String @id @default(cuid())
 
   orderId String
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   // Ticket reference (double-selling is enforced by Ticket.status + reservation fields)
   ticketId String
@@ -480,7 +479,7 @@ model AccessTokenTransaction {
   seller   Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
   type               AccessTokenTxType
-  amountAccessTokens Int @default(0)
+  amountAccessTokens Int               @default(0)
 
   // ✅ Make source required so compound unique is reliable (no NULL weakening)
   source AccessTokenTxSource @default(UNKNOWN)
@@ -498,22 +497,21 @@ model AccessTokenTransaction {
   ticket   Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
 
   orderId String?
-  order   Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   payoutId String?
   payout   Payout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
+  // Prevent duplicate access token awards/spends per ticket per order
+  @@unique([orderId, ticketId, sellerId, type, source], name: "uniq_access_token_per_ticket_reason")
   @@index([sellerId, createdAt])
   @@index([type, createdAt])
   @@index([source, createdAt])
   @@index([orderId])
   @@index([payoutId])
   @@index([ticketId])
-
-  // Prevent duplicate access token awards/spends per ticket per order
-  @@unique([orderId, ticketId, sellerId, type, source], name: "uniq_access_token_per_ticket_reason")
 }
 
 model Payout {
@@ -529,11 +527,11 @@ model Payout {
 
   status PayoutStatus @default(PENDING)
 
-  provider    String?
-  providerRef String?
-  stripeTransferId String? @unique
+  provider         String?
+  providerRef      String?
+  stripeTransferId String?   @unique
   failureReason    String?
-  attemptCount     Int      @default(0)
+  attemptCount     Int       @default(0)
   lastAttemptAt    DateTime?
   paidAt           DateTime?
 
@@ -545,13 +543,13 @@ model Payout {
 }
 
 model TicketEscrow {
-  id       String @id @default(cuid())
+  id String @id @default(cuid())
 
   ticketId String @unique
   ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   orderId String?
-  order   Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   state         TicketEscrowState @default(NONE)
   provider      String?
@@ -570,11 +568,11 @@ model TicketEscrow {
 }
 
 model EventDelivery {
-  id        String   @id @default(cuid())
-  eventId   String   @unique // Stripe event id (e.g., evt_xxx)
-  eventType String
+  id          String   @id @default(cuid())
+  eventId     String   @unique // Stripe event id (e.g., evt_xxx)
+  eventType   String
   processedAt DateTime @default(now())
-  orderId   String?
+  orderId     String?
 
   @@index([eventId])
   @@index([orderId])
@@ -583,11 +581,11 @@ model EventDelivery {
 model EmailDelivery {
   id        String   @id @default(cuid())
   orderId   String
-  emailType String   // PURCHASE_CONFIRMATION, SALE_NOTIFICATION
+  emailType String // PURCHASE_CONFIRMATION, SALE_NOTIFICATION
   recipient String
   sentAt    DateTime @default(now())
-  provider  String   // SENDGRID, CONSOLE
-  status    String   // SENT, FAILED
+  provider  String // SENDGRID, CONSOLE
+  status    String // SENT, FAILED
   error     String?
 
   @@unique([orderId, emailType, recipient])
@@ -612,7 +610,7 @@ model Payment {
 }
 
 model Event {
-  id    String @id @default(cuid())
+  id    String  @id @default(cuid())
   title String
   venue String?
   date  String?
@@ -640,7 +638,7 @@ model CommunityComment {
 
   // Author
   userId String
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Content
   body String
@@ -650,7 +648,7 @@ model CommunityComment {
   ticket   Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
 
   eventId String?
-  event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   // Replies (self relation)
   parentId String?
@@ -658,7 +656,7 @@ model CommunityComment {
   replies  CommunityComment[] @relation("CommentReplies")
 
   // Moderation / safety
-  isDeleted     Boolean  @default(false)
+  isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   deletedReason String?
 
@@ -682,13 +680,13 @@ model ForumThread {
 
   // Author
   authorUserId String
-  author       User @relation("ForumThreadsByAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+  author       User   @relation("ForumThreadsByAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
 
   // Moderation
-  visibility        ForumVisibility @default(VISIBLE)
-  visibilityReason  String?
+  visibility       ForumVisibility @default(VISIBLE)
+  visibilityReason String?
 
-  isLocked     Boolean @default(false)
+  isLocked     Boolean   @default(false)
   lockedAt     DateTime?
   lockedReason String?
 
@@ -710,7 +708,7 @@ model ForumPost {
   thread   ForumThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   authorUserId String
-  author       User @relation("ForumPostsByAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+  author       User   @relation("ForumPostsByAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
 
   body String
 
@@ -720,8 +718,8 @@ model ForumPost {
   replies  ForumPost[] @relation("ForumPostReplies")
 
   // Moderation
-  visibility        ForumVisibility @default(VISIBLE)
-  visibilityReason  String?
+  visibility       ForumVisibility @default(VISIBLE)
+  visibilityReason String?
 
   @@index([threadId, createdAt])
   @@index([parentId, createdAt])
@@ -730,9 +728,9 @@ model ForumPost {
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   tokenHash String   @unique
   createdAt DateTime @default(now())
@@ -747,25 +745,25 @@ model Session {
  * We store only a hash of the code (like sessions) so a leaked DB doesn't expose codes.
  */
 model VerificationCode {
-  id        String           @id @default(cuid())
-  createdAt DateTime         @default(now())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
 
   userId String
-  user   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  kind   VerificationKind
+  kind        VerificationKind
   // Snapshot of where we sent it (email or phone at the time)
   destination String
 
   // sha256(VERIFICATION_SECRET + code)
-  codeHash  String
+  codeHash String
 
   expiresAt DateTime
   usedAt    DateTime?
 
   // rate-limit + brute-force controls
-  sendCount    Int @default(0)
-  attemptCount Int @default(0)
+  sendCount    Int       @default(0)
+  attemptCount Int       @default(0)
   lastSentAt   DateTime?
 
   @@index([userId, kind, createdAt])
@@ -784,7 +782,14 @@ model EarlyAccessLead {
   email  String @unique
   source String @default("homepage")
 
+  // One-time launch reward. The email is the entitlement; the grant is claimed
+  // atomically when a matching account exists or is later registered.
+  accessTokenReward       Int       @default(4)
+  accessTokenRewardedAt   DateTime?
+  accessTokenRewardUserId String?
+
   @@index([createdAt])
+  @@index([accessTokenRewardedAt])
 }
 
 model NotificationPreference {
@@ -799,11 +804,11 @@ model NotificationPreference {
   catalogEntity   CatalogEntity? @relation(fields: [catalogEntityId], references: [id], onDelete: SetNull)
 
   // What kind of notification is this? (e.g., "ARTIST", "TEAM", "VENUE", "CITY", "EVENT_TYPE")
-  type      String
+  type   String
   // The value to match (e.g., "Taylor Swift", "Toronto Maple Leafs", "Scotiabank Arena", "Toronto", "Concert")
-  value     String
+  value  String
   // Status: ACTIVE, PAUSED, DELETED
-  status    String @default("ACTIVE")
+  status String @default("ACTIVE")
 
   // Unique constraint to prevent duplicate preferences for the same user/type/value
   @@unique([userId, type, value])
@@ -822,16 +827,16 @@ model CatalogEntity {
   provider      String
   providerId    String
 
-  aliases  String?
-  subtitle String?
-  address  String?
-  city     String?
-  region   String?
-  country  String?
+  aliases   String?
+  subtitle  String?
+  address   String?
+  city      String?
+  region    String?
+  country   String?
   sourceUrl String?
-  metadata String?
+  metadata  String?
 
-  popularity Int @default(0)
+  popularity Int      @default(0)
   lastSeenAt DateTime @default(now())
 
   notificationPreferences NotificationPreference[]
@@ -855,7 +860,7 @@ model CatalogRequest {
   requestedValue String
   notes          String?
 
-  status     String @default("PENDING") // PENDING, FULFILLED, REJECTED
+  status     String  @default("PENDING") // PENDING, FULFILLED, REJECTED
   adminNotes String?
 
   emailSentAt DateTime?
@@ -903,17 +908,17 @@ model Notification {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Type of notification (e.g., "NEW_EVENT", "TICKET_PRICE_DROP")
-  type      String
+  type    String
   // Content of the notification (e.g., "New Taylor Swift concert tickets posted!")
-  message   String
+  message String
   // Optional link to the relevant event/ticket
-  link      String?
+  link    String?
   // Has the user seen this notification?
-  isRead    Boolean  @default(false)
+  isRead  Boolean @default(false)
 
   @@index([userId, createdAt])
   @@index([isRead])
@@ -925,22 +930,22 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   // Who performed the action
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   // What action was performed
-  action    String   // e.g., "USER_LOGIN", "TICKET_CREATE", "ORDER_CANCEL"
+  action String // e.g., "USER_LOGIN", "TICKET_CREATE", "ORDER_CANCEL"
 
   // What was the target
   targetType String? // e.g., "Ticket", "Order", "User"
   targetId   String? // ID of the affected resource
 
   // Additional context
-  metadata   String? // JSON string with additional details
+  metadata String? // JSON string with additional details
 
   // Request context
-  ipAddress  String?
-  userAgent  String?
+  ipAddress String?
+  userAgent String?
 
   @@index([userId, createdAt])
   @@index([action, createdAt])
@@ -954,20 +959,20 @@ model PriceAlert {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Either specific ticket OR event query
-  ticketId  String?
-  ticket    Ticket?  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  ticketId   String?
+  ticket     Ticket? @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   eventQuery String? // For general event searches
 
   // Price tracking
-  targetPriceCents   Int?     // User's target price (null = any drop)
-  originalPriceCents Int?     // Price when alert created
+  targetPriceCents   Int? // User's target price (null = any drop)
+  originalPriceCents Int? // Price when alert created
 
   // Alert status
-  status      String   @default("ACTIVE") // ACTIVE, TRIGGERED, DELETED
+  status      String    @default("ACTIVE") // ACTIVE, TRIGGERED, DELETED
   triggeredAt DateTime?
 
   @@index([userId, status])
@@ -981,18 +986,18 @@ model WaitlistEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  eventId   String
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   // Preferences
-  maxPriceCents Int?   // Maximum price willing to pay
-  notes     String?    // Any specific requirements
+  maxPriceCents Int? // Maximum price willing to pay
+  notes         String? // Any specific requirements
 
   // Status
-  status    String   @default("ACTIVE") // ACTIVE, FULFILLED, CANCELLED, EXPIRED
+  status String @default("ACTIVE") // ACTIVE, FULFILLED, CANCELLED, EXPIRED
 
   // Notification tracking
   notifiedAt DateTime? // When user was notified tickets are available
@@ -1010,14 +1015,14 @@ model Conversation {
   updatedAt DateTime @updatedAt
 
   // Optional link to order
-  orderId   String?  @unique
-  order     Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderId String? @unique
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   // Participants
   participants ConversationParticipant[]
 
   // Messages
-  messages  Message[]
+  messages Message[]
 
   @@index([updatedAt])
 }
@@ -1036,8 +1041,8 @@ model ConversationParticipant {
 }
 
 model Message {
-  id             String       @id @default(cuid())
-  createdAt      DateTime     @default(now())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
 
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -1072,14 +1077,14 @@ model Review {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  orderId    String  @unique
-  order      Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId    String @unique
+  order      Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
   sellerId   String
-  seller     Seller  @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  seller     Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
   reviewerId String
-  reviewer   User    @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewer   User   @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Cascade)
 
-  rating  Int     // 1-5 stars
+  rating  Int // 1-5 stars
   title   String?
   content String
 
@@ -1098,8 +1103,8 @@ model PasswordResetToken {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Hashed token (sha256)
   tokenHash String
@@ -1108,7 +1113,7 @@ model PasswordResetToken {
   expiresAt DateTime
 
   // Usage tracking
-  usedAt    DateTime?
+  usedAt DateTime?
 
   // Rate limiting
   ipAddress String?
@@ -1127,12 +1132,12 @@ model Referral {
   referrerId String
   referrer   User   @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
 
-  referredId String  @unique
+  referredId String @unique
   referred   User   @relation("Referred", fields: [referredId], references: [id], onDelete: Cascade)
 
   code String // The referral code used
 
-  status String @default("PENDING") // PENDING, COMPLETED, CANCELLED
+  status      String    @default("PENDING") // PENDING, COMPLETED, CANCELLED
   completedAt DateTime?
 
   accessTokensAwarded Int @default(0)
