@@ -1,4 +1,4 @@
-import { PENDING_PAYOUT_WHERE, SELLER_STRIPE_ATTENTION_WHERE, sellerAttentionFingerprint, sellerAttentionSeverity, totalAdminQueueActionable } from "@/lib/adminQueueCounts";
+import { PENDING_PAYOUT_WHERE, REVIEWABLE_ATTENTION_QUEUES, SELLER_STRIPE_ATTENTION_WHERE, reviewableAttentionFingerprint, reviewableAttentionTargetId, sellerAttentionFingerprint, sellerAttentionSeverity, totalAdminQueueActionable } from "@/lib/adminQueueCounts";
 
 describe("admin queue counts", () => {
   it("includes transfer proof human reviews in the actionable total", () => {
@@ -33,5 +33,11 @@ describe("admin queue counts", () => {
     const seller = { status: "PENDING", stripeAccountId: "acct_1", stripeDetailsSubmitted: true, stripePayoutsEnabled: true };
     expect(sellerAttentionSeverity(seller)).toBe("ACTION_REQUIRED");
     expect(sellerAttentionFingerprint(seller)).toBe("PENDING:linked:details:payouts");
+  });
+
+  it("uses stable queue-scoped acknowledgement identities", () => {
+    expect(REVIEWABLE_ATTENTION_QUEUES).toContain("expiredReservations");
+    expect(reviewableAttentionTargetId("expiredReservations", "ticket-1")).toBe("expiredReservations:ticket-1");
+    expect(reviewableAttentionFingerprint(["RESERVED", "2026-08-10"])).toBe("RESERVED:2026-08-10");
   });
 });

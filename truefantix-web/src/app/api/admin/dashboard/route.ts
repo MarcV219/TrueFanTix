@@ -120,6 +120,7 @@ export async function GET(req: Request) {
       failedEmails: queueCounts.failedEmails,
       hiddenForumThreads: queueCounts.hiddenForumThreads,
       hiddenForumPosts: queueCounts.hiddenForumPosts,
+      moderatedForumItems: queueCounts.moderatedForumItems,
     },
     activity: {
       newUsers24h,

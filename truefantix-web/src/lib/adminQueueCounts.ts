@@ -31,6 +31,19 @@ export const SELLER_STRIPE_ATTENTION_WHERE = {
 } satisfies Prisma.SellerWhereInput;
 
 export const SELLER_ATTENTION_ACKNOWLEDGED_ACTION = "SELLER_ATTENTION_ACKNOWLEDGED";
+export const REVIEWABLE_ATTENTION_ACKNOWLEDGED_ACTION = "REVIEWABLE_ATTENTION_ACKNOWLEDGED";
+export const REVIEWABLE_ATTENTION_QUEUES = ["expiredReservations", "failedPayments", "failedEmails", "suspendedSellers", "moderatedForumItems"] as const;
+export type ReviewableAttentionQueue = typeof REVIEWABLE_ATTENTION_QUEUES[number];
+
+export const EXPIRED_RESERVATION_WHERE = { status: "RESERVED", reservedUntil: { not: null } } satisfies Prisma.TicketWhereInput;
+export const FAILED_PAYMENT_WHERE = { status: "FAILED" } satisfies Prisma.PaymentWhereInput;
+export const SUSPENDED_SELLER_WHERE = { status: "SUSPENDED" } satisfies Prisma.SellerWhereInput;
+export const MODERATED_FORUM_WHERE = { visibility: { not: "VISIBLE" } } satisfies Prisma.ForumThreadWhereInput;
+
+export function reviewableAttentionTargetId(queue: ReviewableAttentionQueue, id: string) { return `${queue}:${id}`; }
+export function reviewableAttentionFingerprint(parts: Array<string | number | boolean | Date | null | undefined>) {
+  return parts.map((part) => part instanceof Date ? part.toISOString() : String(part ?? "")).join(":");
+}
 
 export type SellerAttentionState = {
   status: string;

@@ -167,14 +167,14 @@ export default function AdminHomePage() {
                 <QueueItem label="Tickets needing review" value={data.queues.needsReviewTickets} href="/admin/tickets/verification" />
                 <QueueItem label="Catalog requests" value={data.queues.pendingCatalogRequests} href="/admin/catalog-requests" />
                 <QueueItem label="Seller/Stripe attention" value={data.queues.pendingSellerStripe} href="/admin/seller-attention" />
-                <QueueItem label="Expired reservations" value={data.queues.expiredReservations} href="/admin/orders?status=PENDING" />
+                <QueueItem label="Expired reservations" value={data.queues.expiredReservations} href="/admin/reviewable-attention?queue=expiredReservations" />
                 <QueueItem label="Open payment holds" value={data.queues.openEscrows} href="/admin/orders" />
                 <QueueItem label="Open disputes" value={data.queues.disputedOrders ?? 0} href="/admin/orders?status=DISPUTED" />
                 <QueueItem label="Transfer proof human reviews" value={data.queues.transferProofReviews ?? 0} href="/admin/orders?status=HUMAN_REVIEW" />
-                <QueueItem label="Failed payments" value={data.queues.failedPayments} href="/admin/orders" />
+                <QueueItem label="Failed payments" value={data.queues.failedPayments} href="/admin/reviewable-attention?queue=failedPayments" />
                 <QueueItem label="Pending payouts" value={data.queues.pendingPayouts} href="/admin/users?filter=pending-payouts" />
-                <QueueItem label="Failed emails 24h" value={data.queues.failedEmails} />
-                <QueueItem label="Moderated forum items" value={data.queues.hiddenForumThreads + data.queues.hiddenForumPosts} />
+                <QueueItem label="Failed emails 24h" value={data.queues.failedEmails} href="/admin/reviewable-attention?queue=failedEmails" />
+                <QueueItem label="Moderated forum items" value={data.queues.moderatedForumItems} href="/admin/reviewable-attention?queue=moderatedForumItems" />
               </div>
             </Card>
 

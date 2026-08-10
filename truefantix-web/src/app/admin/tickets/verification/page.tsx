@@ -55,13 +55,13 @@ const ATTENTION_ITEMS: Array<{
   { key: "transferProofReviews", label: "Transfer proof human reviews", description: "Seller transfer documentation waiting for an Admin decision.", href: "/admin/orders?status=HUMAN_REVIEW", urgent: true },
   { key: "catalogRequests", label: "Catalog requests", description: "Requested artists, teams, venues, or cities to review.", href: "/admin/catalog-requests" },
   { key: "sellerStripe", label: "Seller / Stripe attention", description: "Seller approval or Stripe onboarding is incomplete.", href: "/admin/seller-attention" },
-  { key: "suspendedSellers", label: "Suspended sellers", description: "Restricted seller accounts to monitor or review.", href: "/admin/users?filter=sellers", urgent: true },
-  { key: "expiredReservations", label: "Expired reservations", description: "Reserved tickets whose hold time has elapsed.", href: "/admin/orders?status=PENDING", urgent: true },
+  { key: "suspendedSellers", label: "Suspended sellers", description: "Restricted seller accounts to monitor or review.", href: "/admin/reviewable-attention?queue=suspendedSellers" },
+  { key: "expiredReservations", label: "Expired reservations", description: "Reserved tickets whose hold time has elapsed.", href: "/admin/reviewable-attention?queue=expiredReservations" },
   { key: "openEscrows", label: "Open payment holds", description: "Ticket access or funds remain in escrow.", href: "/admin/orders" },
-  { key: "failedPayments", label: "Failed payments", description: "Payment attempts that require investigation.", href: "/admin/orders?status=FAILED", urgent: true },
+  { key: "failedPayments", label: "Failed payments", description: "Payment attempts available for review.", href: "/admin/reviewable-attention?queue=failedPayments" },
   { key: "pendingPayouts", label: "Pending payouts", description: "Seller payouts waiting to be processed.", href: "/admin/users?filter=pending-payouts" },
-  { key: "failedEmails", label: "Failed emails (24 hours)", description: "Recent email deliveries that did not succeed.", href: "/admin/audit?action=EMAIL_FAILED", urgent: true },
-  { key: "moderatedForumItems", label: "Moderated forum items", description: "Hidden or deleted threads and posts for oversight.", href: "/forum" },
+  { key: "failedEmails", label: "Failed emails (24 hours)", description: "Recent email deliveries available for review.", href: "/admin/reviewable-attention?queue=failedEmails" },
+  { key: "moderatedForumItems", label: "Moderated forum items", description: "Hidden or deleted threads and posts for oversight.", href: "/admin/reviewable-attention?queue=moderatedForumItems" },
 ];
 
 function money(cents: number) {
