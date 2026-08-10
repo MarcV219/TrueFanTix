@@ -164,8 +164,8 @@ function StatusPillWithTooltip({
   );
 }
 
-function TicketCard({
-  ticket,
+function OrderCard({
+  tickets,
   disputeFormTicketId,
   selectedTicketIds,
   disputeSelectionActive,
@@ -176,7 +176,7 @@ function TicketCard({
   onToggleDisputeTicket,
   onConfirmed,
 }: {
-  ticket: HoldingTicket;
+  tickets: HoldingTicket[];
   disputeFormTicketId: string | null;
   selectedTicketIds: string[];
   disputeSelectionActive: boolean;
@@ -187,6 +187,8 @@ function TicketCard({
   onToggleDisputeTicket: (ticketId: string) => void;
   onConfirmed: () => void;
 }) {
+  const ticket = tickets[0];
+  if (!ticket) return null;
   const [busy, setBusy] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
   const [disputeEvidenceFiles, setDisputeEvidenceFiles] = useState<Array<{
@@ -197,13 +199,18 @@ function TicketCard({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const disputeOpen = disputeFormTicketId === ticket.id;
-  const selectedForDispute = selectedTicketIds.includes(ticket.id);
+  const selectedForDispute = tickets.some((orderTicket) => selectedTicketIds.includes(orderTicket.id));
   const canConfirm =
     ticket.orderStatus === "PAID" &&
     ticket.transferVerificationStatus === "PENDING" &&
     ticket.buyerConfirmationStatus === "PENDING";
 
   async function confirmReceipt() {
+    const confirmed = window.confirm(
+      `Confirm that you received all ${tickets.length} ticket${tickets.length === 1 ? "" : "s"} in this order? If any ticket is missing or incorrect, cancel and open a dispute instead.`
+    );
+    if (!confirmed) return;
+
     setBusy(true);
     setError(null);
     setSuccess(null);
@@ -278,8 +285,25 @@ function TicketCard({
           <h3 style={{ margin: 0, fontSize: 18, fontWeight: 900 }}>{ticket.title}</h3>
           <p style={{ margin: "4px 0", opacity: 0.72 }}>{ticket.venue}</p>
           <p style={{ margin: "4px 0", opacity: 0.62, fontSize: 14 }}>{ticket.date}</p>
-          <p style={{ margin: "8px 0 0", fontWeight: 800, color: "rgba(6, 74, 147, 1)" }}>
-            ${ticket.price.toFixed(2)}
+          <p style={{ margin: "8px 0", fontWeight: 900 }}>
+            Order — {tickets.length} ticket{tickets.length === 1 ? "" : "s"}
+          </p>
+          <div style={{ display: "grid", gap: 6 }}>
+            {tickets.map((orderTicket, index) => {
+              const seat = [
+                orderTicket.section ? `Section ${orderTicket.section}` : null,
+                orderTicket.row ? `Row ${orderTicket.row}` : null,
+                orderTicket.seat ? `Seat ${orderTicket.seat}` : null,
+              ].filter(Boolean).join(" • ");
+              return (
+                <div key={orderTicket.id} style={{ padding: "7px 9px", borderRadius: 7, background: "rgba(248, 250, 252, 1)", fontSize: 13 }}>
+                  <strong>Ticket {index + 1}</strong>{seat ? ` — ${seat}` : ""} — ${orderTicket.price.toFixed(2)}
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ margin: "9px 0 0", fontWeight: 800, color: "rgba(6, 74, 147, 1)" }}>
+            Order total: ${tickets.reduce((sum, orderTicket) => sum + orderTicket.price, 0).toFixed(2)}
           </p>
         </div>
         <div style={{ display: "grid", gap: 8, alignContent: "center", minWidth: 180 }}>
@@ -303,32 +327,9 @@ function TicketCard({
           {canConfirm ? (
             <div style={{ display: "grid", gap: 8 }}>
               {disputeSelectionActive ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (disputeScope === "SPECIFIC") onToggleDisputeTicket(ticket.id);
-                  }}
-                  disabled={busy || disputeScope !== "SPECIFIC"}
-                  aria-pressed={selectedForDispute}
-                  style={{
-                    minHeight: 38,
-                    border: selectedForDispute ? 0 : "1px solid rgba(37, 99, 235, 0.45)",
-                    borderRadius: 8,
-                    background: selectedForDispute ? "rgba(37, 99, 235, 1)" : "white",
-                    color: selectedForDispute ? "white" : "rgba(30, 64, 175, 1)",
-                    fontWeight: 900,
-                    cursor: disputeScope === "SPECIFIC" ? "pointer" : "default",
-                    opacity: disputeScope ? 1 : 0.72,
-                  }}
-                >
-                  {disputeScope === "ALL"
-                    ? "✓ Included — all tickets"
-                    : disputeScope === "SPECIFIC"
-                      ? selectedForDispute
-                        ? "✓ Selected"
-                        : "Select ticket"
-                      : "Choose all or specific tickets below"}
-                </button>
+                <div style={{ fontSize: 12, fontWeight: 800, textAlign: "center" }}>
+                  Choose the affected tickets in the dispute form below.
+                </div>
               ) : (
                 <>
                   <button
@@ -345,7 +346,7 @@ function TicketCard({
                       cursor: "pointer",
                     }}
                   >
-                    {busy ? "Working..." : "Confirm received"}
+                    {busy ? "Working..." : `Confirm all ${tickets.length} ticket${tickets.length === 1 ? "" : "s"} received`}
                   </button>
                   <button
                     type="button"
@@ -365,7 +366,7 @@ function TicketCard({
                       cursor: "pointer",
                     }}
                   >
-                    Open dispute
+                    Missing or incorrect ticket? Open dispute
                   </button>
                 </>
               )}
@@ -429,6 +430,33 @@ function TicketCard({
                       ? "Use the Select ticket buttons on the affected ticket cards."
                       : "Choose one option before continuing."}
                 </div>
+                {disputeScope === "SPECIFIC" ? (
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {tickets.map((orderTicket, index) => {
+                      const selected = selectedTicketIds.includes(orderTicket.id);
+                      const seat = [orderTicket.section, orderTicket.row, orderTicket.seat].filter(Boolean).join(" • ");
+                      return (
+                        <button
+                          key={orderTicket.id}
+                          type="button"
+                          onClick={() => onToggleDisputeTicket(orderTicket.id)}
+                          aria-pressed={selected}
+                          style={{
+                            minHeight: 38,
+                            border: selected ? 0 : "1px solid rgba(37, 99, 235, 0.35)",
+                            borderRadius: 8,
+                            background: selected ? "rgba(37, 99, 235, 1)" : "white",
+                            color: selected ? "white" : "rgba(30, 64, 175, 1)",
+                            fontWeight: 900,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {selected ? "✓ " : ""}Ticket {index + 1}{seat ? ` — ${seat}` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(153, 27, 27, 1)" }}>
                   Opening a dispute pauses seller payout for the entire order while the issue is reviewed.
                 </div>
@@ -717,6 +745,15 @@ function Body() {
     );
   }
 
+  const orders = Array.from(
+    tickets.reduce((grouped, ticket) => {
+      const orderTickets = grouped.get(ticket.orderId) ?? [];
+      orderTickets.push(ticket);
+      grouped.set(ticket.orderId, orderTickets);
+      return grouped;
+    }, new Map<string, HoldingTicket[]>())
+  );
+
   return (
     <div>
       {purchaseConfirmed ? (
@@ -738,19 +775,20 @@ function Body() {
         </div>
       ) : null}
       <p style={{ marginBottom: 16, opacity: 0.8 }}>
-        {tickets.length} ticket{tickets.length !== 1 ? "s" : ""} pending transfer or final completion.
+        {orders.length} order{orders.length !== 1 ? "s" : ""} ({tickets.length} ticket{tickets.length !== 1 ? "s" : ""}) pending transfer or final completion.
       </p>
-      {tickets.map((ticket) => (
-        <TicketCard
-          key={`${ticket.orderId}-${ticket.id}`}
-          ticket={ticket}
+      {orders.map(([orderId, orderTickets]) => {
+        const ticket = orderTickets[0];
+        return ticket ? (
+        <OrderCard
+          key={orderId}
+          tickets={orderTickets}
           disputeFormTicketId={disputeFormTicketId}
           selectedTicketIds={selectedDisputeTicketIds}
           disputeSelectionActive={disputeOrderId === ticket.orderId}
           disputeScope={disputeOrderId === ticket.orderId ? disputeScope : null}
           disputeUpdateVisible={
-            ticket.buyerConfirmationStatus === "DISPUTED" &&
-            tickets.find((candidate) => candidate.orderId === ticket.orderId)?.id === ticket.id
+            ticket.buyerConfirmationStatus === "DISPUTED"
           }
           onOpenDispute={(openedTicket) => {
             setDisputeFormTicketId(openedTicket.id);
@@ -777,7 +815,8 @@ function Body() {
           }
           onConfirmed={refetchTickets}
         />
-      ))}
+        ) : null;
+      })}
     </div>
   );
 }

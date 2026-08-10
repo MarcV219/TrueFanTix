@@ -149,7 +149,7 @@ export async function POST(req: Request) {
       {
         ok: true,
         order: updatedOrder,
-        message: "Ticket receipt confirmed. Seller payout is now eligible for completion.",
+        message: `Receipt of all ${order.items.length} ticket${order.items.length === 1 ? "" : "s"} in this order confirmed. Seller payout is now eligible for completion.`,
       },
       { status: 200 }
     );
