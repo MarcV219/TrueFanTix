@@ -320,9 +320,25 @@ function OrderCard({
             Purchased {new Date(ticket.orderDate).toLocaleDateString()}
           </p>
           {ticket.buyerConfirmationDeadline ? (
-            <p style={{ margin: 0, fontSize: 12, opacity: 0.72, textAlign: "center" }}>
-              Confirm by {new Date(ticket.buyerConfirmationDeadline).toLocaleString()}
-            </p>
+            <div
+              role="status"
+              style={{
+                padding: "10px 12px",
+                borderRadius: 9,
+                border: "2px solid rgba(245, 158, 11, 0.55)",
+                background: "rgba(255, 247, 237, 1)",
+                color: "rgba(154, 52, 18, 1)",
+                boxShadow: "0 3px 10px rgba(245, 158, 11, 0.16)",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 950, letterSpacing: ".06em", textTransform: "uppercase" }}>
+                Confirmation deadline
+              </div>
+              <div style={{ marginTop: 2, fontSize: 15, fontWeight: 950 }}>
+                Confirm by {new Date(ticket.buyerConfirmationDeadline).toLocaleString()}
+              </div>
+            </div>
           ) : null}
           {canConfirm ? (
             <div style={{ display: "grid", gap: 8 }}>
