@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { payoutReadinessError } from "@/lib/payouts/readiness";
+import { sourceSettlementCurrency, stripeTransferFunding } from "@/lib/payouts/stripeTransfer";
 
 function stripeClient() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -61,17 +62,23 @@ export async function POST(req: Request) {
 
   try {
     const stripe = stripeClient();
-    const paymentIntent = await stripe.paymentIntents.retrieve(order!.payment!.providerRef, { expand: ["latest_charge"] });
-    const latestCharge = typeof paymentIntent.latest_charge === "string" ? paymentIntent.latest_charge : paymentIntent.latest_charge?.id;
+    const paymentIntent = await stripe.paymentIntents.retrieve(order!.payment!.providerRef, { expand: ["latest_charge.balance_transaction"] });
+    const latestCharge = typeof paymentIntent.latest_charge === "object" ? paymentIntent.latest_charge : null;
     if (!latestCharge) throw new Error("The original Stripe charge could not be identified.");
+    const payoutCurrency = order!.payment!.currency.toLowerCase();
+    if (paymentIntent.currency !== payoutCurrency || latestCharge.currency !== payoutCurrency) {
+      throw new Error(`Currency reconciliation required: the order is ${payoutCurrency.toUpperCase()}, but Stripe charged ${latestCharge.currency.toUpperCase()}. No payout was sent.`);
+    }
+    const transferFunding = stripeTransferFunding(latestCharge, payoutCurrency, payout.netCents);
+    const settlementCurrency = sourceSettlementCurrency(latestCharge);
 
     const transfer = await stripe.transfers.create({
-      amount: payout.netCents,
-      currency: order!.payment!.currency.toLowerCase(),
+      amount: transferFunding.amount,
+      currency: transferFunding.currency,
       destination: payout.seller.stripeAccountId!,
-      source_transaction: latestCharge,
+      source_transaction: transferFunding.source_transaction,
       transfer_group: `ORDER_${order!.id}`,
-      metadata: { payoutId: payout.id, orderId: order!.id, sellerId: payout.sellerId },
+      metadata: { payoutId: payout.id, orderId: order!.id, sellerId: payout.sellerId, fundingMode: transferFunding.fundingMode, obligationAmount: String(payout.netCents), obligationCurrency: payoutCurrency },
     }, { idempotencyKey: `truefantix:payout:${payout.id}` });
 
     const paidAt = new Date();
@@ -79,7 +86,7 @@ export async function POST(req: Request) {
       status: "PAID", provider: "STRIPE_CONNECT_TRANSFER", stripeTransferId: transfer.id,
       failureReason: null, paidAt,
     } });
-    await auditLog({ action: "ADMIN_SETTINGS_UPDATE", userId: gate.user.id, targetType: "Payout", targetId: payout.id, metadata: { action: "PAYOUT_RELEASED", orderId: order!.id, stripeTransferId: transfer.id, amountCents: payout.netCents }, ...createAuditContext(req) });
+    await auditLog({ action: "ADMIN_SETTINGS_UPDATE", userId: gate.user.id, targetType: "Payout", targetId: payout.id, metadata: { action: "PAYOUT_RELEASED", orderId: order!.id, stripeTransferId: transfer.id, amountCents: payout.netCents, payoutCurrency: payoutCurrency.toUpperCase(), stripeTransferAmount: transferFunding.amount, stripeTransferCurrency: transferFunding.currency.toUpperCase(), sourceSettlementCurrency: settlementCurrency?.toUpperCase() || null, fundingMode: transferFunding.fundingMode }, ...createAuditContext(req) });
     return NextResponse.json({ ok: true, payoutId: payout.id, stripeTransferId: transfer.id, status: "PAID", paidAt });
   } catch (error: any) {
     const message = String(error?.message || "Stripe transfer failed.").slice(0, 1000);
