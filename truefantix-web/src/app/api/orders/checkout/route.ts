@@ -46,6 +46,8 @@ class TicketNotAvailableError extends Error {
   }
 }
 
+class InsufficientAccessTokensError extends Error {}
+
 export async function POST(req: Request) {
   const gate = await requireVerifiedUser(req);
   if (!gate.ok) return gate.res;
@@ -347,6 +349,38 @@ export async function POST(req: Request) {
         })),
       });
 
+      if (requiredAccessTokens > 0) {
+        const debited = await tx.seller.updateMany({
+          where: {
+            id: buyerSellerId,
+            accessTokenBalance: { gte: requiredAccessTokens },
+          },
+          data: { accessTokenBalance: { decrement: requiredAccessTokens } },
+        });
+        if (debited.count !== 1) throw new InsufficientAccessTokensError();
+
+        const updatedBuyer = await tx.seller.findUnique({
+          where: { id: buyerSellerId },
+          select: { accessTokenBalance: true },
+        });
+        const heldBalance = updatedBuyer?.accessTokenBalance ?? 0;
+        const soldOutTickets = tickets.filter((t: any) => t.event?.selloutStatus === "SOLD_OUT");
+        await tx.accessTokenTransaction.createMany({
+          data: soldOutTickets.map((ticket: any, index: number) => ({
+            sellerId: buyerSellerId,
+            type: "HELD",
+            source: "SOLD_OUT_PURCHASE",
+            amountAccessTokens: -ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE,
+            balanceAfterAccessTokens: heldBalance + soldOutTickets.length - index - 1,
+            note: `Access token held while order ${order.id} awaits completion`,
+            referenceType: "Order",
+            referenceId: order.id,
+            orderId: order.id,
+            ticketId: ticket.id,
+          })),
+        });
+      }
+
       // Return fully hydrated order
       const out = await tx.order.findUnique({
         where: { id: order.id },
@@ -395,6 +429,13 @@ export async function POST(req: Request) {
           details: err.message,
           debug: { ticketId: err.ticketId },
         },
+        { status: 409 }
+      );
+    }
+
+    if (err instanceof InsufficientAccessTokensError) {
+      return NextResponse.json(
+        { ok: false, error: "Insufficient access tokens to reserve sold-out event tickets" },
         { status: 409 }
       );
     }

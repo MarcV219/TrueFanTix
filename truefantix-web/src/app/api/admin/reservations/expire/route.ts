@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { hasInternalCronAuth, requireAdmin } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { auditLog, createAuditContext } from "@/lib/audit";
+import { releaseOrderAccessTokenHolds } from "@/lib/accessTokenHolds";
 
 export async function POST(req: Request) {
   const isCron = hasInternalCronAuth(req);
@@ -51,6 +52,7 @@ export async function POST(req: Request) {
       });
 
       if (cancelled.count === 1) ordersCancelled += 1;
+      if (cancelled.count === 1) await releaseOrderAccessTokenHolds(tx, orderId);
 
       const released = await tx.ticket.updateMany({
         where: {

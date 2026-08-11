@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { releaseOrderAccessTokenHolds } from "@/lib/accessTokenHolds";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
@@ -99,6 +100,7 @@ export async function POST(req: Request) {
             reservedUntil: null,
           },
         });
+        await releaseOrderAccessTokenHolds(tx, orderId);
       });
 
       return NextResponse.json(

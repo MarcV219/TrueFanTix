@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
+import { consumeOrderAccessTokenHolds } from "@/lib/accessTokenHolds";
 
 const ACCESS_TOKEN_AWARD_PER_SOLDOUT_SALE = 1; // seller earns per sold-out ticket
 const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1; // buyer spends per sold-out ticket
@@ -232,7 +233,11 @@ export async function POST(req: Request) {
           };
         }
 
-        // Determine which buyer SPENT txns already exist (idempotency safety)
+        // Checkout reserves buyer tokens. Completion makes those holds final without
+        // changing the already-reduced spendable balance a second time.
+        await consumeOrderAccessTokenHolds(tx, order.id);
+
+        // Legacy fallback for orders created before checkout-time holds existed.
         const existingBuyerSpend = await tx.accessTokenTransaction.findMany({
           where: {
             sellerId: order.buyerSellerId,
@@ -247,7 +252,8 @@ export async function POST(req: Request) {
         const existingBuyerTicketIds = new Set(
           existingBuyerSpend.map((t: any) => t.ticketId).filter(Boolean) as string[]
         );
-        const candidateBuyerCreates = soldOutTicketIds.filter((ticketId: any) => !existingBuyerTicketIds.has(ticketId)
+        const candidateBuyerCreates = soldOutTicketIds.filter(
+          (ticketId: any) => !existingBuyerTicketIds.has(ticketId)
         );
 
         // Buyer must have enough access tokens for missing spends

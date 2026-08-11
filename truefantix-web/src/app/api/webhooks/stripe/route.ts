@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { releaseOrderAccessTokenHolds } from "@/lib/accessTokenHolds";
 import { sendEmail, generatePurchaseConfirmationEmail, generateSaleNotificationEmail } from "@/lib/email";
 import { notifyTicketSold, notifyPurchaseConfirmed } from "@/lib/notifications/service";
 import { notifySellerTransferRequired, sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
@@ -325,6 +326,7 @@ export async function POST(req: Request) {
               reservedUntil: null,
             },
           });
+          await releaseOrderAccessTokenHolds(tx, orderId);
         });
 
         console.log(`[STRIPE WEBHOOK] Payment failed for order ${orderId}`);
