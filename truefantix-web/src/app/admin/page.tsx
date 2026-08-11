@@ -186,6 +186,7 @@ export default function AdminHomePage() {
                 <Card title="Tax Rates & Reports" href="/admin/reports/tax"><div style={{ opacity: 0.75, fontSize: 13 }}>Province/state rates and admin-fee tax collected by time frame.</div></Card>
                 <Card title="Location Preflight" href="/admin/preflight/location-issues"><div style={{ opacity: 0.75, fontSize: 13 }}>Find listings and orders with unresolved state/province tax locations.</div></Card>
                 <Card title="Audit Log" href="/admin/audit"><div style={{ opacity: 0.75, fontSize: 13 }}>Search security, user, order, and admin actions.</div></Card>
+                <Card title="Reminder Delivery Log" href="/admin/reminder-deliveries"><div style={{ opacity: 0.75, fontSize: 13 }}>Track every seller and buyer reminder attempt, provider response, and failure.</div></Card>
                 <Card title="Ticket Verification" href="/admin/tickets/verification"><div style={{ opacity: 0.75, fontSize: 13 }}>Approve, reject, or review listings.</div></Card>
                 <Card title="Catalog Requests" href="/admin/catalog-requests"><div style={{ opacity: 0.75, fontSize: 13 }}>Fulfill missing artists, teams, venues, and cities.</div></Card>
                 <Card title="Early Access" href="/admin/early-access"><div style={{ opacity: 0.75, fontSize: 13 }}>Export waitlist leads.</div></Card>

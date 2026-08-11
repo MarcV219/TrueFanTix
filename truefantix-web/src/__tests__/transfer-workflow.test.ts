@@ -1,6 +1,8 @@
 const findUser: jest.Mock = jest.fn();
 const createNotificationOncePerWindow: jest.Mock = jest.fn();
 const sendEmail: jest.Mock = jest.fn();
+const upsertReminderDelivery: jest.Mock = jest.fn();
+const updateReminderDelivery: jest.Mock = jest.fn();
 const generateSellerTransferReminderEmail: jest.Mock = jest.fn(() => ({
   subject: "Transfer reminder",
   text: "Transfer now",
@@ -15,6 +17,10 @@ const generateBuyerTransferConfirmationRequiredEmail: jest.Mock = jest.fn(() => 
 jest.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: (...args: unknown[]) => findUser(...args) },
+    reminderDelivery: {
+      upsert: (...args: unknown[]) => upsertReminderDelivery(...args),
+      update: (...args: unknown[]) => updateReminderDelivery(...args),
+    },
   },
 }));
 
@@ -40,6 +46,8 @@ describe("seller transfer reminder email", () => {
     jest.clearAllMocks();
     findUser.mockResolvedValue({ email: "seller@example.com", firstName: "Pam" });
     sendEmail.mockResolvedValue({ ok: true });
+    upsertReminderDelivery.mockResolvedValue({ id: "delivery-1" });
+    updateReminderDelivery.mockResolvedValue({ id: "delivery-1" });
   });
 
   it("emails the seller when a new six-hour reminder is created", async () => {
@@ -103,6 +111,8 @@ describe("buyer transfer confirmation reminder email", () => {
     jest.clearAllMocks();
     findUser.mockResolvedValue({ email: "buyer@example.com", firstName: "Alex" });
     sendEmail.mockResolvedValue({ ok: true });
+    upsertReminderDelivery.mockResolvedValue({ id: "delivery-2" });
+    updateReminderDelivery.mockResolvedValue({ id: "delivery-2" });
   });
 
   it("emails the buyer when a new six-hour reminder is created", async () => {

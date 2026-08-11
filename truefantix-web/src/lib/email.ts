@@ -29,7 +29,14 @@ function resendErrorMessage(status: number, body: string) {
   return `Resend ${status}`;
 }
 
-export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; error?: string }> {
+export type EmailSendResult = {
+  ok: boolean;
+  error?: string;
+  provider?: "RESEND" | "SENDGRID" | "CONSOLE";
+  providerResult?: string;
+};
+
+export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult> {
   const sendgridApiKey = cleanSecret(process.env.SENDGRID_API_KEY);
   const resendApiKey = cleanSecret(process.env.RESEND_API_KEY);
   const configuredFromEmail = process.env.FROM_EMAIL?.trim();
@@ -56,13 +63,14 @@ export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; e
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         console.error("[EMAIL] Resend error:", res.status, body);
-        return { ok: false, error: resendErrorMessage(res.status, body) };
+        return { ok: false, error: resendErrorMessage(res.status, body), provider: "RESEND", providerResult: `HTTP ${res.status}` };
       }
 
-      return { ok: true };
+      const response = await res.json().catch(() => null) as { id?: string } | null;
+      return { ok: true, provider: "RESEND", providerResult: response?.id || `HTTP ${res.status}` };
     } catch (err: any) {
       console.error("[EMAIL] Resend network error:", err);
-      return { ok: false, error: err?.message || "Resend request failed" };
+      return { ok: false, error: err?.message || "Resend request failed", provider: "RESEND", providerResult: "NETWORK_ERROR" };
     }
   }
 
@@ -70,30 +78,31 @@ export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; e
     sgMail.setApiKey(sendgridApiKey);
 
     try {
-      await sgMail.send({
+      const [response] = await sgMail.send({
         to: payload.to,
         from: fromEmail,
         subject: payload.subject,
         text: payload.text,
         html: payload.html,
       });
-      return { ok: true };
+      const messageId = response?.headers?.["x-message-id"];
+      return { ok: true, provider: "SENDGRID", providerResult: String(messageId || response?.statusCode || "ACCEPTED") };
     } catch (err: any) {
       console.error("[EMAIL] SendGrid error:", err);
-      return { ok: false, error: err.message };
+      return { ok: false, error: err.message, provider: "SENDGRID", providerResult: "PROVIDER_ERROR" };
     }
   }
 
   if (process.env.NODE_ENV === "production") {
     console.error("[EMAIL] No provider configured (RESEND_API_KEY/SENDGRID_API_KEY).");
-    return { ok: false, error: "Email provider is not configured" };
+    return { ok: false, error: "Email provider is not configured", provider: "CONSOLE", providerResult: "NOT_CONFIGURED" };
   }
 
   console.log("[EMAIL] No provider configured (RESEND_API_KEY/SENDGRID_API_KEY). Logging to console instead");
   console.log("[EMAIL] To:", payload.to);
   console.log("[EMAIL] Subject:", payload.subject);
   console.log("[EMAIL] Text:", payload.text.slice(0, 200) + "...");
-  return { ok: true }; // DEV mode - pretend it worked
+  return { ok: true, provider: "CONSOLE", providerResult: "LOGGED" }; // DEV mode - pretend it worked
 }
 
 export function generateVerificationEmail(code: string, firstName: string | null) {

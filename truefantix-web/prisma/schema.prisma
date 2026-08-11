@@ -593,6 +593,26 @@ model EmailDelivery {
   @@index([status])
 }
 
+model ReminderDelivery {
+  id             String   @id @default(cuid())
+  orderId        String
+  reminderType   String // SELLER_TRANSFER, BUYER_CONFIRMATION
+  recipient      String
+  windowStart    DateTime
+  deadline       DateTime
+  provider       String
+  status         String // ATTEMPTING, SENT, FAILED
+  providerResult String?
+  failureReason  String?
+  attemptedAt    DateTime @default(now())
+  completedAt    DateTime?
+
+  @@unique([orderId, reminderType, recipient, windowStart])
+  @@index([attemptedAt])
+  @@index([status, attemptedAt])
+  @@index([orderId, attemptedAt])
+}
+
 model Payment {
   id      String @id @default(cuid())
   orderId String @unique

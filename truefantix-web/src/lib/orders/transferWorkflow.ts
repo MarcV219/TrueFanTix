@@ -33,9 +33,77 @@ export function buyerConfirmationDeadline(transferSubmittedAt: Date) {
   return addHours(transferSubmittedAt, BUYER_CONFIRMATION_DEADLINE_HOURS);
 }
 
-function reminderWindowStart(now = new Date()) {
+export function reminderWindowStart(now = new Date()) {
   const intervalMs = TRANSFER_REMINDER_INTERVAL_HOURS * 60 * 60 * 1000;
   return new Date(Math.floor(now.getTime() / intervalMs) * intervalMs);
+}
+
+function configuredEmailProvider() {
+  if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
+  if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
+  return "CONSOLE";
+}
+
+async function sendLoggedReminder(params: {
+  orderId: string;
+  reminderType: "SELLER_TRANSFER" | "BUYER_CONFIRMATION";
+  recipient: string;
+  deadline: Date;
+  windowStart: Date;
+  email: { subject: string; text: string; html?: string };
+}) {
+  const key = {
+    orderId_reminderType_recipient_windowStart: {
+      orderId: params.orderId,
+      reminderType: params.reminderType,
+      recipient: params.recipient,
+      windowStart: params.windowStart,
+    },
+  };
+  const provider = configuredEmailProvider();
+  await prisma.reminderDelivery.upsert({
+    where: key,
+    create: {
+      orderId: params.orderId,
+      reminderType: params.reminderType,
+      recipient: params.recipient,
+      windowStart: params.windowStart,
+      deadline: params.deadline,
+      provider,
+      status: "ATTEMPTING",
+    },
+    update: {
+      deadline: params.deadline,
+      provider,
+      status: "ATTEMPTING",
+      providerResult: null,
+      failureReason: null,
+      attemptedAt: new Date(),
+      completedAt: null,
+    },
+  });
+
+  try {
+    const result = await sendEmail({ to: params.recipient, ...params.email });
+    await prisma.reminderDelivery.update({
+      where: key,
+      data: {
+        provider: result.provider || provider,
+        status: result.ok ? "SENT" : "FAILED",
+        providerResult: result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED"),
+        failureReason: result.ok ? null : result.error || "Unknown provider error",
+        completedAt: new Date(),
+      },
+    });
+    return result;
+  } catch (error) {
+    const failureReason = error instanceof Error ? error.message : "Unknown email error";
+    await prisma.reminderDelivery.update({
+      where: key,
+      data: { status: "FAILED", providerResult: "EXCEPTION", failureReason, completedAt: new Date() },
+    });
+    return { ok: false as const, error: failureReason, provider };
+  }
 }
 
 export async function notifySellerTransferRequired(params: {
@@ -73,7 +141,14 @@ export async function notifySellerTransferRequired(params: {
         params.ticketCount,
         params.deadline
       );
-      const result = await sendEmail({ to: seller.email, ...email });
+      const result = await sendLoggedReminder({
+        orderId: params.orderId,
+        reminderType: "SELLER_TRANSFER",
+        recipient: seller.email,
+        deadline: params.deadline,
+        windowStart: reminderWindowStart(params.now),
+        email,
+      });
       if (!result.ok) {
         console.error("[EMAIL] Seller transfer reminder email failed:", result.error);
       } else {
@@ -121,7 +196,14 @@ export async function notifyBuyerTransferConfirmationRequired(params: {
         params.ticketCount,
         params.deadline
       );
-      const result = await sendEmail({ to: buyer.email, ...email });
+      const result = await sendLoggedReminder({
+        orderId: params.orderId,
+        reminderType: "BUYER_CONFIRMATION",
+        recipient: buyer.email,
+        deadline: params.deadline,
+        windowStart: reminderWindowStart(params.now),
+        email,
+      });
       if (!result.ok) {
         console.error("[EMAIL] Buyer transfer confirmation email failed:", result.error);
       } else {
