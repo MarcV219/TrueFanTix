@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { refundOrderAccessTokens } from "@/lib/accessTokenHolds";
 
 import { requireAdmin } from "@/lib/auth/guards";
 
@@ -61,28 +62,8 @@ export async function POST(req: Request, ctx: Ctx) {
         });
       }
 
-      // 4) Reverse buyer spend ledger entries for this order
-      const buyerSpend = await tx.accessTokenTransaction.findMany({
-        where: {
-          userId: order.buyerId,
-          ticketId: { in: ticketIds },
-          kind: "SPEND",
-        },
-      });
-      for (const t of buyerSpend) {
-        await tx.accessTokenTransaction.create({
-          data: {
-            userId: t.userId,
-            ticketId: t.ticketId,
-            orderId: t.orderId,
-            amount: -t.amount,
-            kind: "SPEND",
-            description: "Reversed",
-            status: "COMPLETED",
-            createdAt: new Date(),
-          },
-        });
-      }
+      // 4) Return any held or spent buyer access tokens exactly once.
+      await refundOrderAccessTokens(tx, order.id);
 
       return { ok: true, message: "Order reversed and tickets restored." };
     });

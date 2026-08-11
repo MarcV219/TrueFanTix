@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { refundOrderAccessTokens } from "@/lib/accessTokenHolds";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { createNotification } from "@/lib/notifications/service";
@@ -225,6 +226,7 @@ export async function POST(req: Request) {
             failureReason: null,
           },
         });
+        await refundOrderAccessTokens(tx, order.id);
 
         return tx.order.update({
           where: { id: order.id },
