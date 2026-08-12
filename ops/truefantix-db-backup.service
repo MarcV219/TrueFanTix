@@ -1,0 +1,9 @@
+[Unit]
+Description=Export the TrueFanTix production database
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/home/marc
+ExecStart=/home/marc/.openclaw/workspace/TrueFanTix/ops/backup-production-db.sh

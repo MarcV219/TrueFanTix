@@ -32,6 +32,8 @@ GitHub Actions calls `POST /api/cron/order-transfer-reminders` ten minutes after
 
 ## Backup and restore drill
 
+The tested procedure and evidence are maintained in `docs/BACKUP_RECOVERY_RUNBOOK.md`.
+
 1. Confirm Neon automated-backup retention and point-in-time recovery for the production branch.
 2. Create a fresh manual snapshot/export without overwriting production.
 3. Restore to a separate isolated Neon project/branch.

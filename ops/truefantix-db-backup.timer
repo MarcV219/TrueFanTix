@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly TrueFanTix production database export
+
+[Timer]
+OnCalendar=*-*-* 22:45:00 America/Toronto
+Persistent=true
+RandomizedDelaySec=120
+Unit=truefantix-db-backup.service
+
+[Install]
+WantedBy=timers.target
