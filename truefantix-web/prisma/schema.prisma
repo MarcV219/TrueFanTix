@@ -613,6 +613,25 @@ model ReminderDelivery {
   @@index([orderId, attemptedAt])
 }
 
+model ProductionIncident {
+  id            String   @id @default(cuid())
+  fingerprint   String   @unique
+  category      String
+  severity      String
+  summary       String
+  safeDetails   String?
+  status        String   @default("OPEN")
+  occurrenceCount Int    @default(1)
+  firstSeenAt   DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+  lastAlertedAt DateTime?
+  resolvedAt    DateTime?
+  resolvedById  String?
+
+  @@index([status, severity, lastSeenAt])
+  @@index([category, lastSeenAt])
+}
+
 model Payment {
   id      String @id @default(cuid())
   orderId String @unique

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { hasInternalCronAuth } from "@/lib/auth/guards";
 import { runTransferReminderWorkflow } from "@/lib/orders/transferWorkflow";
 import { prisma } from "@/lib/prisma";
+import { reportProductionIncident } from "@/lib/productionIncidents";
 
 export async function POST(req: Request) {
   const internalCron = hasInternalCronAuth(req);
@@ -21,6 +22,13 @@ export async function POST(req: Request) {
     await recordSchedulerRun("FAILED", startedAt, {
       error: error instanceof Error ? error.message : "Unknown scheduler failure",
     }).catch(() => undefined);
+    await reportProductionIncident({
+      category: "REMINDER_SCHEDULER",
+      severity: "CRITICAL",
+      summary: "Transfer reminder scheduler failed",
+      error,
+      fingerprint: "reminder-scheduler-failed",
+    });
     throw error;
   }
 }

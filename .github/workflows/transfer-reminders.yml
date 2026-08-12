@@ -2,6 +2,9 @@ name: Transfer reminders
 
 on:
   workflow_dispatch:
+  schedule:
+    # Cloud fallback ten minutes after the MiniPC's precise six-hour runs.
+    - cron: "17 0,6,12,18 * * *"
 
 jobs:
   run-transfer-reminders:
@@ -28,3 +31,12 @@ jobs:
             --request POST \
             --header "Authorization: Bearer ${CRON_SECRET}" \
             "${app_url}/api/cron/order-transfer-reminders"
+      - name: Verify application and scheduler health
+        env:
+          TRUEFANTIX_APP_URL: ${{ vars.TRUEFANTIX_APP_URL }}
+        run: |
+          set -euo pipefail
+          app_url="${TRUEFANTIX_APP_URL:-https://truefantix-web.vercel.app}"
+          app_url="${app_url%/}"
+          curl --fail-with-body --silent --show-error "${app_url}/api/health"
+          curl --fail-with-body --silent --show-error "${app_url}/api/health/reminder-scheduler"

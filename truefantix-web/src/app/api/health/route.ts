@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { reportProductionIncident } from "@/lib/productionIncidents";
 
 export async function GET() {
   const started = Date.now();
@@ -28,6 +29,7 @@ export async function GET() {
       { status: ok ? 200 : 503 }
     );
   } catch (e: unknown) {
+    await reportProductionIncident({ category: "DATABASE", severity: "CRITICAL", summary: "Production database health check failed", error: e, fingerprint: "database-health-failed" });
     const message = e instanceof Error ? e.message : "Health check failed";
     return NextResponse.json(
       {

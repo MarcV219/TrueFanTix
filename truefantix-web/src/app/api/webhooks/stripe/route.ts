@@ -7,6 +7,7 @@ import { sendEmail, generatePurchaseConfirmationEmail, generateSaleNotificationE
 import { notifyTicketSold, notifyPurchaseConfirmed } from "@/lib/notifications/service";
 import { notifySellerTransferRequired, sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
+import { reportProductionIncident } from "@/lib/productionIncidents";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -347,6 +348,14 @@ export async function POST(req: Request) {
   } catch (err: any) {
     await releaseEventClaim(event.id);
     console.error("[STRIPE WEBHOOK] Error processing event:", err);
+    await reportProductionIncident({
+      category: "STRIPE_WEBHOOK",
+      severity: "CRITICAL",
+      summary: "Stripe webhook processing failed",
+      error: err,
+      references: { eventId: event.id, eventType: event.type, orderId: getOrderIdFromEvent(event) },
+      fingerprint: `stripe-webhook:${event.type}`,
+    });
     return NextResponse.json({ ok: false, error: "PROCESSING_ERROR" }, { status: 500 });
   }
 }

@@ -4,7 +4,7 @@
 
 - Vercel Production contains Stripe secret, publishable, and webhook variables, but the API and publishable keys are **test mode**. Do not call this live-ready.
 - Application Stripe handlers cover `payment_intent.succeeded`, `payment_intent.payment_failed`, and `charge.refunded`.
-- Sentry SDK support is installed but remains disabled until `SENTRY_DSN` and `NEXT_PUBLIC_SENTRY_DSN` are configured. `SENTRY_AUTH_TOKEN` is optional and enables production source-map upload.
+- Built-in production incident monitoring records and deduplicates critical failures and alerts `admin@truefantix.com` through the existing email provider. No Sentry account is required.
 - `/api/health/reminder-scheduler` becomes healthy after the first newly instrumented reminder run and becomes stale after seven hours without a successful run.
 
 ## Stripe live-mode gate
@@ -20,7 +20,7 @@ Account owner must confirm in Stripe live mode:
 
 ## Monitoring and uptime
 
-Configure Sentry Production variables, redeploy, then deliberately generate one controlled test exception and confirm issue ingestion and source-map symbolication. Create alerts for new fatal errors, repeated `/api/webhooks/stripe` failures, and database/Prisma error spikes.
+Use Admin > Production Incidents to review and resolve deduplicated failures. Alert emails are limited to once per incident fingerprint per hour to prevent flooding.
 
 Configure an external service to check every five minutes:
 
@@ -28,7 +28,7 @@ Configure an external service to check every five minutes:
 - `GET /api/health`
 - `GET /api/health/reminder-scheduler`
 
-The external scheduler fallback may call `POST /api/cron/order-transfer-reminders` with `Authorization: Bearer <CRON_SECRET>` shortly after each six-hour boundary. The endpoint is idempotent within reminder windows.
+GitHub Actions calls `POST /api/cron/order-transfer-reminders` ten minutes after every MiniPC window, then verifies app/database and scheduler health. The endpoint is idempotent within reminder windows. A failed workflow provides an independent cloud-side failure signal.
 
 ## Backup and restore drill
 
