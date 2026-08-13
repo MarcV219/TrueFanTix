@@ -108,25 +108,6 @@ describe('Payment Processing', () => {
 })
 
 describe('Ticket Delivery', () => {
-  describe('QR Code Generation', () => {
-    it('should require authentication to access QR code', async () => {
-      const response = await fetch('/api/tickets/test-id/qr')
-      expect(response.status).toBe(401)
-    })
-
-    it('should only allow ticket owner to access QR code', async () => {
-      // Test that only the buyer can access the QR code
-    })
-
-    it('should only generate QR for SOLD tickets', async () => {
-      // Test that AVAILABLE tickets don't have QR codes
-    })
-
-    it('should include valid ticket data in QR code', async () => {
-      // Test QR code content structure
-    })
-  })
-
   describe('Ticket Transfer', () => {
     it('should allow sellers to transfer tickets to buyers', async () => {
       // Test ticket transfer process

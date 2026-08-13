@@ -18,7 +18,6 @@ function ticket(overrides: Partial<Ticket> = {}): Ticket {
     status: "SOLD",
     orderId: "order-1",
     orderDate: "2026-08-13T12:00:00.000Z",
-    qrCodeUrl: "/api/tickets/ticket-1/qr",
     seller: { id: "seller-1", name: "Marc Seller" },
     review: null,
     ...overrides,

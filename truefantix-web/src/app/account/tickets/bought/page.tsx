@@ -22,7 +22,6 @@ export type Ticket = {
   status: string;
   orderId: string;
   orderDate: string;
-  qrCodeUrl: string;
   seller: { id: string; name: string };
   review: Review | null;
 };
@@ -157,28 +156,6 @@ export function SellerReview({ ticket, onSubmitted }: { ticket: Ticket; onSubmit
 }
 
 function TicketCard({ ticket, showReview, onReviewSubmitted }: { ticket: Ticket; showReview: boolean; onReviewSubmitted: (review: Review) => void }) {
-  const [showQR, setShowQR] = useState(false);
-
-  const handleDownloadQR = async () => {
-    try {
-      const response = await fetch(`/api/tickets/${ticket.id}/qr`);
-      if (!response.ok) {
-        throw new Error("Failed to download QR code");
-      }
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `ticket-${ticket.id}.png`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch {
-      alert("Failed to download QR code. Please try again.");
-    }
-  };
-
   return (
     <div
       style={{
@@ -233,59 +210,6 @@ function TicketCard({ ticket, showReview, onReviewSubmitted }: { ticket: Ticket;
           </p>
         </div>
       </div>
-
-      {ticket.status === "SOLD" && (
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.08)" }}>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <button
-              onClick={() => setShowQR(!showQR)}
-              style={{
-                padding: "10px 20px",
-                borderRadius: 8,
-                border: "1px solid rgba(6, 74, 147, 0.35)",
-                background: "rgba(6, 74, 147, 1)",
-                color: "white",
-                fontWeight: 700,
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              {showQR ? "Hide QR Code" : "Show QR Code"}
-            </button>
-            <button
-              onClick={handleDownloadQR}
-              style={{
-                padding: "10px 20px",
-                borderRadius: 8,
-                border: "1px solid rgba(0,0,0,0.18)",
-                background: "rgba(248, 250, 252, 1)",
-                fontWeight: 700,
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              Download QR
-            </button>
-          </div>
-
-          {showQR && (
-            <div style={{ marginTop: 16, textAlign: "center" }}>
-              <img
-                src={`/api/tickets/${ticket.id}/qr`}
-                alt="Ticket QR Code"
-                style={{
-                  maxWidth: 300,
-                  borderRadius: 8,
-                  border: "1px solid rgba(0,0,0,0.1)",
-                }}
-              />
-              <p style={{ marginTop: 8, fontSize: 14, opacity: 0.7 }}>
-                Show this QR code at the venue entrance
-              </p>
-            </div>
-          )}
-        </div>
-      )}
 
       {showReview && <SellerReview ticket={ticket} onSubmitted={onReviewSubmitted} />}
     </div>

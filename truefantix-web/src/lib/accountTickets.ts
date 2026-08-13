@@ -72,7 +72,6 @@ export async function getBuyerTickets(userId: string, statuses: OrderStatus[]) {
             createdAt: order.reviews[0].createdAt.toISOString(),
           }
         : null,
-      qrCodeUrl: `/api/tickets/${item.ticket.id}/qr`,
     }))
   );
 }
