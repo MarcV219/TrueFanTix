@@ -18,7 +18,7 @@ if [[ -z "${CRON_SECRET:-}" ]]; then
   exit 2
 fi
 
-app_url="${TRUEFANTIX_APP_URL:-${APP_ORIGIN:-https://truefantix-web.vercel.app}}"
+app_url="${TRUEFANTIX_APP_URL:-${APP_ORIGIN:-https://www.truefantix.com}}"
 app_url="${app_url%/}"
 
 curl \

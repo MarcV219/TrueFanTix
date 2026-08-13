@@ -24,7 +24,7 @@ jobs:
             exit 1
           fi
 
-          app_url="${TRUEFANTIX_APP_URL:-https://truefantix-web.vercel.app}"
+          app_url="${TRUEFANTIX_APP_URL:-https://www.truefantix.com}"
           app_url="${app_url%/}"
 
           curl --fail-with-body --silent --show-error \
@@ -36,7 +36,7 @@ jobs:
           TRUEFANTIX_APP_URL: ${{ vars.TRUEFANTIX_APP_URL }}
         run: |
           set -euo pipefail
-          app_url="${TRUEFANTIX_APP_URL:-https://truefantix-web.vercel.app}"
+          app_url="${TRUEFANTIX_APP_URL:-https://www.truefantix.com}"
           app_url="${app_url%/}"
           curl --fail-with-body --silent --show-error "${app_url}/api/health"
           curl --fail-with-body --silent --show-error "${app_url}/api/health/reminder-scheduler"
