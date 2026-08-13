@@ -3,8 +3,16 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AccountGate from "@/app/account/_components/accountgate";
+import { apiFetch } from "@/lib/api-fetch";
 
-type Ticket = {
+export type Review = {
+  id: string;
+  rating: number;
+  content: string;
+  createdAt: string;
+};
+
+export type Ticket = {
   id: string;
   title: string;
   venue: string;
@@ -15,6 +23,8 @@ type Ticket = {
   orderId: string;
   orderDate: string;
   qrCodeUrl: string;
+  seller: { id: string; name: string };
+  review: Review | null;
 };
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
@@ -41,7 +51,112 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function TicketCard({ ticket }: { ticket: Ticket }) {
+function StarRating({ value, onChange, disabled = false }: { value: number; onChange?: (rating: number) => void; disabled?: boolean }) {
+  return (
+    <div role={onChange ? "radiogroup" : undefined} aria-label="Seller rating" style={{ display: "flex", gap: 4 }}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          role={onChange ? "radio" : undefined}
+          aria-checked={onChange ? value === star : undefined}
+          aria-label={`${star} star${star === 1 ? "" : "s"}`}
+          onClick={() => onChange?.(star)}
+          disabled={disabled || !onChange}
+          style={{
+            padding: 2,
+            border: 0,
+            background: "transparent",
+            color: star <= value ? "#d97706" : "#94a3b8",
+            fontSize: 30,
+            lineHeight: 1,
+            cursor: disabled || !onChange ? "default" : "pointer",
+          }}
+        >
+          {star <= value ? "★" : "☆"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function SellerReview({ ticket, onSubmitted }: { ticket: Ticket; onSubmitted: (review: Review) => void }) {
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (ticket.review) {
+    return (
+      <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: "rgba(248, 250, 252, 1)", border: "1px solid rgba(0,0,0,0.08)" }}>
+        <div style={{ fontWeight: 800 }}>Your review of {ticket.seller.name}</div>
+        <StarRating value={ticket.review.rating} />
+        <p style={{ margin: "8px 0 0", whiteSpace: "pre-wrap" }}>{ticket.review.content}</p>
+      </div>
+    );
+  }
+
+  async function submitReview(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+
+    if (rating < 1) {
+      setError("Choose a star rating before submitting your review.");
+      return;
+    }
+    if (!comment.trim()) {
+      setError("Add a comment about your experience with the seller.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await apiFetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: ticket.orderId, rating, content: comment.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) throw new Error(data?.message || "Could not submit your review.");
+      onSubmitted(data.review as Review);
+    } catch (err: any) {
+      setError(err?.message || "Could not submit your review.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submitReview} style={{ marginTop: 16, padding: 14, borderRadius: 10, background: "rgba(239, 246, 255, 1)", border: "1px solid rgba(6, 74, 147, 0.18)" }}>
+      <div style={{ fontWeight: 850 }}>Review seller {ticket.seller.name}</div>
+      <p style={{ margin: "4px 0 10px", fontSize: 14, opacity: 0.75 }}>Share an honest positive or negative experience. Your rating will appear on the seller’s profile.</p>
+      <StarRating value={rating} onChange={setRating} disabled={submitting} />
+      <label htmlFor={`review-comment-${ticket.orderId}`} style={{ display: "block", marginTop: 10, fontWeight: 700, fontSize: 14 }}>
+        Comments
+      </label>
+      <textarea
+        id={`review-comment-${ticket.orderId}`}
+        value={comment}
+        onChange={(event) => setComment(event.target.value)}
+        maxLength={5000}
+        rows={4}
+        disabled={submitting}
+        placeholder="How was communication, ticket accuracy, and delivery?"
+        style={{ width: "100%", boxSizing: "border-box", marginTop: 5, padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.22)", resize: "vertical" }}
+      />
+      {error && <div role="alert" style={{ marginTop: 8, color: "rgba(153, 27, 27, 1)", fontWeight: 650 }}>{error}</div>}
+      <button
+        type="submit"
+        disabled={submitting}
+        style={{ marginTop: 10, padding: "10px 16px", borderRadius: 8, border: 0, background: "rgba(6, 74, 147, 1)", color: "white", fontWeight: 800, cursor: submitting ? "default" : "pointer", opacity: submitting ? 0.65 : 1 }}
+      >
+        {submitting ? "Submitting…" : "Submit seller review"}
+      </button>
+    </form>
+  );
+}
+
+function TicketCard({ ticket, showReview, onReviewSubmitted }: { ticket: Ticket; showReview: boolean; onReviewSubmitted: (review: Review) => void }) {
   const [showQR, setShowQR] = useState(false);
 
   const handleDownloadQR = async () => {
@@ -171,6 +286,8 @@ function TicketCard({ ticket }: { ticket: Ticket }) {
           )}
         </div>
       )}
+
+      {showReview && <SellerReview ticket={ticket} onSubmitted={onReviewSubmitted} />}
     </div>
   );
 }
@@ -255,7 +372,14 @@ function Body() {
         You have {tickets.length} ticket{tickets.length !== 1 ? "s" : ""}
       </p>
       {tickets.map((ticket) => (
-        <TicketCard key={ticket.id} ticket={ticket} />
+        <TicketCard
+          key={ticket.id}
+          ticket={ticket}
+          showReview={tickets.find((candidate) => candidate.orderId === ticket.orderId)?.id === ticket.id}
+          onReviewSubmitted={(review) =>
+            setTickets((current) => current.map((item) => item.orderId === ticket.orderId ? { ...item, review } : item))
+          }
+        />
       ))}
     </div>
   );

@@ -20,12 +20,27 @@ export async function getBuyerTickets(userId: string, statuses: OrderStatus[]) {
       status: { in: statuses },
     },
     include: {
+      seller: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
       items: {
         include: {
           ticket: {
             include: { event: true },
           },
         },
+      },
+      reviews: {
+        select: {
+          id: true,
+          rating: true,
+          content: true,
+          createdAt: true,
+        },
+        take: 1,
       },
     },
     orderBy: { createdAt: "desc" },
@@ -50,6 +65,13 @@ export async function getBuyerTickets(userId: string, statuses: OrderStatus[]) {
       adminRequests: visibleAdminRequests(order.transferVerificationReason, "BUYER"),
       orderId: order.id,
       orderDate: order.createdAt.toISOString(),
+      seller: order.seller,
+      review: order.reviews[0]
+        ? {
+            ...order.reviews[0],
+            createdAt: order.reviews[0].createdAt.toISOString(),
+          }
+        : null,
       qrCodeUrl: `/api/tickets/${item.ticket.id}/qr`,
     }))
   );
