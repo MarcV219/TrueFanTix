@@ -319,55 +319,78 @@ function RegisterForm() {
 
         <label style={{ display: "grid", gap: 6 }}>
           <span>Password</span>
-          <input
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            type={showPasswords ? "text" : "password"}
-            autoComplete="new-password"
-            disabled={busy}
-            style={baseInputStyle}
-          />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type={showPasswords ? "text" : "password"}
+              autoComplete="new-password"
+              disabled={busy}
+              style={{ ...baseInputStyle, minWidth: 0 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPasswords((visible) => !visible)}
+              disabled={busy}
+              aria-label={showPasswords ? "Hide passwords" : "Show passwords"}
+              aria-pressed={showPasswords}
+              style={{
+                padding: "0 14px",
+                borderRadius: 10,
+                border: "1px solid rgba(0,0,0,0.25)",
+                background: "white",
+                color: "rgba(0,0,0,0.9)",
+                cursor: busy ? "default" : "pointer",
+                fontWeight: 600,
+              }}
+            >
+              {showPasswords ? "Hide" : "Show"}
+            </button>
+          </div>
         </label>
 
         <label style={{ display: "grid", gap: 6 }}>
           <span>Confirm password</span>
-          <input
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            type={showPasswords ? "text" : "password"}
-            autoComplete="new-password"
-            disabled={busy}
-            style={{
-              ...baseInputStyle,
-              border: showPasswordMismatch
-                ? "1px solid rgba(255,0,0,0.55)"
-                : baseInputStyle.border,
-              background: showPasswordMismatch ? "rgba(255,0,0,0.04)" : baseInputStyle.background,
-            }}
-          />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+            <input
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              type={showPasswords ? "text" : "password"}
+              autoComplete="new-password"
+              disabled={busy}
+              style={{
+                ...baseInputStyle,
+                minWidth: 0,
+                border: showPasswordMismatch
+                  ? "1px solid rgba(255,0,0,0.55)"
+                  : baseInputStyle.border,
+                background: showPasswordMismatch ? "rgba(255,0,0,0.04)" : baseInputStyle.background,
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPasswords((visible) => !visible)}
+              disabled={busy}
+              aria-label={showPasswords ? "Hide passwords" : "Show passwords"}
+              aria-pressed={showPasswords}
+              style={{
+                padding: "0 14px",
+                borderRadius: 10,
+                border: "1px solid rgba(0,0,0,0.25)",
+                background: "white",
+                color: "rgba(0,0,0,0.9)",
+                cursor: busy ? "default" : "pointer",
+                fontWeight: 600,
+              }}
+            >
+              {showPasswords ? "Hide" : "Show"}
+            </button>
+          </div>
           {showPasswordMismatch ? (
             <div style={{ ...helpTextStyle, color: "rgba(200,0,0,0.9)" }}>
               Passwords do not match.
             </div>
           ) : null}
-        </label>
-
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "fit-content",
-            cursor: busy ? "default" : "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={showPasswords}
-            onChange={(e) => setShowPasswords(e.target.checked)}
-            disabled={busy}
-          />
-          <span>Show passwords</span>
         </label>
 
         <label style={{ display: "grid", gap: 6 }}>
