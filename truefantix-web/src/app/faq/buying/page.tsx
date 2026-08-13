@@ -77,10 +77,9 @@ export default function BuyingFAQPage() {
             <ul className="list-disc list-inside text-gray-600 dark:text-gray-400 space-y-2">
               <li>Ticket price</li>
               <li>8.75% admin fee ($5.00 minimum per order)</li>
-              <li>Applicable taxes</li>
             </ul>
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed mt-4">
-              All fees are shown clearly at checkout.
+              TrueFanTix is not currently collecting tax on the admin fee. All fees are shown clearly at checkout.
             </p>
           </div>
 

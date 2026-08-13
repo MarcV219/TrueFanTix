@@ -216,10 +216,10 @@ export default function HowItWorksPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-1 text-lg">
-                    Pay ticket price + 8.75% admin fee + applicable taxes
+                    Pay ticket price + 8.75% admin fee ($5.00 minimum per order)
                   </h3>
                   <p className="text-gray-600 dark:text-gray-400">
-                    Most of the Admin fee goes toward paying for the services required to run the site.
+                    TrueFanTix is not currently collecting tax on the admin fee. Most of the admin fee goes toward paying for the services required to run the site.
                   </p>
                 </div>
               </div>

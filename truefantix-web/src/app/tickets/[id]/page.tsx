@@ -409,7 +409,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                   <div className="mt-8">
                     <PurchaseButton ticketId={ticket.id} price={`${formatMoney(price, currency)} ${currency}`} />
                     <p className="text-sm text-gray-500 mt-2 text-center">
-                      + 8.75% admin fee + applicable taxes
+                      + 8.75% admin fee ($5.00 minimum per order). No tax is currently collected on the admin fee.
                     </p>
                   </div>
                 </div>
