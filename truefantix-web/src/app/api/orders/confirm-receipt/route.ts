@@ -8,6 +8,7 @@ import { notifySellerBuyerConfirmed } from "@/lib/orders/transferWorkflow";
 import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import { processStripePayout } from "@/lib/payouts/processStripePayout";
 import { reportProductionIncident } from "@/lib/productionIncidents";
+import { awardLaunchSale } from "@/lib/launchPromotion";
 
 // POST /api/orders/confirm-receipt
 // Allows a buyer to confirm receipt of tickets for a specific order.
@@ -124,6 +125,7 @@ export async function POST(req: Request) {
           buyerConfirmationAt: true,
         },
       });
+      await awardLaunchSale(tx, { orderId: order.id, sellerId: order.sellerId, ticketCount: order.items.length, occurredAt: now });
       return { order: completedOrder, payoutId: payout.id };
     });
 

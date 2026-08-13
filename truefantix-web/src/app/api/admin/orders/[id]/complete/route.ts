@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { consumeOrderAccessTokenHolds } from "@/lib/accessTokenHolds";
+import { awardLaunchSale } from "@/lib/launchPromotion";
 
 const ACCESS_TOKEN_AWARD_PER_SOLDOUT_SALE = 1; // seller earns per sold-out ticket
 const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1; // buyer spends per sold-out ticket
@@ -375,6 +376,8 @@ export async function POST(req: Request) {
           lifetimeTicketsSold: { increment: ticketsSoldCount },
         },
       });
+
+      await awardLaunchSale(tx, { orderId: order.id, sellerId: order.sellerId, ticketCount: order.items.length });
 
       // Escrow release MVP: create a payout record once order is fully completed.
       // (One-shot because DELIVERED -> COMPLETED transition is gated above.)

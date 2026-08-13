@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { awardLaunchSale } from "@/lib/launchPromotion";
 import { refundOrderAccessTokens } from "@/lib/accessTokenHolds";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
@@ -144,7 +145,7 @@ export async function POST(req: Request) {
           });
         }
 
-        return tx.order.update({
+        const completedOrder = await tx.order.update({
           where: { id: order.id },
           data: {
             status: "COMPLETED",
@@ -155,6 +156,8 @@ export async function POST(req: Request) {
           },
           select: { id: true, status: true, buyerConfirmationStatus: true, transferVerificationStatus: true },
         });
+        await awardLaunchSale(tx, { orderId: order.id, sellerId: order.sellerId, ticketCount: order.items.length, occurredAt: now });
+        return completedOrder;
       });
     } else if (action === "MARK_REFUND_REQUIRED") {
       if (!order.payment || order.payment.status !== "SUCCEEDED") {

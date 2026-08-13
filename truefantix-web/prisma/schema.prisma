@@ -37,6 +37,7 @@ enum AccessTokenTxType {
 
 enum AccessTokenTxSource {
   SOLD_OUT_PURCHASE
+  PROMOTION
   ADMIN
   REFUND
   UNKNOWN
@@ -220,6 +221,7 @@ model User {
   conversationParticipants ConversationParticipant[]
   messages                 Message[]
   reviewsWritten           Review[]                  @relation("ReviewAuthor")
+  promotionParticipations  PromotionParticipation[]
 
   // Price alerts
   priceAlerts PriceAlert[]
@@ -514,6 +516,27 @@ model AccessTokenTransaction {
   @@index([ticketId])
 }
 
+model PromotionParticipation {
+  id            String    @id @default(cuid())
+  promotionKey  String
+  kind          String
+  referenceId   String
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sellerId      String
+  orderId       String?
+  ticketCount   Int       @default(0)
+  tokensAwarded Int
+  occurredAt    DateTime
+  awardedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@unique([promotionKey, kind, referenceId])
+  @@index([promotionKey, kind, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([sellerId, occurredAt])
+}
+
 model Payout {
   id       String @id @default(cuid())
   sellerId String
@@ -594,7 +617,7 @@ model EmailDelivery {
 }
 
 model ReminderDelivery {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   orderId        String
   reminderType   String // SELLER_TRANSFER, BUYER_CONFIRMATION
   recipient      String
@@ -604,7 +627,7 @@ model ReminderDelivery {
   status         String // ATTEMPTING, SENT, FAILED
   providerResult String?
   failureReason  String?
-  attemptedAt    DateTime @default(now())
+  attemptedAt    DateTime  @default(now())
   completedAt    DateTime?
 
   @@unique([orderId, reminderType, recipient, windowStart])
@@ -614,19 +637,19 @@ model ReminderDelivery {
 }
 
 model ProductionIncident {
-  id            String   @id @default(cuid())
-  fingerprint   String   @unique
-  category      String
-  severity      String
-  summary       String
-  safeDetails   String?
-  status        String   @default("OPEN")
-  occurrenceCount Int    @default(1)
-  firstSeenAt   DateTime @default(now())
-  lastSeenAt    DateTime @default(now())
-  lastAlertedAt DateTime?
-  resolvedAt    DateTime?
-  resolvedById  String?
+  id              String    @id @default(cuid())
+  fingerprint     String    @unique
+  category        String
+  severity        String
+  summary         String
+  safeDetails     String?
+  status          String    @default("OPEN")
+  occurrenceCount Int       @default(1)
+  firstSeenAt     DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  lastAlertedAt   DateTime?
+  resolvedAt      DateTime?
+  resolvedById    String?
 
   @@index([status, severity, lastSeenAt])
   @@index([category, lastSeenAt])

@@ -467,6 +467,15 @@ export default function Page() {
 
   return (
     <div className={`min-h-screen flex flex-col ${BRAND.pageBg}`}>
+      <section className="border-b border-amber-300 bg-gradient-to-r from-amber-100 via-yellow-50 to-amber-100 px-4 py-4 text-center text-amber-950">
+        <div className="mx-auto max-w-5xl">
+          <div className="text-xs font-black uppercase tracking-[0.18em] text-amber-800">Limited-time launch promotion</div>
+          <p className="mt-1 text-base font-bold sm:text-lg">
+            Create your free account and receive 4 access tokens. Sell tickets during the promotion and earn an additional 4 access tokens for every ticket sold.
+          </p>
+          <Link href="/register" className="mt-2 inline-block font-black text-[var(--tft-navy)] underline underline-offset-4">Create your free account</Link>
+        </div>
+      </section>
       <section className="relative text-center py-16 bg-white/70 dark:bg-white/5 border-b border-[var(--border)] overflow-hidden">
         <div className="pointer-events-none select-none hidden lg:block absolute left-10 top-1/2 -translate-y-1/2 opacity-100">
           <Image src="/brand/truefantix-lockup.jpeg" alt="" width={360} height={360} className="w-[360px] h-[360px] object-contain" priority={false} />

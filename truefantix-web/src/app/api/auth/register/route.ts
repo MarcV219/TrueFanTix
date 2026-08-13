@@ -7,6 +7,7 @@ import { createSessionForUser } from "@/lib/auth/session";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { grantEarlyAccessReward } from "@/lib/earlyAccessReward";
+import { awardLaunchSignup } from "@/lib/launchPromotion";
 
 function badRequest(message: string, details?: string[]) {
   return NextResponse.json(
@@ -122,7 +123,13 @@ export async function POST(req: Request) {
           sellerId: true,
         },
       });
-      await grantEarlyAccessReward(tx, created);
+      const earlyAccessReward = await grantEarlyAccessReward(tx, created);
+      await awardLaunchSignup(
+        tx,
+        { ...created, sellerId: earlyAccessReward.sellerId },
+        created.createdAt,
+        earlyAccessReward.amount
+      );
       return created;
     });
 

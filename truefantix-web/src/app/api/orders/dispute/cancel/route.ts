@@ -8,6 +8,7 @@ import { createNotification } from "@/lib/notifications/service";
 import { DISPUTE_SUPPORT_EMAIL, parseDisputeCase, sendDisputeEmails } from "@/lib/disputes";
 import { canBuyerCancelDispute } from "@/lib/dispute-case";
 import { schemas, validateRequest } from "@/lib/validation";
+import { awardLaunchSale } from "@/lib/launchPromotion";
 
 export async function POST(req: Request) {
   try {
@@ -90,7 +91,7 @@ export async function POST(req: Request) {
           },
         });
       }
-      return tx.order.update({
+      const completedOrder = await tx.order.update({
         where: { id: order.id },
         data: {
           status: "COMPLETED",
@@ -101,6 +102,8 @@ export async function POST(req: Request) {
         },
         select: { id: true, status: true, buyerConfirmationStatus: true, transferVerificationStatus: true },
       });
+      await awardLaunchSale(tx, { orderId: order.id, sellerId: order.sellerId, ticketCount: order.items.length, occurredAt: now });
+      return completedOrder;
     });
 
     const sellerUserId = order.seller.user?.id;

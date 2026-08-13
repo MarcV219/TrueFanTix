@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { awardLaunchSale } from "@/lib/launchPromotion";
 import {
   generateBuyerTransferConfirmationRequiredEmail,
   generateSellerTransferReminderEmail,
@@ -348,6 +349,8 @@ async function autoReleaseTimedOutBuyerConfirmation(orderId: string, now: Date) 
         },
       });
     }
+
+    await awardLaunchSale(tx, { orderId: order.id, sellerId: order.sellerId, ticketCount: order.items.length, occurredAt: now });
 
     return {
       orderId: order.id,

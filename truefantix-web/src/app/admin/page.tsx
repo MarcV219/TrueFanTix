@@ -191,6 +191,7 @@ export default function AdminHomePage() {
                 <Card title="Ticket Verification" href="/admin/tickets/verification"><div style={{ opacity: 0.75, fontSize: 13 }}>Approve, reject, or review listings.</div></Card>
                 <Card title="Catalog Requests" href="/admin/catalog-requests"><div style={{ opacity: 0.75, fontSize: 13 }}>Fulfill missing artists, teams, venues, and cities.</div></Card>
                 <Card title="Early Access" href="/admin/early-access"><div style={{ opacity: 0.75, fontSize: 13 }}>Export waitlist leads.</div></Card>
+                <Card title="Launch Promotion" href="/admin/promotions/launch"><div style={{ opacity: 0.75, fontSize: 13 }}>Track signup and completed-sale token awards.</div></Card>
               </div>
             </Card>
           </section>
