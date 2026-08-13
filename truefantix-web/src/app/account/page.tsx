@@ -167,6 +167,7 @@ type TicketOverview = {
   sellerHolding: { count: number; actionRequired: number };
   bought: { count: number; activeUpcoming: number };
   sold: { count: number };
+  reviews: { pending: number };
 };
 
 const emptyTicketOverview: TicketOverview = {
@@ -176,6 +177,7 @@ const emptyTicketOverview: TicketOverview = {
   sellerHolding: { count: 0, actionRequired: 0 },
   bought: { count: 0, activeUpcoming: 0 },
   sold: { count: 0 },
+  reviews: { pending: 0 },
 };
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
@@ -754,6 +756,14 @@ function AccountHub({ me }: { me: MeUser }) {
               label="Transaction history"
               hint="See purchases, sales, payouts, refunds, and access tokens."
               href="/account/transactions"
+            />
+            <ToolLink
+              label="Reviews"
+              hint="See reviews you’ve left, reviews you’ve received, and purchases waiting for your review."
+              href="/account/reviews"
+              count={ticketOverview.reviews.pending}
+              attention={ticketOverview.reviews.pending > 0 ? "required" : undefined}
+              attentionLabel={ticketOverview.reviews.pending > 0 ? "Review needed" : undefined}
             />
             {me?.flags?.isAdmin ? (
               <>

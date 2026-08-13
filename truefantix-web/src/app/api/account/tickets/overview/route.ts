@@ -43,7 +43,7 @@ export async function GET(req: Request) {
 
     await withdrawExpiredAvailableTickets(now);
 
-    const [buyerOrders, pendingCheckoutOrders, sellerHoldingOrders, activeSellingCount, soldCompletedCount] = await Promise.all([
+    const [buyerOrders, pendingCheckoutOrders, sellerHoldingOrders, activeSellingCount, soldCompletedCount, pendingReviewCount] = await Promise.all([
       prisma.order.findMany({
         where: {
           buyerSellerId: user.seller.id,
@@ -99,6 +99,13 @@ export async function GET(req: Request) {
           status: "COMPLETED",
         },
       }),
+      prisma.order.count({
+        where: {
+          buyerSellerId: user.seller.id,
+          status: "COMPLETED",
+          reviews: { none: {} },
+        },
+      }),
     ]);
 
     const holdingOrders = buyerOrders.filter((order) => order.status === "PAID" || order.status === "DELIVERED");
@@ -147,6 +154,9 @@ export async function GET(req: Request) {
         },
         sold: {
           count: soldCompletedCount,
+        },
+        reviews: {
+          pending: pendingReviewCount,
         },
       },
     });
