@@ -6,6 +6,8 @@ import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
 import { notifySellerBuyerConfirmed } from "@/lib/orders/transferWorkflow";
 import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
+import { processStripePayout } from "@/lib/payouts/processStripePayout";
+import { reportProductionIncident } from "@/lib/productionIncidents";
 
 // POST /api/orders/confirm-receipt
 // Allows a buyer to confirm receipt of tickets for a specific order.
@@ -63,7 +65,7 @@ export async function POST(req: Request) {
 
     // Update the order to confirmed status and record confirmation time
     const now = new Date();
-    const updatedOrder = await prisma.$transaction(async (tx: any) => {
+    const completion = await prisma.$transaction(async (tx: any) => {
       await tx.ticket.updateMany({
         where: { id: { in: order.items.map((item) => item.ticketId) } },
         data: {
@@ -95,8 +97,7 @@ export async function POST(req: Request) {
         select: { id: true },
       });
 
-      if (!existingPayout) {
-        await tx.payout.create({
+      const payout = existingPayout || await tx.payout.create({
           data: {
             sellerId: order.sellerId,
             amountCents: order.amountCents,
@@ -106,10 +107,10 @@ export async function POST(req: Request) {
             provider: "ESCROW_INTERNAL",
             providerRef,
           },
+          select: { id: true },
         });
-      }
 
-      return tx.order.update({
+      const completedOrder = await tx.order.update({
         where: { id: orderId },
         data: {
           buyerConfirmationStatus: "CONFIRMED",
@@ -123,9 +124,24 @@ export async function POST(req: Request) {
           buyerConfirmationAt: true,
         },
       });
+      return { order: completedOrder, payoutId: payout.id };
     });
 
-    // Buyer confirmation moves the payment hold into the pending payout queue.
+    // A buyer-confirmed, fully eligible order pays the seller immediately. Any
+    // readiness or Stripe failure remains in the Admin payout queue for recovery.
+    const payoutResult = await processStripePayout(completion.payoutId, { actorUserId: gate.user.id, automatic: true });
+    if (!payoutResult.ok) {
+      await reportProductionIncident({
+        category: "APPLICATION",
+        severity: payoutResult.code === "STRIPE_FAILED" ? "ERROR" : "WARNING",
+        summary: "Automatic seller payout requires Admin attention",
+        error: payoutResult.message,
+        references: { orderId, payoutId: completion.payoutId, failureCode: payoutResult.code },
+        fingerprint: `automatic-payout:${completion.payoutId}:${payoutResult.code}`,
+      });
+    }
+
+    // Notify both sides after confirmation and the automatic payout attempt.
     if (order.seller.user?.id) {
       await notifySellerBuyerConfirmed({
         sellerUserId: order.seller.user.id,
@@ -148,8 +164,13 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         ok: true,
-        order: updatedOrder,
-        message: `Receipt of all ${order.items.length} ticket${order.items.length === 1 ? "" : "s"} in this order confirmed. Seller payout is now eligible for completion.`,
+        order: completion.order,
+        payout: payoutResult.ok
+          ? { status: "PAID", automatic: true }
+          : { status: "ADMIN_ATTENTION", automatic: true },
+        message: payoutResult.ok
+          ? `Receipt of all ${order.items.length} ticket${order.items.length === 1 ? "" : "s"} confirmed. The seller payout was sent automatically.`
+          : `Receipt of all ${order.items.length} ticket${order.items.length === 1 ? "" : "s"} confirmed. The payout needs Admin attention; your order is still complete.`,
       },
       { status: 200 }
     );
