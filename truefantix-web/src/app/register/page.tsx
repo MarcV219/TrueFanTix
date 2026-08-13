@@ -68,6 +68,7 @@ function RegisterForm() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPasswords, setShowPasswords] = useState(false);
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -321,7 +322,7 @@ function RegisterForm() {
           <input
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            type="password"
+            type={showPasswords ? "text" : "password"}
             autoComplete="new-password"
             disabled={busy}
             style={baseInputStyle}
@@ -333,7 +334,7 @@ function RegisterForm() {
           <input
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            type="password"
+            type={showPasswords ? "text" : "password"}
             autoComplete="new-password"
             disabled={busy}
             style={{
@@ -349,6 +350,24 @@ function RegisterForm() {
               Passwords do not match.
             </div>
           ) : null}
+        </label>
+
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "fit-content",
+            cursor: busy ? "default" : "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={showPasswords}
+            onChange={(e) => setShowPasswords(e.target.checked)}
+            disabled={busy}
+          />
+          <span>Show passwords</span>
         </label>
 
         <label style={{ display: "grid", gap: 6 }}>
