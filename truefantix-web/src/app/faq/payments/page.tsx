@@ -67,7 +67,7 @@ export default function PaymentsFAQPage() {
               What does the admin fee cover?
             </h2>
             <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-              The admin fee (8.75%) covers processing costs including payment gateway fees, 
+              The admin fee (8.75%, with a $5.00 minimum per order) covers processing costs including payment gateway fees,
               payment protection, platform maintenance, and dispute resolution systems. Most of
               the admin fee goes toward paying for the services required to run the site securely.
             </p>

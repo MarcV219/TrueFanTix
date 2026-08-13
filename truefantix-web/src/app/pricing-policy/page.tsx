@@ -53,10 +53,10 @@ export default function PricingPolicyPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
-                    Buyers Pay 8.75% Admin Fee
+                    Buyers Pay 8.75% Admin Fee (Minimum $5)
                   </h3>
                   <p className="text-gray-600 dark:text-gray-400">
-                    The buyer pays the ticket price plus an 8.75% admin fee. This covers payment processing, 
+                    The buyer pays the ticket price plus an 8.75% admin fee, with a $5.00 minimum per order. This covers payment processing,
                     payment protection, platform maintenance, and dispute resolution.
                   </p>
                 </div>
@@ -68,10 +68,10 @@ export default function PricingPolicyPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
-                    Taxes Calculated at Checkout
+                    No Tax Collected at This Time
                   </h3>
                   <p className="text-gray-600 dark:text-gray-400">
-                    Applicable taxes are calculated and displayed clearly during checkout based on your location.
+                    TrueFanTix is not currently collecting GST/HST or sales tax on the admin fee. This policy will be reviewed if registration or collection obligations change.
                   </p>
                 </div>
               </div>
@@ -106,7 +106,7 @@ export default function PricingPolicyPage() {
             </div>
 
             <div className="mt-6 text-gray-600 dark:text-gray-400 text-sm">
-              <p>Note: Applicable taxes will be added at checkout where required by law.</p>
+              <p>Note: TrueFanTix is not currently collecting tax on the admin fee.</p>
             </div>
           </div>
 
@@ -164,7 +164,7 @@ export default function PricingPolicyPage() {
                   <tr className="bg-green-50 dark:bg-green-900/10 border-b border-gray-200 dark:border-gray-700">
                     <td className="py-3 px-4 font-semibold text-green-900 dark:text-green-300">TrueFanTix</td>
                     <td className="text-center py-3 px-4 text-green-600 font-semibold">0%</td>
-                    <td className="text-center py-3 px-4">8.75%</td>
+                    <td className="text-center py-3 px-4">8.75% (minimum $5)</td>
                     <td className="text-center py-3 px-4 text-green-600">✓ Enforced</td>
                   </tr>
                   <tr className="border-b border-gray-200 dark:border-gray-700">
