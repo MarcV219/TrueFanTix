@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 import AppHeader from "@/app/_components/appheader";
 import { NavHistoryProvider } from "@/app/_components/navhistory";
+import TrafficTracker from "@/app/_components/traffic-tracker";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/";
@@ -14,6 +15,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <NavHistoryProvider>
+      <TrafficTracker />
       {!hideHeader ? <AppHeader /> : null}
       {children}
     </NavHistoryProvider>

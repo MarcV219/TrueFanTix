@@ -381,6 +381,20 @@
           ['openclaw', 'OpenClaw'],
         ];
 
+        const traffic = data?.trueFanTixTraffic;
+        const trafficCard = traffic ? `
+          <div class="card" style="grid-column:1 / -1;">
+            <h3>TrueFanTix visitor stats</h3>
+            <div class="budget-grid" style="margin-top:12px;margin-bottom:8px;">
+              <div class="budget-card"><div class="budget-label">Today</div><div class="budget-value spent">${traffic.visitorsToday ?? 0}</div><div class="hint">visitors · ${traffic.pageViewsToday ?? 0} page views</div></div>
+              <div class="budget-card"><div class="budget-label">Yesterday</div><div class="budget-value daily">${traffic.visitorsYesterday ?? 0}</div><div class="hint">visitors · ${traffic.pageViewsYesterday ?? 0} page views</div></div>
+              <div class="budget-card"><div class="budget-label">Last 7 days</div><div class="budget-value monthly">${traffic.visitors7d ?? 0}</div><div class="hint">unique visitors · ${traffic.pageViews7d ?? 0} page views</div></div>
+              <div class="budget-card"><div class="budget-label">Last 30 days</div><div class="budget-value remaining">${traffic.visitors30d ?? 0}</div><div class="hint">unique visitors · ${traffic.pageViews30d ?? 0} page views</div></div>
+            </div>
+            <div class="hint">Top sources (30 days): ${(traffic.topSources30d || []).map(x => `${String(x.source).replaceAll('<','&lt;').replaceAll('>','&gt;')} (${x.visitors})`).join(' · ') || 'No visits recorded yet'}.</div>
+            <div class="hint" style="margin-top:6px;font-size:0.75rem;">Anonymous, first-party measurement. Tracking began when this feature was deployed.</div>
+          </div>` : '';
+
         const html = topics.map(([key, defaultLabel]) => {
           const t = data?.topics?.[key];
           const label = t?.label || defaultLabel;
@@ -448,7 +462,7 @@
         const agentCard = renderImprovementsCard('Agent Improvements', data?.improvements?.agent);
         const businessCard = renderImprovementsCard('Business Improvements', data?.improvements?.business);
 
-        container.innerHTML = html + agentCard + businessCard;
+        container.innerHTML = trafficCard + html + agentCard + businessCard;
       } catch (err) {
         container.innerHTML =
           fallback('Upcoming ticket sales (CA/US)', 'Unable to load upcoming on-sale announcements.') +

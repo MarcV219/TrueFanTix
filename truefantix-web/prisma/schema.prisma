@@ -1015,6 +1015,25 @@ model AuditLog {
   @@index([createdAt])
 }
 
+// Privacy-conscious traffic reporting. One row represents one anonymous browser
+// on one Toronto calendar day; no IP address or account identity is stored.
+model TrafficVisitorDay {
+  id           String   @id @default(cuid())
+  day          DateTime @db.Date
+  visitorId    String
+  pageViews    Int      @default(1)
+  firstPath    String
+  referrerHost String?
+  source       String?
+  campaign     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([day, visitorId])
+  @@index([day])
+  @@index([source, day])
+}
+
 // Price drop alerts
 model PriceAlert {
   id        String   @id @default(cuid())
