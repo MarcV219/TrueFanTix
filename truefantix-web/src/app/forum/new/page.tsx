@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import Footer from "@/components/Footer";
 import { fetchJson } from "@/lib/api-fetch";
+import ForumPhotoPicker from "@/app/forum/_components/forum-photo-picker";
 
 type TopicType = "ARTIST" | "TEAM" | "SHOW" | "OTHER";
 
@@ -19,6 +20,7 @@ export default function NewThreadPage() {
   const [body, setBody] = useState("");
   const [topicType, setTopicType] = useState<TopicType>("OTHER");
   const [topic, setTopic] = useState("");
+  const [photos, setPhotos] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -38,8 +40,8 @@ export default function NewThreadPage() {
       setError("Title must be at least 5 characters.");
       return;
     }
-    if (trimmedTitle.length > 200) {
-      setError("Title must be 200 characters or less.");
+    if (trimmedTitle.length > 140) {
+      setError("Title must be 140 characters or less.");
       return;
     }
     if (!trimmedBody) {
@@ -67,12 +69,18 @@ export default function NewThreadPage() {
           body: trimmedBody,
           topicType,
           topic: topic.trim() || null,
+          imageUrls: photos,
         }),
       });
 
       if (!res.ok) {
         const details = Array.isArray(json?.details) ? json.details : null;
-        const msg = json?.message || json?.error || (details?.length ? details[0] : null) || `Failed to create thread (${res.status})`;
+        const fallback = res.status === 401
+          ? "Please log in before creating a discussion."
+          : res.status === 403
+            ? "Please verify your email and phone number before creating a discussion."
+            : `Failed to create thread (${res.status})`;
+        const msg = json?.message || (details?.length ? details[0] : null) || fallback;
         setError(msg);
         return;
       }
@@ -82,6 +90,7 @@ export default function NewThreadPage() {
       setTitle("");
       setBody("");
       setTopic("");
+      setPhotos([]);
     } catch (e: any) {
       setError(e?.message || "Network error. Please try again.");
     } finally {
@@ -162,11 +171,11 @@ export default function NewThreadPage() {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="What's your discussion about?"
-              maxLength={200}
+              maxLength={140}
               className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               disabled={submitting}
             />
-            <p className="text-xs text-gray-500 mt-1">{title.length}/200 characters</p>
+            <p className="text-xs text-gray-500 mt-1">{title.length}/140 characters</p>
           </div>
 
           {/* Topic Type & Topic */}
@@ -222,6 +231,7 @@ export default function NewThreadPage() {
               disabled={submitting}
             />
             <p className="text-xs text-gray-500 mt-1">{body.length}/5000 characters</p>
+            <ForumPhotoPicker photos={photos} onChange={setPhotos} disabled={submitting} onError={setError} />
           </div>
 
           {/* Submit */}

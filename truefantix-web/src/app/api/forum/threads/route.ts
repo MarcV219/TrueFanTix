@@ -123,7 +123,7 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.forumThreadCreateApi)(req);
     if (!validation.success) return validation.response;
 
-    const { title, body: firstPostBody, topic, topicType = "OTHER" } = validation.data;
+    const { title, body: firstPostBody, topic, topicType = "OTHER", imageUrls } = validation.data;
 
     const created = await prisma.$transaction(async (tx: any) => {
       const thread = await tx.forumThread.create({
@@ -150,12 +150,14 @@ export async function POST(req: Request) {
         data: {
           threadId: thread.id,
           body: firstPostBody,
+          imageUrls,
           authorUserId: user.id,
         },
         select: {
           id: true,
           threadId: true,
           body: true,
+          imageUrls: true,
           createdAt: true,
           authorUserId: true,
         },

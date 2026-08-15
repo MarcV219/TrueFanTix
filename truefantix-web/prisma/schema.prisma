@@ -772,7 +772,8 @@ model ForumPost {
   authorUserId String
   author       User   @relation("ForumPostsByAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
 
-  body String
+  body      String
+  imageUrls String[] @default([])
 
   // Replies (self relation)
   parentId String?

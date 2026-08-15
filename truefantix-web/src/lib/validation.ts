@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+const forumImageUrlsSchema = z
+  .array(z.string().regex(/^data:image\/(jpeg|png|webp|gif);base64,/i).max(2_800_000))
+  .max(3)
+  .refine((images) => images.reduce((total, image) => total + image.length, 0) <= 2_800_000, {
+    message: "Forum photos must be 2 MB or less in total.",
+  })
+  .optional()
+  .default([]);
+
 // Common validation schemas
 export const schemas = {
   // Ticket schemas
@@ -652,6 +661,7 @@ export const schemas = {
     threadId: z.string().trim().cuid(),
     body: z.string().trim().min(1).max(8000),
     parentId: z.string().trim().cuid().optional().nullable(),
+    imageUrls: forumImageUrlsSchema,
   }),
 
   forumThreadCreateApi: z.object({
@@ -659,6 +669,7 @@ export const schemas = {
     topicType: z.enum(["ARTIST", "TEAM", "SHOW", "OTHER"]).optional(),
     topic: z.string().trim().max(140).optional().nullable(),
     body: z.string().trim().min(5).max(8000),
+    imageUrls: forumImageUrlsSchema,
   }),
 
   forumLockApi: z.object({

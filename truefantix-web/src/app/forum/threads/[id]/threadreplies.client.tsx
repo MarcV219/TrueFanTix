@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJson } from "@/lib/api-fetch";
+import ForumPhotoPicker from "@/app/forum/_components/forum-photo-picker";
 
 type ForumAuthor = {
   id: string;
@@ -21,6 +22,7 @@ type ForumPost = {
   parentId: string | null;
   visibility: string; // "VISIBLE" | "HIDDEN" | "DELETED" | ...
   visibilityReason?: string | null;
+  imageUrls: string[];
 };
 
 type Props = {
@@ -123,6 +125,7 @@ function InlineReplyComposer({
   showNoNestingHint: boolean;
 }) {
   const [body, setBody] = useState("");
+  const [photos, setPhotos] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
@@ -174,6 +177,7 @@ function InlineReplyComposer({
           threadId,
           parentId,
           body: trimmed,
+          imageUrls: photos,
         }),
       });
 
@@ -253,6 +257,8 @@ function InlineReplyComposer({
         }}
       />
 
+      <ForumPhotoPicker photos={photos} onChange={setPhotos} disabled={submitting || isLocked} onError={setStatusMsg} />
+
       {statusMsg && (
         <div style={{ marginTop: "0.5rem", color: "#7a1f1f", fontSize: "0.9rem" }}>
           {statusMsg}
@@ -303,6 +309,7 @@ export default function ThreadRepliesClient({
 
   // Top-level reply state
   const [topBody, setTopBody] = useState("");
+  const [topPhotos, setTopPhotos] = useState<string[]>([]);
   const [topSubmitting, setTopSubmitting] = useState(false);
   const [topStatusMsg, setTopStatusMsg] = useState<string | null>(null);
 
@@ -368,6 +375,7 @@ export default function ThreadRepliesClient({
           threadId,
           parentId: null,
           body: trimmed,
+          imageUrls: topPhotos,
         }),
       });
 
@@ -433,7 +441,19 @@ export default function ThreadRepliesClient({
               This post was hidden by a moderator.
             </div>
           ) : (
-            <div style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap" }}>{node.body}</div>
+            <>
+              <div style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap" }}>{node.body}</div>
+              {node.imageUrls?.length ? (
+                <div className="mt-3 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
+                  {node.imageUrls.map((imageUrl, index) => (
+                    <a key={`${node.id}-photo-${index}`} href={imageUrl} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={imageUrl} alt={`Photo shared by ${formatAuthor(node.author)}`} className="max-h-[420px] w-full object-contain" />
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </>
           )}
 
           <div style={{ marginTop: "0.5rem", display: "flex", gap: 12, alignItems: "center" }}>
@@ -604,6 +624,8 @@ export default function ThreadRepliesClient({
               }}
             />
 
+            <ForumPhotoPicker photos={topPhotos} onChange={setTopPhotos} disabled={topSubmitting || isLocked} onError={setTopStatusMsg} />
+
             {topStatusMsg && (
               <div style={{ marginTop: "0.5rem", color: "#7a1f1f", fontSize: "0.9rem" }}>
                 {topStatusMsg}
@@ -633,6 +655,7 @@ export default function ThreadRepliesClient({
                 onClick={() => {
                   setTopStatusMsg(null);
                   setTopBody("");
+                  setTopPhotos([]);
                 }}
                 disabled={topSubmitting || isLocked}
                 style={{

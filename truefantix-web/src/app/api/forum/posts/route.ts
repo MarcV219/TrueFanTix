@@ -125,7 +125,7 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.forumPostCreateApi)(req);
     if (!validation.success) return validation.response;
 
-    const { threadId, body, parentId } = validation.data;
+    const { threadId, body, parentId, imageUrls } = validation.data;
     const requestedParentId = normalizeNullableId(parentId);
 
     // Validate thread
@@ -161,6 +161,7 @@ export async function POST(req: Request) {
       data: {
         threadId,
         body,
+        imageUrls,
         parentId: effectiveParentId,
         authorUserId: user.id,
         visibility: "VISIBLE",
@@ -169,6 +170,7 @@ export async function POST(req: Request) {
         id: true,
         threadId: true,
         body: true,
+        imageUrls: true,
         parentId: true,
         createdAt: true,
         updatedAt: true,

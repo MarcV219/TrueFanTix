@@ -150,6 +150,7 @@ export async function GET(req: Request) {
         id: true,
         threadId: true,
         body: true,
+        imageUrls: true,
         createdAt: true,
         updatedAt: true,
         authorUserId: true,
@@ -175,6 +176,7 @@ export async function GET(req: Request) {
               return {
                 ...p,
                 body: "", // do not leak content
+                imageUrls: [],
               };
             }
             return p;
