@@ -4,6 +4,7 @@ import React from "react";
 import { usePathname } from "next/navigation";
 
 import AppHeader from "@/app/_components/appheader";
+import CommunityWelcome from "@/app/_components/community-welcome";
 import { NavHistoryProvider } from "@/app/_components/navhistory";
 import TrafficTracker from "@/app/_components/traffic-tracker";
 
@@ -18,6 +19,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <TrafficTracker />
       {!hideHeader ? <AppHeader /> : null}
       {children}
+      <CommunityWelcome />
     </NavHistoryProvider>
   );
 }
