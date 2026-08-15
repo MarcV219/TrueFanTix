@@ -19,6 +19,8 @@ describe("CommunityWelcome", () => {
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("We're building this with fans like you")).toBeInTheDocument();
+    expect(screen.getByText(/isn't a marketplace for scalpers/i)).toBeInTheDocument();
+    expect(screen.getByText(/4 access tokens for every ticket you sell/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue to site" })).toBeInTheDocument();
   });
 

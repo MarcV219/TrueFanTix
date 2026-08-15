@@ -83,10 +83,13 @@ export default function CommunityWelcome() {
                 TrueFanTix is brand new, so you may find only a few tickets—or none at all—for the event you want today. I want to be honest about that from the start.
               </p>
               <p>
-                This is a fan-first marketplace where tickets stay at or below face value. For it to grow, it needs a community of real fans willing to give a better way a chance.
+                We&apos;re different from traditional resale sites. Fans are tired of seeing tickets snapped up and relisted at prices they can&apos;t afford. TrueFanTix keeps tickets at or below face value, and it isn&apos;t a marketplace for scalpers—it&apos;s a community for real fans.
               </p>
               <p>
-                You can help by signing up, listing a ticket when your plans change, buying from another fan, and setting notifications for the artists and teams you love. Every early member helps make the next fan&apos;s visit better.
+                For this better way to grow, we need your support. You can help by signing up, listing a ticket when your plans change, buying from another fan, and setting notifications for the artists and teams you love.
+              </p>
+              <p>
+                During our limited-time launch promotion, creating a free account gives you <strong>4 access tokens</strong>. You can earn another <strong>4 access tokens for every ticket you sell</strong> during the promotion.
               </p>
               <p className="font-semibold text-gray-900 dark:text-white">
                 Thank you for being here at the beginning. I hope you&apos;ll help us build something fairer—together.
@@ -106,6 +109,9 @@ export default function CommunityWelcome() {
             >
               Continue to site
             </button>
+            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+              Continue to learn more about us and how TrueFanTix works.
+            </p>
           </div>
         </main>
       </div>
