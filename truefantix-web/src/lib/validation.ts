@@ -677,6 +677,10 @@ export const schemas = {
     reason: z.string().trim().max(300).optional().nullable(),
   }),
 
+  forumPinApi: z.object({
+    pinned: z.boolean(),
+  }),
+
   forumVisibilityApi: z.object({
     visibility: z.enum(["VISIBLE", "HIDDEN", "DELETED"]),
     reason: z.string().trim().max(300).optional().nullable(),

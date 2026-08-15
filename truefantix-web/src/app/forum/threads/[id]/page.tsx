@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import ThreadRepliesClient from "./threadreplies.client";
+import PinThreadButton from "./pin-thread-button";
 
 async function getBaseUrlFromHeaders() {
   const h = await headers();
@@ -119,6 +120,14 @@ export default async function ThreadPage({
               {thread.lockedReason ? `Reason: ${thread.lockedReason}` : null}
             </div>
           )}
+
+          {thread.isPinned ? (
+            <div className="mt-4 inline-flex rounded-full bg-amber-100 px-3 py-1.5 text-sm font-bold text-amber-900 dark:bg-amber-900/30 dark:text-amber-200">
+              📌 Pinned by Admin
+            </div>
+          ) : null}
+
+          {viewerIsModerator ? <PinThreadButton threadId={thread.id} isPinned={thread.isPinned} /> : null}
         </header>
 
         {/* Login prompt for guests */}

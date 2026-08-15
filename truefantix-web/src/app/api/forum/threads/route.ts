@@ -34,7 +34,7 @@ export async function GET(req: Request) {
 
     const threads = await prisma.forumThread.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ isPinned: "desc" }, { pinnedAt: "desc" }, { createdAt: "desc" }],
       take: limit + 1,
       ...(cursor
         ? {
@@ -50,6 +50,8 @@ export async function GET(req: Request) {
         visibility: true,
         createdAt: true,
         updatedAt: true,
+        isPinned: true,
+        pinnedAt: true,
 
         authorUserId: true,
         author: {

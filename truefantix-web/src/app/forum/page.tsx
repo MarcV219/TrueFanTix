@@ -127,6 +127,12 @@ export default async function ForumPage() {
                     {thread.title}
                   </Link>
 
+                  {thread.isPinned ? (
+                    <span className="ml-2 inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-900 dark:bg-amber-900/30 dark:text-amber-200">
+                      📌 Pinned by Admin
+                    </span>
+                  ) : null}
+
                   <div className="mt-2 text-sm text-gray-500 dark:text-gray-400 flex flex-wrap gap-2">
                     <span className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{thread.topicType}</span>
                     {thread.topic && <span className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{thread.topic}</span>}

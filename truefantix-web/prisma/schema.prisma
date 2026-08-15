@@ -752,6 +752,9 @@ model ForumThread {
   lockedAt     DateTime?
   lockedReason String?
 
+  isPinned Boolean   @default(false)
+  pinnedAt DateTime?
+
   posts ForumPost[]
 
   @@index([createdAt])

@@ -99,6 +99,8 @@ export async function GET(req: Request) {
         isLocked: true,
         lockedAt: true,
         lockedReason: true,
+        isPinned: true,
+        pinnedAt: true,
         authorUserId: true,
         author: {
           select: {
