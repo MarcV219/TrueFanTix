@@ -33,6 +33,7 @@ type AdminUser = {
     stripePayoutsEnabled: boolean;
     payoutHold: boolean;
     payoutHoldReason: string | null;
+    accessTokenBalance: number;
     payouts: Array<{
       id: string;
       amountCents: number;
@@ -58,7 +59,7 @@ type AdminUser = {
       };
     }>;
   };
-  _count: { sessions: number; notificationPreferences: number };
+  _count: { sessions: number; notificationPreferences: number; forumPosts: number };
 };
 
 const FILTER_LABELS: Record<string, string> = {
@@ -222,6 +223,8 @@ function AdminUsersContent() {
               <div>Buy: <strong>{user.canBuy ? "Enabled" : "Disabled"}</strong></div>
               <div>Sell: <strong>{user.canSell ? "Enabled" : "Disabled"}</strong></div>
               <div>Comment: <strong>{user.canComment ? "Enabled" : "Disabled"}</strong></div>
+              <div>Access Tokens: <strong>{user.seller?.accessTokenBalance ?? 0}</strong></div>
+              <div>Forum comments: <strong>{user._count.forumPosts}</strong></div>
               <div>Sessions: <strong>{user._count.sessions}</strong></div>
               <div>Notification prefs: <strong>{user._count.notificationPreferences}</strong></div>
             </div>

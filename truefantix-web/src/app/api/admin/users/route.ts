@@ -86,6 +86,7 @@ export async function GET(req: Request) {
           stripePayoutsEnabled: true,
           payoutHold: true,
           payoutHoldReason: true,
+          accessTokenBalance: true,
           payouts: {
             where: PENDING_PAYOUT_WHERE,
             orderBy: { createdAt: "asc" },
@@ -112,6 +113,7 @@ export async function GET(req: Request) {
         select: {
           sessions: true,
           notificationPreferences: true,
+          forumPosts: true,
         },
       },
     },
