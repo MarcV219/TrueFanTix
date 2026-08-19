@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import Footer from "@/components/Footer";
 import TicketImage from "@/components/TicketImage";
 import { prisma } from "@/lib/prisma";
@@ -8,6 +9,7 @@ import { isTicketEventExpired } from "@/lib/tickets/expiry";
 import { formatMoney, normalizeCurrency, venueInfoFromLocation } from "@/lib/ticketsView";
 import { searchProviderCatalog } from "@/lib/catalog/provider-catalog";
 import PurchaseButton from "./PurchaseButton";
+import { absoluteUrl, conciseDescription, DEFAULT_SOCIAL_IMAGE, safeJsonLd, schemaDate } from "@/lib/seo";
 
 interface TicketPageProps {
   params: Promise<{ id: string }>;
@@ -187,6 +189,39 @@ function eventTitleWithVenue(title: string, venue: string) {
   return `${t} at ${v}`;
 }
 
+export async function generateMetadata({ params }: TicketPageProps): Promise<Metadata> {
+  const { id } = await params;
+  const ticket = await getTicket(id);
+  if (!ticket || ticket.status !== "AVAILABLE" || isTicketEventExpired({ date: ticket.date, venue: ticket.venue })) {
+    return { title: "Ticket unavailable", robots: { index: false, follow: false } };
+  }
+
+  const eventTitle = ticket.event?.title || ticket.title;
+  const venue = ticket.event?.venue || ticket.venue;
+  const currency = normalizeCurrency(ticket.currency);
+  const price = formatMoney(ticket.priceCents / 100, currency);
+  const title = `${eventTitle} Tickets at ${venue}`;
+  const description = conciseDescription(
+    `Buy verified ${eventTitle} tickets at ${venue} for ${price} ${currency}. Listed at or below the seller's verified face value on TrueFanTix.`,
+  );
+  const image = ticket.image?.startsWith("http") ? ticket.image : DEFAULT_SOCIAL_IMAGE;
+  const canonical = `/tickets/${ticket.id}`;
+
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      type: "website",
+      url: canonical,
+      title: `${title} | TrueFanTix`,
+      description,
+      images: [{ url: image, alt: eventTitle }],
+    },
+    twitter: { card: "summary_large_image", title: `${title} | TrueFanTix`, description, images: [image] },
+  };
+}
+
 export default async function TicketDetailPage({ params }: TicketPageProps) {
   const { id } = await params;
   const ticket = await getTicket(id);
@@ -232,9 +267,44 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   // Fetch dynamic image
   const dynamicImage = await getTicketImage(ticket.title, eventTypeInfo.type);
   const imageToShow = dynamicImage.startsWith("http") ? dynamicImage : getPlaceholderImage(eventTypeInfo.type);
+  const eventUrl = absoluteUrl(`/tickets/${ticket.id}`);
+  const eventJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Event",
+    name: eventTitle,
+    startDate: schemaDate(event?.date || ticket.date),
+    eventStatus: "https://schema.org/EventScheduled",
+    eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
+    url: eventUrl,
+    image: [imageToShow.startsWith("http") ? imageToShow : absoluteUrl(imageToShow)],
+    location: {
+      "@type": "Place",
+      name: eventVenue,
+      ...(locationDisplay
+        ? {
+            address: {
+              "@type": "PostalAddress",
+              streetAddress: venueInfo.address || undefined,
+              addressLocality: venueInfo.city || undefined,
+              addressRegion: venueInfo.province || undefined,
+              addressCountry: venueInfo.country || undefined,
+            },
+          }
+        : {}),
+    },
+    offers: {
+      "@type": "Offer",
+      url: eventUrl,
+      price: price.toFixed(2),
+      priceCurrency: currency,
+      availability: "https://schema.org/InStock",
+      validFrom: ticket.createdAt,
+    },
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd(eventJsonLd) }} />
       {/* Hero */}
       <section className="bg-[var(--tft-navy)] text-white py-12">
         <div className="max-w-4xl mx-auto px-4">
@@ -425,6 +495,14 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
             >
               ← Back to Tickets
             </Link>
+            {event?.id ? (
+              <Link
+                href={`/events/${event.id}`}
+                className="button-primary px-6 py-3 rounded-lg font-semibold"
+              >
+                View all tickets for this event
+              </Link>
+            ) : null}
           </div>
         </div>
       </section>
