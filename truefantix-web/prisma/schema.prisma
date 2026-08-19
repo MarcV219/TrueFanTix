@@ -553,6 +553,10 @@ model Payout {
   provider         String?
   providerRef      String?
   stripeTransferId String?   @unique
+  stripeInstantPayoutId String? @unique
+  instantPayoutStatus   String?
+  instantPayoutAt       DateTime?
+  instantPayoutFailure  String?
   failureReason    String?
   attemptCount     Int       @default(0)
   lastAttemptAt    DateTime?

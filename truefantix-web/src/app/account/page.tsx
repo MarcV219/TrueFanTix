@@ -218,6 +218,7 @@ function AccountHub({ me }: { me: MeUser }) {
   const [stripeBusy, setStripeBusy] = React.useState<boolean>(false);
   const [stripeManageBusy, setStripeManageBusy] = React.useState<boolean>(false);
   const [stripeError, setStripeError] = React.useState<string | null>(null);
+  const [instantPayoutStatus, setInstantPayoutStatus] = React.useState<"INSTANT_READY" | "STANDARD_ONLY" | "SETUP_REQUIRED">("SETUP_REQUIRED");
 
   // Seller eligibility:
   const sellerEligible = emailVerified && phoneVerified && stripeOk;
@@ -262,6 +263,7 @@ function AccountHub({ me }: { me: MeUser }) {
 
       setStripeHasAccount(!!data?.stripe?.hasAccount);
       setStripeOk(chargesEnabled && payoutsEnabled);
+      setInstantPayoutStatus(data?.stripe?.instantPayout?.status || "SETUP_REQUIRED");
       setStripeChecked(true);
 
       return { ok: true as const, chargesEnabled, payoutsEnabled };
@@ -726,6 +728,55 @@ function AccountHub({ me }: { me: MeUser }) {
             ) : null}
           </div>
         </Card>
+
+        {stripeHasAccount ? (
+          <Card
+            title="Fast seller payouts"
+            description="TrueFanTix releases eligible proceeds as soon as the buyer confirms receipt."
+          >
+            <div style={{ display: "grid", gap: 12 }}>
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 10,
+                  border: instantPayoutStatus === "INSTANT_READY" ? "1px solid rgba(34,197,94,0.35)" : "1px solid rgba(217,119,6,0.45)",
+                  background: instantPayoutStatus === "INSTANT_READY" ? "rgba(240,253,244,1)" : "rgba(255,251,235,1)",
+                  color: instantPayoutStatus === "INSTANT_READY" ? "rgba(22,101,52,1)" : "rgba(146,64,14,1)",
+                  fontWeight: 850,
+                  lineHeight: 1.45,
+                }}
+              >
+                {instantPayoutStatus === "INSTANT_READY"
+                  ? "✓ Instant Payouts ready — Stripe normally delivers proceeds within 30 minutes."
+                  : instantPayoutStatus === "STANDARD_ONLY"
+                  ? "Standard payouts only — add an eligible Canadian debit card in Stripe for payouts normally delivered within 30 minutes."
+                  : "Instant Payout setup required — add an eligible Canadian debit card in Stripe."}
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.8, lineHeight: 1.45 }}>
+                TrueFanTix currently pays Stripe’s 1% Instant Payout fee, so the fee is not deducted from your ticket proceeds. Stripe decides whether a debit card is eligible.
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {instantPayoutStatus !== "INSTANT_READY" ? (
+                  <button
+                    type="button"
+                    onClick={openStripeDashboard}
+                    disabled={stripeManageBusy}
+                    style={{ padding: "12px 14px", borderRadius: 10, border: 0, background: "#064a93", color: "white", fontWeight: 950, cursor: stripeManageBusy ? "not-allowed" : "pointer" }}
+                  >
+                    {stripeManageBusy ? "Opening Stripe…" : "Add eligible debit card in Stripe"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => loadStripeStatus()}
+                  style={{ padding: "12px 14px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.10)", background: "rgba(248,250,252,1)", fontWeight: 900, cursor: "pointer" }}
+                >
+                  Recheck eligibility
+                </button>
+              </div>
+            </div>
+          </Card>
+        ) : null}
 
         <Card title="Account tools" description="Everything you can manage from your account.">
           <div

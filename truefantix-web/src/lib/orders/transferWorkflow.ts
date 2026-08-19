@@ -229,7 +229,7 @@ export async function notifySellerBuyerConfirmed(params: {
   return createNotification({
     userId: params.sellerUserId,
     type: "TRANSFER_RECEIVED",
-    message: `The buyer confirmed receipt of ${params.ticketCount} ${ticketWord}. The payment hold has moved to the pending payout queue.`,
+    message: `The buyer confirmed receipt of ${params.ticketCount} ${ticketWord}. The payment hold was released and your payout is being sent automatically.`,
     link: "/account/tickets/seller-holding",
   });
 }

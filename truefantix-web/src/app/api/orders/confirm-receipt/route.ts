@@ -141,6 +141,15 @@ export async function POST(req: Request) {
         references: { orderId, payoutId: completion.payoutId, failureCode: payoutResult.code },
         fingerprint: `automatic-payout:${completion.payoutId}:${payoutResult.code}`,
       });
+    } else if (payoutResult.instantPayoutStatus === "FAILED") {
+      await reportProductionIncident({
+        category: "APPLICATION",
+        severity: "WARNING",
+        summary: "Seller transfer succeeded but Instant Payout needs attention",
+        error: "Stripe could not complete the automatic Instant Payout. The seller funds remain safely in their connected Stripe account.",
+        references: { orderId, payoutId: completion.payoutId, stripeTransferId: payoutResult.stripeTransferId },
+        fingerprint: `instant-payout:${completion.payoutId}:failed`,
+      });
     }
 
     // Notify both sides after confirmation and the automatic payout attempt.
@@ -171,7 +180,7 @@ export async function POST(req: Request) {
           ? { status: "PAID", automatic: true }
           : { status: "ADMIN_ATTENTION", automatic: true },
         message: payoutResult.ok
-          ? `Receipt of all ${order.items.length} ticket${order.items.length === 1 ? "" : "s"} confirmed. The seller payout was sent automatically.`
+          ? `Receipt of all ${order.items.length} ticket${order.items.length === 1 ? "" : "s"} confirmed. The seller funds were released automatically.`
           : `Receipt of all ${order.items.length} ticket${order.items.length === 1 ? "" : "s"} confirmed. The payout needs Admin attention; your order is still complete.`,
       },
       { status: 200 }

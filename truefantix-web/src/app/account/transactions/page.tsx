@@ -71,6 +71,9 @@ type PayoutItem = {
   net: number;
   provider: string | null;
   providerRef: string | null;
+  stripeInstantPayoutId: string | null;
+  instantPayoutStatus: string | null;
+  instantPayoutAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -326,6 +329,7 @@ function PayoutsTable({ payouts }: { payouts: PayoutItem[] }) {
               <th style={{ padding: "8px 6px" }}>Fee</th>
               <th style={{ padding: "8px 6px" }}>Net</th>
               <th style={{ padding: "8px 6px" }}>Provider</th>
+              <th style={{ padding: "8px 6px" }}>Bank delivery</th>
               <th style={{ padding: "8px 6px" }}>Reference</th>
             </tr>
           </thead>
@@ -338,6 +342,15 @@ function PayoutsTable({ payouts }: { payouts: PayoutItem[] }) {
                 <td style={{ padding: "8px 6px" }}>${Number(p.fee ?? 0).toFixed(2)}</td>
                 <td style={{ padding: "8px 6px", fontWeight: 700 }}>${Number(p.net ?? 0).toFixed(2)}</td>
                 <td style={{ padding: "8px 6px" }}>{p.provider ?? "—"}</td>
+                <td style={{ padding: "8px 6px" }}>
+                  {p.stripeInstantPayoutId
+                    ? `Instant (${p.instantPayoutStatus || "sent"})`
+                    : p.instantPayoutStatus === "STANDARD_ONLY"
+                    ? "Standard payout"
+                    : p.instantPayoutStatus === "FAILED"
+                    ? "Instant retry needed"
+                    : "Pending"}
+                </td>
                 <td style={{ padding: "8px 6px", fontFamily: "monospace", fontSize: 12 }}>{p.providerRef ?? "—"}</td>
               </tr>
             ))}

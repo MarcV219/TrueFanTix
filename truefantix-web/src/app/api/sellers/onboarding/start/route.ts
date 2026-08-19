@@ -170,6 +170,9 @@ export async function POST(req: Request) {
         capabilities: {
           transfers: { requested: true },
         },
+        settings: {
+          payouts: { schedule: { interval: "daily", delay_days: "minimum" } },
+        },
         metadata: {
           userId: user.id,
           sellerId: seller.id,

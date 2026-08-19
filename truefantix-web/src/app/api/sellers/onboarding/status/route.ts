@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { instantPayoutDestination, instantPayoutStatusLabel } from "@/lib/payouts/instantPayout";
 
 function noStoreJson(body: any, init?: ResponseInit) {
   const res = NextResponse.json(body, init);
@@ -53,6 +54,7 @@ export async function GET() {
             chargesEnabled: false,
             payoutsEnabled: false,
             fullyEnabled: false,
+            instantPayout: { status: "SETUP_REQUIRED", eligible: false, feePaidBy: "TRUEFANTIX" },
             // debug
             capabilities: null,
             requirements: null,
@@ -75,6 +77,7 @@ export async function GET() {
     }
 
     const acct: any = await stripe.accounts.retrieve(seller.stripeAccountId);
+    const externalAccounts: any = await stripe.accounts.listExternalAccounts(seller.stripeAccountId, { limit: 100 });
 
     const detailsSubmitted = !!acct?.details_submitted;
 
@@ -106,6 +109,9 @@ export async function GET() {
       : null;
 
     const fullyEnabled = detailsSubmitted && payoutsEnabled;
+    const payoutAccounts = Array.isArray(externalAccounts?.data) ? externalAccounts.data : [];
+    const instantDestination = instantPayoutDestination(payoutAccounts, "CAD");
+    const instantPayoutStatus = instantPayoutStatusLabel(!!instantDestination, payoutAccounts.length > 0);
 
     // Store what Stripe says (source of truth)
     await prisma.seller.update({
@@ -145,6 +151,12 @@ export async function GET() {
           chargesEnabled,
           payoutsEnabled,
           fullyEnabled,
+          instantPayout: {
+            status: instantPayoutStatus,
+            eligible: !!instantDestination,
+            feePaidBy: "TRUEFANTIX",
+            destinationType: instantDestination?.object ?? null,
+          },
           // debug (helps us if Stripe still disagrees)
           capabilities: {
             card_payments: cap?.card_payments ?? null,
