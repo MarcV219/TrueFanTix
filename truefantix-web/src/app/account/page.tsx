@@ -761,7 +761,7 @@ function AccountHub({ me }: { me: MeUser }) {
                     ? "Stripe has verified an eligible debit card. After the buyer confirms receipt, your proceeds are sent by Instant Payout and normally arrive within 30 minutes."
                     : instantPayoutStatus === "STANDARD_ONLY"
                     ? "Stripe has a bank account for you, but it only supports standard delivery. After the buyer confirms receipt, TrueFanTix releases your proceeds immediately to Stripe; Stripe then deposits them according to its standard payout schedule."
-                    : "Stripe has not found a valid payout destination yet. Add a bank account for standard payouts or an eligible Canadian debit card for fast payouts."}
+                    : "Stripe has not found a valid payout destination yet. Add a bank account for standard payouts or an eligible debit card for fast payouts."}
                 </div>
               </div>
 
@@ -775,7 +775,7 @@ function AccountHub({ me }: { me: MeUser }) {
                 <div style={{ padding: 12, borderRadius: 10, border: "1px solid rgba(6,74,147,0.25)", background: "rgba(239,246,255,1)" }}>
                   <div style={{ fontWeight: 900 }}>Fast payout</div>
                   <div style={{ marginTop: 4, fontSize: 13, lineHeight: 1.45, opacity: 0.8 }}>
-                    Requires a Stripe-eligible Canadian debit card. After the buyer confirms receipt, proceeds are sent by Instant Payout and normally reach the linked account within 30 minutes.
+                    Requires a Stripe-eligible debit card. After the buyer confirms receipt, proceeds are sent by Instant Payout and normally reach the linked account within 30 minutes.
                   </div>
                 </div>
               </div>
