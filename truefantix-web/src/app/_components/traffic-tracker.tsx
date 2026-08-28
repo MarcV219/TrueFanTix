@@ -2,6 +2,10 @@
 
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
+import {
+  ATTRIBUTION_STORAGE_KEY,
+  sanitizeAttribution,
+} from "@/lib/analytics/campaign-attribution";
 
 const VISITOR_KEY = "tft_anonymous_visitor";
 
@@ -26,12 +30,30 @@ export default function TrafficTracker() {
     if (!id) return;
 
     const params = new URLSearchParams(window.location.search);
+    const attribution = sanitizeAttribution({
+      source: params.get("utm_source"),
+      medium: params.get("utm_medium"),
+      campaign: params.get("utm_campaign"),
+      content: params.get("utm_content"),
+      term: params.get("utm_term"),
+      firstPath: pathname,
+      referrerHost: document.referrer,
+    });
+
+    try {
+      const existing = window.localStorage.getItem(ATTRIBUTION_STORAGE_KEY);
+      if (!existing && (attribution.source || attribution.referrerHost)) {
+        window.localStorage.setItem(ATTRIBUTION_STORAGE_KEY, JSON.stringify(attribution));
+      }
+    } catch {
+      // Attribution is optional; traffic reporting should continue without it.
+    }
+
     const payload = {
       visitorId: id,
       path: pathname,
       referrer: document.referrer || null,
-      source: params.get("utm_source"),
-      campaign: params.get("utm_campaign"),
+      ...attribution,
     };
 
     void fetch("/api/analytics/visit", {

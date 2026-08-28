@@ -3,23 +3,13 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit } from "@/lib/rate-limit";
+import { attributionSource, sanitizeAttribution } from "@/lib/analytics/campaign-attribution";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function shortText(value: unknown, max: number): string | null {
   const text = typeof value === "string" ? value.trim() : "";
   return text ? text.slice(0, max) : null;
-}
-
-function referrerHost(value: unknown): string | null {
-  const text = shortText(value, 500);
-  if (!text) return null;
-  try {
-    const host = new URL(text).hostname.toLowerCase().replace(/^www\./, "");
-    return host === "truefantix.com" ? null : host.slice(0, 120);
-  } catch {
-    return null;
-  }
 }
 
 function torontoDay(): Date {
@@ -44,9 +34,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "INVALID_VISIT" }, { status: 400 });
     }
 
-    const source = shortText(body?.source, 80);
-    const campaign = shortText(body?.campaign, 120);
-    const referrer = referrerHost(body?.referrer);
+    const attribution = sanitizeAttribution({
+      source: body?.source,
+      medium: body?.medium,
+      campaign: body?.campaign,
+      content: body?.content,
+      term: body?.term,
+      firstPath: path,
+      referrerHost: body?.referrerHost || body?.referrer,
+    });
     const day = torontoDay();
 
     await prisma.trafficVisitorDay.upsert({
@@ -55,9 +51,12 @@ export async function POST(req: Request) {
         day,
         visitorId: id,
         firstPath: path,
-        referrerHost: referrer,
-        source: source || referrer || "direct",
-        campaign,
+        referrerHost: attribution.referrerHost,
+        source: attributionSource(attribution),
+        medium: attribution.medium,
+        campaign: attribution.campaign,
+        content: attribution.content,
+        term: attribution.term,
       },
       update: { pageViews: { increment: 1 } },
     });

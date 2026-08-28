@@ -146,6 +146,16 @@ model User {
   // Referral program
   referralCode String? @unique
 
+  // First-touch campaign attribution captured at registration. Values are
+  // sanitized marketing labels/hosts only; no full referrer URL or IP address.
+  acquisitionSource       String?
+  acquisitionMedium       String?
+  acquisitionCampaign     String?
+  acquisitionContent      String?
+  acquisitionTerm         String?
+  acquisitionFirstPath    String?
+  acquisitionReferrerHost String?
+
   // Identity (basic)
   firstName String
   lastName  String
@@ -232,6 +242,7 @@ model User {
 
   @@index([role])
   @@index([createdAt])
+  @@index([acquisitionSource, acquisitionCampaign, createdAt])
   @@index([country, region, city])
   @@index([postalCode])
 }
@@ -1033,7 +1044,10 @@ model TrafficVisitorDay {
   firstPath    String
   referrerHost String?
   source       String?
+  medium       String?
   campaign     String?
+  content      String?
+  term         String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { COUNTRIES } from "@/lib/countries";
+import { ATTRIBUTION_STORAGE_KEY, sanitizeAttribution } from "@/lib/analytics/campaign-attribution";
 
 type RegisterResponse = { ok: true; next?: string } | { error?: string; message?: string };
 
@@ -176,6 +177,14 @@ function RegisterForm() {
 
     setBusy(true);
     try {
+      let attribution = null;
+      try {
+        const stored = window.localStorage.getItem(ATTRIBUTION_STORAGE_KEY);
+        attribution = stored ? sanitizeAttribution(JSON.parse(stored)) : null;
+      } catch {
+        attribution = null;
+      }
+
       const { res, data, text } = await fetchJson("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -194,6 +203,7 @@ function RegisterForm() {
           country,
           acceptTerms,
           acceptPrivacy,
+          attribution,
         }),
       });
 

@@ -855,6 +855,11 @@ function AccountHub({ me }: { me: MeUser }) {
                   hint="Review pending/flagged ticket authenticity and approve or reject listings."
                   href="/admin/tickets/verification"
                 />
+                <ToolLink
+                  label="Campaign analytics"
+                  hint="Measure visits, registrations, follows, first listings, and completed transactions by campaign."
+                  href="/admin/analytics"
+                />
               </>
             ) : null}
           </div>

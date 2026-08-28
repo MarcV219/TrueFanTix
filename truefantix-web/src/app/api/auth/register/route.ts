@@ -8,6 +8,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { grantEarlyAccessReward } from "@/lib/earlyAccessReward";
 import { awardLaunchSignup } from "@/lib/launchPromotion";
+import { attributionSource, sanitizeAttribution } from "@/lib/analytics/campaign-attribution";
 
 function badRequest(message: string, details?: string[]) {
   return NextResponse.json(
@@ -52,6 +53,8 @@ export async function POST(req: Request) {
   try {
     const emailNorm = normalizeEmail(body.email);
     const phoneNorm = normalizePhone(body.phone);
+    const attribution = sanitizeAttribution(body.attribution);
+    const hasAttribution = !!(attribution.source || attribution.referrerHost || attribution.campaign);
 
     // --- Uniqueness checks ---
     const [existingByEmail, existingByPhone] = await Promise.all([
@@ -108,6 +111,14 @@ export async function POST(req: Request) {
           termsVersion: TERMS_VERSION,
           privacyAcceptedAt: new Date(),
           privacyVersion: PRIVACY_VERSION,
+
+          acquisitionSource: hasAttribution ? attributionSource(attribution) : null,
+          acquisitionMedium: hasAttribution ? attribution.medium : null,
+          acquisitionCampaign: hasAttribution ? attribution.campaign : null,
+          acquisitionContent: hasAttribution ? attribution.content : null,
+          acquisitionTerm: hasAttribution ? attribution.term : null,
+          acquisitionFirstPath: hasAttribution ? attribution.firstPath : null,
+          acquisitionReferrerHost: hasAttribution ? attribution.referrerHost : null,
         },
         select: {
           id: true,

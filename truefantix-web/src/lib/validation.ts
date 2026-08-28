@@ -152,6 +152,15 @@ export const schemas = {
     country: z.string().trim().min(2).max(2),
     acceptTerms: z.literal(true),
     acceptPrivacy: z.literal(true),
+    attribution: z.object({
+      source: z.string().max(80).optional().nullable(),
+      medium: z.string().max(80).optional().nullable(),
+      campaign: z.string().max(120).optional().nullable(),
+      content: z.string().max(120).optional().nullable(),
+      term: z.string().max(120).optional().nullable(),
+      firstPath: z.string().max(200).optional().nullable(),
+      referrerHost: z.string().max(500).optional().nullable(),
+    }).optional().nullable(),
   }),
 
   forgotPasswordRequest: z.object({

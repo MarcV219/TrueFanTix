@@ -328,6 +328,11 @@ export default function AppHeader() {
                 label="Waitlist"
                 active={current.startsWith("/admin/early-access")}
               />
+              <NavPill
+                href="/admin/analytics"
+                label="Analytics"
+                active={current.startsWith("/admin/analytics")}
+              />
             </>
           ) : null}
 
