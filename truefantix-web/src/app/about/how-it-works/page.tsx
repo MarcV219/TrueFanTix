@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "How it Works | TrueFanTix",
+  title: "How TrueFanTix Works",
   description: "Learn how TrueFanTix works for buyers and sellers. Fair ticket marketplace at or below face value.",
+  alternates: { canonical: "/about/how-it-works" },
 };
 
 export default function HowItWorksPage() {

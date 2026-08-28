@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Terms of Service | TrueFanTix",
+  title: "Terms of Service",
   description: "Terms and conditions for using TrueFanTix - the fan-first ticket marketplace.",
+  alternates: { canonical: "/terms" },
 };
 
 export default function TermsPage() {

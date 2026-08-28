@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Access Tokens – Frequently Asked Questions | TrueFanTix",
+  title: "Access Token FAQs",
   description: "Learn how access tokens work on TrueFanTix for purchasing sold out event tickets.",
+  alternates: { canonical: "/faq/access-tokens" },
 };
 
 export default function AccessTokensFAQPage() {

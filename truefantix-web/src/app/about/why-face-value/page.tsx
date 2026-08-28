@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Why Face Value | TrueFanTix",
+  title: "Why Face-Value Tickets Matter",
   description: "Learn why TrueFanTix enforces tickets at or below face value - creating fairness for real fans.",
+  alternates: { canonical: "/about/why-face-value" },
 };
 
 export default function WhyFaceValuePage() {

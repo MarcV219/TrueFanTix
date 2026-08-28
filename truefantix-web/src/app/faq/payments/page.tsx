@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Payments – Frequently Asked Questions | TrueFanTix",
+  title: "Payment FAQs",
   description: "Learn about payments on TrueFanTix including secure processing via Stripe Connect.",
+  alternates: { canonical: "/faq/payments" },
 };
 
 export default function PaymentsFAQPage() {

@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Community Guidelines | TrueFanTix",
+  title: "Community Guidelines",
   description: "Community guidelines for the TrueFanTix forum and platform.",
+  alternates: { canonical: "/community-guidelines" },
 };
 
 export default function CommunityGuidelinesPage() {

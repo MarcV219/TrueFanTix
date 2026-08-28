@@ -1,5 +1,7 @@
 export const metadata = {
-  title: "Accessibility | TrueFanTix",
+  title: "Accessibility",
+  description: "Learn about TrueFanTix's commitment to an inclusive, accessible ticket marketplace and how to report an accessibility barrier.",
+  alternates: { canonical: "/accessibility" },
 };
 
 export default function AccessibilityPage() {

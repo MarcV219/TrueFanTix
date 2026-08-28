@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Refunds – Frequently Asked Questions | TrueFanTix",
+  title: "Refund and Dispute FAQs",
   description: "Learn about the refund policy on TrueFanTix including event cancellations and dispute resolution.",
+  alternates: { canonical: "/faq/refunds" },
 };
 
 export default function RefundsFAQPage() {

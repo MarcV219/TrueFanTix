@@ -49,8 +49,9 @@ async function getCurrentUser() {
 }
 
 export const metadata = {
-  title: "Community Forum | TrueFanTix",
+  title: "Community Forum",
   description: "Discuss events, artists, teams, and shows with other fans on the TrueFanTix Community Forum.",
+  alternates: { canonical: "/forum" },
 };
 
 export default async function ForumPage() {

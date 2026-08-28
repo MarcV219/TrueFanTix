@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Our Story | TrueFanTix",
+  title: "Our Story",
   description: "The story behind TrueFanTix - a fan-first ticket marketplace built by fans, for fans.",
+  alternates: { canonical: "/about/our-story" },
 };
 
 export default function OurStoryPage() {

@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "FAQ | TrueFanTix",
+  title: "Frequently Asked Questions",
   description: "Frequently asked questions about TrueFanTix - buying tickets, selling tickets, access tokens, payments, and refunds.",
+  alternates: { canonical: "/faq" },
 };
 
 export default function FAQIndexPage() {

@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Privacy Policy | TrueFanTix",
+  title: "Privacy Policy",
   description: "How TrueFanTix handles your personal information and protects your privacy.",
+  alternates: { canonical: "/privacy" },
 };
 
 export default function PrivacyPage() {

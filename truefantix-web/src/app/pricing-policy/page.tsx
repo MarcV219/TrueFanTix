@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Pricing and Fee Policy | TrueFanTix",
+  title: "Pricing and Fee Policy",
   description: "TrueFanTix pricing and fee policy - transparent pricing with no hidden charges.",
+  alternates: { canonical: "/pricing-policy" },
 };
 
 export default function PricingPolicyPage() {

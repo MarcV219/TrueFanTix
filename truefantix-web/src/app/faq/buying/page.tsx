@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Buying Tickets – Frequently Asked Questions | TrueFanTix",
-  description: "Frequently asked questions about buying tickets on TrueFanTix.",
+  title: "Buying Ticket FAQs",
+  description: "Learn how to find, buy, and receive verified event tickets at or below face value on TrueFanTix.",
+  alternates: { canonical: "/faq/buying" },
 };
 
 export default function BuyingFAQPage() {

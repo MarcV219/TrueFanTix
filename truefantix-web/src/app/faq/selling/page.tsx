@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Selling Tickets – Frequently Asked Questions | TrueFanTix",
-  description: "Frequently asked questions about selling tickets on TrueFanTix.",
+  title: "Selling Ticket FAQs",
+  description: "Learn how to list, transfer, and get paid for verified face-value tickets on TrueFanTix with no seller fees.",
+  alternates: { canonical: "/faq/selling" },
 };
 
 export default function SellingFAQPage() {

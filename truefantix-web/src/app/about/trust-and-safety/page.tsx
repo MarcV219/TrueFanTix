@@ -2,8 +2,9 @@ import Link from "next/link";
 import Footer from "@/components/Footer";
 
 export const metadata = {
-  title: "Trust & Safety | TrueFanTix",
+  title: "Trust & Safety",
   description: "Learn about TrueFanTix's trust and safety measures including payment protection, verification, and dispute resolution.",
+  alternates: { canonical: "/about/trust-and-safety" },
 };
 
 export default function TrustAndSafetyPage() {
