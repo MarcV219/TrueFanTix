@@ -55,6 +55,21 @@ async function main() {
       if (processed % 5000 === 0) console.log(`Imported ${processed.toLocaleString()} rows`);
     }
   }
+  const classified = await prisma.outreachContact.updateMany({
+    where: {
+      consentBasis: "UNASSESSED",
+      email: { not: null },
+      sourceUrl: { not: null },
+      role: { not: null },
+      confidence: "HIGH",
+      researchStatus: { in: ["RESEARCHED", "VERIFIED"] },
+    },
+    data: {
+      consentBasis: "CONSPICUOUSLY_PUBLISHED",
+      consentEvidence: "High-confidence public business address and role retained from the official source URL.",
+    },
+  });
+  console.log(`Classified ${classified.count.toLocaleString()} high-confidence published business contact(s).`);
   console.log(`Outreach import complete: ${processed.toLocaleString()} rows processed.`);
 }
 main().finally(async () => { await prisma.$disconnect(); await pool.end(); });
