@@ -77,6 +77,7 @@ Key variables:
 - `SPOTIFY_REDIRECT_URI` - Optional override for the Spotify OAuth callback; defaults to `${APP_ORIGIN}/api/integrations/spotify/callback`
 - `SPOTIFY_TOKEN_ENCRYPTION_KEY` - Optional encryption secret for Spotify OAuth tokens; falls back to `SESSION_SECRET`
 - `OUTREACH_FROM_EMAIL` - Authenticated address used for Admin outreach (defaults to `marc@truefantix.com`)
+- `OUTREACH_RESEND_API_KEY` - Sending-only, domain-restricted Resend key used exclusively by Admin outreach
 - `OUTREACH_UNSUBSCRIBE_SECRET` - Optional 32+ character signing secret for unsubscribe links; falls back to `SESSION_SECRET`
 - `CRON_SECRET` - Required for internal cron endpoints such as `/api/cron/catalog-sync` and `/api/cron/order-transfer-reminders`
 

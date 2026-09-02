@@ -6,7 +6,8 @@ describe("outreach security and personalization", () => {
   beforeEach(() => {
     process.env.OUTREACH_FROM_EMAIL = "marc@truefantix.com";
     process.env.OUTREACH_UNSUBSCRIBE_SECRET = "another-secure-test-key-at-least-32-characters";
-    process.env.RESEND_API_KEY = "test-key";
+    process.env.OUTREACH_RESEND_API_KEY = "test-key";
+    delete process.env.RESEND_API_KEY;
     delete process.env.SENDGRID_API_KEY;
     jest.restoreAllMocks();
   });
