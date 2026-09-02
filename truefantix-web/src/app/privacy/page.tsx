@@ -63,6 +63,14 @@ export default function PrivacyPage() {
                 to operate the import feature. We do not use Spotify data for advertising, resale, machine learning
                 training, or unrelated purposes.
               </p>
+              <p className="leading-relaxed">
+                <strong className="text-gray-900 dark:text-white">Business Outreach:</strong> We may retain
+                business contact information published by official organizations, the source and date used to
+                verify it, our lawful basis for contact, outgoing communication records, and unsubscribe or
+                do-not-contact requests. If an authorized administrator connects Gmail, we request send-only
+                access and store the OAuth credentials encrypted. We do not use that connection to read the
+                administrator&apos;s inbox or import unrelated email.
+              </p>
             </div>
           </div>
 

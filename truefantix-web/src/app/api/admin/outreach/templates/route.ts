@@ -1,0 +1,5 @@
+import { NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth/guards";
+import { prisma } from "@/lib/prisma";
+export async function GET(req: Request) { const gate = await requireAdmin(req); if (!gate.ok) return gate.res; return NextResponse.json({ ok: true, items: await prisma.outreachTemplate.findMany({ where: { isArchived: false }, orderBy: { name: "asc" } }) }); }
+export async function POST(req: Request) { const gate = await requireAdmin(req); if (!gate.ok) return gate.res; const body = await req.json().catch(() => null); const name = String(body?.name || "").trim(), subject = String(body?.subject || "").trim(), bodyText = String(body?.bodyText || "").trim(); if (!name || !subject || !bodyText) return NextResponse.json({ ok: false, error: "Name, subject, and message are required." }, { status: 400 }); const item = await prisma.outreachTemplate.upsert({ where: { name }, create: { name, subject, bodyText }, update: { subject, bodyText, isArchived: false } }); return NextResponse.json({ ok: true, item }); }

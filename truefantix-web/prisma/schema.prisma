@@ -564,7 +564,7 @@ model Payout {
   provider         String?
   providerRef      String?
   stripeTransferId String?   @unique
-  stripeInstantPayoutId String? @unique
+  stripeInstantPayoutId String?   @unique
   instantPayoutStatus   String?
   instantPayoutAt       DateTime?
   instantPayoutFailure  String?
@@ -1248,4 +1248,112 @@ model Referral {
   @@index([referrerId, status])
   @@index([referredId])
   @@index([status, createdAt])
+}
+
+model OutreachContact {
+  id               String              @id @default(cuid())
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  externalKey      String              @unique
+  category         String
+  organization     String?
+  subjectName      String?
+  contactName      String?
+  role             String?
+  email            String?
+  normalizedEmail  String?
+  phone            String?
+  websiteUrl       String?
+  sourceUrl        String?
+  sourceType       String?
+  verifiedAt       DateTime?
+  confidence       String?
+  researchStatus   String?
+  notes            String?
+  consentBasis     String              @default("UNASSESSED")
+  consentEvidence  String?
+  consentExpiresAt DateTime?
+  lastContactedAt  DateTime?
+  unsubscribedAt   DateTime?
+  recipients       OutreachRecipient[]
+
+  @@index([category, organization])
+  @@index([normalizedEmail])
+  @@index([researchStatus, confidence])
+  @@index([consentBasis, consentExpiresAt])
+  @@index([lastContactedAt])
+}
+
+model OutreachSuppression {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  normalizedEmail String   @unique
+  email           String
+  reason          String
+  source          String
+  notes           String?
+  suppressedById  String?
+
+  @@index([createdAt])
+}
+
+model OutreachTemplate {
+  id         String             @id @default(cuid())
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  name       String             @unique
+  subject    String
+  bodyText   String
+  bodyHtml   String?
+  isArchived Boolean            @default(false)
+  campaigns  OutreachCampaign[]
+
+  @@index([isArchived, updatedAt])
+}
+
+model OutreachCampaign {
+  id          String              @id @default(cuid())
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  name        String
+  status      String              @default("DRAFT")
+  templateId  String?
+  template    OutreachTemplate?   @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  subject     String
+  bodyText    String
+  bodyHtml    String?
+  createdById String
+  approvedAt  DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  recipients  OutreachRecipient[]
+
+  @@index([status, createdAt])
+  @@index([createdById, createdAt])
+}
+
+model OutreachRecipient {
+  id               String           @id @default(cuid())
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  campaignId       String
+  campaign         OutreachCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId        String
+  contact          OutreachContact  @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  emailSnapshot    String
+  subjectSnapshot  String
+  bodyTextSnapshot String
+  status           String           @default("PENDING")
+  gmailMessageId   String?
+  gmailThreadId    String?
+  providerResult   String?
+  error            String?
+  sentAt           DateTime?
+  repliedAt        DateTime?
+
+  @@unique([campaignId, contactId])
+  @@index([status, createdAt])
+  @@index([contactId, sentAt])
+  @@index([gmailThreadId])
 }
