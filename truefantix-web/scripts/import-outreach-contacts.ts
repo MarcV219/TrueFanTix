@@ -41,10 +41,17 @@ async function main() {
         const isArtist = source.kind === "artist"; const organization = value(row.organization) || (isArtist ? null : value(row.team)); const subjectName = isArtist ? value(row.artist) : value(row.team);
         const role = value(row.role) || value(row.title) || value(row.department) || value(row.contact_type); const email = value(row.email); const normalizedEmail = email?.toLowerCase() || null; const sourceUrl = value(row.source_url);
         const externalKey = key([source.namespace, subjectName, organization, value(row.contact_name), role, email, value(row.phone), sourceUrl]);
-        const data = { category: source.category, organization, subjectName, contactName: value(row.contact_name), role, email, normalizedEmail, phone: value(row.phone), websiteUrl: value(row.official_website) || value(row.team_website), sourceUrl, sourceType: value(row.source_type), verifiedAt: date(row.verified_date), confidence: value(row.confidence)?.toUpperCase() || null, researchStatus: value(row.status)?.toUpperCase() || null, notes: value(row.notes) };
+        const data = { category: source.category, league: value(row.league), city: value(row.city), region: value(row.region), country: value(row.country), organization, subjectName, contactName: value(row.contact_name), role, email, normalizedEmail, phone: value(row.phone), websiteUrl: value(row.official_website) || value(row.team_website), sourceUrl, sourceType: value(row.source_type), verifiedAt: date(row.verified_date), confidence: value(row.confidence)?.toUpperCase() || null, researchStatus: value(row.status)?.toUpperCase() || null, notes: value(row.notes) };
         return { externalKey, ...data };
       });
       await prisma.outreachContact.createMany({ data: dataRows, skipDuplicates: true }); processed += dataRows.length;
+      if (source.kind === "sports") {
+        for (let updateOffset = 0; updateOffset < dataRows.length; updateOffset += 100) {
+          await prisma.$transaction(dataRows.slice(updateOffset, updateOffset + 100).map(({ externalKey, ...data }) =>
+            prisma.outreachContact.update({ where: { externalKey }, data })
+          ));
+        }
+      }
       if (processed % 5000 === 0) console.log(`Imported ${processed.toLocaleString()} rows`);
     }
   }

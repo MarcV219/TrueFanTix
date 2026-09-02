@@ -1256,6 +1256,10 @@ model OutreachContact {
   updatedAt        DateTime            @updatedAt
   externalKey      String              @unique
   category         String
+  league           String?
+  city             String?
+  region           String?
+  country          String?
   organization     String?
   subjectName      String?
   contactName      String?
@@ -1278,6 +1282,8 @@ model OutreachContact {
   recipients       OutreachRecipient[]
 
   @@index([category, organization])
+  @@index([league, city])
+  @@index([subjectName])
   @@index([normalizedEmail])
   @@index([researchStatus, confidence])
   @@index([consentBasis, consentExpiresAt])
