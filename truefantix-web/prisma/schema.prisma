@@ -1358,10 +1358,28 @@ model OutreachRecipient {
   error            String?
   sentAt           DateTime?
   repliedAt        DateTime?
+  events           OutreachEmailEvent[]
 
   @@unique([campaignId, contactId])
   @@index([status, createdAt])
   @@index([contactId, sentAt])
   @@index([gmailThreadId])
   @@index([providerMessageId])
+}
+
+model OutreachEmailEvent {
+  id                String             @id @default(cuid())
+  createdAt         DateTime           @default(now())
+  svixId            String             @unique
+  type              String
+  providerMessageId String
+  recipientId       String
+  recipient         OutreachRecipient  @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  email             String
+  occurredAt        DateTime
+  detail            String?
+
+  @@index([recipientId, occurredAt])
+  @@index([providerMessageId])
+  @@index([type, occurredAt])
 }
