@@ -14,7 +14,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "db:import-outreach": "tsx scripts/import-outreach-contacts.ts",
+    "db:import-outreach": "npx -y tsx scripts/import-outreach-contacts.ts",
     "typecheck": "tsc --noEmit",
     "verify:escrow": "npx -y tsx scripts/escrow-lifecycle.integration.ts && npx -y tsx scripts/stripe-webhook-replay-drill.ts",
     "drill:webhook": "npx -y tsx scripts/stripe-webhook-replay-drill.ts",

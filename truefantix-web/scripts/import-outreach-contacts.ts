@@ -2,8 +2,12 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
 
-const prisma = new PrismaClient();
+if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter: new PrismaPg(pool), log: ["error"] });
 function parseCsv(input: string) {
   const rows: string[][] = []; let row: string[] = []; let field = ""; let quoted = false;
   for (let i = 0; i < input.length; i++) { const char = input[i];
@@ -32,18 +36,18 @@ async function main() {
   for (const source of sources) {
     if (!fs.existsSync(source.file)) { console.warn(`Skipping missing ${source.file}`); continue; }
     const rows = parseCsv(fs.readFileSync(source.file, "utf8"));
-    for (let offset = 0; offset < rows.length; offset += 100) {
-      const operations = rows.slice(offset, offset + 100).map((row) => {
+    for (let offset = 0; offset < rows.length; offset += 1000) {
+      const dataRows = rows.slice(offset, offset + 1000).map((row) => {
         const isArtist = source.kind === "artist"; const organization = value(row.organization) || (isArtist ? null : value(row.team)); const subjectName = isArtist ? value(row.artist) : value(row.team);
         const role = value(row.role) || value(row.title) || value(row.department) || value(row.contact_type); const email = value(row.email); const normalizedEmail = email?.toLowerCase() || null; const sourceUrl = value(row.source_url);
         const externalKey = key([source.namespace, subjectName, organization, value(row.contact_name), role, email, value(row.phone), sourceUrl]);
         const data = { category: source.category, organization, subjectName, contactName: value(row.contact_name), role, email, normalizedEmail, phone: value(row.phone), websiteUrl: value(row.official_website) || value(row.team_website), sourceUrl, sourceType: value(row.source_type), verifiedAt: date(row.verified_date), confidence: value(row.confidence)?.toUpperCase() || null, researchStatus: value(row.status)?.toUpperCase() || null, notes: value(row.notes) };
-        return prisma.outreachContact.upsert({ where: { externalKey }, create: { externalKey, ...data }, update: data });
+        return { externalKey, ...data };
       });
-      await prisma.$transaction(operations); processed += operations.length;
+      await prisma.outreachContact.createMany({ data: dataRows, skipDuplicates: true }); processed += dataRows.length;
       if (processed % 5000 === 0) console.log(`Imported ${processed.toLocaleString()} rows`);
     }
   }
   console.log(`Outreach import complete: ${processed.toLocaleString()} rows processed.`);
 }
-main().finally(() => prisma.$disconnect());
+main().finally(async () => { await prisma.$disconnect(); await pool.end(); });
