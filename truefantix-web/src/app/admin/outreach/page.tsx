@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import Link from "next/link";
+import { apiFetch } from "@/lib/api-fetch";
 
 type Contact = { id:string; organization:string|null; subjectName:string|null; contactName:string|null; role:string|null; email:string|null; category:string; sourceUrl:string|null; verifiedAt:string|null; confidence:string|null; researchStatus:string|null; consentBasis:string; consentEvidence:string|null; lastContactedAt:string|null; unsubscribedAt:string|null; suppressionReason:string|null };
 type Campaign = { id:string; name:string; status:string; createdAt:string; _count:{recipients:number}; statusCounts:Record<string,number> };
@@ -8,7 +9,7 @@ type Template = { id:string; name:string; subject:string; bodyText:string };
 const field: React.CSSProperties = { padding:"9px 10px", borderRadius:8, border:"1px solid rgba(0,0,0,.16)", background:"white" };
 const button: React.CSSProperties = { padding:"9px 12px", borderRadius:8, border:"1px solid rgba(0,0,0,.16)", background:"white", fontWeight:800, cursor:"pointer" };
 
-async function jsonFetch(url:string, options?:RequestInit) { const res=await fetch(url,options); const data=await res.json().catch(()=>null); if(!res.ok||!data?.ok) throw new Error(data?.error||data?.message||"Request failed."); return data; }
+async function jsonFetch(url:string, options?:RequestInit) { const res=await apiFetch(url,options); const data=await res.json().catch(()=>null); if(!res.ok||!data?.ok) throw new Error(data?.message||data?.error||"Request failed."); return data; }
 export default function OutreachPage(){
   const [contacts,setContacts]=React.useState<Contact[]>([]),[campaigns,setCampaigns]=React.useState<Campaign[]>([]),[templates,setTemplates]=React.useState<Template[]>([]);
   const [selected,setSelected]=React.useState<Set<string>>(new Set()),[q,setQ]=React.useState(""),[category,setCategory]=React.useState(""),[categories,setCategories]=React.useState<string[]>([]),[sendable,setSendable]=React.useState(false);
