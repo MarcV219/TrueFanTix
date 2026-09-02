@@ -3,6 +3,7 @@ import sgMail from "@sendgrid/mail";
 function clean(value: string | undefined) { return value?.trim().replace(/^['"]|['"]$/g, ""); }
 export function outreachSenderEmail() { return (clean(process.env.OUTREACH_FROM_EMAIL) || "marc@truefantix.com").toLowerCase(); }
 export function outreachSender() { return `Marc at TrueFanTix <${outreachSenderEmail()}>`; }
+export function outreachProviderConfigured() { return Boolean(clean(process.env.RESEND_API_KEY) || clean(process.env.SENDGRID_API_KEY)); }
 
 export type OutreachEmailResult = { provider: "RESEND" | "SENDGRID"; messageId: string };
 export async function sendOutreachEmail(input: { to:string; subject:string; text:string; unsubscribeUrl:string }): Promise<OutreachEmailResult> {
