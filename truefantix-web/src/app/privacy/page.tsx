@@ -67,9 +67,8 @@ export default function PrivacyPage() {
                 <strong className="text-gray-900 dark:text-white">Business Outreach:</strong> We may retain
                 business contact information published by official organizations, the source and date used to
                 verify it, our lawful basis for contact, outgoing communication records, and unsubscribe or
-                do-not-contact requests. If an authorized administrator connects Gmail, we request send-only
-                access and store the OAuth credentials encrypted. We do not use that connection to read the
-                administrator&apos;s inbox or import unrelated email.
+                do-not-contact requests. Outreach is sent through our authenticated email delivery provider;
+                we do not read the administrator&apos;s inbox or import unrelated email.
               </p>
             </div>
           </div>

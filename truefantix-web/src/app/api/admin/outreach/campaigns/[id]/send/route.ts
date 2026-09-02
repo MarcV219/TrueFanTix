@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { sendGmail } from "@/lib/integrations/gmail";
+import { sendOutreachEmail } from "@/lib/outreach-email";
 import { normalizeEmail, unsubscribeUrl } from "@/lib/outreach";
 import { auditLog, createAuditContext } from "@/lib/audit";
 
@@ -22,8 +22,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     if (suppression || recipient.contact.unsubscribedAt) { await prisma.outreachRecipient.update({ where: { id: recipient.id }, data: { status: "SUPPRESSED", error: suppression?.reason || "UNSUBSCRIBED" } }); continue; }
     await prisma.outreachRecipient.update({ where: { id: recipient.id }, data: { status: "SENDING", error: null } });
     try {
-      const result = await sendGmail(gate.user.id, { to: recipient.emailSnapshot, subject: recipient.subjectSnapshot, text: `${recipient.bodyTextSnapshot}\n\nTrueFanTix Inc.\nToronto, Ontario, Canada\nUnsubscribe: ${unsubscribeUrl(email)}`, unsubscribeUrl: unsubscribeUrl(email) });
-      await prisma.$transaction([prisma.outreachRecipient.update({ where: { id: recipient.id }, data: { status: "SENT", sentAt: new Date(), gmailMessageId: result.id, gmailThreadId: result.threadId, providerResult: "GMAIL_ACCEPTED" } }), prisma.outreachContact.update({ where: { id: recipient.contactId }, data: { lastContactedAt: new Date() } })]); sent++;
+      const result = await sendOutreachEmail({ to: recipient.emailSnapshot, subject: recipient.subjectSnapshot, text: `${recipient.bodyTextSnapshot}\n\nTrueFanTix Inc.\nToronto, Ontario, Canada\nUnsubscribe: ${unsubscribeUrl(email)}`, unsubscribeUrl: unsubscribeUrl(email) });
+      await prisma.$transaction([prisma.outreachRecipient.update({ where: { id: recipient.id }, data: { status: "SENT", sentAt: new Date(), providerMessageId: result.messageId, providerResult: `${result.provider}_ACCEPTED` } }), prisma.outreachContact.update({ where: { id: recipient.contactId }, data: { lastContactedAt: new Date() } })]); sent++;
     } catch (error) { const message = error instanceof Error ? error.message.slice(0, 500) : "Gmail send failed."; await prisma.outreachRecipient.update({ where: { id: recipient.id }, data: { status: "FAILED", error: message } }); failed++; }
   }
   const remaining = await prisma.outreachRecipient.count({ where: { campaignId: id, status: "PENDING" } });

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { contactMergeVars, normalizeEmail } from "@/lib/outreach";
-import { renderMerge } from "@/lib/integrations/gmail";
+import { contactMergeVars, normalizeEmail, renderMerge } from "@/lib/outreach";
 import { auditLog, createAuditContext } from "@/lib/audit";
 
 export async function GET(req: Request) {

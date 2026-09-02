@@ -76,10 +76,7 @@ Key variables:
 - `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` - Spotify app credentials for importing a user's followed/top artists into notification favorites
 - `SPOTIFY_REDIRECT_URI` - Optional override for the Spotify OAuth callback; defaults to `${APP_ORIGIN}/api/integrations/spotify/callback`
 - `SPOTIFY_TOKEN_ENCRYPTION_KEY` - Optional encryption secret for Spotify OAuth tokens; falls back to `SESSION_SECRET`
-- `GOOGLE_GMAIL_CLIENT_ID` / `GOOGLE_GMAIL_CLIENT_SECRET` - Google OAuth web-app credentials for Admin outreach; request only `gmail.send`
-- `GOOGLE_GMAIL_REDIRECT_URI` - Optional override; defaults to `${APP_ORIGIN}/api/admin/outreach/gmail/callback`
-- `OUTREACH_FROM_EMAIL` - Gmail/Workspace address used for Admin outreach (for example `marc@truefantix.com`)
-- `GMAIL_TOKEN_ENCRYPTION_KEY` - Optional 32+ character encryption secret for Gmail OAuth tokens; falls back to `SESSION_SECRET`
+- `OUTREACH_FROM_EMAIL` - Authenticated address used for Admin outreach (defaults to `marc@truefantix.com`)
 - `OUTREACH_UNSUBSCRIBE_SECRET` - Optional 32+ character signing secret for unsubscribe links; falls back to `SESSION_SECRET`
 - `CRON_SECRET` - Required for internal cron endpoints such as `/api/cron/catalog-sync` and `/api/cron/order-transfer-reminders`
 
@@ -96,7 +93,7 @@ The catalog also uses the public MusicBrainz API as an artist fallback. MusicBra
 
 Spotify import is limited to user-authorized followed/top artists for notification favorite import. Do not use Spotify data for ads, resale, ML training, scraping, streaming capture, or unrelated purposes. Users must be able to disconnect Spotify from Account > Notifications; disconnecting deletes the stored Spotify connection credentials.
 
-Admin outreach uses a send-only Gmail connection. It stores encrypted OAuth credentials, outgoing message snapshots, Gmail message/thread identifiers, contact-source evidence, and a global suppression list. It does not read the Gmail mailbox or replies. Import the maintained research datasets with `npm run db:import-outreach` after applying the outreach migration.
+Admin outreach sends through the configured Resend/SendGrid provider using `marc@truefantix.com`, whose replies are routed to Marc's inbox. It stores outgoing message snapshots, provider identifiers, contact-source evidence, and a global suppression list. It does not read Marc's mailbox or replies. Import the maintained research datasets with `npm run db:import-outreach` after applying the outreach migration.
 
 ## 📖 Documentation
 

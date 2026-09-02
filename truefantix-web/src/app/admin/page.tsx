@@ -192,7 +192,7 @@ export default function AdminHomePage() {
                 <Card title="Catalog Requests" href="/admin/catalog-requests"><div style={{ opacity: 0.75, fontSize: 13 }}>Fulfill missing artists, teams, venues, and cities.</div></Card>
                 <Card title="Early Access" href="/admin/early-access"><div style={{ opacity: 0.75, fontSize: 13 }}>Export waitlist leads.</div></Card>
                 <Card title="Campaign Analytics" href="/admin/analytics"><div style={{ opacity: 0.75, fontSize: 13 }}>Measure acquisition, activation, listings, and completed transactions by source.</div></Card>
-                <Card title="Outreach & Contacts" href="/admin/outreach"><div style={{ opacity: 0.75, fontSize: 13 }}>Select evidence-backed contacts, run Gmail campaigns, and enforce the do-not-contact list.</div></Card>
+                <Card title="Outreach & Contacts" href="/admin/outreach"><div style={{ opacity: 0.75, fontSize: 13 }}>Select evidence-backed contacts, send personalized campaigns, and enforce the do-not-contact list.</div></Card>
                 <Card title="Launch Promotion" href="/admin/promotions/launch"><div style={{ opacity: 0.75, fontSize: 13 }}>Track signup and completed-sale token awards.</div></Card>
               </div>
             </Card>

@@ -28,3 +28,6 @@ export function contactMergeVars(contact: { contactName?: string | null; subject
   const firstName = (contact.contactName || "").trim().split(/\s+/)[0] || "there";
   return { firstName, contactName: contact.contactName || "", subjectName: contact.subjectName || "", organization: contact.organization || "", role: contact.role || "", email: contact.email || "" };
 }
+export function renderMerge(value: string, vars: Record<string, string | null | undefined>) {
+  return value.replace(/{{\s*([a-zA-Z][\w]*)\s*}}/g, (_match, key) => vars[key] || "");
+}

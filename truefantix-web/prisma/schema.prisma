@@ -1347,6 +1347,7 @@ model OutreachRecipient {
   status           String           @default("PENDING")
   gmailMessageId   String?
   gmailThreadId    String?
+  providerMessageId String?
   providerResult   String?
   error            String?
   sentAt           DateTime?
@@ -1356,4 +1357,5 @@ model OutreachRecipient {
   @@index([status, createdAt])
   @@index([contactId, sentAt])
   @@index([gmailThreadId])
+  @@index([providerMessageId])
 }
