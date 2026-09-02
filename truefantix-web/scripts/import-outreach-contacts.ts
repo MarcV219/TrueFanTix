@@ -60,7 +60,7 @@ async function main() {
         }
       }
       await prisma.outreachContact.createMany({ data: dataRows, skipDuplicates: true }); processed += dataRows.length;
-      if (source.kind === "sports" || source.kind === "artist") {
+      if (source.kind === "sports") {
         for (let updateOffset = 0; updateOffset < dataRows.length; updateOffset += 100) {
           await prisma.$transaction(dataRows.slice(updateOffset, updateOffset + 100).map(({ externalKey, ...data }) =>
             prisma.outreachContact.update({ where: { externalKey }, data })
