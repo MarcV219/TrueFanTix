@@ -1278,8 +1278,12 @@ model OutreachContact {
   consentEvidence  String?
   consentExpiresAt DateTime?
   lastContactedAt  DateTime?
+  engagementStage String              @default("NEW")
+  followUpAt       DateTime?
+  adminNotes       String?
   unsubscribedAt   DateTime?
   recipients       OutreachRecipient[]
+  replies          OutreachReply[]
 
   @@index([category, organization])
   @@index([league, city])
@@ -1288,6 +1292,7 @@ model OutreachContact {
   @@index([researchStatus, confidence])
   @@index([consentBasis, consentExpiresAt])
   @@index([lastContactedAt])
+  @@index([engagementStage, followUpAt])
 }
 
 model OutreachSuppression {
@@ -1358,13 +1363,37 @@ model OutreachRecipient {
   error            String?
   sentAt           DateTime?
   repliedAt        DateTime?
+  replyToken       String           @unique @default(cuid())
   events           OutreachEmailEvent[]
+  replies          OutreachReply[]
 
   @@unique([campaignId, contactId])
   @@index([status, createdAt])
   @@index([contactId, sentAt])
   @@index([gmailThreadId])
   @@index([providerMessageId])
+}
+
+model OutreachReply {
+  id                String            @id @default(cuid())
+  createdAt         DateTime          @default(now())
+  providerEmailId   String            @unique
+  providerMessageId String?
+  recipientId       String
+  recipient         OutreachRecipient @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  contactId         String
+  contact           OutreachContact   @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  fromEmail         String
+  toEmail           String
+  subject           String
+  textBody          String?
+  htmlBody          String?
+  receivedAt        DateTime
+  forwardedAt       DateTime?
+  attachmentCount   Int               @default(0)
+
+  @@index([contactId, receivedAt])
+  @@index([recipientId, receivedAt])
 }
 
 model OutreachEmailEvent {

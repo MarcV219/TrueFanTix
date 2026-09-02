@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/outreach";
 
 const BASES = new Set(["UNASSESSED", "EXPRESS_CONSENT", "EXISTING_BUSINESS_RELATIONSHIP", "CONSPICUOUSLY_PUBLISHED", "NOT_REQUIRED"]);
+const STAGES = new Set(["NEW", "CONTACTED", "REPLIED", "INTERESTED", "FOLLOW_UP", "NOT_INTERESTED", "CLOSED"]);
 export async function GET(req: Request) {
   const gate = await requireAdmin(req); if (!gate.ok) return gate.res;
   const url = new URL(req.url); const q = (url.searchParams.get("q") || "").trim(); const category = url.searchParams.get("category") || "";
@@ -44,6 +45,9 @@ export async function PATCH(req: Request) {
   if (body.consentEvidence !== undefined) data.consentEvidence = String(body.consentEvidence || "").trim() || null;
   if (body.consentExpiresAt !== undefined) data.consentExpiresAt = body.consentExpiresAt ? new Date(body.consentExpiresAt) : null;
   if (body.email !== undefined) { data.email = String(body.email || "").trim() || null; data.normalizedEmail = data.email ? normalizeEmail(data.email) : null; }
+  if (body.engagementStage !== undefined) { const stage = String(body.engagementStage); if (!STAGES.has(stage)) return NextResponse.json({ ok: false, error: "Invalid contact stage." }, { status: 400 }); data.engagementStage = stage; }
+  if (body.followUpAt !== undefined) data.followUpAt = body.followUpAt ? new Date(body.followUpAt) : null;
+  if (body.adminNotes !== undefined) data.adminNotes = String(body.adminNotes || "").trim().slice(0, 10000) || null;
   const item = await prisma.outreachContact.update({ where: { id }, data });
   return NextResponse.json({ ok: true, item });
 }

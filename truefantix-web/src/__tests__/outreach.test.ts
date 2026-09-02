@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
+import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
 import { emailFromUnsubscribeToken, normalizeEmail, unsubscribeToken } from "@/lib/outreach";
 
 describe("outreach security and personalization", () => {
@@ -19,7 +19,8 @@ describe("outreach security and personalization", () => {
   });
 
   it("uses the branded TrueFanTix sender", () => {
-    expect(outreachSender()).toBe("Marc at TrueFanTix <marc@truefantix.com>");
+  expect(outreachSender()).toBe("Marc at TrueFanTix <marc@truefantix.com>");
+  expect(outreachReplyAddress("abc123")).toBe("reply+abc123@replies.truefantix.com");
     expect(normalizeEmail(" Test@Example.COM ")).toBe("test@example.com");
   });
 

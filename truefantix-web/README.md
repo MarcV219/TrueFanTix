@@ -78,6 +78,10 @@ Key variables:
 - `SPOTIFY_TOKEN_ENCRYPTION_KEY` - Optional encryption secret for Spotify OAuth tokens; falls back to `SESSION_SECRET`
 - `OUTREACH_FROM_EMAIL` - Authenticated address used for Admin outreach (defaults to `marc@truefantix.com`)
 - `OUTREACH_RESEND_API_KEY` - Sending-only, domain-restricted Resend key used exclusively by Admin outreach
+- `OUTREACH_REPLY_DOMAIN` - Dedicated Resend Inbound subdomain (defaults to `replies.truefantix.com`)
+- `OUTREACH_RESEND_INBOUND_API_KEY` - Separate key permitted to retrieve and forward inbound replies
+- `OUTREACH_RESEND_INBOUND_WEBHOOK_SECRET` - Signing secret for `/api/webhooks/resend-outreach-replies`
+- `OUTREACH_REPLY_FORWARD_TO` - Marc's private inbox destination for captured replies
 - `OUTREACH_UNSUBSCRIBE_SECRET` - Optional 32+ character signing secret for unsubscribe links; falls back to `SESSION_SECRET`
 - `CRON_SECRET` - Required for internal cron endpoints such as `/api/cron/catalog-sync` and `/api/cron/order-transfer-reminders`
 
@@ -94,7 +98,7 @@ The catalog also uses the public MusicBrainz API as an artist fallback. MusicBra
 
 Spotify import is limited to user-authorized followed/top artists for notification favorite import. Do not use Spotify data for ads, resale, ML training, scraping, streaming capture, or unrelated purposes. Users must be able to disconnect Spotify from Account > Notifications; disconnecting deletes the stored Spotify connection credentials.
 
-Admin outreach sends through the configured Resend/SendGrid provider using `marc@truefantix.com`, whose replies are routed to Marc's inbox. It stores outgoing message snapshots, provider identifiers, contact-source evidence, and a global suppression list. It does not read Marc's mailbox or replies. Import the maintained research datasets with `npm run db:import-outreach` after applying the outreach migration.
+Admin outreach sends through Resend using `marc@truefantix.com`. Campaign recipients get a unique Reply-To alias on the dedicated replies subdomain; signed inbound events are attached to the exact recipient/contact and forwarded to Marc's private inbox. The app stores outgoing snapshots, replies, provider events, contact-source evidence, follow-ups, stages, and a global suppression list without reading Marc's Gmail mailbox. Import maintained research datasets with `npm run db:import-outreach` after applying the outreach migrations.
 
 ## 📖 Documentation
 
