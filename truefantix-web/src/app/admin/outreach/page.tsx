@@ -567,6 +567,25 @@ export default function OutreachPage() {
       setError(e.message);
     }
   };
+  const deleteCampaign = async (campaign: Campaign) => {
+    const confirmation = prompt(
+      `This permanently deletes this unsent draft and all of its pending messages.\n\nType the exact campaign name to confirm:\n${campaign.name}`,
+    );
+    if (confirmation === null) return;
+    setError(null);
+    try {
+      await jsonFetch(`/api/admin/outreach/campaigns/${campaign.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation }),
+      });
+      setNotice(`Deleted unsent campaign “${campaign.name}”.`);
+      if (review?.id === campaign.id) setReview(null);
+      await load();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
   const selectReviewRecipient = (
     campaignReview: CampaignReview,
     index: number,
@@ -1447,6 +1466,15 @@ export default function OutreachPage() {
                 <button style={button} onClick={() => openReview(c)}>
                   Preview each message
                 </button>
+                {c.status === "DRAFT" &&
+                  (c.statusCounts.PENDING || 0) === c._count.recipients && (
+                    <button
+                      style={{ ...button, color: "#b91c1c", borderColor: "#fecaca" }}
+                      onClick={() => deleteCampaign(c)}
+                    >
+                      Delete campaign
+                    </button>
+                  )}
                 {["DRAFT", "SENDING"].includes(c.status) && (
                   <button
                     style={{ ...button, background: "#064a93", color: "white" }}
