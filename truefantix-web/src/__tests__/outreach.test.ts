@@ -49,7 +49,8 @@ describe("outreach security and personalization", () => {
     expect(html).not.toContain("Founder, TrueFanTix");
     expect(html).not.toContain("Marc@TrueFanTix.com");
     expect(html).not.toContain("TrueFanTix.com | TrueFanTix.ca");
-    expect(html).toContain("TrueFanTix Inc.");
+    expect(html).toContain("TrueFanTix<br>1547 Gill Road");
+    expect(html).not.toContain("TrueFanTix Inc.");
     expect(html).toContain("1547 Gill Road");
     expect(html).toContain("Midhurst, Ontario L9X 1M5");
     expect(html).toContain("This is a commercial message from TrueFanTix.");

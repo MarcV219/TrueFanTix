@@ -9,7 +9,7 @@ const emailBlockStyles: Record<string, string> = {
   li: "margin:0 0 6px",
 };
 
-export const outreachLegalFooterText = `TrueFanTix Inc.
+export const outreachLegalFooterText = `TrueFanTix
 1547 Gill Road
 Midhurst, Ontario L9X 1M5
 Canada
