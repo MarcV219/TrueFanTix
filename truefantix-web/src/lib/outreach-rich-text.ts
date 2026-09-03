@@ -2,6 +2,13 @@ import sanitizeHtmlLibrary from "sanitize-html";
 
 const allowedTags = ["p", "div", "br", "strong", "b", "em", "i", "u", "ul", "ol", "li", "a"];
 
+const emailBlockStyles: Record<string, string> = {
+  p: "margin:0 0 16px",
+  ul: "margin:0 0 16px;padding-left:28px",
+  ol: "margin:0 0 16px;padding-left:28px",
+  li: "margin:0 0 6px",
+};
+
 export const outreachLegalFooterText = `Marc Villeneuve
 Founder, TrueFanTix
 Marc@TrueFanTix.com
@@ -17,10 +24,11 @@ This is a commercial message from TrueFanTix.`;
 export function sanitizeOutreachHtml(value: string) {
   return sanitizeHtmlLibrary(value, {
     allowedTags,
-    allowedAttributes: { a: ["href", "title", "target"] },
+    allowedAttributes: { a: ["href", "title", "target"], p: ["style"], ul: ["style"], ol: ["style"], li: ["style"] },
     allowedSchemes: ["http", "https", "mailto"],
     transformTags: {
       a: (_tagName, attribs) => ({ tagName: "a", attribs: { ...attribs, target: "_blank" } }),
+      ...Object.fromEntries(Object.entries(emailBlockStyles).map(([tagName, style]) => [tagName, (_name: string, attribs: Record<string, string>) => ({ tagName, attribs: { ...attribs, style } })])),
     },
     exclusiveFilter(frame) {
       return frame.tag === "a" && !frame.attribs.href;

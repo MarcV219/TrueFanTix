@@ -37,7 +37,8 @@ describe("outreach security and personalization", () => {
   it("preserves safe rich text and removes unsafe pasted Word markup", () => {
     const clean=sanitizeOutreachHtml('<p style="font-size:99px" onclick="bad()"><strong>Hello</strong> <script>bad()</script><a href="javascript:bad()">team</a></p><ul><li>One</li></ul>');
     expect(clean).toContain("<strong>Hello</strong>");
-    expect(clean).toContain("<li>One</li>");
+    expect(clean).toContain('<p style="margin:0 0 16px">');
+    expect(clean).toContain('<li style="margin:0 0 6px">One</li>');
     expect(clean).not.toMatch(/script|onclick|javascript|font-size/);
     expect(outreachHtmlToText(clean)).toContain("• One");
   });
