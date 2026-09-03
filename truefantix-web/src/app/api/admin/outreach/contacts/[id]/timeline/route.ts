@@ -10,6 +10,7 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
     include: {
       recipients: { orderBy: { createdAt: "desc" }, take: 100, include: { campaign: { select: { name: true } }, events: { orderBy: { occurredAt: "asc" } } } },
       replies: { orderBy: { receivedAt: "desc" }, take: 100 },
+      communications: { orderBy: { occurredAt: "desc" }, take: 100 },
     },
   });
   if (!contact) return NextResponse.json({ ok: false, error: "Contact not found." }, { status: 404 });

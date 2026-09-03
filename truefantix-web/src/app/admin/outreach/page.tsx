@@ -290,6 +290,7 @@ async function jsonFetch(url: string, options?: RequestInit) {
   return data;
 }
 export default function OutreachPage() {
+  const gmailAutoSyncStarted = React.useRef(false);
   const [contacts, setContacts] = React.useState<Contact[]>([]),
     [campaigns, setCampaigns] = React.useState<Campaign[]>([]),
     [templates, setTemplates] = React.useState<Template[]>([]);
@@ -320,8 +321,17 @@ export default function OutreachPage() {
       replyCaptureConfigured: boolean;
       replyDomain: string;
     } | null>(null),
+    [gmailMatching, setGmailMatching] = React.useState<{ configured: boolean } | null>(null),
     [dashboard, setDashboard] = React.useState<Dashboard | null>(null);
   const [timeline, setTimeline] = React.useState<any | null>(null);
+  const [communicationContact, setCommunicationContact] = React.useState<Contact | null>(null);
+  const [communication, setCommunication] = React.useState({
+    type: "CALL",
+    occurredAt: new Date().toISOString().slice(0, 16),
+    subject: "",
+    notes: "",
+    followUpAt: "",
+  });
   const [review, setReview] = React.useState<CampaignReview | null>(null),
     [reviewIndex, setReviewIndex] = React.useState(0),
     [reviewDraft, setReviewDraft] = React.useState({
@@ -355,12 +365,13 @@ export default function OutreachPage() {
       if (emailFilter) params.set("email", emailFilter);
       if (researchStatus) params.set("researchStatus", researchStatus);
       if (sendable) params.set("sendable", "true");
-      const [c, ca, t, d, db] = await Promise.all([
+      const [c, ca, t, d, db, gm] = await Promise.all([
         jsonFetch(`/api/admin/outreach/contacts?${params}`),
         jsonFetch("/api/admin/outreach/campaigns"),
         jsonFetch("/api/admin/outreach/templates"),
         jsonFetch("/api/admin/outreach/delivery-status"),
         jsonFetch("/api/admin/outreach/dashboard"),
+        jsonFetch("/api/admin/outreach/gmail-sync"),
       ]);
       setContacts(c.items);
       setCategories(c.categories);
@@ -374,6 +385,7 @@ export default function OutreachPage() {
       setTemplates(t.items);
       setDelivery(d);
       setDashboard(db);
+      setGmailMatching(gm);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -394,6 +406,15 @@ export default function OutreachPage() {
   React.useEffect(() => {
     load();
   }, [load]);
+  React.useEffect(() => {
+    if (!gmailMatching?.configured || gmailAutoSyncStarted.current) return;
+    gmailAutoSyncStarted.current = true;
+    jsonFetch("/api/admin/outreach/gmail-sync", { method: "POST" })
+      .then((result) => {
+        if (result.matched) setNotice(`Gmail automatically linked ${result.matched} new repl${result.matched === 1 ? "y" : "ies"}.`);
+      })
+      .catch(() => undefined);
+  }, [gmailMatching?.configured]);
   React.useEffect(() => {
     setPage(1);
   }, [q, category, league, city, team, emailFilter, researchStatus, sendable]);
@@ -483,6 +504,31 @@ export default function OutreachPage() {
     } catch (e: any) {
       setError(e.message);
     }
+  };
+  const saveCommunication = async () => {
+    if (!communicationContact) return;
+    try {
+      await jsonFetch(`/api/admin/outreach/contacts/${communicationContact.id}/communications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...communication,
+          occurredAt: new Date(communication.occurredAt).toISOString(),
+          followUpAt: communication.followUpAt ? new Date(communication.followUpAt).toISOString() : null,
+        }),
+      });
+      setNotice("Communication added to the contact timeline.");
+      setCommunicationContact(null);
+      setCommunication({ type: "CALL", occurredAt: new Date().toISOString().slice(0, 16), subject: "", notes: "", followUpAt: "" });
+      await load();
+    } catch (e: any) { setError(e.message); }
+  };
+  const syncGmail = async () => {
+    try {
+      const result = await jsonFetch("/api/admin/outreach/gmail-sync", { method: "POST" });
+      setNotice(`Gmail checked: ${result.matched} new repl${result.matched === 1 ? "y" : "ies"} linked; ${result.ignored} unmatched.`);
+      await load();
+    } catch (e: any) { setError(e.message); }
   };
   const createCampaign = async () => {
     setError(null);
@@ -737,6 +783,14 @@ export default function OutreachPage() {
               Send test to me
             </button>
           )}
+          <button
+            style={{ ...button, opacity: gmailMatching?.configured ? 1 : 0.55 }}
+            disabled={!gmailMatching?.configured}
+            title={gmailMatching?.configured ? "Link new replies from marc@truefantix.com to contact timelines" : "Gmail reply matching needs authorization"}
+            onClick={syncGmail}
+          >
+            Sync Gmail replies
+          </button>
           <button style={button} onClick={suppress}>
             Add suppression
           </button>
@@ -1183,6 +1237,12 @@ export default function OutreachPage() {
                         >
                           Timeline
                         </button>
+                        <button
+                          style={{ ...button, padding: "4px 7px" }}
+                          onClick={() => setCommunicationContact(c)}
+                        >
+                          Add communication
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1287,6 +1347,12 @@ export default function OutreachPage() {
                 subject: r.subject,
                 detail: r.textBody || "HTML reply",
               })),
+              ...(timeline.communications || []).map((c: any) => ({
+                kind: c.type.replaceAll("_", " ").toLowerCase().replace(/^./, (x: string) => x.toUpperCase()),
+                at: c.occurredAt,
+                subject: c.subject,
+                detail: c.notes || "",
+              })),
             ]
               .sort(
                 (a: any, b: any) =>
@@ -1315,6 +1381,24 @@ export default function OutreachPage() {
                   </div>
                 </div>
               ))}
+          </div>
+        )}
+        {communicationContact && (
+          <div style={{ marginTop: 16, padding: 14, border: "1px solid #86efac", borderRadius: 9, background: "#f0fdf4" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <strong>Add communication — {communicationContact.organization || communicationContact.subjectName || communicationContact.email}</strong>
+              <button style={button} onClick={() => setCommunicationContact(null)}>Cancel</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginTop: 12 }}>
+              <label>Type<select style={{ ...field, display: "block", width: "100%", marginTop: 4 }} value={communication.type} onChange={(e) => setCommunication((x) => ({ ...x, type: e.target.value }))}>
+                <option value="CALL">Call</option><option value="MEETING">Meeting</option><option value="DIRECT_EMAIL">Direct email</option><option value="SOCIAL_MESSAGE">Social message</option><option value="CONTACT_FORM">Contact form</option><option value="OTHER">Other</option>
+              </select></label>
+              <label>Date and time<input type="datetime-local" style={{ ...field, display: "block", width: "100%", marginTop: 4 }} value={communication.occurredAt} onChange={(e) => setCommunication((x) => ({ ...x, occurredAt: e.target.value }))} /></label>
+              <label>Optional next follow-up<input type="datetime-local" style={{ ...field, display: "block", width: "100%", marginTop: 4 }} value={communication.followUpAt} onChange={(e) => setCommunication((x) => ({ ...x, followUpAt: e.target.value }))} /></label>
+            </div>
+            <label style={{ display: "block", marginTop: 10 }}>Subject<input style={{ ...field, display: "block", width: "100%", marginTop: 4 }} value={communication.subject} onChange={(e) => setCommunication((x) => ({ ...x, subject: e.target.value }))} /></label>
+            <label style={{ display: "block", marginTop: 10 }}>Notes<textarea rows={4} style={{ ...field, display: "block", width: "100%", marginTop: 4 }} value={communication.notes} onChange={(e) => setCommunication((x) => ({ ...x, notes: e.target.value }))} /></label>
+            <button style={{ ...button, marginTop: 10, background: "#166534", color: "white" }} disabled={!communication.subject.trim() || !communication.occurredAt} onClick={saveCommunication}>Save to Timeline</button>
           </div>
         )}
       </section>

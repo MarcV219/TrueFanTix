@@ -1284,6 +1284,7 @@ model OutreachContact {
   unsubscribedAt   DateTime?
   recipients       OutreachRecipient[]
   replies          OutreachReply[]
+  communications   OutreachCommunication[]
 
   @@index([category, organization])
   @@index([league, city])
@@ -1293,6 +1294,21 @@ model OutreachContact {
   @@index([consentBasis, consentExpiresAt])
   @@index([lastContactedAt])
   @@index([engagementStage, followUpAt])
+}
+
+model OutreachCommunication {
+  id             String          @id @default(cuid())
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  contactId      String
+  contact        OutreachContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type           String
+  occurredAt     DateTime
+  subject        String
+  notes          String?
+  createdById    String
+
+  @@index([contactId, occurredAt])
 }
 
 model OutreachSuppression {
