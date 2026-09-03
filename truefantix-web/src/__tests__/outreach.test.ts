@@ -45,7 +45,11 @@ describe("outreach security and personalization", () => {
 
   it("adds the unsubscribe link to the rich email footer", () => {
     const html=outreachHtmlDocument("<p>Hello</p>","https://truefantix.ca/unsubscribe/outreach?token=x");
-    expect(html).toContain("Marc Villeneuve");
+    expect(html).not.toContain("Marc Villeneuve");
+    expect(html).not.toContain("Founder, TrueFanTix");
+    expect(html).not.toContain("Marc@TrueFanTix.com");
+    expect(html).not.toContain("TrueFanTix.com | TrueFanTix.ca");
+    expect(html).toContain("TrueFanTix Inc.");
     expect(html).toContain("1547 Gill Road");
     expect(html).toContain("Midhurst, Ontario L9X 1M5");
     expect(html).toContain("This is a commercial message from TrueFanTix.");
