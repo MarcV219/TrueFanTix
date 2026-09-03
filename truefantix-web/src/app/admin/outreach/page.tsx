@@ -729,7 +729,7 @@ export default function OutreachPage() {
             }}
           >
             {delivery?.configured
-              ? `Sender ready: marc@truefantix.com · ${delivery.replyCaptureConfigured ? "replies tracked and forwarded" : "replies forward to Gmail; CRM capture pending setup"}`
+              ? "Sender ready: marc@truefantix.com · replies go directly to marc@truefantix.com"
               : "Email delivery setup required—sending is disabled"}
           </span>
           {delivery?.configured && (

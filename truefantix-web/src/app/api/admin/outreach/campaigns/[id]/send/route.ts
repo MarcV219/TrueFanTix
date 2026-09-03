@@ -2,11 +2,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import {
-  outreachReplyAddress,
-  outreachReplyCaptureConfigured,
-  sendOutreachEmail,
-} from "@/lib/outreach-email";
+import { sendOutreachEmail } from "@/lib/outreach-email";
 import { normalizeEmail, unsubscribeUrl } from "@/lib/outreach";
 import {
   outreachHtmlDocument,
@@ -85,9 +81,6 @@ export async function POST(
           ? outreachHtmlDocument(recipient.bodyHtmlSnapshot, optOutUrl)
           : undefined,
         unsubscribeUrl: optOutUrl,
-        replyTo: outreachReplyCaptureConfigured()
-          ? outreachReplyAddress(recipient.replyToken)
-          : undefined,
       });
       await prisma.$transaction([
         prisma.outreachRecipient.update({
