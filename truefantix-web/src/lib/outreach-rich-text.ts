@@ -2,6 +2,18 @@ import sanitizeHtmlLibrary from "sanitize-html";
 
 const allowedTags = ["p", "div", "br", "strong", "b", "em", "i", "u", "ul", "ol", "li", "a"];
 
+export const outreachLegalFooterText = `Marc Villeneuve
+Founder, TrueFanTix
+Marc@TrueFanTix.com
+TrueFanTix.com | TrueFanTix.ca
+
+TrueFanTix Inc.
+1547 Gill Road
+Midhurst, Ontario L9X 1M5
+Canada
+
+This is a commercial message from TrueFanTix.`;
+
 export function sanitizeOutreachHtml(value: string) {
   return sanitizeHtmlLibrary(value, {
     allowedTags,
@@ -29,5 +41,6 @@ export function outreachHtmlToText(value: string) {
 }
 
 export function outreachHtmlDocument(bodyHtml: string, unsubscribeUrl: string) {
-  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.55;color:#111827">${bodyHtml}<div style="margin-top:28px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.5;color:#6b7280">TrueFanTix Inc.<br>Toronto, Ontario, Canada<br><a href="${unsubscribeUrl}">Unsubscribe from TrueFanTix outreach emails</a></div></div>`;
+  const footerHtml = outreachLegalFooterText.replaceAll("\n", "<br>");
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.55;color:#111827">${bodyHtml}<div style="margin-top:28px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.5;color:#6b7280">${footerHtml}<br><a href="${unsubscribeUrl}">Unsubscribe from TrueFanTix outreach emails</a></div></div>`;
 }
