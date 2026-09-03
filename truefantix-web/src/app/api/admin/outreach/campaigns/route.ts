@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { contactMergeVars, normalizeEmail, renderMerge } from "@/lib/outreach";
+import { outreachHtmlToText, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 import { auditLog, createAuditContext } from "@/lib/audit";
 
 export async function GET(req: Request) {
@@ -12,7 +13,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const gate = await requireAdmin(req); if (!gate.ok) return gate.res;
-  const body = await req.json().catch(() => null); const name = String(body?.name || "").trim(); const subject = String(body?.subject || "").trim(); const bodyText = String(body?.bodyText || "").trim();
+  const body = await req.json().catch(() => null); const name = String(body?.name || "").trim(); const subject = String(body?.subject || "").trim(); const bodyHtml = sanitizeOutreachHtml(String(body?.bodyHtml || "")); const bodyText = String(body?.bodyText || outreachHtmlToText(bodyHtml)).trim();
   const contactIds: string[] = Array.isArray(body?.contactIds) ? Array.from(new Set<string>(body.contactIds.map((value: unknown) => String(value)))).slice(0, 500) : [];
   if (!name || !subject || !bodyText || !contactIds.length) return NextResponse.json({ ok: false, error: "Campaign name, subject, message, and at least one contact are required." }, { status: 400 });
   const contacts = await prisma.outreachContact.findMany({ where: { id: { in: contactIds } } });
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
     const email = normalizeEmail(contact.email); if (used.has(email)) return false; used.add(email); return true;
   });
   if (!eligible.length) return NextResponse.json({ ok: false, error: "No selected contacts are currently sendable. Record a valid contact basis and source, and ensure the address is not suppressed." }, { status: 400 });
-  const campaign = await prisma.outreachCampaign.create({ data: { name, subject, bodyText, bodyHtml: null, createdById: gate.user.id, templateId: body?.templateId || null, recipients: { create: eligible.map((contact) => { const vars = contactMergeVars(contact); return { contactId: contact.id, emailSnapshot: contact.email!, subjectSnapshot: renderMerge(subject, vars), bodyTextSnapshot: renderMerge(bodyText, vars), status: "PENDING" }; }) } }, include: { _count: { select: { recipients: true } } } });
+  const campaign = await prisma.outreachCampaign.create({ data: { name, subject, bodyText, bodyHtml: bodyHtml || null, createdById: gate.user.id, templateId: body?.templateId || null, recipients: { create: eligible.map((contact) => { const vars = contactMergeVars(contact); return { contactId: contact.id, emailSnapshot: contact.email!, subjectSnapshot: renderMerge(subject, vars), bodyTextSnapshot: renderMerge(bodyText, vars), bodyHtmlSnapshot: bodyHtml ? renderMerge(bodyHtml, vars) : null, status: "PENDING" }; }) } }, include: { _count: { select: { recipients: true } } } });
   await auditLog({ action: "ADMIN_OUTREACH_CAMPAIGN_CREATE", userId: gate.user.id, targetType: "OutreachCampaign", targetId: campaign.id, metadata: { recipientCount: campaign._count.recipients, skipped: contactIds.length - eligible.length }, ...createAuditContext(req) });
   return NextResponse.json({ ok: true, item: campaign, skipped: contactIds.length - eligible.length }, { status: 201 });
 }

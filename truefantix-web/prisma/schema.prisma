@@ -1355,6 +1355,7 @@ model OutreachRecipient {
   emailSnapshot    String
   subjectSnapshot  String
   bodyTextSnapshot String
+  bodyHtmlSnapshot String?
   status           String           @default("PENDING")
   gmailMessageId   String?
   gmailThreadId    String?

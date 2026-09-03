@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
 import { emailFromUnsubscribeToken, normalizeEmail, unsubscribeToken } from "@/lib/outreach";
+import { outreachHtmlDocument, outreachHtmlToText, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 
 describe("outreach security and personalization", () => {
   beforeEach(() => {
@@ -31,5 +32,19 @@ describe("outreach security and personalization", () => {
     expect(payload.from).toBe("Marc at TrueFanTix <marc@truefantix.com>");
     expect(payload.reply_to).toBe("marc@truefantix.com");
     expect(payload.headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+  });
+
+  it("preserves safe rich text and removes unsafe pasted Word markup", () => {
+    const clean=sanitizeOutreachHtml('<p style="font-size:99px" onclick="bad()"><strong>Hello</strong> <script>bad()</script><a href="javascript:bad()">team</a></p><ul><li>One</li></ul>');
+    expect(clean).toContain("<strong>Hello</strong>");
+    expect(clean).toContain("<li>One</li>");
+    expect(clean).not.toMatch(/script|onclick|javascript|font-size/);
+    expect(outreachHtmlToText(clean)).toContain("• One");
+  });
+
+  it("adds the unsubscribe link to the rich email footer", () => {
+    const html=outreachHtmlDocument("<p>Hello</p>","https://truefantix.ca/unsubscribe/outreach?token=x");
+    expect(html).toContain("Unsubscribe from TrueFanTix outreach emails");
+    expect(html).toContain("token=x");
   });
 });
