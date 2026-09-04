@@ -6,6 +6,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useNavHistory } from "@/app/_components/navhistory";
 import { apiFetch, fetchJson } from "@/lib/api-fetch";
+import { LanguageSwitch, useLanguage } from "@/app/_components/language-provider";
 
 type MeUser = {
   id: string;
@@ -98,6 +99,7 @@ export default function AppHeader() {
   const router = useRouter();
   const pathname = usePathname() || "/";
   const { previousPath } = useNavHistory();
+  const { t } = useLanguage();
 
   const prev = normalizePath(previousPath);
   const current = normalizePath(pathname) || "/";
@@ -299,12 +301,13 @@ export default function AppHeader() {
 
         {/* Right: Primary nav + auth actions */}
         <nav className="flex items-center gap-2 flex-wrap justify-end">
-          <NavPill href="/" label="Home" active={isHome} />
-          <NavPill href="/tickets" label="Tickets" active={isTickets} />
+          {!current.startsWith("/admin") ? <LanguageSwitch /> : null}
+          <NavPill href="/" label={t("Home")} active={isHome} />
+          <NavPill href="/tickets" label={t("Tickets")} active={isTickets} />
           <NavPill href="/forum" label="Forum" active={isForum} />
           <NavPill
             href="/account"
-            label={`Account${userActionCount > 0 ? ` (${userActionCount})` : ""}`}
+            label={`${t("Account")}${userActionCount > 0 ? ` (${userActionCount})` : ""}`}
             active={isAccount}
           />
           {me?.flags?.isAdmin ? (
@@ -344,7 +347,7 @@ export default function AppHeader() {
                 disabled={logoutBusy}
                 className="ml-1 text-sm font-semibold text-[var(--tft-teal)] hover:text-[var(--tft-teal-dark)] transition disabled:opacity-50"
               >
-                {logoutBusy ? "Logging out..." : "Log out"}
+                {logoutBusy ? t("Logging out...") : t("Log out")}
               </button>
             ) : (
               <>
@@ -352,13 +355,13 @@ export default function AppHeader() {
                   href="/login"
                   className="ml-1 text-sm font-semibold text-[var(--tft-teal)] hover:text-[var(--tft-teal-dark)] transition"
                 >
-                  Log in
+                  {t("Log in")}
                 </Link>
                 <Link
                   href="/register"
                   className="button-primary px-4 py-2 rounded-lg text-sm font-semibold shadow-sm hover:shadow transition"
                 >
-                  Create account
+                  {t("Create account")}
                 </Link>
               </>
             )
