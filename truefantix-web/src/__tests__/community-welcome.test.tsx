@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CommunityWelcome from "@/app/_components/community-welcome";
+import { LanguageProvider } from "@/app/_components/language-provider";
 
 const mockUsePathname = jest.fn(() => "/");
 
@@ -11,6 +12,7 @@ jest.mock("next/navigation", () => ({
 describe("CommunityWelcome", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
+    window.localStorage.clear();
     mockUsePathname.mockReturnValue("/");
   });
 
@@ -37,5 +39,22 @@ describe("CommunityWelcome", () => {
     render(<CommunityWelcome />);
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("lets a visitor read the welcome in French and remembers the choice", async () => {
+    render(
+      <LanguageProvider>
+        <CommunityWelcome />
+      </LanguageProvider>,
+    );
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "FR" }));
+
+    expect(await screen.findByText("Nous bâtissons ceci avec des amateurs comme vous")).toBeInTheDocument();
+    expect(screen.getByText(/n’est pas une plateforme pour les revendeurs/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continuer vers le site" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("truefantix-language")).toBe("fr");
+    expect(document.documentElement.lang).toBe("fr");
   });
 });
