@@ -74,4 +74,20 @@ describe("customer language preference", () => {
     expect(translateText("3 posts", "fr")).toBe("3 publications");
     expect(translateText("by Marc", "fr")).toBe("par Marc");
   });
+
+  it.each([
+    ["Built by a fan, for fans", "Créé par un amateur, pour les amateurs"],
+    ["For Sellers", "Pour les vendeurs"],
+    ["One core rule: Tickets at or below face value", "Une règle fondamentale : les billets au prix nominal ou moins"],
+    ["Trust is built into the platform", "La confiance est intégrée à la plateforme"],
+    ["Are ticket prices fair?", "Les prix des billets sont-ils équitables?"],
+    ["What is the refund policy?", "Quelle est la politique de remboursement?"],
+    ["Your privacy matters to us", "Votre vie privée nous tient à cœur"],
+    ["Agreement to Terms", "Acceptation des conditions"],
+    ["Pricing and Fee Policy", "Politique de tarification et de frais"],
+    ["Help us build a positive community for fans", "Aidez-nous à bâtir une communauté positive pour les amateurs"],
+    ["Found a bug or something broken? Send us details and we'll jump on it.", "Vous avez trouvé un bogue ou un élément défectueux? Envoyez-nous les détails et nous nous en occuperons."],
+  ])("translates public information copy: %s", (english, french) => {
+    expect(translateText(english, "fr")).toBe(french);
+  });
 });
