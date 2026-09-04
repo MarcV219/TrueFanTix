@@ -116,6 +116,7 @@ export default function AppHeader() {
   const backTarget = computeBackTarget(prev, current, isLoggedIn);
   const showBack = current !== "/" && !!backTarget;
   const backLabel = backTarget ? labelForPath(backTarget) : "Back";
+  const translatedBackLabel = t(`Back to ${backLabel}`);
 
   const isAccount = current.startsWith("/account");
   const isForum = current.startsWith("/forum");
@@ -290,11 +291,11 @@ export default function AppHeader() {
               type="button"
               onClick={goBack}
               className="hidden md:inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border)] bg-white/70 dark:bg-white/5 text-sm font-semibold text-[var(--foreground)] hover:bg-black/5 dark:hover:bg-white/10 transition"
-              aria-label={`Back to ${backLabel}`}
-              title={`Back to ${backLabel}`}
+              aria-label={translatedBackLabel}
+              title={translatedBackLabel}
             >
               <span aria-hidden>←</span>
-              <span className="max-w-[220px] truncate">Back to {backLabel}</span>
+              <span className="max-w-[220px] truncate">{translatedBackLabel}</span>
             </button>
           ) : null}
         </div>
@@ -417,11 +418,11 @@ export default function AppHeader() {
               type="button"
               onClick={goBack}
               className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-[var(--border)] bg-white/70 dark:bg-white/5 text-sm font-semibold text-[var(--foreground)] hover:bg-black/5 dark:hover:bg-white/10 transition"
-              aria-label={`Back to ${backLabel}`}
-              title={`Back to ${backLabel}`}
+              aria-label={translatedBackLabel}
+              title={translatedBackLabel}
             >
               <span aria-hidden>←</span>
-              <span className="truncate">Back to {backLabel}</span>
+              <span className="truncate">{translatedBackLabel}</span>
             </button>
           </div>
         </div>

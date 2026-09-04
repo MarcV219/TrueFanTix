@@ -65,6 +65,17 @@ describe("customer language preference", () => {
     )).toContain("Créez votre compte gratuit");
   });
 
+  it("translates the complete ticket-browsing controls and live totals", () => {
+    expect(translateText("Find tickets at or below face value for your favorite events", "fr")).toBe("Trouvez des billets au prix nominal ou moins pour vos événements préférés");
+    expect(translateText("Search events, venues, artists, teams, shows, towns or cities...", "fr")).toContain("Rechercher des événements");
+    expect(translateText("⭐ Sold Out Events Only", "fr")).toBe("⭐ Événements à guichets fermés seulement");
+    expect(translateText("0 events • 0 tickets available", "fr")).toBe("0 événements • 0 billets disponibles");
+    expect(translateText("2 events • 1 ticket available", "fr")).toBe("2 événements • 1 billet disponible");
+    expect(translateText("0 selected · $0.00 CAD subtotal", "fr")).toBe("0 sélectionnés · sous-total de $0.00 CAD");
+    expect(translateText("Checkout selected", "fr")).toBe("Passer à la caisse avec la sélection");
+    expect(translateText("Back to Home", "fr")).toBe("Retour à l’accueil");
+  });
+
   it("translates the TrueFanTix forum welcome content and forum metadata", () => {
     expect(translateText("TrueFanTix Community", "fr")).toBe("Communauté TrueFanTix");
     expect(translateText(
