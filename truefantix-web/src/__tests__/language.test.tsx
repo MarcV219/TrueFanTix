@@ -33,6 +33,19 @@ describe("customer language preference", () => {
     expect(document.documentElement.lang).toBe("fr");
   });
 
+  it("translates customer text that changes after an async status update", async () => {
+    function LiveStatus() {
+      const [ready, setReady] = React.useState(false);
+      return <><button onClick={() => setReady(true)}>update</button><p>{ready ? "Seller verified" : "Starting verification…"}</p></>;
+    }
+
+    render(<LanguageProvider><LanguageSwitch /><LiveStatus /></LanguageProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "FR" }));
+    await waitFor(() => expect(screen.getByText("Démarrage de la vérification…")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "update" }));
+    await waitFor(() => expect(screen.getByText("Vendeur vérifié")).toBeInTheDocument());
+  });
+
   it("keeps admin pages in English without erasing the preference", async () => {
     window.localStorage.setItem("truefantix-language", "fr");
     pathname = "/admin";

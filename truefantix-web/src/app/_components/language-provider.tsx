@@ -78,13 +78,26 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
     const observer = new MutationObserver((records) => {
       for (const record of records) {
+        if (record.type === "characterData" && record.target instanceof Text && record.target.parentNode) {
+          const current = record.target.data;
+          const source = originalText.get(record.target);
+          if (source && current !== source && current !== translateText(source.trim(), language)) {
+            originalText.set(record.target, current);
+          }
+          const latestSource = originalText.get(record.target) ?? current;
+          const leading = latestSource.match(/^\s*/)?.[0] ?? "";
+          const trailing = latestSource.match(/\s*$/)?.[0] ?? "";
+          const content = latestSource.trim();
+          const translated = content ? `${leading}${translateText(content, language)}${trailing}` : latestSource;
+          if (record.target.data !== translated) record.target.data = translated;
+        }
         for (const added of record.addedNodes) {
           if (added.nodeType === Node.TEXT_NODE && added.parentNode) translateNode(added.parentNode, language);
           else if (added instanceof Element) translateNode(added, language);
         }
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
     return () => observer.disconnect();
   }, [language, pathname]);
 
