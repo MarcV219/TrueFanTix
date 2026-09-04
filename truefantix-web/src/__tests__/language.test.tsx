@@ -64,4 +64,14 @@ describe("customer language preference", () => {
       "fr",
     )).toContain("Créez votre compte gratuit");
   });
+
+  it("translates the TrueFanTix forum welcome content and forum metadata", () => {
+    expect(translateText("TrueFanTix Community", "fr")).toBe("Communauté TrueFanTix");
+    expect(translateText(
+      "Welcome to the TrueFanTix Community — You're Here at the Beginning",
+      "fr",
+    )).toBe("Bienvenue dans la communauté TrueFanTix — Vous êtes là depuis le début");
+    expect(translateText("3 posts", "fr")).toBe("3 publications");
+    expect(translateText("by Marc", "fr")).toBe("par Marc");
+  });
 });
