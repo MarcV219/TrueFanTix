@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import Footer from "@/components/Footer";
+import { useLanguage } from "@/app/_components/language-provider";
 import EventTicketGroupCard from "@/components/tickets/EventTicketGroupCard";
 import { fetchJson } from "@/lib/api-fetch";
 import { formatMoney, groupTicketsByEvent, inferCoordsFromCity as sharedInferCoordsFromCity, mapApiTicketToCard, rankFeaturedTickets } from "@/lib/ticketsView";
@@ -78,11 +79,11 @@ type PreferencesResponse = {
   };
 };
 
-function formatForumTime(iso: string | null | undefined) {
+function formatForumTime(iso: string | null | undefined, locale = "en-CA") {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return d.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" });
 }
 
 function topicTypeLabel(t: ForumThreadPreview["topicType"]) {
@@ -134,6 +135,7 @@ function ChevronRightIcon({ className }: { className?: string }) {
 
 export default function Page() {
   const router = useRouter();
+  const { language, t } = useLanguage();
   const [allTickets, setAllTickets] = React.useState<TicketCardView[]>([]);
   const [currentIndex, setCurrentIndex] = React.useState(0);
   const [selectedTicketIds, setSelectedTicketIds] = React.useState<string[]>([]);
@@ -471,7 +473,7 @@ export default function Page() {
         <div className="mx-auto max-w-5xl">
           <div className="text-xs font-black uppercase tracking-[0.18em] text-amber-800">Limited-time launch promotion</div>
           <p className="mt-1 text-base font-bold sm:text-lg">
-            Create your free account and receive 4 access tokens. Sell tickets during the promotion and earn an additional 4 access tokens for every ticket sold.
+            {t("Create your free account and receive 4 access tokens. Sell tickets during the promotion and earn an additional 4 access tokens for every ticket sold.")}
           </p>
           <Link href="/register" className="mt-2 inline-block font-black text-[var(--tft-navy)] underline underline-offset-4">Create your free account</Link>
         </div>
@@ -485,7 +487,7 @@ export default function Page() {
         </div>
 
         <div className="relative z-10 px-4">
-          <h1 className={`text-5xl font-bold mb-4 ${BRAND.title}`}>Welcome to <span className="text-[var(--tft-navy)]">TrueFan</span><span className="text-[var(--tft-teal)]">Tix</span></h1>
+          <h1 className={`text-5xl font-bold mb-4 ${BRAND.title}`}>{t("Welcome to")} <span className="text-[var(--tft-navy)]">TrueFan</span><span className="text-[var(--tft-teal)]">Tix</span></h1>
           <p className={`text-lg mb-6 ${BRAND.subtle}`}>Buy and sell tickets at or below face value. Secure, fair, and fan-first.</p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
             <Link href="/tickets" className={BRAND.btnPrimary}>Browse Tickets</Link>
@@ -614,9 +616,9 @@ export default function Page() {
                           {t.topic && <span className={`text-xs font-semibold px-2 py-1 rounded-full ${BRAND.pillNeutral}`}>{t.topic}</span>}
                           <Link href={`/forum/threads/${t.id}`} className="font-semibold text-[var(--foreground)] hover:text-[var(--tft-teal)] truncate" title={t.title}>{t.title}</Link>
                         </div>
-                        <div className="text-xs text-gray-500 mt-1">{t.updatedAt ? `Updated ${formatForumTime(t.updatedAt)}` : ""}</div>
+                        <div className="text-xs text-gray-500 mt-1">{t.updatedAt ? `${language === "fr" ? "Mis à jour" : "Updated"} ${formatForumTime(t.updatedAt, language === "fr" ? "fr-CA" : "en-CA")}` : ""}</div>
                       </div>
-                      <div className={`shrink-0 text-sm ${BRAND.subtle}`}><span className="px-2 py-1 rounded bg-gray-100 dark:bg-white/10">{t.replies} repl{t.replies === 1 ? "y" : "ies"}</span></div>
+                      <div className={`shrink-0 text-sm ${BRAND.subtle}`}><span className="px-2 py-1 rounded bg-gray-100 dark:bg-white/10">{t.replies} {language === "fr" ? (t.replies === 1 ? "réponse" : "réponses") : (t.replies === 1 ? "reply" : "replies")}</span></div>
                     </div>
                   </li>
                 ))}

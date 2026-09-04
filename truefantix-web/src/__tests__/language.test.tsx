@@ -53,4 +53,15 @@ describe("customer language preference", () => {
     expect(translateText("Back to Tickets", "fr")).toBe("Retour à Billets");
     expect(translateText("Account", "en")).toBe("Account");
   });
+
+  it("translates homepage promotion and dynamic forum labels", () => {
+    expect(translateText("Welcome to", "fr")).toBe("Bienvenue sur");
+    expect(translateText("Updated Sep 4, 2026", "fr")).toBe("Mis à jour Sep 4, 2026");
+    expect(translateText("0 replies", "fr")).toBe("0 réponses");
+    expect(translateText("1 reply", "fr")).toBe("1 réponse");
+    expect(translateText(
+      "Create your free account and receive 4 access tokens. Sell tickets during the promotion and earn an additional 4 access tokens for every ticket sold.",
+      "fr",
+    )).toContain("Créez votre compte gratuit");
+  });
 });

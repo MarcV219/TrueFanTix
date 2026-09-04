@@ -120,6 +120,9 @@ export const frenchText: Record<string, string> = {
   "Latest discussions (showing up to 6).": "Discussions récentes (jusqu’à 6 affichées).",
   "Select featured tickets to checkout directly.": "Choisissez des billets en vedette pour passer directement à la caisse.",
   "Limited-time launch promotion": "Promotion de lancement à durée limitée",
+  "Create your free account and receive 4 access tokens. Sell tickets during the promotion and earn an additional 4 access tokens for every ticket sold.":
+    "Créez votre compte gratuit et recevez 4 jetons d’accès. Vendez des billets pendant la promotion et obtenez 4 jetons d’accès supplémentaires pour chaque billet vendu.",
+  "Welcome to": "Bienvenue sur",
   "Buy and sell tickets at or below face value. Secure, fair, and fan-first.": "Achetez et vendez des billets au prix nominal ou moins. Sécuritaire, équitable et pensé pour les amateurs.",
   "Could not load tickets": "Impossible de charger les billets",
   "Loading tickets...": "Chargement des billets...",
@@ -165,6 +168,9 @@ export const frenchText: Record<string, string> = {
   "New post": "Nouvelle publication",
   "New thread": "Nouvelle discussion",
   "Post reply": "Publier la réponse",
+  "Updated": "Mis à jour",
+  "reply": "réponse",
+  "replies": "réponses",
 };
 
 export function translateText(text: string, language: SiteLanguage): string {
@@ -177,6 +183,9 @@ export function translateText(text: string, language: SiteLanguage): string {
     [/^Signed in as (.+)$/, (match) => `Connecté en tant que ${match[1]}`],
     [/^(.+) item waiting for you$/, (match) => `${match[1]} élément en attente`],
     [/^(.+) items waiting for you$/, (match) => `${match[1]} éléments en attente`],
+    [/^Updated (.+)$/, (match) => `Mis à jour ${match[1]}`],
+    [/^(\d+) reply$/, (match) => `${match[1]} réponse`],
+    [/^(\d+) replies$/, (match) => `${match[1]} réponses`],
   ];
   for (const [pattern, replacement] of replacements) {
     const match = text.match(pattern);
