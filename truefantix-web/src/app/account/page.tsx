@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AccountGate, { MeUser } from "@/app/account/_components/accountgate";
 import { apiFetch, fetchJson } from "@/lib/api-fetch";
+import { useLanguage } from "@/app/_components/language-provider";
 
 function Card({
   title,
@@ -15,6 +16,7 @@ function Card({
   description?: string;
   children?: React.ReactNode;
 }) {
+  const { t } = useLanguage();
   return (
     <div
       style={{
@@ -26,8 +28,8 @@ function Card({
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 900 }}>{title}</h2>
-          {description ? <div style={{ marginTop: 6, opacity: 0.78 }}>{description}</div> : null}
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 900 }}>{t(title)}</h2>
+          {description ? <div style={{ marginTop: 6, opacity: 0.78 }}>{t(description)}</div> : null}
         </div>
       </div>
       {children ? <div style={{ marginTop: 12 }}>{children}</div> : null}
@@ -52,6 +54,7 @@ function ToolLink({
   attention?: "active" | "required";
   attentionLabel?: string;
 }) {
+  const { t } = useLanguage();
   const requiresAction = attention === "required";
   const isActive = attention === "active";
   const styles: React.CSSProperties = {
@@ -131,7 +134,7 @@ function ToolLink({
         letterSpacing: 0,
       }}
     >
-      {attentionLabel}
+      {t(attentionLabel)}
     </span>
   ) : null;
 
@@ -139,8 +142,8 @@ function ToolLink({
     return (
       <div style={styles}>
         <div style={{ display: "grid", gap: 2 }}>
-          <div style={{ fontWeight: 900 }}>{label}</div>
-          {hint ? <div style={{ fontSize: 12, opacity: 0.75 }}>{hint}</div> : null}
+          <div style={{ fontWeight: 900 }}>{t(label)}</div>
+          {hint ? <div style={{ fontSize: 12, opacity: 0.75 }}>{t(hint)}</div> : null}
           {badge}
         </div>
         {right}
@@ -151,8 +154,8 @@ function ToolLink({
   return (
     <Link href={href} style={styles}>
       <div style={{ display: "grid", gap: 2 }}>
-        <div style={{ fontWeight: 900 }}>{label}</div>
-        {hint ? <div style={{ fontSize: 12, opacity: 0.75 }}>{hint}</div> : null}
+        <div style={{ fontWeight: 900 }}>{t(label)}</div>
+        {hint ? <div style={{ fontSize: 12, opacity: 0.75 }}>{t(hint)}</div> : null}
         {badge}
       </div>
       {right}
@@ -181,6 +184,7 @@ const emptyTicketOverview: TicketOverview = {
 };
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
+  const { t } = useLanguage();
   return (
     <span
       style={{
@@ -198,12 +202,13 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
       }}
     >
       <span aria-hidden>{ok ? "✓" : "•"}</span>
-      {label}
+      {t(label)}
     </span>
   );
 }
 
 function AccountHub({ me }: { me: MeUser }) {
+  const { t } = useLanguage();
   const displayName = me?.displayName?.trim() || `${me.firstName} ${me.lastName}`;
 
   const emailVerified = !!me?.emailVerifiedAt;
@@ -534,7 +539,7 @@ function AccountHub({ me }: { me: MeUser }) {
               <div style={{ fontWeight: 800 }}>
                 {me.email}{" "}
                 <span style={{ fontWeight: 700, opacity: 0.75 }}>
-                  {emailVerified ? "✓ verified" : "• not verified"}
+                  {t(emailVerified ? "✓ verified" : "• not verified")}
                 </span>
               </div>
             </div>
@@ -544,7 +549,7 @@ function AccountHub({ me }: { me: MeUser }) {
               <div style={{ fontWeight: 800 }}>
                 {me.phone}{" "}
                 <span style={{ fontWeight: 700, opacity: 0.75 }}>
-                  {phoneVerified ? "✓ verified" : "• not verified"}
+                  {t(phoneVerified ? "✓ verified" : "• not verified")}
                 </span>
               </div>
             </div>
@@ -557,7 +562,7 @@ function AccountHub({ me }: { me: MeUser }) {
                   color: platformVerified ? "green" : "rgba(0,0,0,0.7)",
                 }}
               >
-                {platformVerified ? "Verified" : "Not verified yet"}
+                {t(platformVerified ? "Verified" : "Not verified yet")}
               </div>
             </div>
 
@@ -606,9 +611,9 @@ function AccountHub({ me }: { me: MeUser }) {
                 fontWeight: 850,
               }}
             >
-              {sellerEligible
+              {t(sellerEligible
                 ? "You’re approved to sell."
-                : "Complete verification to unlock selling (identity + payouts is handled through Stripe)."}
+                : "Complete verification to unlock selling (identity + payouts is handled through Stripe).")}
             </div>
 
             {stripeError ? (
@@ -651,13 +656,13 @@ function AccountHub({ me }: { me: MeUser }) {
                       : "pointer",
                 }}
               >
-                {sellerEligible
+                {t(sellerEligible
                   ? "Seller verified"
                   : stripeBusy
                   ? "Starting verification…"
                   : !(emailVerified && phoneVerified)
                   ? "Verify email + phone first"
-                  : "Start seller verification"}
+                  : "Start seller verification")}
               </button>
 
               <button
@@ -696,7 +701,7 @@ function AccountHub({ me }: { me: MeUser }) {
                   cursor: stripeManageBusy || !stripeHasAccount ? "not-allowed" : "pointer",
                 }}
               >
-                {stripeManageBusy ? "Opening Stripe…" : "Manage Stripe account"}
+                {t(stripeManageBusy ? "Opening Stripe…" : "Manage Stripe account")}
               </button>
 
               <Link
@@ -750,18 +755,18 @@ function AccountHub({ me }: { me: MeUser }) {
                   Your current setup
                 </div>
                 <div style={{ marginTop: 3, fontSize: 16 }}>
-                  {instantPayoutStatus === "INSTANT_READY"
+                  {t(instantPayoutStatus === "INSTANT_READY"
                     ? "✓ Fast payouts enabled"
                     : instantPayoutStatus === "STANDARD_ONLY"
                     ? "Standard payouts enabled"
-                    : "Payout destination setup required"}
+                    : "Payout destination setup required")}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, fontWeight: 650 }}>
-                  {instantPayoutStatus === "INSTANT_READY"
+                  {t(instantPayoutStatus === "INSTANT_READY"
                     ? "Stripe has verified an eligible debit card. After the buyer confirms receipt, your proceeds are sent by Instant Payout and normally arrive within 30 minutes."
                     : instantPayoutStatus === "STANDARD_ONLY"
                     ? "Stripe has a bank account for you, but it only supports standard delivery. After the buyer confirms receipt, TrueFanTix releases your proceeds immediately to Stripe; Stripe then deposits them according to its standard payout schedule."
-                    : "Stripe has not found a valid payout destination yet. Add a bank account for standard payouts or an eligible debit card for fast payouts."}
+                    : "Stripe has not found a valid payout destination yet. Add a bank account for standard payouts or an eligible debit card for fast payouts.")}
                 </div>
               </div>
 
@@ -790,7 +795,7 @@ function AccountHub({ me }: { me: MeUser }) {
                     disabled={stripeManageBusy}
                     style={{ padding: "12px 14px", borderRadius: 10, border: 0, background: "#064a93", color: "white", fontWeight: 950, cursor: stripeManageBusy ? "not-allowed" : "pointer" }}
                   >
-                    {stripeManageBusy ? "Opening Stripe…" : "Add eligible debit card in Stripe"}
+                    {t(stripeManageBusy ? "Opening Stripe…" : "Add eligible debit card in Stripe")}
                   </button>
                 ) : null}
                 <button
@@ -817,7 +822,7 @@ function AccountHub({ me }: { me: MeUser }) {
               marginBottom: 10,
             }}
           >
-            Access token balance: {accessTokenBalance}
+            {t("Access token balance:")} {accessTokenBalance}
           </div>
           <div style={{ display: "grid", gap: 10 }}>
             <ToolLink
@@ -1074,7 +1079,7 @@ function AccountHub({ me }: { me: MeUser }) {
                   cursor: deleteBusy ? "not-allowed" : "pointer",
                 }}
               >
-                {deleteBusy ? "Deleting…" : "Delete my account"}
+                {t(deleteBusy ? "Deleting…" : "Delete my account")}
               </button>
             </form>
           </div>
