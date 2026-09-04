@@ -16,6 +16,7 @@ import {
   sortTicketsByPriority,
 } from "@/lib/ticketsView";
 import type { TicketCardView } from "@/lib/ticketsView";
+import { useLanguage } from "@/app/_components/language-provider";
 
 type Ticket = TicketCardView;
 type RadiusUnit = "km" | "mi";
@@ -300,6 +301,7 @@ function writeFilterQuery(params: BrowseFilters) {
 
 export default function TicketsPage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const [initialFilters] = useState(() => getInitialBrowseFilters());
   const [shouldPreserveInitialRadius] = useState(() => hasFilterQueryParams() || shouldRestoreReturnFilters());
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -1010,11 +1012,11 @@ export default function TicketsPage() {
               <div>
                 <p className="text-gray-600 dark:text-gray-400">
                   {loading
-                    ? "Loading tickets..."
-                    : `${filteredEventGroups.length} event${filteredEventGroups.length !== 1 ? "s" : ""} • ${sortedFilteredTickets.length} ticket${sortedFilteredTickets.length !== 1 ? "s" : ""} available`}
+                    ? t("Loading tickets...")
+                    : t(`${filteredEventGroups.length} event${filteredEventGroups.length !== 1 ? "s" : ""} • ${sortedFilteredTickets.length} ticket${sortedFilteredTickets.length !== 1 ? "s" : ""} available`)}
                 </p>
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                  {selectedTicketIds.length} selected · {formatMoney(selectedTotal, selectedCurrency)} {selectedCurrency} subtotal
+                  {t(`${selectedTicketIds.length} selected · ${formatMoney(selectedTotal, selectedCurrency)} ${selectedCurrency} subtotal`)}
                 </p>
                 {checkoutError ? <p className="mt-1 text-sm font-semibold text-red-600">{checkoutError}</p> : null}
               </div>

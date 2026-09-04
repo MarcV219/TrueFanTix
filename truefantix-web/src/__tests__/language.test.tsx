@@ -76,6 +76,21 @@ describe("customer language preference", () => {
     expect(translateText("Back to Home", "fr")).toBe("Retour à l’accueil");
   });
 
+  it.each([
+    ["Your identity and verification status.", "Votre identité et votre état de vérification."],
+    ["Seller verification", "Vérification du vendeur"],
+    ["You’re approved to sell.", "Vous êtes autorisé à vendre."],
+    ["Seller payout speed", "Vitesse des versements au vendeur"],
+    ["Account tools", "Outils du compte"],
+    ["Holding (incoming / transferred to you)", "Billets détenus (entrants ou transférés à vous)"],
+    ["Selling (active listings)", "En vente (annonces actives)"],
+    ["Seller holding (transfer required)", "Billets vendus détenus (transfert requis)"],
+    ["Danger zone", "Zone dangereuse"],
+    ["Delete my account", "Supprimer mon compte"],
+  ])("translates main Account page copy: %s", (english, french) => {
+    expect(translateText(english, "fr")).toBe(french);
+  });
+
   it("translates the TrueFanTix forum welcome content and forum metadata", () => {
     expect(translateText("TrueFanTix Community", "fr")).toBe("Communauté TrueFanTix");
     expect(translateText(
