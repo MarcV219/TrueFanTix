@@ -5,6 +5,15 @@ import { normalizeEmail } from "@/lib/outreach";
 
 const BASES = new Set(["UNASSESSED", "EXPRESS_CONSENT", "EXISTING_BUSINESS_RELATIONSHIP", "CONSPICUOUSLY_PUBLISHED", "NOT_REQUIRED"]);
 const STAGES = new Set(["NEW", "CONTACTED", "REPLIED", "INTERESTED", "FOLLOW_UP", "NOT_INTERESTED", "CLOSED"]);
+const SPORT_CATEGORIES: Record<string, string[]> = {
+  SPORTS_BASEBALL: ["MLB"],
+  SPORTS_BASKETBALL: ["NBA", "NBA G League", "WNBA"],
+  SPORTS_FOOTBALL: ["CFL", "NCAA Division I FBS", "NFL"],
+  SPORTS_HOCKEY: ["AHL", "ECHL", "NHL", "OHL", "QMJHL"],
+  SPORTS_SOCCER: ["MLS", "NWSL", "USL Championship"],
+  SPORTS_COLLEGE_OTHER: ["U Sports"],
+};
+const NON_SPORT_CATEGORIES = new Set(["ARTIST", "TEST_CONTACT"]);
 export async function GET(req: Request) {
   const gate = await requireAdmin(req); if (!gate.ok) return gate.res;
   const url = new URL(req.url); const q = (url.searchParams.get("q") || "").trim(); const category = url.searchParams.get("category") || "";
@@ -13,8 +22,14 @@ export async function GET(req: Request) {
   const sendable = url.searchParams.get("sendable"); const page = Math.max(1, Number(url.searchParams.get("page")) || 1); const take = Math.min(100, Math.max(10, Number(url.searchParams.get("take")) || 50));
   const where: any = {};
   if (q) where.OR = ["organization", "subjectName", "contactName", "role", "email"].map((field) => ({ [field]: { contains: q, mode: "insensitive" } }));
-  if (category) where.category = category;
-  if (league) where.league = league;
+  if (SPORT_CATEGORIES[category]) where.AND = [{ league: { in: SPORT_CATEGORIES[category] } }];
+  else if (category === "SPORTS_OTHER") {
+    where.AND = [
+      { category: { startsWith: "SPORTS_" } },
+      { OR: [{ league: null }, { league: { notIn: Object.values(SPORT_CATEGORIES).flat() } }] },
+    ];
+  } else if (category) where.category = category;
+  if (league) where.AND = [...(where.AND || []), { league }];
   if (city) where.city = city;
   if (team) where.subjectName = team;
   if (researchStatus) where.researchStatus = researchStatus;
@@ -35,18 +50,35 @@ export async function GET(req: Request) {
   const blocked = new Map(suppressions.map((item) => [item.normalizedEmail, item.reason]));
   const groupedCount = (item: { _count?: true | { _all?: number } }) =>
     typeof item._count === "object" ? item._count._all || 0 : 0;
+  const rawCategoryCounts = Object.fromEntries(categories.map((x) => [x.category, groupedCount(x)]));
+  const leagueCounts = Object.fromEntries(leagues.filter((x) => x.league).map((x) => [x.league!, groupedCount(x)]));
+  const sportCategoryCounts = Object.fromEntries(
+    Object.entries(SPORT_CATEGORIES).map(([sport, sportLeagues]) => [
+      sport,
+      sportLeagues.reduce((sum, sportLeague) => sum + (leagueCounts[sportLeague] || 0), 0),
+    ]),
+  );
+  const knownSportCount = Object.values(sportCategoryCounts).reduce((sum, value) => sum + value, 0);
+  const totalSportCount = categories
+    .filter((x) => x.category.startsWith("SPORTS_"))
+    .reduce((sum, x) => sum + groupedCount(x), 0);
+  const categoryCounts = {
+    ...Object.fromEntries([...NON_SPORT_CATEGORIES].filter((key) => rawCategoryCounts[key]).map((key) => [key, rawCategoryCounts[key]])),
+    ...Object.fromEntries(Object.entries(sportCategoryCounts).filter(([, value]) => value > 0)),
+    ...(totalSportCount > knownSportCount ? { SPORTS_OTHER: totalSportCount - knownSportCount } : {}),
+  };
   return NextResponse.json({
     ok: true,
     items: items.map((item) => ({ ...item, suppressionReason: item.normalizedEmail ? blocked.get(item.normalizedEmail) || null : null })),
     count, totalCount, page, take,
-    categories: categories.map((x) => x.category),
+    categories: Object.keys(categoryCounts),
     leagues: leagues.map((x) => x.league).filter(Boolean),
     cities: cities.map((x) => x.city).filter(Boolean),
     teams: teams.map((x) => x.subjectName).filter(Boolean),
     researchStatuses: researchStatuses.map((x) => x.researchStatus).filter(Boolean),
     filterCounts: {
-      categories: Object.fromEntries(categories.map((x) => [x.category, groupedCount(x)])),
-      leagues: Object.fromEntries(leagues.filter((x) => x.league).map((x) => [x.league!, groupedCount(x)])),
+      categories: categoryCounts,
+      leagues: leagueCounts,
       cities: Object.fromEntries(cities.filter((x) => x.city).map((x) => [x.city!, groupedCount(x)])),
       teams: Object.fromEntries(teams.filter((x) => x.subjectName).map((x) => [x.subjectName!, groupedCount(x)])),
       researchStatuses: Object.fromEntries(researchStatuses.filter((x) => x.researchStatus).map((x) => [x.researchStatus!, groupedCount(x)])),

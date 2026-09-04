@@ -141,9 +141,13 @@ const researchColors: Record<string, string> = {
 };
 const categoryLabels: Record<string, string> = {
   ARTIST: "Artists",
-  SPORTS_COLLEGE: "Sports — College / university",
-  SPORTS_HOCKEY: "Sports — Hockey",
-  SPORTS_MAJOR_PRO: "Sports — Major professional",
+  SPORTS_BASEBALL: "Baseball",
+  SPORTS_BASKETBALL: "Basketball",
+  SPORTS_FOOTBALL: "Football",
+  SPORTS_HOCKEY: "Hockey",
+  SPORTS_SOCCER: "Soccer",
+  SPORTS_COLLEGE_OTHER: "College / university — Other",
+  SPORTS_OTHER: "Other sports",
   TEST_CONTACT: "Test contacts",
 };
 const stages = [
