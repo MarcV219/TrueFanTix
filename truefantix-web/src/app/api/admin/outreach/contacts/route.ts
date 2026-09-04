@@ -25,15 +25,33 @@ export async function GET(req: Request) {
     prisma.outreachContact.findMany({ where, orderBy: [{ lastContactedAt: "asc" }, { organization: "asc" }], skip: (page - 1) * take, take }),
     prisma.outreachContact.count({ where }),
     prisma.outreachContact.count(),
-    prisma.outreachContact.findMany({ distinct: ["category"], select: { category: true }, orderBy: { category: "asc" } }),
-    prisma.outreachContact.findMany({ where: { league: { not: null } }, distinct: ["league"], select: { league: true }, orderBy: { league: "asc" } }),
-    prisma.outreachContact.findMany({ where: { city: { not: null } }, distinct: ["city"], select: { city: true }, orderBy: { city: "asc" } }),
-    prisma.outreachContact.findMany({ where: { league: { not: null }, subjectName: { not: null } }, distinct: ["subjectName"], select: { subjectName: true }, orderBy: { subjectName: "asc" } }),
-    prisma.outreachContact.findMany({ where: { researchStatus: { not: null } }, distinct: ["researchStatus"], select: { researchStatus: true }, orderBy: { researchStatus: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["category"], _count: { _all: true }, orderBy: { category: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["league"], where: { league: { not: null } }, _count: { _all: true }, orderBy: { league: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["city"], where: { city: { not: null } }, _count: { _all: true }, orderBy: { city: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["subjectName"], where: { subjectName: { not: null } }, _count: { _all: true }, orderBy: { subjectName: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["researchStatus"], where: { researchStatus: { not: null } }, _count: { _all: true }, orderBy: { researchStatus: "asc" } }),
     prisma.outreachSuppression.findMany({ select: { normalizedEmail: true, reason: true } }),
   ]);
   const blocked = new Map(suppressions.map((item) => [item.normalizedEmail, item.reason]));
-  return NextResponse.json({ ok: true, items: items.map((item) => ({ ...item, suppressionReason: item.normalizedEmail ? blocked.get(item.normalizedEmail) || null : null })), count, totalCount, page, take, categories: categories.map((x) => x.category), leagues: leagues.map((x) => x.league).filter(Boolean), cities: cities.map((x) => x.city).filter(Boolean), teams: teams.map((x) => x.subjectName).filter(Boolean), researchStatuses: researchStatuses.map((x) => x.researchStatus).filter(Boolean) });
+  const groupedCount = (item: { _count?: true | { _all?: number } }) =>
+    typeof item._count === "object" ? item._count._all || 0 : 0;
+  return NextResponse.json({
+    ok: true,
+    items: items.map((item) => ({ ...item, suppressionReason: item.normalizedEmail ? blocked.get(item.normalizedEmail) || null : null })),
+    count, totalCount, page, take,
+    categories: categories.map((x) => x.category),
+    leagues: leagues.map((x) => x.league).filter(Boolean),
+    cities: cities.map((x) => x.city).filter(Boolean),
+    teams: teams.map((x) => x.subjectName).filter(Boolean),
+    researchStatuses: researchStatuses.map((x) => x.researchStatus).filter(Boolean),
+    filterCounts: {
+      categories: Object.fromEntries(categories.map((x) => [x.category, groupedCount(x)])),
+      leagues: Object.fromEntries(leagues.filter((x) => x.league).map((x) => [x.league!, groupedCount(x)])),
+      cities: Object.fromEntries(cities.filter((x) => x.city).map((x) => [x.city!, groupedCount(x)])),
+      teams: Object.fromEntries(teams.filter((x) => x.subjectName).map((x) => [x.subjectName!, groupedCount(x)])),
+      researchStatuses: Object.fromEntries(researchStatuses.filter((x) => x.researchStatus).map((x) => [x.researchStatus!, groupedCount(x)])),
+    },
+  });
 }
 
 export async function PATCH(req: Request) {

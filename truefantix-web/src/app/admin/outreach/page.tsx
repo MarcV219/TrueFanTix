@@ -91,6 +91,38 @@ const button: React.CSSProperties = {
   fontWeight: 800,
   cursor: "pointer",
 };
+const ontarioDateTimeInput = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value || "";
+  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
+};
+const dialogBackdrop: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 1000,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 16,
+  background: "rgba(15, 23, 42, .55)",
+};
+const dialogPanel: React.CSSProperties = {
+  width: "min(760px, 100%)",
+  maxHeight: "calc(100vh - 32px)",
+  overflowY: "auto",
+  padding: 16,
+  borderRadius: 10,
+  boxShadow: "0 20px 50px rgba(0, 0, 0, .25)",
+};
 const researchLabels: Record<string, string> = {
   PENDING: "Not researched",
   RESEARCHED: "Researched",
@@ -106,6 +138,13 @@ const researchColors: Record<string, string> = {
   CONTACT_FORM_ONLY: "#e0f2fe",
   NO_PUBLIC_CONTACT: "#f1f5f9",
   NEEDS_REVIEW: "#fee2e2",
+};
+const categoryLabels: Record<string, string> = {
+  ARTIST: "Artists",
+  SPORTS_COLLEGE: "Sports — College / university",
+  SPORTS_HOCKEY: "Sports — Hockey",
+  SPORTS_MAJOR_PRO: "Sports — Major professional",
+  TEST_CONTACT: "Test contacts",
 };
 const stages = [
   "NEW",
@@ -308,6 +347,7 @@ export default function OutreachPage() {
     [cities, setCities] = React.useState<string[]>([]),
     [teams, setTeams] = React.useState<string[]>([]),
     [researchStatuses, setResearchStatuses] = React.useState<string[]>([]),
+    [filterCounts, setFilterCounts] = React.useState<Record<string, Record<string, number>>>({}),
     [count, setCount] = React.useState(0),
     [totalCount, setTotalCount] = React.useState(0),
     [page, setPage] = React.useState(1),
@@ -327,7 +367,7 @@ export default function OutreachPage() {
   const [communicationContact, setCommunicationContact] = React.useState<Contact | null>(null);
   const [communication, setCommunication] = React.useState({
     type: "CALL",
-    occurredAt: new Date().toISOString().slice(0, 16),
+    occurredAt: ontarioDateTimeInput(),
     subject: "",
     notes: "",
     followUpAt: "",
@@ -379,6 +419,7 @@ export default function OutreachPage() {
       setCities(c.cities);
       setTeams(c.teams);
       setResearchStatuses(c.researchStatuses || []);
+      setFilterCounts(c.filterCounts || {});
       setCount(c.count);
       setTotalCount(c.totalCount);
       setCampaigns(ca.items);
@@ -519,7 +560,7 @@ export default function OutreachPage() {
       });
       setNotice("Communication added to the contact timeline.");
       setCommunicationContact(null);
-      setCommunication({ type: "CALL", occurredAt: new Date().toISOString().slice(0, 16), subject: "", notes: "", followUpAt: "" });
+      setCommunication({ type: "CALL", occurredAt: ontarioDateTimeInput(), subject: "", notes: "", followUpAt: "" });
       await load();
     } catch (e: any) { setError(e.message); }
   };
@@ -958,9 +999,9 @@ export default function OutreachPage() {
             value={category}
             onChange={(e) => setCategory(e.target.value)}
           >
-            <option value="">All categories</option>
+            <option value="">All categories ({totalCount.toLocaleString()})</option>
             {categories.map((x) => (
-              <option key={x}>{x}</option>
+              <option key={x} value={x}>{categoryLabels[x] || x} ({(filterCounts.categories?.[x] || 0).toLocaleString()})</option>
             ))}
           </select>
           <select
@@ -968,9 +1009,9 @@ export default function OutreachPage() {
             value={league}
             onChange={(e) => setLeague(e.target.value)}
           >
-            <option value="">All leagues</option>
+            <option value="">All sports / leagues</option>
             {leagues.map((x) => (
-              <option key={x}>{x}</option>
+              <option key={x} value={x}>{x} ({(filterCounts.leagues?.[x] || 0).toLocaleString()})</option>
             ))}
           </select>
           <select
@@ -980,7 +1021,7 @@ export default function OutreachPage() {
           >
             <option value="">All cities</option>
             {cities.map((x) => (
-              <option key={x}>{x}</option>
+              <option key={x} value={x}>{x} ({(filterCounts.cities?.[x] || 0).toLocaleString()})</option>
             ))}
           </select>
           <select
@@ -988,9 +1029,9 @@ export default function OutreachPage() {
             value={team}
             onChange={(e) => setTeam(e.target.value)}
           >
-            <option value="">All teams</option>
+            <option value="">All teams / artists</option>
             {teams.map((x) => (
-              <option key={x}>{x}</option>
+              <option key={x} value={x}>{x} ({(filterCounts.teams?.[x] || 0).toLocaleString()})</option>
             ))}
           </select>
           <select
@@ -1010,7 +1051,7 @@ export default function OutreachPage() {
             <option value="">All research statuses</option>
             {researchStatuses.map((x) => (
               <option key={x} value={x}>
-                {researchLabels[x] || x}
+                {researchLabels[x] || x} ({(filterCounts.researchStatuses?.[x] || 0).toLocaleString()})
               </option>
             ))}
           </select>
@@ -1245,14 +1286,22 @@ export default function OutreachPage() {
                           Notes
                         </button>
                         <button
+                          type="button"
                           style={{ ...button, padding: "4px 7px" }}
                           onClick={() => openTimeline(c)}
                         >
                           Timeline
                         </button>
                         <button
+                          type="button"
                           style={{ ...button, padding: "4px 7px" }}
-                          onClick={() => setCommunicationContact(c)}
+                          onClick={() => {
+                            setCommunication((current) => ({
+                              ...current,
+                              occurredAt: ontarioDateTimeInput(),
+                            }));
+                            setCommunicationContact(c);
+                          }}
                         >
                           Add communication
                         </button>
@@ -1309,8 +1358,16 @@ export default function OutreachPage() {
         )}
         {timeline && (
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Communication timeline"
+            onClick={() => setTimeline(null)}
+            style={dialogBackdrop}
+          >
+          <div
+            onClick={(event) => event.stopPropagation()}
             style={{
-              marginTop: 16,
+              ...dialogPanel,
               padding: 14,
               border: "1px solid #93c5fd",
               borderRadius: 9,
@@ -1346,6 +1403,7 @@ export default function OutreachPage() {
                   at: r.sentAt || r.createdAt,
                   subject: r.subjectSnapshot,
                   detail: `${r.campaign.name} · ${r.status}`,
+                  message: r.bodyTextSnapshot,
                 },
                 ...(r.events || []).map((e: any) => ({
                   kind: e.type.replace("email.", ""),
@@ -1358,13 +1416,15 @@ export default function OutreachPage() {
                 kind: "Reply",
                 at: r.receivedAt,
                 subject: r.subject,
-                detail: r.textBody || "HTML reply",
+                detail: `From ${r.fromEmail}`,
+                message: r.textBody || "This reply only contains HTML content.",
               })),
               ...(timeline.communications || []).map((c: any) => ({
                 kind: c.type.replaceAll("_", " ").toLowerCase().replace(/^./, (x: string) => x.toUpperCase()),
                 at: c.occurredAt,
                 subject: c.subject,
                 detail: c.notes || "",
+                message: c.notes || "",
               })),
             ]
               .sort(
@@ -1381,23 +1441,45 @@ export default function OutreachPage() {
                 >
                   <strong>{event.kind}</strong> ·{" "}
                   {new Date(event.at).toLocaleString()} · {event.subject}
-                  <div
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      marginTop: 3,
-                      opacity: 0.78,
-                      maxHeight: 180,
-                      overflow: "auto",
-                    }}
-                  >
-                    {event.detail}
-                  </div>
+                  {event.detail && (
+                    <div style={{ marginTop: 3, opacity: 0.78 }}>
+                      {event.detail}
+                    </div>
+                  )}
+                  {event.message && (
+                    <details style={{ marginTop: 7 }}>
+                      <summary style={{ cursor: "pointer", fontWeight: 800 }}>
+                        {event.kind === "Reply" ? "Read reply" : "Read message"}
+                      </summary>
+                      <div
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          marginTop: 7,
+                          padding: 10,
+                          borderRadius: 7,
+                          background: "rgba(255,255,255,.72)",
+                          maxHeight: 260,
+                          overflow: "auto",
+                        }}
+                      >
+                        {event.message}
+                      </div>
+                    </details>
+                  )}
                 </div>
               ))}
           </div>
+          </div>
         )}
         {communicationContact && (
-          <div style={{ marginTop: 16, padding: 14, border: "1px solid #86efac", borderRadius: 9, background: "#f0fdf4" }}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add communication"
+            onClick={() => setCommunicationContact(null)}
+            style={dialogBackdrop}
+          >
+          <div onClick={(event) => event.stopPropagation()} style={{ ...dialogPanel, padding: 14, border: "1px solid #86efac", borderRadius: 9, background: "#f0fdf4" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
               <strong>Add communication — {communicationContact.organization || communicationContact.subjectName || communicationContact.email}</strong>
               <button style={button} onClick={() => setCommunicationContact(null)}>Cancel</button>
@@ -1412,6 +1494,7 @@ export default function OutreachPage() {
             <label style={{ display: "block", marginTop: 10 }}>Subject<input style={{ ...field, display: "block", width: "100%", marginTop: 4 }} value={communication.subject} onChange={(e) => setCommunication((x) => ({ ...x, subject: e.target.value }))} /></label>
             <label style={{ display: "block", marginTop: 10 }}>Notes<textarea rows={4} style={{ ...field, display: "block", width: "100%", marginTop: 4 }} value={communication.notes} onChange={(e) => setCommunication((x) => ({ ...x, notes: e.target.value }))} /></label>
             <button style={{ ...button, marginTop: 10, background: "#166534", color: "white" }} disabled={!communication.subject.trim() || !communication.occurredAt} onClick={saveCommunication}>Save to Timeline</button>
+          </div>
           </div>
         )}
       </section>
