@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { sendOutreachEmail } from "@/lib/outreach-email";
-import { normalizeEmail, unsubscribeUrl } from "@/lib/outreach";
+import { normalizeEmail, recentContactCutoff, unsubscribeUrl } from "@/lib/outreach";
 import {
   outreachHtmlDocument,
   outreachLegalFooterText,
@@ -20,7 +20,7 @@ export async function POST(
   const body = await req.json().catch(() => null);
   const campaign = await prisma.outreachCampaign.findUnique({
     where: { id },
-    select: { id: true, name: true, status: true },
+    select: { id: true, name: true, status: true, allowRecentContact: true },
   });
   if (!campaign)
     return NextResponse.json(
@@ -64,6 +64,17 @@ export async function POST(
           status: "SUPPRESSED",
           error: suppression?.reason || "UNSUBSCRIBED",
         },
+      });
+      continue;
+    }
+    if (
+      !campaign.allowRecentContact &&
+      recipient.contact.lastContactedAt &&
+      recipient.contact.lastContactedAt >= recentContactCutoff()
+    ) {
+      await prisma.outreachRecipient.update({
+        where: { id: recipient.id },
+        data: { status: "SKIPPED_RECENT", error: "CONTACTED_WITHIN_30_DAYS" },
       });
       continue;
     }

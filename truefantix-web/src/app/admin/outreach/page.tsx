@@ -35,6 +35,7 @@ type Campaign = {
   createdAt: string;
   _count: { recipients: number };
   statusCounts: Record<string, number>;
+  allowRecentContact: boolean;
 };
 type CampaignRecipient = {
   id: string;
@@ -392,6 +393,7 @@ export default function OutreachPage() {
     bodyText: "Hi {{firstName}},\n\n\n\nThanks,\nMarc\nTrueFanTix",
     bodyHtml:
       "<p>Hi {{firstName}},</p><p><br></p><p>Thanks,<br>Marc<br>TrueFanTix</p>",
+    allowRecentContact: false,
   });
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -585,7 +587,7 @@ export default function OutreachPage() {
         body: JSON.stringify({ ...compose, contactIds: [...selected] }),
       });
       setNotice(
-        `Campaign created with ${data.item._count.recipients} recipient(s)${data.skipped ? `; ${data.skipped} unsafe or duplicate selection(s) skipped` : ""}.`,
+        `Campaign created with ${data.item._count.recipients} recipient(s)${data.skipped ? `; ${data.skipped} selection(s) skipped${data.skippedRecent ? `, including ${data.skippedRecent} contacted in the last 30 days` : ""}` : ""}.`,
       );
       setSelected(new Set());
       setCompose((x) => ({ ...x, name: "" }));
@@ -1553,6 +1555,28 @@ export default function OutreachPage() {
               setCompose((current) => ({ ...current, bodyHtml, bodyText }))
             }
           />
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              padding: 12,
+              borderRadius: 8,
+              background: compose.allowRecentContact ? "#fff7ed" : "#f0fdf4",
+              border: `1px solid ${compose.allowRecentContact ? "#fdba74" : "#bbf7d0"}`,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={compose.allowRecentContact}
+              onChange={(e) => setCompose({ ...compose, allowRecentContact: e.target.checked })}
+            />
+            <span>
+              <strong>Allow re-contact within 30 days</strong>
+              <br />
+              Leave this off for normal outreach. Turn it on only for an expected follow-up or another deliberate exception.
+            </span>
+          </label>
           {previewContact && (
             <div
               style={{
@@ -1644,6 +1668,7 @@ export default function OutreachPage() {
                   {Object.entries(c.statusCounts || {})
                     .map(([k, v]) => `${k}: ${v}`)
                     .join(" · ")}
+                  {c.allowRecentContact ? " · 30-day safeguard overridden" : " · 30-day safeguard active"}
                 </span>
               </div>
               <div style={{ display: "flex", gap: 8 }}>

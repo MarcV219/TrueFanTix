@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { contactMergeVars, normalizeEmail, renderMerge } from "@/lib/outreach";
+import { contactMergeVars, normalizeEmail, recentContactCutoff, renderMerge } from "@/lib/outreach";
 import {
   outreachHtmlToText,
   sanitizeOutreachHtml,
@@ -48,6 +48,7 @@ export async function POST(req: Request) {
         new Set<string>(body.contactIds.map((value: unknown) => String(value))),
       )
     : [];
+  const allowRecentContact = body?.allowRecentContact === true;
   if (!name || !subject || !bodyText || !contactIds.length)
     return NextResponse.json(
       {
@@ -78,6 +79,7 @@ export async function POST(req: Request) {
   });
   const blocked = new Set(suppressions.map((x) => x.normalizedEmail));
   const used = new Set<string>();
+  let skippedRecent = 0;
   const eligible = contacts.filter((contact) => {
     if (
       !contact.email ||
@@ -88,6 +90,10 @@ export async function POST(req: Request) {
       blocked.has(contact.normalizedEmail)
     )
       return false;
+    if (!allowRecentContact && contact.lastContactedAt && contact.lastContactedAt >= recentContactCutoff()) {
+      skippedRecent++;
+      return false;
+    }
     const email = normalizeEmail(contact.email);
     if (used.has(email)) return false;
     used.add(email);
@@ -109,6 +115,7 @@ export async function POST(req: Request) {
       bodyText,
       bodyHtml: bodyHtml || null,
       createdById: gate.user.id,
+      allowRecentContact,
       templateId: body?.templateId || null,
       recipients: {
         create: eligible.map((contact) => {
@@ -134,11 +141,12 @@ export async function POST(req: Request) {
     metadata: {
       recipientCount: campaign._count.recipients,
       skipped: contactIds.length - eligible.length,
+      skippedRecent,
     },
     ...createAuditContext(req),
   });
   return NextResponse.json(
-    { ok: true, item: campaign, skipped: contactIds.length - eligible.length },
+    { ok: true, item: campaign, skipped: contactIds.length - eligible.length, skippedRecent },
     { status: 201 },
   );
 }

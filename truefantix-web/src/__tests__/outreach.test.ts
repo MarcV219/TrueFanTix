@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
-import { emailFromUnsubscribeToken, normalizeEmail, unsubscribeToken } from "@/lib/outreach";
+import { emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
 import { outreachHtmlDocument, outreachHtmlToText, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 
 describe("outreach security and personalization", () => {
@@ -23,6 +23,13 @@ describe("outreach security and personalization", () => {
   expect(outreachSender()).toBe("Marc at TrueFanTix <marc@truefantix.com>");
   expect(outreachReplyAddress("abc123")).toBe("reply+abc123@replies.truefantix.com");
     expect(normalizeEmail(" Test@Example.COM ")).toBe("test@example.com");
+  });
+
+  it("guards against contacting an address again within 30 days", () => {
+    const now = new Date("2026-09-04T16:00:00.000Z");
+    expect(recentContactCutoff(now).toISOString()).toBe("2026-08-05T16:00:00.000Z");
+    expect(wasRecentlyContacted("2026-08-20T12:00:00.000Z", now)).toBe(true);
+    expect(wasRecentlyContacted("2026-07-20T12:00:00.000Z", now)).toBe(false);
   });
 
   it("sends through Resend with reply-to and one-click unsubscribe headers", async () => {

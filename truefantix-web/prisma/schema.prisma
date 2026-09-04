@@ -561,17 +561,17 @@ model Payout {
 
   status PayoutStatus @default(PENDING)
 
-  provider         String?
-  providerRef      String?
-  stripeTransferId String?   @unique
+  provider              String?
+  providerRef           String?
+  stripeTransferId      String?   @unique
   stripeInstantPayoutId String?   @unique
   instantPayoutStatus   String?
   instantPayoutAt       DateTime?
   instantPayoutFailure  String?
-  failureReason    String?
-  attemptCount     Int       @default(0)
-  lastAttemptAt    DateTime?
-  paidAt           DateTime?
+  failureReason         String?
+  attemptCount          Int       @default(0)
+  lastAttemptAt         DateTime?
+  paidAt                DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1251,10 +1251,10 @@ model Referral {
 }
 
 model OutreachContact {
-  id               String              @id @default(cuid())
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  externalKey      String              @unique
+  id               String                  @id @default(cuid())
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  externalKey      String                  @unique
   category         String
   league           String?
   city             String?
@@ -1274,11 +1274,11 @@ model OutreachContact {
   confidence       String?
   researchStatus   String?
   notes            String?
-  consentBasis     String              @default("UNASSESSED")
+  consentBasis     String                  @default("UNASSESSED")
   consentEvidence  String?
   consentExpiresAt DateTime?
   lastContactedAt  DateTime?
-  engagementStage String              @default("NEW")
+  engagementStage  String                  @default("NEW")
   followUpAt       DateTime?
   adminNotes       String?
   unsubscribedAt   DateTime?
@@ -1297,16 +1297,16 @@ model OutreachContact {
 }
 
 model OutreachCommunication {
-  id             String          @id @default(cuid())
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  contactId      String
-  contact        OutreachContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  type           String
-  occurredAt     DateTime
-  subject        String
-  notes          String?
-  createdById    String
+  id          String          @id @default(cuid())
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  contactId   String
+  contact     OutreachContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type        String
+  occurredAt  DateTime
+  subject     String
+  notes       String?
+  createdById String
 
   @@index([contactId, occurredAt])
 }
@@ -1340,49 +1340,50 @@ model OutreachTemplate {
 }
 
 model OutreachCampaign {
-  id          String              @id @default(cuid())
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  name        String
-  status      String              @default("DRAFT")
-  templateId  String?
-  template    OutreachTemplate?   @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  subject     String
-  bodyText    String
-  bodyHtml    String?
-  createdById String
-  approvedAt  DateTime?
-  startedAt   DateTime?
-  completedAt DateTime?
-  recipients  OutreachRecipient[]
+  id                 String              @id @default(cuid())
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  name               String
+  status             String              @default("DRAFT")
+  templateId         String?
+  template           OutreachTemplate?   @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  subject            String
+  bodyText           String
+  bodyHtml           String?
+  createdById        String
+  approvedAt         DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  allowRecentContact Boolean             @default(false)
+  recipients         OutreachRecipient[]
 
   @@index([status, createdAt])
   @@index([createdById, createdAt])
 }
 
 model OutreachRecipient {
-  id               String           @id @default(cuid())
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  campaignId       String
-  campaign         OutreachCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contactId        String
-  contact          OutreachContact  @relation(fields: [contactId], references: [id], onDelete: Restrict)
-  emailSnapshot    String
-  subjectSnapshot  String
-  bodyTextSnapshot String
-  bodyHtmlSnapshot String?
-  status           String           @default("PENDING")
-  gmailMessageId   String?
-  gmailThreadId    String?
+  id                String               @id @default(cuid())
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  campaignId        String
+  campaign          OutreachCampaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId         String
+  contact           OutreachContact      @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  emailSnapshot     String
+  subjectSnapshot   String
+  bodyTextSnapshot  String
+  bodyHtmlSnapshot  String?
+  status            String               @default("PENDING")
+  gmailMessageId    String?
+  gmailThreadId     String?
   providerMessageId String?
-  providerResult   String?
-  error            String?
-  sentAt           DateTime?
-  repliedAt        DateTime?
-  replyToken       String           @unique @default(cuid())
-  events           OutreachEmailEvent[]
-  replies          OutreachReply[]
+  providerResult    String?
+  error             String?
+  sentAt            DateTime?
+  repliedAt         DateTime?
+  replyToken        String               @unique @default(cuid())
+  events            OutreachEmailEvent[]
+  replies           OutreachReply[]
 
   @@unique([campaignId, contactId])
   @@index([status, createdAt])
@@ -1414,13 +1415,13 @@ model OutreachReply {
 }
 
 model OutreachEmailEvent {
-  id                String             @id @default(cuid())
-  createdAt         DateTime           @default(now())
-  svixId            String             @unique
+  id                String            @id @default(cuid())
+  createdAt         DateTime          @default(now())
+  svixId            String            @unique
   type              String
   providerMessageId String
   recipientId       String
-  recipient         OutreachRecipient  @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  recipient         OutreachRecipient @relation(fields: [recipientId], references: [id], onDelete: Cascade)
   email             String
   occurredAt        DateTime
   detail            String?
