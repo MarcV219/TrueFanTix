@@ -1147,7 +1147,13 @@ export default function OutreachPage() {
                       <br />
                       <span style={{ opacity: 0.7 }}>{c.role}</span>
                     </td>
-                    <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: "1px solid #eee",
+                        overflowWrap: "anywhere",
+                      }}
+                    >
                       {c.email || "No public email"}
                       {blocked && (
                         <>
@@ -1218,7 +1224,14 @@ export default function OutreachPage() {
                             ? `Last sent ${new Date(c.lastContactedAt).toLocaleDateString()}`
                             : "Never contacted"}
                       </div>
-                      <div style={{ display: "flex", gap: 7, marginTop: 5 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 7,
+                          marginTop: 5,
+                        }}
+                      >
                         <button
                           style={{ ...button, padding: "4px 7px" }}
                           onClick={() => scheduleFollowUp(c)}
