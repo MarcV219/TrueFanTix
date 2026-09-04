@@ -14,6 +14,8 @@ export const RateLimitConfigs: Record<string, RateLimitConfig> = {
   "auth:register": { limit: 5, windowMs: 15 * 60 * 1000 }, // 5 requests per 15 minutes per IP
   "auth:forgot-password-request": { limit: 3, windowMs: 10 * 60 * 1000 }, // 3 requests per 10 minutes per IP
   "auth:forgot-password-reset": { limit: 5, windowMs: 5 * 60 * 1000 }, // 5 requests per 5 minutes per IP
+  "outreach:resubscribe-request": { limit: 3, windowMs: 60 * 60 * 1000 }, // 3 confirmation emails per hour per IP
+  "outreach:resubscribe-confirm": { limit: 10, windowMs: 60 * 60 * 1000 }, // 10 confirmation attempts per hour per IP
   "account:delete": { limit: 1, windowMs: 60 * 60 * 1000 }, // 1 request per hour
   "account:profile-update": { limit: 15, windowMs: 60 * 1000 }, // 15 requests per minute
   "account:security-password-change": { limit: 5, windowMs: 10 * 60 * 1000 }, // 5 requests per 10 minutes

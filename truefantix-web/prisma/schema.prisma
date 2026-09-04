@@ -1325,6 +1325,20 @@ model OutreachSuppression {
   @@index([createdAt])
 }
 
+model OutreachResubscribeRequest {
+  id              String    @id @default(cuid())
+  createdAt       DateTime  @default(now())
+  normalizedEmail String
+  email           String
+  tokenHash       String    @unique
+  expiresAt       DateTime
+  confirmedAt     DateTime?
+  requestIp       String?
+
+  @@index([normalizedEmail, createdAt])
+  @@index([expiresAt, confirmedAt])
+}
+
 model OutreachTemplate {
   id         String             @id @default(cuid())
   createdAt  DateTime           @default(now())

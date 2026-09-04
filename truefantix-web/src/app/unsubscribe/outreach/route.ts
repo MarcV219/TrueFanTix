@@ -38,5 +38,5 @@ export async function POST(req: Request) {
     prisma.outreachContact.updateMany({ where: { normalizedEmail: email }, data: { unsubscribedAt } }),
     prisma.outreachRecipient.updateMany({ where: { emailSnapshot: { equals: email, mode: "insensitive" }, status: "PENDING" }, data: { status: "SUPPRESSED", error: "UNSUBSCRIBED" } }),
   ]);
-  return new NextResponse("You have been unsubscribed from TrueFanTix outreach emails. You will not receive further promotional outreach at this address.", { headers: textHeaders });
+  return new NextResponse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribed from TrueFanTix outreach</title></head><body style="font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:32px"><main style="max-width:560px;margin:48px auto;background:white;border:1px solid #e2e8f0;border-radius:14px;padding:28px"><h1>You have been unsubscribed</h1><p>You will not receive further promotional outreach from TrueFanTix at this address.</p><p>If you change your mind later, use our <a href="/resubscribe/outreach">re-subscribe page</a>. Re-subscribing requires confirmation by email.</p></main></body></html>`, { headers: htmlHeaders });
 }
