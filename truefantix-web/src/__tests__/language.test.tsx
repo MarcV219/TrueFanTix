@@ -1,7 +1,7 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { LanguageProvider, LanguageSwitch } from "@/app/_components/language-provider";
+import { LanguageProvider, LanguageSwitch, useLanguage } from "@/app/_components/language-provider";
 import { translateText } from "@/lib/language";
 
 let pathname = "/tickets";
@@ -44,6 +44,29 @@ describe("customer language preference", () => {
     await waitFor(() => expect(screen.getByText("Démarrage de la vérification…")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "update" }));
     await waitFor(() => expect(screen.getByText("Vendeur vérifié")).toBeInTheDocument());
+  });
+
+  it("restores English for components that render their own localized dynamic text", async () => {
+    function DynamicNotificationCopy() {
+      const { language } = useLanguage();
+      return (
+        <>
+          <p>{language === "fr"
+            ? "Utilise votre adresse domiciliaire à Midhurst, ON pour limiter les notifications aux événements situés dans les endroits où vous êtes prêt à vous déplacer."
+            : "Uses your home address in Midhurst, ON to limit event notifications to places you are willing to travel."}</p>
+          <input placeholder={language === "fr" ? "Commencez à saisir un artiste..." : "Start typing a artist..."} />
+        </>
+      );
+    }
+
+    render(<LanguageProvider><LanguageSwitch /><DynamicNotificationCopy /></LanguageProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "FR" }));
+    await waitFor(() => expect(screen.getByText(/Utilise votre adresse domiciliaire/)).toBeInTheDocument());
+    expect(screen.getByPlaceholderText("Commencez à saisir un artiste...")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "EN" }));
+    await waitFor(() => expect(screen.getByText(/Uses your home address/)).toBeInTheDocument());
+    expect(screen.getByPlaceholderText("Start typing a artist...")).toBeInTheDocument();
   });
 
   it("keeps admin pages in English without erasing the preference", async () => {

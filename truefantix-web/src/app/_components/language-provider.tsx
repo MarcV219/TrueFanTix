@@ -26,6 +26,17 @@ const originalText = new WeakMap<Text, string>();
 const originalAttributes = new WeakMap<Element, Map<string, string>>();
 const translatedAttributes = ["placeholder", "title", "aria-label"];
 
+function renderText(source: string, language: SiteLanguage) {
+  const leading = source.match(/^\s*/)?.[0] ?? "";
+  const trailing = source.match(/\s*$/)?.[0] ?? "";
+  const content = source.trim();
+  return content ? `${leading}${translateText(content, language)}${trailing}` : source;
+}
+
+function isKnownTextRendering(current: string, source: string) {
+  return current === renderText(source, "en") || current === renderText(source, "fr");
+}
+
 function translateNode(root: ParentNode, language: SiteLanguage) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode() as Text | null;
@@ -33,12 +44,12 @@ function translateNode(root: ParentNode, language: SiteLanguage) {
   while (node) {
     const parent = node.parentElement;
     if (parent && !parent.closest("[data-no-translate], script, style, code, pre")) {
-      const source = originalText.get(node) ?? node.data;
-      if (!originalText.has(node)) originalText.set(node, source);
-      const leading = source.match(/^\s*/)?.[0] ?? "";
-      const trailing = source.match(/\s*$/)?.[0] ?? "";
-      const content = source.trim();
-      if (content) node.data = `${leading}${translateText(content, language)}${trailing}`;
+      let source = originalText.get(node);
+      if (source == null || !isKnownTextRendering(node.data, source)) {
+        source = node.data;
+        originalText.set(node, source);
+      }
+      node.data = renderText(source, language);
     }
     node = walker.nextNode() as Text | null;
   }
@@ -54,7 +65,11 @@ function translateNode(root: ParentNode, language: SiteLanguage) {
     for (const attribute of translatedAttributes) {
       const current = element.getAttribute(attribute);
       if (current == null) continue;
-      if (!saved.has(attribute)) saved.set(attribute, current);
+      const savedSource = saved.get(attribute);
+      if (savedSource == null || (
+        current !== translateText(savedSource, "en")
+        && current !== translateText(savedSource, "fr")
+      )) saved.set(attribute, current);
       element.setAttribute(attribute, translateText(saved.get(attribute)!, language));
     }
   }
@@ -81,14 +96,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         if (record.type === "characterData" && record.target instanceof Text && record.target.parentNode) {
           const current = record.target.data;
           const source = originalText.get(record.target);
-          if (source && current !== source && current !== translateText(source.trim(), language)) {
+          if (source && !isKnownTextRendering(current, source)) {
             originalText.set(record.target, current);
           }
           const latestSource = originalText.get(record.target) ?? current;
-          const leading = latestSource.match(/^\s*/)?.[0] ?? "";
-          const trailing = latestSource.match(/\s*$/)?.[0] ?? "";
-          const content = latestSource.trim();
-          const translated = content ? `${leading}${translateText(content, language)}${trailing}` : latestSource;
+          const translated = renderText(latestSource, language);
           if (record.target.data !== translated) record.target.data = translated;
         }
         for (const added of record.addedNodes) {
