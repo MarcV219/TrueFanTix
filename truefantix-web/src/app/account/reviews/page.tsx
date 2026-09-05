@@ -38,7 +38,7 @@ function Empty({ children }: { children: React.ReactNode }) {
   return <div style={{ padding: 18, borderRadius: 10, background: "rgba(248,250,252,1)", opacity: 0.75 }}>{children}</div>;
 }
 
-function ReviewCard({ review, received }: { review: ReviewItem; received?: boolean }) {
+function ReviewCard({ review, received, translatedContent }: { review: ReviewItem; received?: boolean; translatedContent?: string | null }) {
   const { language, t } = useLanguage();
   const person = received
     ? review.reviewer?.displayName || review.reviewer?.firstName || "Buyer"
@@ -59,7 +59,17 @@ function ReviewCard({ review, received }: { review: ReviewItem; received?: boole
       </div>
       <div style={{ marginTop: 4, fontSize: 13, opacity: 0.7 }}>{event}</div>
       <div style={{ marginTop: 6 }}><Stars rating={review.rating} /></div>
-      <p style={{ margin: "8px 0 0", whiteSpace: "pre-wrap" }}>{review.content}</p>
+      {language === "fr" && translatedContent === undefined ? (
+        <p style={{ margin: "8px 0 0", opacity: 0.7 }}>Traduction de l’évaluation…</p>
+      ) : (
+        <p data-no-translate style={{ margin: "8px 0 0", whiteSpace: "pre-wrap" }}>{translatedContent || review.content}</p>
+      )}
+      {language === "fr" && translatedContent && translatedContent !== review.content ? (
+        <details data-no-translate style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>
+          <summary>Voir l’évaluation originale</summary>
+          <p style={{ whiteSpace: "pre-wrap" }}>{review.content}</p>
+        </details>
+      ) : null}
     </article>
   );
 }
@@ -75,7 +85,9 @@ function Section({ title, description, count, children }: { title: string; descr
 }
 
 export function ReviewsBody() {
+  const { language } = useLanguage();
   const [data, setData] = React.useState<ReviewsData>({ written: [], received: [], pending: [] });
+  const [translations, setTranslations] = React.useState<Record<string, string | null>>({});
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -93,6 +105,34 @@ export function ReviewsBody() {
   }, []);
 
   React.useEffect(() => { void load(); }, [load]);
+
+  React.useEffect(() => {
+    if (language !== "fr" || loading) return;
+    const ids = [...data.received, ...data.written]
+      .map((review) => review.id)
+      .filter((id) => translations[id] === undefined)
+      .slice(0, 20);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void fetchJson("/api/account/reviews/translations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewIds: ids }),
+    }).then(({ res, data: response }) => {
+      if (cancelled) return;
+      if (res.ok && response?.ok) {
+        setTranslations((current) => ({
+          ...current,
+          ...Object.fromEntries(ids.map((id) => [id, response.translations?.[id] || null])),
+        }));
+      } else {
+        setTranslations((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, null])) }));
+      }
+    }).catch(() => {
+      if (!cancelled) setTranslations((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, null])) }));
+    });
+    return () => { cancelled = true; };
+  }, [data.received, data.written, language, loading, translations]);
 
   if (loading) return <p style={{ opacity: 0.75 }}>Loading reviews…</p>;
   if (error) return <div role="alert" style={{ padding: 12, borderRadius: 10, background: "rgba(254,242,242,1)", color: "rgba(153,27,27,1)" }}>{error}</div>;
@@ -128,11 +168,11 @@ export function ReviewsBody() {
       </Section>
 
       <Section title="Reviews you’ve received" description="Feedback buyers have left for you as a seller." count={data.received.length}>
-        {data.received.length === 0 ? <Empty>No buyer reviews received yet.</Empty> : data.received.map((review) => <ReviewCard key={review.id} review={review} received />)}
+        {data.received.length === 0 ? <Empty>No buyer reviews received yet.</Empty> : data.received.map((review) => <ReviewCard key={review.id} review={review} received translatedContent={translations[review.id]} />)}
       </Section>
 
       <Section title="Reviews you’ve left" description="Your review history for completed purchases." count={data.written.length}>
-        {data.written.length === 0 ? <Empty>You haven’t left any seller reviews yet.</Empty> : data.written.map((review) => <ReviewCard key={review.id} review={review} />)}
+        {data.written.length === 0 ? <Empty>You haven’t left any seller reviews yet.</Empty> : data.written.map((review) => <ReviewCard key={review.id} review={review} translatedContent={translations[review.id]} />)}
       </Section>
     </div>
   );
