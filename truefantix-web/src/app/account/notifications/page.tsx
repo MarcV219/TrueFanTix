@@ -134,7 +134,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
 }
 
 function Body({ user }: { user: MeUser }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [preferences, setPreferences] = React.useState<Preference[]>([]);
   const [selectedType, setSelectedType] = React.useState<PreferenceType>("ARTIST");
   const [value, setValue] = React.useState("");
@@ -586,7 +586,9 @@ function Body({ user }: { user: MeUser }) {
         <div>
           <div style={{ fontWeight: 950 }}>Event distance radius</div>
           <div style={{ marginTop: 3, fontSize: 13, opacity: 0.78 }}>
-            {t(`Uses your home address in ${user.city}, ${user.region} to limit event notifications to places you are willing to travel.`)}
+            {language === "fr"
+              ? `Utilise votre adresse domiciliaire à ${user.city}, ${user.region} pour limiter les notifications aux événements situés dans les endroits où vous êtes prêt à vous déplacer.`
+              : `Uses your home address in ${user.city}, ${user.region} to limit event notifications to places you are willing to travel.`}
           </div>
           <div style={{ marginTop: 8, fontSize: 13, fontWeight: 900, color: "rgba(30, 64, 175, 1)" }}>
             Current radius: {radiusLabel(savedRadiusKm, savedRadiusUnit)}
