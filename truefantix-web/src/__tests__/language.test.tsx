@@ -128,6 +128,8 @@ describe("customer language preference", () => {
     )).toBe("Bienvenue dans la communauté TrueFanTix — Vous êtes là depuis le début");
     expect(translateText("3 posts", "fr")).toBe("3 publications");
     expect(translateText("by Marc", "fr")).toBe("par Marc");
+    expect(translateText("From Pam", "fr")).toBe("De la part de Pam");
+    expect(translateText("For Taylor", "fr")).toBe("Pour Taylor");
   });
 
   it.each([

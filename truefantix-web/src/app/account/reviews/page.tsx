@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import AccountGate from "@/app/account/_components/accountgate";
 import { SellerReview, type Review, type Ticket } from "@/app/account/tickets/bought/page";
+import { useLanguage } from "@/app/_components/language-provider";
 import { fetchJson } from "@/lib/api-fetch";
 
 type ReviewItem = {
@@ -38,6 +39,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 function ReviewCard({ review, received }: { review: ReviewItem; received?: boolean }) {
+  const { language, t } = useLanguage();
   const person = received
     ? review.reviewer?.displayName || review.reviewer?.firstName || "Buyer"
     : review.seller?.name || "Seller";
@@ -46,8 +48,14 @@ function ReviewCard({ review, received }: { review: ReviewItem; received?: boole
   return (
     <article style={{ padding: 14, borderRadius: 10, border: "1px solid rgba(0,0,0,.1)", background: "white" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ fontWeight: 900 }}>{received ? `From ${person}` : `For ${person}`}</div>
-        <time style={{ fontSize: 12, opacity: 0.65 }}>{new Date(review.createdAt).toLocaleDateString()}</time>
+        <div style={{ fontWeight: 900 }}>{t(received ? `From ${person}` : `For ${person}`)}</div>
+        <time style={{ fontSize: 12, opacity: 0.65 }}>
+          {new Date(review.createdAt).toLocaleDateString(language === "fr" ? "fr-CA" : undefined, {
+            year: "numeric",
+            month: language === "fr" ? "long" : "numeric",
+            day: "numeric",
+          })}
+        </time>
       </div>
       <div style={{ marginTop: 4, fontSize: 13, opacity: 0.7 }}>{event}</div>
       <div style={{ marginTop: 6 }}><Stars rating={review.rating} /></div>

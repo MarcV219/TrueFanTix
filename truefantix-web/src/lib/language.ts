@@ -989,6 +989,8 @@ export function translateText(text: string, language: SiteLanguage): string {
     [/^(\d+) post$/, (match) => `${match[1]} publication`],
     [/^(\d+) posts$/, (match) => `${match[1]} publications`],
     [/^by (.+)$/, (match) => `par ${match[1]}`],
+    [/^From (.+)$/, (match) => `De la part de ${match[1]}`],
+    [/^For (.+)$/, (match) => `Pour ${match[1]}`],
     [/^(\d+) event$/, (match) => `${match[1]} événement`],
     [/^(\d+) events$/, (match) => `${match[1]} événements`],
     [/^(\d+) ticket available$/, (match) => `${match[1]} billet disponible`],
