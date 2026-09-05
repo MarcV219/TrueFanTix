@@ -996,6 +996,27 @@ export function translateText(text: string, language: SiteLanguage): string {
     [/^(\d+) event(?:s)? • (\d+) ticket(?:s)? available$/, (match) => `${match[1]} événement${match[1] === "1" ? "" : "s"} • ${match[2]} billet${match[2] === "1" ? " disponible" : "s disponibles"}`],
     [/^(\d+) selected · (.+) subtotal$/, (match) => `${match[1]} sélectionné${match[1] === "1" ? "" : "s"} · sous-total de ${match[2]}`],
     [/^Selected (.+): (.+)$/, (match) => `${match[1]} sélectionné : ${match[2]}`],
+    [/^Uses your home address in (.+) to limit event notifications to places you are willing to travel\.$/, (match) => `Utilise votre adresse domiciliaire à ${match[1]} pour limiter les notifications aux événements situés dans les endroits où vous êtes prêt à vous déplacer.`],
+    [/^Start typing an? (artist|team|venue|city|sport)\.\.\.$/, (match) => {
+      const labels: Record<string, string> = {
+        artist: "un artiste",
+        team: "une équipe",
+        venue: "une salle",
+        city: "une ville",
+        sport: "un sport",
+      };
+      return `Commencez à saisir ${labels[match[1]]}...`;
+    }],
+    [/^Request this (artist|team|venue|city|sport)$/, (match) => {
+      const labels: Record<string, string> = {
+        artist: "l’ajout de cet artiste",
+        team: "l’ajout de cette équipe",
+        venue: "l’ajout de cette salle",
+        city: "l’ajout de cette ville",
+        sport: "l’ajout de ce sport",
+      };
+      return `Demander ${labels[match[1]]}`;
+    }],
   ];
   for (const [pattern, replacement] of replacements) {
     const match = text.match(pattern);

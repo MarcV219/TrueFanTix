@@ -95,6 +95,16 @@ describe("customer language preference", () => {
     expect(translateText("New here?", "fr")).toBe("Nouveau ici?");
   });
 
+  it("translates dynamic notification guidance for every saved location and interest type", () => {
+    expect(translateText(
+      "Uses your home address in Midhurst, ON to limit event notifications to places you are willing to travel.",
+      "fr",
+    )).toContain("votre adresse domiciliaire à Midhurst, ON");
+    expect(translateText("Start typing a artist...", "fr")).toBe("Commencez à saisir un artiste...");
+    expect(translateText("Start typing a venue...", "fr")).toBe("Commencez à saisir une salle...");
+    expect(translateText("Request this team", "fr")).toBe("Demander l’ajout de cette équipe");
+  });
+
   it.each([
     ["Your identity and verification status.", "Votre identité et votre état de vérification."],
     ["Seller verification", "Vérification du vendeur"],
