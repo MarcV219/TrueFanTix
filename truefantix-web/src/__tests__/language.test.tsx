@@ -89,6 +89,12 @@ describe("customer language preference", () => {
     expect(translateText("Back to Home", "fr")).toBe("Retour à l’accueil");
   });
 
+  it("translates every visible login-page instruction", () => {
+    expect(translateText("email@example.com or 4165551234", "fr")).toBe("courriel@exemple.ca ou 4165551234");
+    expect(translateText("If your account isn’t verified yet, you’ll be sent to verification after login.", "fr")).toContain("dirigé vers la vérification");
+    expect(translateText("New here?", "fr")).toBe("Nouveau ici?");
+  });
+
   it.each([
     ["Your identity and verification status.", "Votre identité et votre état de vérification."],
     ["Seller verification", "Vérification du vendeur"],
