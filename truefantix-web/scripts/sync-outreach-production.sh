@@ -10,7 +10,17 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$app_dir"
-HOME=/home/marc npx vercel env pull "$temp_dir/production.env" --environment=production --yes >/dev/null
+for attempt in 1 2 3; do
+  if HOME=/home/marc npx vercel env pull "$temp_dir/production.env" --environment=production --yes >/dev/null; then
+    break
+  fi
+  if [[ "$attempt" == "3" ]]; then
+    echo "Unable to download Vercel production environment after 3 attempts" >&2
+    exit 1
+  fi
+  rm -f "$temp_dir/production.env"
+  sleep 2
+done
 set -a
 # shellcheck disable=SC1090
 source "$temp_dir/production.env"
