@@ -62,7 +62,9 @@ function ReviewCard({ review, received, translatedContent }: { review: ReviewIte
       {language === "fr" && translatedContent === undefined ? (
         <p style={{ margin: "8px 0 0", opacity: 0.7 }}>Traduction de l’évaluation…</p>
       ) : (
-        <p data-no-translate style={{ margin: "8px 0 0", whiteSpace: "pre-wrap" }}>{translatedContent || review.content}</p>
+        <p data-no-translate style={{ margin: "8px 0 0", whiteSpace: "pre-wrap" }}>
+          {language === "fr" && translatedContent ? translatedContent : review.content}
+        </p>
       )}
       {language === "fr" && translatedContent && translatedContent !== review.content ? (
         <details data-no-translate style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>

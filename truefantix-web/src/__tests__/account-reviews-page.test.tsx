@@ -1,6 +1,7 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ReviewsBody } from "@/app/account/reviews/page";
+import { LanguageProvider, LanguageSwitch } from "@/app/_components/language-provider";
 import { fetchJson } from "@/lib/api-fetch";
 
 jest.mock("@/lib/api-fetch", () => ({ fetchJson: jest.fn() }));
@@ -48,5 +49,47 @@ describe("account reviews page", () => {
     expect(screen.getByText("Smooth delivery.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Submit seller review" })).toBeTruthy();
     await waitFor(() => expect(mockedFetchJson).toHaveBeenCalledWith("/api/account/reviews", { cache: "no-store" }));
+  });
+
+  it("switches customer review content from English to French and back again", async () => {
+    mockedFetchJson.mockImplementation(async (path) => {
+      if (path === "/api/account/reviews/translations") {
+        return {
+          res: { ok: true } as Response,
+          text: "",
+          data: { ok: true, translations: { "received-1": "Livraison rapide des billets!" } },
+        };
+      }
+      return {
+        res: { ok: true } as Response,
+        text: "",
+        data: {
+          ok: true,
+          reviews: {
+            pending: [], written: [],
+            received: [{
+              id: "received-1", rating: 5, content: "Quick delivery of tickets!", status: "APPROVED",
+              createdAt: "2026-08-13T12:00:00.000Z",
+              reviewer: { id: "buyer-1", firstName: "Pam", displayName: "Pam" },
+              order: { id: "order-2", items: [{ ticket: { title: "The Black Keys" } }] },
+            }],
+          },
+        },
+      };
+    });
+
+    const { container } = render(<LanguageProvider><LanguageSwitch /><ReviewsBody /></LanguageProvider>);
+    expect(await screen.findByText("Quick delivery of tickets!")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "FR" }));
+    expect(await screen.findByText("Livraison rapide des billets!")).toBeInTheDocument();
+    expect(container.querySelector("article > p[data-no-translate]")?.textContent).toBe("Livraison rapide des billets!");
+
+    fireEvent.click(screen.getByRole("button", { name: "EN" }));
+    expect(await screen.findByText("Quick delivery of tickets!")).toBeInTheDocument();
+    expect(container.querySelector("article > p[data-no-translate]")?.textContent).toBe("Quick delivery of tickets!");
+
+    fireEvent.click(screen.getByRole("button", { name: "FR" }));
+    expect(await screen.findByText("Livraison rapide des billets!")).toBeInTheDocument();
   });
 });
