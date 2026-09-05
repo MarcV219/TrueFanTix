@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import AccountGate, { MeUser } from "@/app/account/_components/accountgate";
+import { useLanguage } from "@/app/_components/language-provider";
 import { fetchJson } from "@/lib/api-fetch";
 
 type PreferenceType = "ARTIST" | "TEAM" | "VENUE" | "CITY" | "SPORT";
@@ -133,6 +134,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
 }
 
 function Body({ user }: { user: MeUser }) {
+  const { t } = useLanguage();
   const [preferences, setPreferences] = React.useState<Preference[]>([]);
   const [selectedType, setSelectedType] = React.useState<PreferenceType>("ARTIST");
   const [value, setValue] = React.useState("");
@@ -584,7 +586,7 @@ function Body({ user }: { user: MeUser }) {
         <div>
           <div style={{ fontWeight: 950 }}>Event distance radius</div>
           <div style={{ marginTop: 3, fontSize: 13, opacity: 0.78 }}>
-            Uses your home address in {user.city}, {user.region} to limit event notifications to places you are willing to travel.
+            {t(`Uses your home address in ${user.city}, ${user.region} to limit event notifications to places you are willing to travel.`)}
           </div>
           <div style={{ marginTop: 8, fontSize: 13, fontWeight: 900, color: "rgba(30, 64, 175, 1)" }}>
             Current radius: {radiusLabel(savedRadiusKm, savedRadiusUnit)}
@@ -902,7 +904,7 @@ function Body({ user }: { user: MeUser }) {
                 setSelectedSuggestion(null);
               }}
               disabled={busy || requestBusy}
-              placeholder={`Start typing a ${selectedType.toLowerCase()}...`}
+              placeholder={t(`Start typing a ${selectedType.toLowerCase()}...`)}
               style={{
                 width: "100%",
                 padding: 12,
@@ -974,7 +976,7 @@ function Body({ user }: { user: MeUser }) {
                         cursor: busy || requestBusy ? "not-allowed" : "pointer",
                       }}
                     >
-                      {requestBusy ? "Sending request..." : `Request this ${selectedType.toLowerCase()}`}
+                      {requestBusy ? t("Sending request...") : t(`Request this ${selectedType.toLowerCase()}`)}
                     </button>
                   </div>
                 )}
