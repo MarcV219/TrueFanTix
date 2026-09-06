@@ -19,10 +19,35 @@ This is a commercial message from TrueFanTix.`;
 export function sanitizeOutreachHtml(value: string) {
   return sanitizeHtmlLibrary(value, {
     allowedTags,
-    allowedAttributes: { a: ["href", "title", "target"], p: ["style"], ul: ["style"], ol: ["style"], li: ["style"] },
+    allowedAttributes: {
+      a: ["href", "title", "target", "style"],
+      p: ["id", "style"],
+      div: ["id"],
+      ul: ["style"],
+      ol: ["style"],
+      li: ["style"],
+    },
+    allowedStyles: {
+      a: {
+        "background-color": [/^#[0-9a-f]{3,6}$/i],
+        color: [/^#[0-9a-f]{3,6}$/i],
+        display: [/^inline-block$/],
+        padding: [/^\d{1,2}px \d{1,2}px$/],
+        "border-radius": [/^\d{1,2}px$/],
+        "text-decoration": [/^none$/],
+        "font-weight": [/^(bold|[5-9]00)$/],
+        margin: [/^\d{1,2}px$/],
+      },
+    },
     allowedSchemes: ["http", "https", "mailto"],
+    allowProtocolRelative: false,
     transformTags: {
-      a: (_tagName, attribs) => ({ tagName: "a", attribs: { ...attribs, target: "_blank" } }),
+      a: (_tagName, attribs) => ({
+        tagName: "a",
+        attribs: attribs.href?.startsWith("#")
+          ? { ...attribs }
+          : { ...attribs, target: "_blank" },
+      }),
       ...Object.fromEntries(Object.entries(emailBlockStyles).map(([tagName, style]) => [tagName, (_name: string, attribs: Record<string, string>) => ({ tagName, attribs: { ...attribs, style } })])),
     },
     exclusiveFilter(frame) {
@@ -30,6 +55,11 @@ export function sanitizeOutreachHtml(value: string) {
     },
   }).trim();
 }
+
+export const quebecCollaborationSubject =
+  "Collaboration avec {{organization}} / Collaboration with {{organization}}";
+
+export const quebecCollaborationHtml = `<p><strong>Choisissez votre langue / Choose your language</strong></p><p><a href="#francais" style="background-color:#1d4ed8;color:#ffffff;display:inline-block;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:bold;margin:4px">Français</a> <a href="#english" style="background-color:#1d4ed8;color:#ffffff;display:inline-block;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:bold;margin:4px">English</a></p><p id="francais"><strong>Français</strong></p><p>Bonjour {{firstName}},</p><p>Je vous écris au sujet d’une possibilité de collaboration entre {{organization}} et TrueFanTix.</p><p>TrueFanTix est une place de marché canadienne où les amateurs peuvent acheter et revendre des billets à leur prix d’origine ou à un prix inférieur. Nous aimerions discuter de la façon dont nous pourrions soutenir vos partisans et vos objectifs de billetterie.</p><p>Seriez-vous disponible pour une brève conversation?</p><p>Merci,<br>Marc<br>TrueFanTix</p><p id="english"><strong>English</strong></p><p>Hi {{firstName}},</p><p>I’m reaching out about a potential collaboration between {{organization}} and TrueFanTix.</p><p>TrueFanTix is a Canadian marketplace where fans can buy and resell tickets at or below their original price. We’d like to discuss how we could support your fans and ticketing goals.</p><p>Would you be open to a brief conversation?</p><p>Thanks,<br>Marc<br>TrueFanTix</p>`;
 
 export function outreachHtmlToText(value: string) {
   const blockAware = value

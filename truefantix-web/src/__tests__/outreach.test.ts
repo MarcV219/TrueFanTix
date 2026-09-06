@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
 import { emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
-import { outreachHtmlDocument, outreachHtmlToText, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
+import { outreachHtmlDocument, outreachHtmlToText, quebecCollaborationHtml, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 
 describe("outreach security and personalization", () => {
   beforeEach(() => {
@@ -48,6 +48,18 @@ describe("outreach security and personalization", () => {
     expect(clean).toContain('<li style="margin:0 0 6px">One</li>');
     expect(clean).not.toMatch(/script|onclick|javascript|font-size/);
     expect(outreachHtmlToText(clean)).toContain("• One");
+  });
+
+  it("preserves the Quebec bilingual language buttons and collaboration wording", () => {
+    const clean = sanitizeOutreachHtml(quebecCollaborationHtml);
+    expect(clean).toContain('href="#francais"');
+    expect(clean).toContain('href="#english"');
+    expect(clean).toContain('id="francais"');
+    expect(clean).toContain('id="english"');
+    expect(clean).toContain("possibilité de collaboration");
+    expect(clean).toContain("potential collaboration");
+    expect(clean).not.toMatch(/partnership/i);
+    expect(quebecCollaborationSubject).toContain("Collaboration");
   });
 
   it("adds the unsubscribe link to the rich email footer", () => {

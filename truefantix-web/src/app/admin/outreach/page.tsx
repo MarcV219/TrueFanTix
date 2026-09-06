@@ -2,6 +2,11 @@
 import React from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-fetch";
+import {
+  outreachHtmlToText,
+  quebecCollaborationHtml,
+  quebecCollaborationSubject,
+} from "@/lib/outreach-rich-text";
 
 type Contact = {
   id: string;
@@ -193,15 +198,16 @@ function safePreviewHtml(value: string) {
       element.replaceWith(...element.childNodes);
       continue;
     }
-    for (const attr of [...element.attributes])
-      if (
-        element.tagName !== "A" ||
-        !["href", "title", "target"].includes(attr.name)
-      )
-        element.removeAttribute(attr.name);
+    for (const attr of [...element.attributes]) {
+      const allowedAttribute =
+        (element.tagName === "A" &&
+          ["href", "title", "target", "style"].includes(attr.name)) ||
+        (["P", "DIV"].includes(element.tagName) && attr.name === "id");
+      if (!allowedAttribute) element.removeAttribute(attr.name);
+    }
     if (
       element.tagName === "A" &&
-      !/^(https?:|mailto:)/i.test(element.getAttribute("href") || "")
+      !/^(https?:|mailto:|#)/i.test(element.getAttribute("href") || "")
     )
       element.removeAttribute("href");
   }
@@ -770,6 +776,15 @@ export default function OutreachPage() {
         bodyText: t.bodyText,
         bodyHtml: t.bodyHtml || plainTextHtml(t.bodyText),
       }));
+  };
+  const applyQuebecCollaborationTemplate = () => {
+    setCompose((current) => ({
+      ...current,
+      subject: quebecCollaborationSubject,
+      bodyHtml: quebecCollaborationHtml,
+      bodyText: outreachHtmlToText(quebecCollaborationHtml),
+    }));
+    setNotice("Québec bilingual collaboration template loaded. Review and edit it before creating the campaign.");
   };
   const previewContact = contacts.find((contact) => selected.has(contact.id));
   const preview = (value: string) => {
@@ -1539,6 +1554,9 @@ export default function OutreachPage() {
             </select>
             <button style={button} onClick={saveTemplate}>
               Save current as template
+            </button>
+            <button style={button} onClick={applyQuebecCollaborationTemplate}>
+              Use Québec EN/FR collaboration template
             </button>
           </div>
           <input
