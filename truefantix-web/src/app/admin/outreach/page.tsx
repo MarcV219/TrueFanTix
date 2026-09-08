@@ -341,6 +341,8 @@ async function jsonFetch(url: string, options?: RequestInit) {
 }
 export default function OutreachPage() {
   const gmailAutoSyncStarted = React.useRef(false);
+  const campaignNameRef = React.useRef<HTMLInputElement>(null);
+  const campaignSubjectRef = React.useRef<HTMLInputElement>(null);
   const [contacts, setContacts] = React.useState<Contact[]>([]),
     [campaigns, setCampaigns] = React.useState<Campaign[]>([]),
     [templates, setTemplates] = React.useState<Template[]>([]);
@@ -367,7 +369,9 @@ export default function OutreachPage() {
     [pageSize] = React.useState(100);
   const [error, setError] = React.useState<string | null>(null),
     [notice, setNotice] = React.useState<string | null>(null),
-    [loading, setLoading] = React.useState(true);
+    [loading, setLoading] = React.useState(true),
+    [campaignError, setCampaignError] = React.useState<string | null>(null),
+    [campaignCreating, setCampaignCreating] = React.useState(false);
   const [delivery, setDelivery] = React.useState<{
       configured: boolean;
       sender: string;
@@ -591,6 +595,26 @@ export default function OutreachPage() {
   const createCampaign = async () => {
     setError(null);
     setNotice(null);
+    setCampaignError(null);
+    if (!compose.name.trim()) {
+      setCampaignError("Enter a campaign name before creating the draft.");
+      campaignNameRef.current?.focus();
+      return;
+    }
+    if (!compose.subject.trim()) {
+      setCampaignError("Enter an email subject before creating the draft.");
+      campaignSubjectRef.current?.focus();
+      return;
+    }
+    if (!compose.bodyText.trim()) {
+      setCampaignError("Enter an email message before creating the draft.");
+      return;
+    }
+    if (!selected.size) {
+      setCampaignError("Select at least one contact before creating the draft.");
+      return;
+    }
+    setCampaignCreating(true);
     try {
       const data = await jsonFetch("/api/admin/outreach/campaigns", {
         method: "POST",
@@ -604,7 +628,9 @@ export default function OutreachPage() {
       setCompose((x) => ({ ...x, name: "" }));
       await load();
     } catch (e: any) {
-      setError(e.message);
+      setCampaignError(e.message);
+    } finally {
+      setCampaignCreating(false);
     }
   };
   const saveTemplate = async () => {
@@ -1552,10 +1578,15 @@ export default function OutreachPage() {
         </h2>
         <div style={{ display: "grid", gap: 9 }}>
           <input
+            ref={campaignNameRef}
             style={field}
             placeholder="Campaign name"
             value={compose.name}
-            onChange={(e) => setCompose({ ...compose, name: e.target.value })}
+            aria-invalid={campaignError?.includes("campaign name") || undefined}
+            onChange={(e) => {
+              setCompose({ ...compose, name: e.target.value });
+              setCampaignError(null);
+            }}
           />
           <div style={{ display: "flex", gap: 8 }}>
             <select
@@ -1578,12 +1609,14 @@ export default function OutreachPage() {
             </button>
           </div>
           <input
+            ref={campaignSubjectRef}
             style={field}
             placeholder="Subject — supports {{firstName}}, {{organization}}, {{subjectName}}, {{role}}"
             value={compose.subject}
-            onChange={(e) =>
-              setCompose({ ...compose, subject: e.target.value })
-            }
+            onChange={(e) => {
+              setCompose({ ...compose, subject: e.target.value });
+              setCampaignError(null);
+            }}
           />
           <RichTextEditor
             value={compose.bodyHtml}
@@ -1663,11 +1696,24 @@ export default function OutreachPage() {
               color: "white",
               justifySelf: "start",
             }}
-            disabled={!selected.size}
+            disabled={!selected.size || campaignCreating}
             onClick={createCampaign}
           >
-            Create reviewed draft campaign
+            {campaignCreating ? "Creating draft…" : "Create reviewed draft campaign"}
           </button>
+          {campaignError && (
+            <div
+              role="alert"
+              style={{
+                padding: 12,
+                background: "#fee2e2",
+                borderRadius: 8,
+                color: "#991b1b",
+              }}
+            >
+              {campaignError}
+            </div>
+          )}
         </div>
       </section>
       <section
