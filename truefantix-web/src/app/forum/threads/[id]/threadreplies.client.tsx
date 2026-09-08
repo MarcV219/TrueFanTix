@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJson } from "@/lib/api-fetch";
 import ForumPhotoPicker from "@/app/forum/_components/forum-photo-picker";
+import { useLanguage } from "@/app/_components/language-provider";
 
 type ForumAuthor = {
   id: string;
@@ -296,7 +297,31 @@ export default function ThreadRepliesClient({
   indentPx = 18,
   maxDepth = 6,
 }: Props) {
+  const { language } = useLanguage();
   const roots = useMemo(() => buildPostTree(posts), [posts]);
+  const [translations, setTranslations] = useState<Record<string, Partial<Record<"en" | "fr", string>>>>({});
+
+  useEffect(() => {
+    const ids = posts.filter((post) => post.visibility === "VISIBLE" && translations[post.id]?.[language] === undefined).map((post) => post.id);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void fetchJson("/api/forum/translations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language, postIds: ids }),
+    }).then(({ res, data }) => {
+      if (cancelled || !res.ok || !data?.ok) return;
+      setTranslations((current) => {
+        const next = { ...current };
+        for (const post of posts) {
+          if (!ids.includes(post.id)) continue;
+          next[post.id] = { ...next[post.id], [language]: data.postBodies?.[post.id] || post.body };
+        }
+        return next;
+      });
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [language, posts, translations]);
 
   // Which post is being replied to (inline)
   const [replyToId, setReplyToId] = useState<string | null>(null);
@@ -442,7 +467,9 @@ export default function ThreadRepliesClient({
             </div>
           ) : (
             <>
-              <div style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap" }}>{node.body}</div>
+              <div data-no-translate style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap" }}>
+                {translations[node.id]?.[language] ?? node.body}
+              </div>
               {node.imageUrls?.length ? (
                 <div className="mt-3 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
                   {node.imageUrls.map((imageUrl, index) => (

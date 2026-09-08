@@ -3,6 +3,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import ThreadRepliesClient from "./threadreplies.client";
 import PinThreadButton from "./pin-thread-button";
+import ForumThreadTitle from "@/app/forum/_components/forum-thread-title";
 
 async function getBaseUrlFromHeaders() {
   const h = await headers();
@@ -103,7 +104,7 @@ export default async function ThreadPage({
 
         <header className="mt-4 mb-6">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            {thread.title}
+            <ForumThreadTitle threadId={thread.id} title={thread.title} />
           </h1>
 
           <div className="mt-2 text-sm text-gray-500 dark:text-gray-400">

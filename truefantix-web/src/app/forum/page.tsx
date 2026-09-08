@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import Footer from "@/components/Footer";
+import ForumThreadTitle from "@/app/forum/_components/forum-thread-title";
 
 async function getBaseUrlFromHeaders() {
   const h = await headers();
@@ -125,7 +126,7 @@ export default async function ForumPage() {
                     href={`/forum/threads/${thread.id}`}
                     className="text-xl font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition"
                   >
-                    {thread.title}
+                    <ForumThreadTitle threadId={thread.id} title={thread.title} />
                   </Link>
 
                   {thread.isPinned ? (
