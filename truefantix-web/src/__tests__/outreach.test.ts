@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
-import { emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
+import { defaultOutreachFollowUpAt, emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
 import { outreachHtmlDocument, outreachHtmlToText, quebecCollaborationHtml, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 
 describe("outreach security and personalization", () => {
@@ -30,6 +30,11 @@ describe("outreach security and personalization", () => {
     expect(recentContactCutoff(now).toISOString()).toBe("2026-08-05T16:00:00.000Z");
     expect(wasRecentlyContacted("2026-08-20T12:00:00.000Z", now)).toBe(true);
     expect(wasRecentlyContacted("2026-07-20T12:00:00.000Z", now)).toBe(false);
+  });
+
+  it("defaults a successful email follow-up to 45 days after it was sent", () => {
+    const sentAt = new Date("2026-09-08T16:00:00.000Z");
+    expect(defaultOutreachFollowUpAt(sentAt).toISOString()).toBe("2026-10-23T16:00:00.000Z");
   });
 
   it("sends through Resend with reply-to and one-click unsubscribe headers", async () => {

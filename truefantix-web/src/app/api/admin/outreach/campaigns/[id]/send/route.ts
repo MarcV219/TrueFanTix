@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { sendOutreachEmail } from "@/lib/outreach-email";
-import { normalizeEmail, recentContactCutoff, unsubscribeUrl } from "@/lib/outreach";
+import { defaultOutreachFollowUpAt, normalizeEmail, recentContactCutoff, unsubscribeUrl } from "@/lib/outreach";
 import {
   outreachHtmlDocument,
   outreachLegalFooterText,
@@ -93,19 +93,24 @@ export async function POST(
           : undefined,
         unsubscribeUrl: optOutUrl,
       });
+      const sentAt = new Date();
       await prisma.$transaction([
         prisma.outreachRecipient.update({
           where: { id: recipient.id },
           data: {
             status: "SENT",
-            sentAt: new Date(),
+            sentAt,
             providerMessageId: result.messageId,
             providerResult: `${result.provider}_ACCEPTED`,
           },
         }),
         prisma.outreachContact.update({
           where: { id: recipient.contactId },
-          data: { lastContactedAt: new Date(), engagementStage: "CONTACTED" },
+          data: {
+            lastContactedAt: sentAt,
+            followUpAt: defaultOutreachFollowUpAt(sentAt),
+            engagementStage: "CONTACTED",
+          },
         }),
       ]);
       sent++;

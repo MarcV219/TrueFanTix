@@ -2,8 +2,12 @@ import crypto from "crypto";
 
 export function normalizeEmail(value: string) { return value.trim().toLowerCase(); }
 export const OUTREACH_RECENT_CONTACT_DAYS = 30;
+export const OUTREACH_DEFAULT_FOLLOW_UP_DAYS = 45;
 export function recentContactCutoff(now = new Date()) {
   return new Date(now.getTime() - OUTREACH_RECENT_CONTACT_DAYS * 24 * 60 * 60 * 1000);
+}
+export function defaultOutreachFollowUpAt(sentAt = new Date()) {
+  return new Date(sentAt.getTime() + OUTREACH_DEFAULT_FOLLOW_UP_DAYS * 24 * 60 * 60 * 1000);
 }
 export function wasRecentlyContacted(value: Date | string | null | undefined, now = new Date()) {
   return Boolean(value && new Date(value).getTime() >= recentContactCutoff(now).getTime());
