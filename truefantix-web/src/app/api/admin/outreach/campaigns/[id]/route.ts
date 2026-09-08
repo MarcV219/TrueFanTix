@@ -12,7 +12,32 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
       id: true, name: true, status: true,
       recipients: {
         orderBy: { createdAt: "asc" },
-        select: { id: true, emailSnapshot: true, subjectSnapshot: true, bodyTextSnapshot: true, bodyHtmlSnapshot: true, status: true, contact: { select: { contactName: true, organization: true, subjectName: true, role: true } } },
+        select: {
+          id: true,
+          emailSnapshot: true,
+          subjectSnapshot: true,
+          bodyTextSnapshot: true,
+          bodyHtmlSnapshot: true,
+          status: true,
+          error: true,
+          events: {
+            orderBy: { occurredAt: "desc" },
+            select: {
+              id: true,
+              type: true,
+              occurredAt: true,
+              detail: true,
+            },
+          },
+          contact: {
+            select: {
+              contactName: true,
+              organization: true,
+              subjectName: true,
+              role: true,
+            },
+          },
+        },
       },
     },
   });

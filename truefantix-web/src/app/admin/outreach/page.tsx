@@ -49,6 +49,13 @@ type CampaignRecipient = {
   bodyTextSnapshot: string;
   bodyHtmlSnapshot: string | null;
   status: string;
+  error: string | null;
+  events: Array<{
+    id: string;
+    type: string;
+    occurredAt: string;
+    detail: string | null;
+  }>;
   contact: {
     contactName: string | null;
     organization: string | null;
@@ -1857,6 +1864,48 @@ export default function OutreachPage() {
                     Next →
                   </button>
                 </div>
+                {(recipient.events.length > 0 || recipient.error) && (
+                  <div
+                    style={{
+                      padding: 12,
+                      borderRadius: 8,
+                      border:
+                        recipient.status === "BOUNCED"
+                          ? "1px solid #fecaca"
+                          : "1px solid #cbd5e1",
+                      background:
+                        recipient.status === "BOUNCED" ? "#fef2f2" : "#f8fafc",
+                    }}
+                  >
+                    <strong>
+                      {recipient.status === "BOUNCED"
+                        ? "Bounce reason and delivery history"
+                        : "Delivery history"}
+                    </strong>
+                    {recipient.error && (
+                      <div style={{ marginTop: 7, color: "#991b1b" }}>
+                        {recipient.error}
+                      </div>
+                    )}
+                    {recipient.events.map((event) => (
+                      <div
+                        key={event.id}
+                        style={{
+                          marginTop: 7,
+                          paddingTop: 7,
+                          borderTop: "1px solid rgba(148, 163, 184, .35)",
+                          fontSize: 13,
+                        }}
+                      >
+                        <strong>
+                          {event.type.replace("email.", "").replaceAll("_", " ")}
+                        </strong>{" "}
+                        · {new Date(event.occurredAt).toLocaleString()}
+                        {event.detail ? ` · ${event.detail}` : ""}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <label style={{ fontWeight: 800 }}>
                   Subject
                   <input
