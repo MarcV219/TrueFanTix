@@ -155,6 +155,10 @@ describe("customer language preference", () => {
     expect(translateText("by Marc", "fr")).toBe("par Marc");
     expect(translateText("From Pam", "fr")).toBe("De la part de Pam");
     expect(translateText("For Taylor", "fr")).toBe("Pour Taylor");
+    expect(translateText("Add a reply to this thread", "fr")).toBe("Ajouter une réponse à cette discussion");
+    expect(translateText("Choose photos", "fr")).toBe("Choisir des photos");
+    expect(translateText("No photos selected", "fr")).toBe("Aucune photo sélectionnée");
+    expect(translateText("Clear", "fr")).toBe("Effacer");
   });
 
   it.each([

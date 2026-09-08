@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import { useLanguage } from "@/app/_components/language-provider";
 
 export const MAX_FORUM_PHOTOS = 3;
 export const MAX_FORUM_PHOTO_BYTES = 2 * 1024 * 1024;
@@ -23,6 +24,7 @@ function readFile(file: File): Promise<string> {
 
 export default function ForumPhotoPicker({ photos, onChange, disabled, onError }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const { language, t } = useLanguage();
 
   async function addPhotos(files: FileList | null) {
     if (!files?.length) return;
@@ -64,6 +66,23 @@ export default function ForumPhotoPicker({ photos, onChange, disabled, onError }
       <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300">
         Photos <span className="font-normal text-gray-500">(optional, up to 3; 2 MB total)</span>
       </label>
+      <div className="mt-2 flex items-center gap-3 text-sm text-gray-600 dark:text-gray-300">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={disabled || photos.length >= MAX_FORUM_PHOTOS}
+          className="rounded-lg border-0 bg-blue-50 px-4 py-2 font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+        >
+          {t("Choose photos")}
+        </button>
+        <span data-no-translate>
+          {photos.length === 0
+            ? t("No photos selected")
+            : language === "fr"
+              ? `${photos.length} photo${photos.length > 1 ? "s" : ""} sélectionnée${photos.length > 1 ? "s" : ""}`
+              : `${photos.length} photo${photos.length > 1 ? "s" : ""} selected`}
+        </span>
+      </div>
       <input
         ref={inputRef}
         type="file"
@@ -71,7 +90,8 @@ export default function ForumPhotoPicker({ photos, onChange, disabled, onError }
         multiple
         disabled={disabled || photos.length >= MAX_FORUM_PHOTOS}
         onChange={(event) => void addPhotos(event.target.files)}
-        className="mt-2 block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:font-semibold file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50 dark:text-gray-300"
+        className="sr-only"
+        tabIndex={-1}
       />
       {photos.length > 0 ? (
         <div className="mt-3 grid grid-cols-3 gap-3">

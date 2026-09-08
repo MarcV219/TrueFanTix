@@ -16,6 +16,7 @@ describe("forum content translation", () => {
       const body = JSON.parse(String(options?.body));
       return {
         res: { ok: true } as Response,
+        text: "",
         data: {
           ok: true,
           threadTitles: {
