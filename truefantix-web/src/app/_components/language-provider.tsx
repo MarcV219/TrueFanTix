@@ -132,15 +132,20 @@ export function useLanguage() {
 }
 
 export function LanguageSwitch() {
-  const { language, setLanguage } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
   return (
-    <div className="inline-flex items-center rounded-lg border border-[var(--border)] bg-white/70 p-0.5 dark:bg-white/5" aria-label="Select language">
-      <button type="button" onClick={() => setLanguage("en")} aria-pressed={language === "en"} className={`rounded-md px-2 py-1.5 text-xs font-bold transition ${language === "en" ? "bg-[var(--tft-navy)] text-white" : "text-[var(--foreground)] hover:bg-black/5"}`}>
-        EN
-      </button>
-      <button type="button" onClick={() => setLanguage("fr")} aria-pressed={language === "fr"} className={`rounded-md px-2 py-1.5 text-xs font-bold transition ${language === "fr" ? "bg-[var(--tft-navy)] text-white" : "text-[var(--foreground)] hover:bg-black/5"}`}>
-        FR
-      </button>
+    <div className="inline-flex flex-col items-center gap-0.5">
+      <span className="text-[10px] font-semibold leading-none text-[var(--muted)]">
+        {t("Language")}
+      </span>
+      <div className="inline-flex items-center rounded-lg border border-[var(--border)] bg-white/70 p-0.5 dark:bg-white/5" aria-label={t("Select language")}>
+        <button type="button" onClick={() => setLanguage("en")} aria-pressed={language === "en"} className={`rounded-md px-2 py-1.5 text-xs font-bold transition ${language === "en" ? "bg-[var(--tft-navy)] text-white" : "text-[var(--foreground)] hover:bg-black/5"}`}>
+          EN
+        </button>
+        <button type="button" onClick={() => setLanguage("fr")} aria-pressed={language === "fr"} className={`rounded-md px-2 py-1.5 text-xs font-bold transition ${language === "fr" ? "bg-[var(--tft-navy)] text-white" : "text-[var(--foreground)] hover:bg-black/5"}`}>
+          FR
+        </button>
+      </div>
     </div>
   );
 }

@@ -25,10 +25,12 @@ describe("customer language preference", () => {
       </LanguageProvider>,
     );
 
+    expect(screen.getByText("Language")).toBeInTheDocument();
     expect(screen.getByText("Buy tickets")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "FR" }));
 
     await waitFor(() => expect(screen.getByText("Acheter des billets")).toBeInTheDocument());
+    expect(screen.getByText("Langue")).toBeInTheDocument();
     expect(window.localStorage.getItem("truefantix-language")).toBe("fr");
     expect(document.documentElement.lang).toBe("fr");
   });
