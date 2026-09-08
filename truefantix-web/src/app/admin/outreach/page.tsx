@@ -352,12 +352,14 @@ export default function OutreachPage() {
     [team, setTeam] = React.useState(""),
     [emailFilter, setEmailFilter] = React.useState(""),
     [researchStatus, setResearchStatus] = React.useState(""),
+    [relationship, setRelationship] = React.useState(""),
     [sendable, setSendable] = React.useState(false);
   const [categories, setCategories] = React.useState<string[]>([]),
     [leagues, setLeagues] = React.useState<string[]>([]),
     [cities, setCities] = React.useState<string[]>([]),
     [teams, setTeams] = React.useState<string[]>([]),
     [researchStatuses, setResearchStatuses] = React.useState<string[]>([]),
+    [relationships, setRelationships] = React.useState<string[]>([]),
     [filterCounts, setFilterCounts] = React.useState<Record<string, Record<string, number>>>({}),
     [count, setCount] = React.useState(0),
     [totalCount, setTotalCount] = React.useState(0),
@@ -416,6 +418,7 @@ export default function OutreachPage() {
       if (team) params.set("team", team);
       if (emailFilter) params.set("email", emailFilter);
       if (researchStatus) params.set("researchStatus", researchStatus);
+      if (relationship) params.set("relationship", relationship);
       if (sendable) params.set("sendable", "true");
       const [c, ca, t, d, db, gm] = await Promise.all([
         jsonFetch(`/api/admin/outreach/contacts?${params}`),
@@ -431,6 +434,7 @@ export default function OutreachPage() {
       setCities(c.cities);
       setTeams(c.teams);
       setResearchStatuses(c.researchStatuses || []);
+      setRelationships(c.relationships || []);
       setFilterCounts(c.filterCounts || {});
       setCount(c.count);
       setTotalCount(c.totalCount);
@@ -452,6 +456,7 @@ export default function OutreachPage() {
     team,
     emailFilter,
     researchStatus,
+    relationship,
     sendable,
     page,
     pageSize,
@@ -470,7 +475,7 @@ export default function OutreachPage() {
   }, [gmailMatching?.configured]);
   React.useEffect(() => {
     setPage(1);
-  }, [q, category, league, city, team, emailFilter, researchStatus, sendable]);
+  }, [q, category, league, city, team, emailFilter, researchStatus, relationship, sendable]);
   const toggle = (id: string) =>
     setSelected((old) => {
       const next = new Set(old);
@@ -1076,6 +1081,18 @@ export default function OutreachPage() {
               </option>
             ))}
           </select>
+          <select
+            style={field}
+            value={relationship}
+            onChange={(e) => setRelationship(e.target.value)}
+          >
+            <option value="">All relationships</option>
+            {relationships.map((stage) => (
+              <option key={stage} value={stage}>
+                {stage.replaceAll("_", " ")} ({(filterCounts.relationships?.[stage] || 0).toLocaleString()})
+              </option>
+            ))}
+          </select>
           <label style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <input
               type="checkbox"
@@ -1097,6 +1114,7 @@ export default function OutreachPage() {
               setTeam("");
               setEmailFilter("");
               setResearchStatus("");
+              setRelationship("");
               setSendable(false);
               setPage(1);
             }}

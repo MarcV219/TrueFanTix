@@ -19,6 +19,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url); const q = (url.searchParams.get("q") || "").trim(); const category = url.searchParams.get("category") || "";
   const league = url.searchParams.get("league") || ""; const city = url.searchParams.get("city") || ""; const team = url.searchParams.get("team") || "";
   const email = url.searchParams.get("email") || ""; const researchStatus = url.searchParams.get("researchStatus") || "";
+  const relationship = url.searchParams.get("relationship") || "";
   const sendable = url.searchParams.get("sendable"); const page = Math.max(1, Number(url.searchParams.get("page")) || 1); const take = Math.min(100, Math.max(10, Number(url.searchParams.get("take")) || 50));
   const where: any = {};
   if (q) where.OR = ["organization", "subjectName", "contactName", "role", "email"].map((field) => ({ [field]: { contains: q, mode: "insensitive" } }));
@@ -33,10 +34,11 @@ export async function GET(req: Request) {
   if (city) where.city = city;
   if (team) where.subjectName = team;
   if (researchStatus) where.researchStatus = researchStatus;
+  if (relationship && STAGES.has(relationship)) where.engagementStage = relationship;
   if (sendable === "true") { where.email = { not: null }; where.normalizedEmail = { not: null }; where.unsubscribedAt = null; where.consentBasis = { not: "UNASSESSED" }; where.sourceUrl = { not: null }; }
   if (email === "yes") where.email = { not: null };
   if (email === "no") where.email = null;
-  const [items, count, totalCount, categories, leagues, cities, teams, researchStatuses, suppressions] = await prisma.$transaction([
+  const [items, count, totalCount, categories, leagues, cities, teams, researchStatuses, relationships, suppressions] = await prisma.$transaction([
     prisma.outreachContact.findMany({ where, orderBy: [{ lastContactedAt: "asc" }, { organization: "asc" }], skip: (page - 1) * take, take }),
     prisma.outreachContact.count({ where }),
     prisma.outreachContact.count(),
@@ -45,6 +47,7 @@ export async function GET(req: Request) {
     prisma.outreachContact.groupBy({ by: ["city"], where: { city: { not: null } }, _count: { _all: true }, orderBy: { city: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["subjectName"], where: { subjectName: { not: null } }, _count: { _all: true }, orderBy: { subjectName: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["researchStatus"], where: { researchStatus: { not: null } }, _count: { _all: true }, orderBy: { researchStatus: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["engagementStage"], _count: { _all: true }, orderBy: { engagementStage: "asc" } }),
     prisma.outreachSuppression.findMany({ select: { normalizedEmail: true, reason: true } }),
   ]);
   const blocked = new Map(suppressions.map((item) => [item.normalizedEmail, item.reason]));
@@ -76,12 +79,14 @@ export async function GET(req: Request) {
     cities: cities.map((x) => x.city).filter(Boolean),
     teams: teams.map((x) => x.subjectName).filter(Boolean),
     researchStatuses: researchStatuses.map((x) => x.researchStatus).filter(Boolean),
+    relationships: relationships.map((x) => x.engagementStage),
     filterCounts: {
       categories: categoryCounts,
       leagues: leagueCounts,
       cities: Object.fromEntries(cities.filter((x) => x.city).map((x) => [x.city!, groupedCount(x)])),
       teams: Object.fromEntries(teams.filter((x) => x.subjectName).map((x) => [x.subjectName!, groupedCount(x)])),
       researchStatuses: Object.fromEntries(researchStatuses.filter((x) => x.researchStatus).map((x) => [x.researchStatus!, groupedCount(x)])),
+      relationships: Object.fromEntries(relationships.map((x) => [x.engagementStage, groupedCount(x)])),
     },
   });
 }
