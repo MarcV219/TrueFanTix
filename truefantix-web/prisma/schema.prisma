@@ -1274,7 +1274,7 @@ model OutreachContact {
   confidence       String?
   researchStatus   String?
   notes            String?
-  consentBasis     String                  @default("UNASSESSED")
+  consentBasis     String                  @default("CONSPICUOUSLY_PUBLISHED")
   consentEvidence  String?
   consentExpiresAt DateTime?
   lastContactedAt  DateTime?
