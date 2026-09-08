@@ -54,10 +54,6 @@ export async function GET() {
     {
       ok,
       status: ok ? "healthy" : "degraded",
-      providers: {
-        email,
-        twilio,
-      },
       ts: new Date().toISOString(),
     },
     { status: ok ? 200 : 503 }

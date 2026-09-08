@@ -187,8 +187,6 @@ function OrderCard({
   onToggleDisputeTicket: (ticketId: string) => void;
   onConfirmed: () => void;
 }) {
-  const ticket = tickets[0];
-  if (!ticket) return null;
   const [busy, setBusy] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
   const [disputeEvidenceFiles, setDisputeEvidenceFiles] = useState<Array<{
@@ -198,6 +196,8 @@ function OrderCard({
   }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const ticket = tickets[0];
+  if (!ticket) return null;
   const disputeOpen = disputeFormTicketId === ticket.id;
   const selectedForDispute = tickets.some((orderTicket) => selectedTicketIds.includes(orderTicket.id));
   const canConfirm =
