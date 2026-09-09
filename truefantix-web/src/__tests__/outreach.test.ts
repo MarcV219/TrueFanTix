@@ -69,6 +69,18 @@ describe("outreach security and personalization", () => {
     expect(clean).toContain("No seller fees");
     expect(clean).toContain("Reinforce the Organization’s commitment");
     expect(clean).toContain("15-minute introductory conversation");
+    for (const phrase of [
+      "nouvelle plateforme de revente de billets entre fans",
+      "frais d’administration de 8,75 %",
+      "conversation exploratoire de 15 minutes",
+      "new fan-to-fan ticket marketplace",
+      "8.75% administration fee",
+      "15-minute introductory conversation",
+    ]) {
+      expect(clean).toContain(`<strong>${phrase}</strong>`);
+    }
+    expect(clean).toContain("Pour <strong>{{organization}}</strong>, nous croyons");
+    expect(clean).toContain("For <strong>{{organization}}</strong>, we believe");
     expect(quebecCollaborationSubject).toContain("Une option de revente de billets axée sur les fans");
     expect(quebecCollaborationSubject).toContain("A fan-first ticket resale option for the {{organization}}");
   });

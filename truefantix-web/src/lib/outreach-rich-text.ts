@@ -63,7 +63,39 @@ export const quebecCollaborationHtml = `<p><strong>Choisissez votre langue / Cho
 
 const attachmentEnglishSection = `<p id="english"><strong>English</strong></p><p>Hi {{firstName}},</p><p>I’m Marc Villeneuve, founder of TrueFanTix, a new fan-to-fan ticket marketplace built around a simple principle: fans should be able to pass along tickets they can’t use and access tickets without those tickets being marked up for profit or diminished by excessive resale fees.</p><p>I’m reaching out because I believe TrueFanTix could complement {{organization}}’s existing ticketing programs by providing another fan-first option for season-ticket members and other fans, helping members recover what they paid for tickets they can’t use while giving other genuine fans an opportunity to attend at a fair price.</p><p>TrueFanTix is fundamentally different from conventional resale marketplaces:</p><ul><li><strong>Face value or less:</strong> Tickets can be listed only up to their verified face value and eligible original fees paid. Sellers can always list for less.</li><li><strong>No seller fees:</strong> Sellers receive 100% of the permitted listing price, allowing members to recover what they paid without increasing their asking price simply to offset a marketplace commission.</li><li><strong>A low, transparent buyer fee:</strong> Buyers pay a clearly disclosed 8.75% administration fee. Our total marketplace fee is fixed, published and predictable at just 8.75% of the ticket price, substantially below the total fees typically collected from buyers and sellers by major resale platforms.</li><li><strong>No profit-driven markups:</strong> The TrueFanTix model is designed for genuine fan-to-fan exchange rather than speculative resale.</li><li><strong>Protected transactions:</strong> Payments and ticket transfers follow a documented, protected process.</li><li><strong>Fans helping fans:</strong> Fans who can’t attend can help put their tickets into the hands of other fans at fair prices rather than leaving seats unused.</li><li><strong>Rewards for sold-out events:</strong> Sellers of eligible tickets to sold-out events can earn a non-expiring Access Token toward another sold-out ticket on TrueFanTix. Access Tokens are not required for non-sold-out events.</li></ul><p>For {{organization}}, we believe this model has the potential to:</p><ul><li>Reduce unused seats and put more genuine fans in the venue</li><li>Increase game-day spending on concessions, merchandise and other purchases</li><li>Create opportunities to introduce new fans to the game-day experience</li><li>Enhance the value for season-ticket and multi-game members by giving members another way to recover up to what they paid for tickets they can’t use without seller fees or the need to mark up their tickets simply to offset a marketplace commission</li><li>Improve member satisfaction and support long-term retention</li><li>Help protect the affordability of attending games</li><li>Reinforce {{organization}}’s commitment to a fair, transparent and fan-first ticketing experience</li></ul><p>We’re not looking to replace {{organization}}’s existing ticketing relationships or propose a one-size-fits-all partnership. We’d like to explore whether there is a complementary role TrueFanTix could play that provides value to your organization and, most importantly, your fans.</p><p>That could be as simple as introducing TrueFanTix to a group of season-ticket members, including it as an additional member resource, or testing the concept around selected games. A small pilot could provide an opportunity to measure fan participation, tickets successfully exchanged and the potential reduction in unused seats before considering anything broader.</p><p>We’d also be happy to make the relationship reciprocal. TrueFanTix could support {{organization}} by promoting official ticket offers, membership campaigns, merchandise promotions, community initiatives, selected events or other approved content through our website, email and social channels.</p><p>Before suggesting any particular approach, however, I’d first like to understand your priorities and any challenges you currently see around unused tickets, member resale or the secondary-market experience. From there, we could determine whether TrueFanTix can add meaningful value.</p><p>Would you be open to a 15-minute introductory conversation to explore whether there might be a fit?</p><p>Thank you for your time,</p><p>Marc Villeneuve<br>Founder, TrueFanTix<br>Marc@TrueFanTix.com<br>TrueFanTix.com | TrueFanTix.ca</p>`;
 
-export const completeQuebecCollaborationHtml = quebecCollaborationHtml
+function applyAttachmentBolding(value: string) {
+  const boldPhrases = [
+    "nouvelle plateforme de revente de billets entre fans",
+    "frais d’administration de 8,75 %",
+    "fixes, publiés et prévisibles, et ne représentent que 8,75 % du prix du billet",
+    "ne cherchons pas à remplacer les relations actuelles de {{organization}} avec ses partenaires de billetterie ni à proposer un partenariat universel et prédéfini",
+    "Un projet pilote à petite échelle permettrait de mesurer la participation des fans, le nombre de billets échangés avec succès et la réduction potentielle du nombre de sièges inoccupés avant d’envisager une initiative plus vaste.",
+    "vos priorités ainsi que les défis que vous constatez actuellement concernant les billets inutilisés, la revente par les membres ou l’expérience offerte sur le marché secondaire",
+    "conversation exploratoire de 15 minutes",
+    "new fan-to-fan ticket marketplace",
+    "8.75% administration fee",
+    "fixed, published and predictable at just 8.75% of the ticket price",
+    "not looking to replace {{organization}}’s existing ticketing relationships or propose a one-size-fits-all partnership",
+    "A small pilot could provide an opportunity to measure fan participation, tickets successfully exchanged and the potential reduction in unused seats before considering anything broader.",
+    "your priorities and any challenges you currently see around unused tickets, member resale or the secondary-market experience",
+    "15-minute introductory conversation",
+  ];
+
+  return boldPhrases.reduce(
+    (html, phrase) => html.replace(phrase, `<strong>${phrase}</strong>`),
+    value,
+  )
+    .replace(
+      "<p>Pour {{organization}}, nous croyons",
+      "<p>Pour <strong>{{organization}}</strong>, nous croyons",
+    )
+    .replace(
+      "<p>For {{organization}}, we believe",
+      "<p>For <strong>{{organization}}</strong>, we believe",
+    );
+}
+
+export const completeQuebecCollaborationHtml = applyAttachmentBolding(quebecCollaborationHtml
   .replace(
     /<p><strong>Choisissez votre langue \/ Choose your language<\/strong><\/p><p>[\s\S]*?<\/p><p id="francais"><strong>Français<\/strong><\/p>/,
     "<p><strong>Français — English follows below</strong></p>",
@@ -77,7 +109,7 @@ export const completeQuebecCollaborationHtml = quebecCollaborationHtml
       )
       .replace("complement {{organization}}’s", "complement the {{organization}}’s")
       .replace("Reinforce {{organization}}’s commitment", "Reinforce the Organization’s commitment"),
-  );
+  ));
 
 export function outreachHtmlToText(value: string) {
   const blockAware = value
