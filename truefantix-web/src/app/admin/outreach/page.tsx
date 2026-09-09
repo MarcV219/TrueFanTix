@@ -480,11 +480,12 @@ export default function OutreachPage() {
     if (!gmailMatching?.configured || gmailAutoSyncStarted.current) return;
     gmailAutoSyncStarted.current = true;
     jsonFetch("/api/admin/outreach/gmail-sync", { method: "POST" })
-      .then((result) => {
+      .then(async (result) => {
         if (result.matched) setNotice(`Gmail automatically linked ${result.matched} new repl${result.matched === 1 ? "y" : "ies"}.`);
+        if (result.matched) await load();
       })
       .catch(() => undefined);
-  }, [gmailMatching?.configured]);
+  }, [gmailMatching?.configured, load]);
   React.useEffect(() => {
     setPage(1);
   }, [q, category, league, city, team, emailFilter, researchStatus, relationship, sendable]);
