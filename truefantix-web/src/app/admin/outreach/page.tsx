@@ -2,6 +2,7 @@
 import React from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-fetch";
+import { MAX_OUTREACH_CAMPAIGN_CONTACTS as MAX_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 import {
   completeQuebecCollaborationHtml,
   outreachHtmlToText,
@@ -172,8 +173,6 @@ const stages = [
   "NOT_INTERESTED",
   "CLOSED",
 ];
-const MAX_CAMPAIGN_CONTACTS = 20;
-
 function plainTextHtml(value: string) {
   return value
     .split(/\n{2,}/)

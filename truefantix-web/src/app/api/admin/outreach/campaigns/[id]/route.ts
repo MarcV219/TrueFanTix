@@ -4,8 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { contactMergeVars, normalizeEmail, recentContactCutoff, renderMerge } from "@/lib/outreach";
 import { outreachHtmlToText, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 import { auditLog, createAuditContext } from "@/lib/audit";
-
-const MAX_CAMPAIGN_CONTACTS = 20;
+import { MAX_OUTREACH_CAMPAIGN_CONTACTS as MAX_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 
 export async function GET(req: Request, context: { params: Promise<{ id: string }> }) {
   const gate = await requireAdmin(req); if (!gate.ok) return gate.res;

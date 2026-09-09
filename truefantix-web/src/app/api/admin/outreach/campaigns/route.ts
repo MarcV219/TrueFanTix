@@ -7,8 +7,7 @@ import {
   sanitizeOutreachHtml,
 } from "@/lib/outreach-rich-text";
 import { auditLog, createAuditContext } from "@/lib/audit";
-
-const MAX_CAMPAIGN_CONTACTS = 20;
+import { MAX_OUTREACH_CAMPAIGN_CONTACTS as MAX_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 
 export async function GET(req: Request) {
   const gate = await requireAdmin(req);

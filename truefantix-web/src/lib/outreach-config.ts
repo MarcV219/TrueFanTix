@@ -1,0 +1,1 @@
+export const MAX_OUTREACH_CAMPAIGN_CONTACTS = 40;

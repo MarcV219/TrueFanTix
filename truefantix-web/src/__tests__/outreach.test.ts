@@ -2,6 +2,7 @@
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
 import { defaultOutreachFollowUpAt, emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
 import { completeQuebecCollaborationHtml, outreachHtmlDocument, outreachHtmlToText, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
+import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 
 describe("outreach security and personalization", () => {
   beforeEach(() => {
@@ -11,6 +12,10 @@ describe("outreach security and personalization", () => {
     delete process.env.RESEND_API_KEY;
     delete process.env.SENDGRID_API_KEY;
     jest.restoreAllMocks();
+  });
+
+  it("allows campaigns to contain and send up to 40 contacts", () => {
+    expect(MAX_OUTREACH_CAMPAIGN_CONTACTS).toBe(40);
   });
 
   it("signs unsubscribe addresses and rejects tampering", () => {

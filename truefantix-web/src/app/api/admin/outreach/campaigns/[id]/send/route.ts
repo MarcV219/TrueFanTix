@@ -9,6 +9,7 @@ import {
   outreachLegalFooterText,
 } from "@/lib/outreach-rich-text";
 import { auditLog, createAuditContext } from "@/lib/audit";
+import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 
 export async function POST(
   req: Request,
@@ -32,7 +33,13 @@ export async function POST(
       { ok: false, error: "Type the exact campaign name to confirm sending." },
       { status: 400 },
     );
-  const limit = Math.min(20, Math.max(1, Number(body?.limit) || 20));
+  const limit = Math.min(
+    MAX_OUTREACH_CAMPAIGN_CONTACTS,
+    Math.max(
+      1,
+      Number(body?.limit) || MAX_OUTREACH_CAMPAIGN_CONTACTS,
+    ),
+  );
   const recipients = await prisma.outreachRecipient.findMany({
     where: { campaignId: id, status: "PENDING" },
     orderBy: { createdAt: "asc" },
