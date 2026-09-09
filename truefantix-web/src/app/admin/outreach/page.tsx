@@ -167,6 +167,7 @@ const categoryLabels: Record<string, string> = {
 const stages = [
   "NEW",
   "CONTACTED",
+  "BOUNCED",
   "REPLIED",
   "INTERESTED",
   "FOLLOW_UP",

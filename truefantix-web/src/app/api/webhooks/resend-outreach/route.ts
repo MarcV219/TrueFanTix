@@ -41,6 +41,12 @@ function suppressionReason(type: string) {
   return null;
 }
 
+export function contactUpdateForDeliveryEvent(type: string) {
+  return type === "email.bounced"
+    ? { engagementStage: "BOUNCED", followUpAt: null }
+    : null;
+}
+
 export async function POST(req: Request) {
   const secret = process.env.OUTREACH_RESEND_WEBHOOK_SECRET?.trim();
   if (!secret) return NextResponse.json({ ok: false, error: "Webhook not configured." }, { status: 503 });
@@ -64,7 +70,7 @@ export async function POST(req: Request) {
   if (!trackedTypes.has(event.type) || !("email_id" in event.data)) return NextResponse.json({ ok: true, ignored: true });
   const svixId = req.headers.get("svix-id")!;
   const providerMessageId = event.data.email_id;
-  const recipient = await prisma.outreachRecipient.findFirst({ where: { providerMessageId }, select: { id: true, emailSnapshot: true, status: true } });
+  const recipient = await prisma.outreachRecipient.findFirst({ where: { providerMessageId }, select: { id: true, contactId: true, emailSnapshot: true, status: true } });
   // The Resend account also sends transactional mail. Ignore events that do not
   // match a message sent by the isolated Outreach system.
   if (!recipient) return NextResponse.json({ ok: true, ignored: true });
@@ -80,6 +86,10 @@ export async function POST(req: Request) {
       const nextStatus = recipientStatuses[event.type];
       if ((statusPriority[nextStatus] || 0) >= (statusPriority[recipient.status] || 0)) {
         await tx.outreachRecipient.update({ where: { id: recipient.id }, data: { status: nextStatus, error: detail } });
+      }
+      const contactUpdate = contactUpdateForDeliveryEvent(event.type);
+      if (contactUpdate) {
+        await tx.outreachContact.update({ where: { id: recipient.contactId }, data: contactUpdate });
       }
       if (reason) {
         await tx.outreachSuppression.upsert({

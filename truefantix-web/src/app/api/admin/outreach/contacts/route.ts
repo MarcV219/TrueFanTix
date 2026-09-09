@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/outreach";
 
 const BASES = new Set(["UNASSESSED", "EXPRESS_CONSENT", "EXISTING_BUSINESS_RELATIONSHIP", "CONSPICUOUSLY_PUBLISHED", "NOT_REQUIRED"]);
-const STAGES = new Set(["NEW", "CONTACTED", "REPLIED", "INTERESTED", "FOLLOW_UP", "NOT_INTERESTED", "CLOSED"]);
+const STAGES = new Set(["NEW", "CONTACTED", "BOUNCED", "REPLIED", "INTERESTED", "FOLLOW_UP", "NOT_INTERESTED", "CLOSED"]);
 const SPORT_CATEGORIES: Record<string, string[]> = {
   SPORTS_BASEBALL: ["MLB"],
   SPORTS_BASKETBALL: ["NBA", "NBA G League", "WNBA"],

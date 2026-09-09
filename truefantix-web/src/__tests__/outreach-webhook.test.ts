@@ -1,7 +1,7 @@
 /** @jest-environment node */
 jest.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-import { POST } from "@/app/api/webhooks/resend-outreach/route";
+import { contactUpdateForDeliveryEvent, POST } from "@/app/api/webhooks/resend-outreach/route";
 
 describe("Resend outreach webhook security", () => {
   afterEach(() => { delete process.env.OUTREACH_RESEND_WEBHOOK_SECRET; });
@@ -15,5 +15,18 @@ describe("Resend outreach webhook security", () => {
     process.env.OUTREACH_RESEND_WEBHOOK_SECRET = "whsec_test_secret_that_is_long_enough";
     const response = await POST(new Request("https://truefantix.ca/api/webhooks/resend-outreach", { method: "POST", headers: { "svix-id": "evt_fake", "svix-timestamp": "1", "svix-signature": "v1,fake" }, body: "{}" }));
     expect(response.status).toBe(400);
+  });
+});
+
+describe("Resend outreach delivery state", () => {
+  it("moves a bounced recipient's contact to BOUNCED and clears follow-up", () => {
+    expect(contactUpdateForDeliveryEvent("email.bounced")).toEqual({
+      engagementStage: "BOUNCED",
+      followUpAt: null,
+    });
+  });
+
+  it("does not change the contact relationship for ordinary delivery events", () => {
+    expect(contactUpdateForDeliveryEvent("email.delivered")).toBeNull();
   });
 });
