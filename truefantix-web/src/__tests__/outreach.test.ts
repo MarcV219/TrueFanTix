@@ -65,10 +65,12 @@ describe("outreach security and personalization", () => {
     expect(clean).toContain("Aucuns frais pour les vendeurs");
     expect(clean).toContain("conversation exploratoire de 15 minutes");
     expect(clean).toContain("I’m Marc Villeneuve, founder of TrueFanTix");
+    expect(clean).toContain("complement the {{organization}}’s existing ticketing programs");
     expect(clean).toContain("No seller fees");
+    expect(clean).toContain("Reinforce the Organization’s commitment");
     expect(clean).toContain("15-minute introductory conversation");
     expect(quebecCollaborationSubject).toContain("Une option de revente de billets axée sur les fans");
-    expect(quebecCollaborationSubject).toContain("A fan-first ticket resale option");
+    expect(quebecCollaborationSubject).toContain("A fan-first ticket resale option for the {{organization}}");
   });
 
   it("adds the unsubscribe link to the rich email footer", () => {
