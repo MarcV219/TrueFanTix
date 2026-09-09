@@ -61,10 +61,12 @@ describe("outreach security and personalization", () => {
     expect(clean).toContain('href="#english"');
     expect(clean).toContain('id="francais"');
     expect(clean).toContain('id="english"');
-    expect(clean).toContain("possibilité de collaboration");
+    expect(clean).toContain("Je m’appelle Marc Villeneuve");
+    expect(clean).toContain("Aucuns frais pour les vendeurs");
+    expect(clean).toContain("conversation exploratoire de 15 minutes");
     expect(clean).toContain("potential collaboration");
-    expect(clean).not.toMatch(/partnership/i);
-    expect(quebecCollaborationSubject).toContain("Collaboration");
+    expect(quebecCollaborationSubject).toContain("Une option de revente de billets axée sur les fans");
+    expect(quebecCollaborationSubject).toContain("Collaboration with");
   });
 
   it("adds the unsubscribe link to the rich email footer", () => {
