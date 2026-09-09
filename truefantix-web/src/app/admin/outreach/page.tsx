@@ -350,6 +350,7 @@ export default function OutreachPage() {
   const gmailAutoSyncStarted = React.useRef(false);
   const campaignNameRef = React.useRef<HTMLInputElement>(null);
   const campaignSubjectRef = React.useRef<HTMLInputElement>(null);
+  const campaignEditorRef = React.useRef<HTMLElement>(null);
   const [contacts, setContacts] = React.useState<Contact[]>([]),
     [campaigns, setCampaigns] = React.useState<Campaign[]>([]),
     [templates, setTemplates] = React.useState<Template[]>([]);
@@ -378,7 +379,8 @@ export default function OutreachPage() {
     [notice, setNotice] = React.useState<string | null>(null),
     [loading, setLoading] = React.useState(true),
     [campaignError, setCampaignError] = React.useState<string | null>(null),
-    [campaignCreating, setCampaignCreating] = React.useState(false);
+    [campaignCreating, setCampaignCreating] = React.useState(false),
+    [editingCampaignId, setEditingCampaignId] = React.useState<string | null>(null);
   const [delivery, setDelivery] = React.useState<{
       configured: boolean;
       sender: string;
@@ -623,16 +625,23 @@ export default function OutreachPage() {
     }
     setCampaignCreating(true);
     try {
-      const data = await jsonFetch("/api/admin/outreach/campaigns", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...compose, contactIds: [...selected] }),
-      });
-      setNotice(
-        `Campaign created with ${data.item._count.recipients} recipient(s)${data.skipped ? `; ${data.skipped} selection(s) skipped${data.skippedRecent ? `, including ${data.skippedRecent} contacted in the last 30 days` : ""}` : ""}.`,
+      const data = await jsonFetch(
+        editingCampaignId
+          ? `/api/admin/outreach/campaigns/${editingCampaignId}`
+          : "/api/admin/outreach/campaigns",
+        {
+          method: editingCampaignId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...compose, contactIds: [...selected] }),
+        },
       );
+      const recipientCount = editingCampaignId
+        ? data.recipientCount
+        : data.item._count.recipients;
+      setNotice(`${editingCampaignId ? "Campaign updated" : "Campaign created"} with ${recipientCount} recipient(s)${data.skipped ? `; ${data.skipped} selection(s) skipped${data.skippedRecent ? `, including ${data.skippedRecent} contacted in the last 30 days` : ""}` : ""}.`);
       setSelected(new Set());
       setCompose((x) => ({ ...x, name: "" }));
+      setEditingCampaignId(null);
       await load();
     } catch (e: any) {
       setCampaignError(e.message);
@@ -722,6 +731,33 @@ export default function OutreachPage() {
     } catch (e: any) {
       setError(e.message);
     }
+  };
+  const editCampaign = async (campaign: Campaign) => {
+    setError(null);
+    setCampaignError(null);
+    try {
+      const data = await jsonFetch(`/api/admin/outreach/campaigns/${campaign.id}`);
+      const item = data.item;
+      setEditingCampaignId(campaign.id);
+      setCompose({
+        name: item.name,
+        subject: item.subject,
+        bodyText: item.bodyText,
+        bodyHtml: item.bodyHtml || plainTextHtml(item.bodyText),
+        allowRecentContact: item.allowRecentContact,
+      });
+      setSelected(new Set(item.recipients.map((recipient: { contactId: string }) => recipient.contactId)));
+      setNotice(`Editing draft “${campaign.name}”. Save changes when you are finished.`);
+      window.setTimeout(() => campaignEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  const cancelCampaignEdit = () => {
+    setEditingCampaignId(null);
+    setSelected(new Set());
+    setCampaignError(null);
+    setNotice("Campaign editing cancelled. The draft was not changed.");
   };
   const selectReviewRecipient = (
     campaignReview: CampaignReview,
@@ -1614,6 +1650,7 @@ export default function OutreachPage() {
         )}
       </section>
       <section
+        ref={campaignEditorRef}
         style={{
           marginTop: 18,
           padding: 16,
@@ -1623,7 +1660,7 @@ export default function OutreachPage() {
         }}
       >
         <h2 style={{ marginTop: 0 }}>
-          2. Prepare campaign{" "}
+          2. {editingCampaignId ? "Edit campaign" : "Prepare campaign"}{" "}
           <small style={{ fontWeight: 400 }}>({selected.size} selected)</small>
         </h2>
         <div style={{ display: "grid", gap: 9 }}>
@@ -1739,18 +1776,22 @@ export default function OutreachPage() {
               </div>
             </div>
           )}
-          <button
-            style={{
-              ...button,
-              background: "#0f172a",
-              color: "white",
-              justifySelf: "start",
-            }}
-            disabled={!selected.size || campaignCreating}
-            onClick={createCampaign}
-          >
-            {campaignCreating ? "Creating draft…" : "Create reviewed draft campaign"}
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              style={{ ...button, background: "#0f172a", color: "white" }}
+              disabled={!selected.size || campaignCreating}
+              onClick={createCampaign}
+            >
+              {campaignCreating
+                ? editingCampaignId ? "Saving changes…" : "Creating draft…"
+                : editingCampaignId ? "Save campaign changes" : "Create reviewed draft campaign"}
+            </button>
+            {editingCampaignId && (
+              <button style={button} disabled={campaignCreating} onClick={cancelCampaignEdit}>
+                Cancel editing
+              </button>
+            )}
+          </div>
           {campaignError && (
             <div
               role="alert"
@@ -1809,12 +1850,17 @@ export default function OutreachPage() {
                 </button>
                 {c.status === "DRAFT" &&
                   (c.statusCounts.PENDING || 0) === c._count.recipients && (
-                    <button
-                      style={{ ...button, color: "#b91c1c", borderColor: "#fecaca" }}
-                      onClick={() => deleteCampaign(c)}
-                    >
-                      Delete campaign
-                    </button>
+                    <>
+                      <button style={button} onClick={() => editCampaign(c)}>
+                        Edit campaign
+                      </button>
+                      <button
+                        style={{ ...button, color: "#b91c1c", borderColor: "#fecaca" }}
+                        onClick={() => deleteCampaign(c)}
+                      >
+                        Delete campaign
+                      </button>
+                    </>
                   )}
                 {["DRAFT", "SENDING"].includes(c.status) && (
                   <button
