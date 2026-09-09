@@ -3,8 +3,8 @@ import React from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-fetch";
 import {
+  completeQuebecCollaborationHtml,
   outreachHtmlToText,
-  quebecCollaborationHtml,
   quebecCollaborationSubject,
 } from "@/lib/outreach-rich-text";
 
@@ -819,8 +819,8 @@ export default function OutreachPage() {
     setCompose((current) => ({
       ...current,
       subject: quebecCollaborationSubject,
-      bodyHtml: quebecCollaborationHtml,
-      bodyText: outreachHtmlToText(quebecCollaborationHtml),
+      bodyHtml: completeQuebecCollaborationHtml,
+      bodyText: outreachHtmlToText(completeQuebecCollaborationHtml),
     }));
     setNotice("Québec bilingual collaboration template loaded. Review and edit it before creating the campaign.");
   };

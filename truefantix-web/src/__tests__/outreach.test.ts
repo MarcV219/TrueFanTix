@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
 import { defaultOutreachFollowUpAt, emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
-import { outreachHtmlDocument, outreachHtmlToText, quebecCollaborationHtml, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
+import { completeQuebecCollaborationHtml, outreachHtmlDocument, outreachHtmlToText, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 
 describe("outreach security and personalization", () => {
   beforeEach(() => {
@@ -56,7 +56,7 @@ describe("outreach security and personalization", () => {
   });
 
   it("preserves the Quebec bilingual language buttons and collaboration wording", () => {
-    const clean = sanitizeOutreachHtml(quebecCollaborationHtml);
+    const clean = sanitizeOutreachHtml(completeQuebecCollaborationHtml);
     expect(clean).toContain('href="#francais"');
     expect(clean).toContain('href="#english"');
     expect(clean).toContain('id="francais"');
@@ -64,9 +64,11 @@ describe("outreach security and personalization", () => {
     expect(clean).toContain("Je m’appelle Marc Villeneuve");
     expect(clean).toContain("Aucuns frais pour les vendeurs");
     expect(clean).toContain("conversation exploratoire de 15 minutes");
-    expect(clean).toContain("potential collaboration");
+    expect(clean).toContain("I’m Marc Villeneuve, founder of TrueFanTix");
+    expect(clean).toContain("No seller fees");
+    expect(clean).toContain("15-minute introductory conversation");
     expect(quebecCollaborationSubject).toContain("Une option de revente de billets axée sur les fans");
-    expect(quebecCollaborationSubject).toContain("Collaboration with");
+    expect(quebecCollaborationSubject).toContain("A fan-first ticket resale option");
   });
 
   it("adds the unsubscribe link to the rich email footer", () => {
