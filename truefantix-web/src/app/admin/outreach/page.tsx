@@ -1041,6 +1041,49 @@ export default function OutreachPage() {
           Each send can deliver a maximum of {MAX_CAMPAIGN_CONTACTS} individual messages.
         </p>
         <div
+          aria-live="polite"
+          aria-label={`${selected.size} of ${MAX_CAMPAIGN_CONTACTS} contacts selected`}
+          style={{
+            position: "sticky",
+            top: 8,
+            zIndex: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            marginBottom: 14,
+            padding: "10px 12px",
+            border: `2px solid ${selected.size >= MAX_CAMPAIGN_CONTACTS ? "#dc2626" : "#2563eb"}`,
+            borderRadius: 9,
+            background: selected.size >= MAX_CAMPAIGN_CONTACTS ? "#fef2f2" : "#eff6ff",
+            color: selected.size >= MAX_CAMPAIGN_CONTACTS ? "#991b1b" : "#1e3a8a",
+            boxShadow: "0 2px 8px rgba(15, 23, 42, 0.12)",
+          }}
+        >
+          <div>
+            <strong style={{ fontSize: 17 }}>
+              {selected.size} of {MAX_CAMPAIGN_CONTACTS} selected
+            </strong>
+            <div style={{ marginTop: 2, fontSize: 13 }}>
+              {selected.size >= MAX_CAMPAIGN_CONTACTS
+                ? "Limit reached — deselect a contact to choose another."
+                : `${MAX_CAMPAIGN_CONTACTS - selected.size} selection${MAX_CAMPAIGN_CONTACTS - selected.size === 1 ? "" : "s"} remaining.`}
+            </div>
+          </div>
+          {selected.size > 0 && (
+            <button
+              type="button"
+              style={{ ...button, background: "white", whiteSpace: "nowrap" }}
+              onClick={() => {
+                setSelected(new Set());
+                setError(null);
+              }}
+            >
+              Clear selection
+            </button>
+          )}
+        </div>
+        <div
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))",
