@@ -55,12 +55,12 @@ describe("outreach security and personalization", () => {
     expect(outreachHtmlToText(clean)).toContain("• One");
   });
 
-  it("preserves the Quebec bilingual language buttons and collaboration wording", () => {
+  it("uses a Gmail-safe bilingual layout and preserves the collaboration wording", () => {
     const clean = sanitizeOutreachHtml(completeQuebecCollaborationHtml);
-    expect(clean).toContain('href="#francais"');
-    expect(clean).toContain('href="#english"');
-    expect(clean).toContain('id="francais"');
-    expect(clean).toContain('id="english"');
+    expect(clean).toContain("Français — English follows below");
+    expect(clean).toContain("Version anglaise / English version");
+    expect(clean).not.toContain('href="#francais"');
+    expect(clean).not.toContain('href="#english"');
     expect(clean).toContain("Je m’appelle Marc Villeneuve");
     expect(clean).toContain("Aucuns frais pour les vendeurs");
     expect(clean).toContain("conversation exploratoire de 15 minutes");
