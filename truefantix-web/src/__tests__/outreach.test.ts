@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
-import { defaultOutreachFollowUpAt, emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
+import { contactMergeVars, defaultOutreachFollowUpAt, emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
 import { completeQuebecCollaborationHtml, outreachHtmlDocument, outreachHtmlToText, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 
@@ -40,6 +40,16 @@ describe("outreach security and personalization", () => {
   it("defaults a successful email follow-up to 45 days after it was sent", () => {
     const sentAt = new Date("2026-09-08T16:00:00.000Z");
     expect(defaultOutreachFollowUpAt(sentAt).toISOString()).toBe("2026-10-23T16:00:00.000Z");
+  });
+
+  it("uses the team name for sports campaign personalization", () => {
+    expect(contactMergeVars({
+      subjectName: "Toronto Sceptres",
+      organization: "Toronto Sceptres / Professional Women's Hockey League",
+    })).toMatchObject({
+      subjectName: "Toronto Sceptres",
+      organization: "Toronto Sceptres",
+    });
   });
 
   it("sends through Resend with reply-to and one-click unsubscribe headers", async () => {

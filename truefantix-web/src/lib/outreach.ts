@@ -37,7 +37,17 @@ export function emailFromUnsubscribeToken(token: string) {
 export function unsubscribeUrl(email: string) { return `${outreachOrigin()}/unsubscribe/outreach?token=${encodeURIComponent(unsubscribeToken(email))}`; }
 export function contactMergeVars(contact: { contactName?: string | null; subjectName?: string | null; organization?: string | null; role?: string | null; email?: string | null }) {
   const firstName = (contact.contactName || "").trim().split(/\s+/)[0] || "there";
-  return { firstName, contactName: contact.contactName || "", subjectName: contact.subjectName || "", organization: contact.organization || "", role: contact.role || "", email: contact.email || "" };
+  const subjectName = contact.subjectName || "";
+  return {
+    firstName,
+    contactName: contact.contactName || "",
+    subjectName,
+    // Sports imports may identify a league or venue as the contact's employer.
+    // Campaigns are addressed to the team/artist itself, which is subjectName.
+    organization: subjectName || contact.organization || "",
+    role: contact.role || "",
+    email: contact.email || "",
+  };
 }
 export function renderMerge(value: string, vars: Record<string, string | null | undefined>) {
   return value.replace(/{{\s*([a-zA-Z][\w]*)\s*}}/g, (_match, key) => vars[key] || "");

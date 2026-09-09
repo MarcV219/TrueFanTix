@@ -1307,10 +1307,9 @@ export default function OutreachPage() {
                       />
                     </td>
                     <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
-                      <strong>{c.organization || c.subjectName || "—"}</strong>
+                      <strong>{c.subjectName || c.organization || "—"}</strong>
                       <br />
                       <span style={{ opacity: 0.7 }}>
-                        {c.subjectName !== c.organization ? c.subjectName : ""}{" "}
                         {[c.league, c.city, c.region]
                           .filter(Boolean)
                           .join(" · ") || c.category}
@@ -1537,8 +1536,8 @@ export default function OutreachPage() {
             >
               <strong>
                 Communication timeline —{" "}
-                {timeline.organization ||
-                  timeline.subjectName ||
+                {timeline.subjectName ||
+                  timeline.organization ||
                   timeline.email}
               </strong>
               <button style={button} onClick={() => setTimeline(null)}>
@@ -1635,7 +1634,7 @@ export default function OutreachPage() {
           >
           <div onClick={(event) => event.stopPropagation()} style={{ ...dialogPanel, padding: 14, border: "1px solid #86efac", borderRadius: 9, background: "#f0fdf4" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <strong>Add communication — {communicationContact.organization || communicationContact.subjectName || communicationContact.email}</strong>
+              <strong>Add communication — {communicationContact.subjectName || communicationContact.organization || communicationContact.email}</strong>
               <button style={button} onClick={() => setCommunicationContact(null)}>Cancel</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginTop: 12 }}>
@@ -1938,8 +1937,8 @@ export default function OutreachPage() {
                       {recipient.contact.contactName || "Departmental contact"}
                     </strong>{" "}
                     ·{" "}
-                    {recipient.contact.organization ||
-                      recipient.contact.subjectName ||
+                    {recipient.contact.subjectName ||
+                      recipient.contact.organization ||
                       "No organization"}
                     <br />
                     <span style={{ fontSize: 13 }}>
