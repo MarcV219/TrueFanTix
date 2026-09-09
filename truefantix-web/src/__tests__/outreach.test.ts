@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
-import { contactMergeVars, defaultOutreachFollowUpAt, emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
+import { contactMergeVars, defaultOutreachFollowUpAt, emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, renderMerge, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
 import { completeQuebecCollaborationHtml, outreachHtmlDocument, outreachHtmlToText, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 
@@ -50,6 +50,16 @@ describe("outreach security and personalization", () => {
       subjectName: "Toronto Sceptres",
       organization: "Toronto Sceptres",
     });
+  });
+
+  it("renders organization possessives correctly for every team name", () => {
+    const template = "Support {{organization}}’s fans and {{organization}}'s members";
+    expect(renderMerge(template, { organization: "Boston Fleet" })).toBe(
+      "Support Boston Fleet’s fans and Boston Fleet’s members",
+    );
+    expect(renderMerge(template, { organization: "Toronto Sceptres" })).toBe(
+      "Support Toronto Sceptres’ fans and Toronto Sceptres’ members",
+    );
   });
 
   it("sends through Resend with reply-to and one-click unsubscribe headers", async () => {

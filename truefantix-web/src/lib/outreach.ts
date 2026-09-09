@@ -50,5 +50,13 @@ export function contactMergeVars(contact: { contactName?: string | null; subject
   };
 }
 export function renderMerge(value: string, vars: Record<string, string | null | undefined>) {
-  return value.replace(/{{\s*([a-zA-Z][\w]*)\s*}}/g, (_match, key) => vars[key] || "");
+  const organization = String(vars.organization || "").trim();
+  const organizationPossessive = organization
+    ? `${organization}${/s$/i.test(organization) ? "’" : "’s"}`
+    : "";
+  return value
+    // Existing templates use {{organization}}’s. Resolve the complete phrase
+    // first so names ending in s become "Sceptres’", not "Sceptres’s".
+    .replace(/{{\s*organization\s*}}(?:’s|'s)/gi, organizationPossessive)
+    .replace(/{{\s*([a-zA-Z][\w]*)\s*}}/g, (_match, key) => vars[key] || "");
 }
