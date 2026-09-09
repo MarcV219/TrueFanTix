@@ -14,6 +14,15 @@ const SPORT_CATEGORIES: Record<string, string[]> = {
   SPORTS_COLLEGE_OTHER: ["U Sports"],
 };
 const NON_SPORT_CATEGORIES = new Set(["ARTIST", "TEST_CONTACT"]);
+function categoryWhere(category: string) {
+  if (category === "SPORTS_HOCKEY") return { category: "SPORTS_HOCKEY" };
+  if (SPORT_CATEGORIES[category]) return { league: { in: SPORT_CATEGORIES[category] } };
+  if (category === "SPORTS_OTHER") return {
+    category: { startsWith: "SPORTS_" },
+    OR: [{ league: null }, { league: { notIn: Object.values(SPORT_CATEGORIES).flat() } }],
+  };
+  return category ? { category } : {};
+}
 export async function GET(req: Request) {
   const gate = await requireAdmin(req); if (!gate.ok) return gate.res;
   const url = new URL(req.url); const q = (url.searchParams.get("q") || "").trim(); const category = url.searchParams.get("category") || "";
@@ -21,15 +30,9 @@ export async function GET(req: Request) {
   const email = url.searchParams.get("email") || ""; const researchStatus = url.searchParams.get("researchStatus") || "";
   const relationship = url.searchParams.get("relationship") || "";
   const sendable = url.searchParams.get("sendable"); const page = Math.max(1, Number(url.searchParams.get("page")) || 1); const take = Math.min(100, Math.max(10, Number(url.searchParams.get("take")) || 50));
-  const where: any = {};
+  const selectedCategoryWhere: any = categoryWhere(category);
+  const where: any = category ? { AND: [selectedCategoryWhere] } : {};
   if (q) where.OR = ["organization", "subjectName", "contactName", "role", "email"].map((field) => ({ [field]: { contains: q, mode: "insensitive" } }));
-  if (SPORT_CATEGORIES[category]) where.AND = [{ league: { in: SPORT_CATEGORIES[category] } }];
-  else if (category === "SPORTS_OTHER") {
-    where.AND = [
-      { category: { startsWith: "SPORTS_" } },
-      { OR: [{ league: null }, { league: { notIn: Object.values(SPORT_CATEGORIES).flat() } }] },
-    ];
-  } else if (category) where.category = category;
   if (league) where.AND = [...(where.AND || []), { league }];
   if (city) where.city = city;
   if (team) where.subjectName = team;
@@ -38,11 +41,12 @@ export async function GET(req: Request) {
   if (sendable === "true") { where.email = { not: null }; where.normalizedEmail = { not: null }; where.unsubscribedAt = null; where.consentBasis = { not: "UNASSESSED" }; where.sourceUrl = { not: null }; }
   if (email === "yes") where.email = { not: null };
   if (email === "no") where.email = null;
-  const [items, count, totalCount, categories, leagues, cities, teams, researchStatuses, relationships, suppressions] = await prisma.$transaction([
+  const [items, count, totalCount, categories, leagues, allLeagues, cities, teams, researchStatuses, relationships, suppressions] = await prisma.$transaction([
     prisma.outreachContact.findMany({ where, orderBy: [{ lastContactedAt: "asc" }, { organization: "asc" }], skip: (page - 1) * take, take }),
     prisma.outreachContact.count({ where }),
     prisma.outreachContact.count(),
     prisma.outreachContact.groupBy({ by: ["category"], _count: { _all: true }, orderBy: { category: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["league"], where: { AND: [selectedCategoryWhere, { league: { not: null } }] }, _count: { _all: true }, orderBy: { league: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["league"], where: { league: { not: null } }, _count: { _all: true }, orderBy: { league: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["city"], where: { city: { not: null } }, _count: { _all: true }, orderBy: { city: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["subjectName"], where: { subjectName: { not: null } }, _count: { _all: true }, orderBy: { subjectName: "asc" } }),
@@ -55,10 +59,13 @@ export async function GET(req: Request) {
     typeof item._count === "object" ? item._count._all || 0 : 0;
   const rawCategoryCounts = Object.fromEntries(categories.map((x) => [x.category, groupedCount(x)]));
   const leagueCounts = Object.fromEntries(leagues.filter((x) => x.league).map((x) => [x.league!, groupedCount(x)]));
+  const allLeagueCounts = Object.fromEntries(allLeagues.filter((x) => x.league).map((x) => [x.league!, groupedCount(x)]));
   const sportCategoryCounts = Object.fromEntries(
     Object.entries(SPORT_CATEGORIES).map(([sport, sportLeagues]) => [
       sport,
-      sportLeagues.reduce((sum, sportLeague) => sum + (leagueCounts[sportLeague] || 0), 0),
+      sport === "SPORTS_HOCKEY"
+        ? rawCategoryCounts.SPORTS_HOCKEY || 0
+        : sportLeagues.reduce((sum, sportLeague) => sum + (allLeagueCounts[sportLeague] || 0), 0),
     ]),
   );
   const knownSportCount = Object.values(sportCategoryCounts).reduce((sum, value) => sum + value, 0);

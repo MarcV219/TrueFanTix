@@ -1135,7 +1135,10 @@ export default function OutreachPage() {
           <select
             style={field}
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            onChange={(e) => {
+              setCategory(e.target.value);
+              setLeague("");
+            }}
           >
             <option value="">All categories ({totalCount.toLocaleString()})</option>
             {categories.map((x) => (
