@@ -22,6 +22,18 @@ function parseCsv(input: string) {
 function date(value: string) { if (!value) return null; const parsed = new Date(`${value}T00:00:00Z`); return Number.isNaN(parsed.getTime()) ? null : parsed; }
 function value(input: string | undefined) { return input?.trim() || null; }
 function key(parts: Array<string | null | undefined>) { return crypto.createHash("sha256").update(parts.map((x) => (x || "").trim().toLowerCase()).join("\u001f")).digest("hex"); }
+const OFFICIAL_PWHL_NAMES: Record<string, string> = {
+  Detroit: "PWHL Detroit",
+  Hamilton: "PWHL Hamilton",
+  "Las Vegas": "PWHL Las Vegas",
+  "Montreal Victoire": "Montréal Victoire",
+  "Montréal Victoire": "Montréal Victoire",
+  "San Jose": "PWHL San Jose",
+};
+function sportsSubjectName(teamName: string | undefined, league: string | undefined) {
+  const name = value(teamName);
+  return league?.trim().toUpperCase() === "PWHL" && name ? OFFICIAL_PWHL_NAMES[name] || name : name;
+}
 function contactScore(row: { email: string | null; confidence: string | null; researchStatus: string | null; verifiedAt: Date | null; phone: string | null; sourceUrl: string | null; notes: string | null }) {
   return (row.email ? 1_000_000 : 0)
     + (row.confidence === "HIGH" ? 100_000 : row.confidence === "MEDIUM" ? 50_000 : 0)
@@ -46,15 +58,15 @@ async function main() {
     if (!fs.existsSync(source.file)) { console.warn(`Skipping missing ${source.file}`); continue; }
     const rows = parseCsv(fs.readFileSync(source.file, "utf8"));
     const mappedRows = rows.map((row) => {
-        const isArtist = source.kind === "artist"; const organization = value(row.organization) || (isArtist ? null : value(row.team)); const subjectName = isArtist ? value(row.artist) : value(row.team);
+        const isArtist = source.kind === "artist"; const organization = value(row.organization) || (isArtist ? null : value(row.team)); const rawSubjectName = isArtist ? value(row.artist) : value(row.team); const subjectName = isArtist ? rawSubjectName : sportsSubjectName(row.team, row.league);
         const role = value(row.role) || value(row.title) || value(row.department) || value(row.contact_type); const email = value(row.email); const normalizedEmail = email?.toLowerCase() || null; const sourceUrl = value(row.source_url);
         const contactName = value(row.contact_name);
         // A named person at one subject is one outreach contact. Research upgrades
         // (especially adding an email) must update that contact instead of creating a duplicate.
-        const legacyExternalKey = key([source.namespace, subjectName, organization, contactName, role, email, value(row.phone), sourceUrl]);
-        const accidentalExternalKey = key([source.namespace, subjectName, organization, role, email, value(row.phone), sourceUrl]);
+        const legacyExternalKey = key([source.namespace, rawSubjectName, organization, contactName, role, email, value(row.phone), sourceUrl]);
+        const accidentalExternalKey = key([source.namespace, rawSubjectName, organization, role, email, value(row.phone), sourceUrl]);
         const externalKey = source.kind === "sports" && contactName
-          ? key([source.namespace, subjectName || organization, contactName])
+          ? key([source.namespace, rawSubjectName || organization, contactName])
           : legacyExternalKey;
         if (legacyExternalKey !== externalKey) supersededExternalKeys.add(legacyExternalKey);
         if (accidentalExternalKey !== externalKey) supersededExternalKeys.add(accidentalExternalKey);

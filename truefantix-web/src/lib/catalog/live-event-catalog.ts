@@ -412,10 +412,14 @@ const EXPANDED_PRO_TEAMS: TeamSeed[] = [
 
   // PWHL
   team("Boston Fleet", "PWHL", "Boston", "MA"),
+  team("PWHL Detroit", "PWHL", "Detroit", "MI"),
+  team("PWHL Hamilton", "PWHL", "Hamilton", "ON", "Canada"),
+  team("PWHL Las Vegas", "PWHL", "Las Vegas", "NV"),
   team("Minnesota Frost", "PWHL", "Saint Paul", "MN"),
-  team("Montreal Victoire", "PWHL", "Montreal", "QC", "Canada"),
+  team("Montréal Victoire", "PWHL", "Laval", "QC", "Canada", ["Montreal Victoire"]),
   team("New York Sirens", "PWHL", "Newark", "NJ"),
   team("Ottawa Charge", "PWHL", "Ottawa", "ON", "Canada"),
+  team("PWHL San Jose", "PWHL", "San Jose", "CA"),
   team("Toronto Sceptres", "PWHL", "Toronto", "ON", "Canada", ["Sceptres", "Toronto PWHL"]),
   team("Vancouver Goldeneyes", "PWHL", "Vancouver", "BC", "Canada"),
   team("Seattle Torrent", "PWHL", "Seattle", "WA"),
