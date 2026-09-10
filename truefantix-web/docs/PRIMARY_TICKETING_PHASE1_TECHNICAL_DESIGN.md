@@ -173,16 +173,16 @@ In future payment work, immediately before returning a client secret that can pr
 - The isolated foundation realizes this boundary as scoped `PrimaryPaymentAttempt`, deduplicated `PrimaryPaymentProviderEvent`, and explicit `PrimaryPaymentException` evidence. It creates only unconfirmed Stripe test-mode intents after the local committed transaction and exposes no client secret or checkout route.
 - Webhook success is fail-closed against immutable amount/currency and server-owned order/organizer/event/reservation metadata. A released-inventory late success creates a refund-required exception rather than tickets; terminal failure release requires a signed event explicitly carrying the adapter's terminal guarantee.
 
-**PrimaryRefund**
+**PrimaryRefund (design only)**
 
-- `id`, `orderId`, `status: REQUESTED | PROCESSING | SUCCEEDED | FAILED | CANCELLED`
-- `reason`, `requestedByUserId`, exact amount-component snapshots, `providerRefundId?`, timestamps
-- unique `(providerRefundId)` when present; client idempotency key required
+- `id`, exact organizer/event/order/payment scope, `status: REQUESTED | PROVIDER_PENDING | SUCCEEDED | FAILED | RECONCILIATION_REQUIRED | CANCELLED_BEFORE_PROVIDER`
+- `reason`, `requestedByUserId`, command/allocation digest, immutable item/component snapshots, timestamps
+- provider identifiers live on append-only provider-attempt evidence; globally unique platform request key required
 
 **PrimaryRefundItem**
 
 - `id`, `refundId`, `admissionTicketId`, ticket/fee/tax/refund component amounts, `allocationRemainderRank`
-- unique `(refundId, admissionTicketId)`; a ticket may belong to only one successful refund
+- unique `(refundId, admissionTicketId)`; database guards prevent one ticket/allocation from belonging to overlapping pending or successful refunds
 - every partial refund names the exact admission tickets affected; only those credentials are invalidated
 - ticket-scoped components refund their stored allocation; per-order refundable components are allocated across all tickets at purchase using largest-remainder rules, so refund order cannot change totals and refunding every ticket exactly equals the original refundable amount
 
@@ -337,6 +337,105 @@ Invalid transitions return `409 INVALID_STATE`; all accepted transitions are aud
 - Success is driven by a signed Stripe webhook, not the browser response.
 - A successful full refund invalidates all unscanned order credentials and creates exact reversing ledger entries in one idempotent transaction. Previously checked-in tickets retain their immutable entry history and remain unusable; whether post-entry refunds are permitted is a policy decision.
 - Event cancellation creates refund obligations, not successful-refund entries. Provider-confirmed results settle those obligations individually; pending/failed amounts remain explicit liabilities.
+
+### 4.1 Refund, event-cancellation, and admission-revocation design gate
+
+This section is a design contract only. It authorizes no schema, migration, provider call, route, ledger posting, or credential mutation. Implementation remains blocked until Marc, legal, accounting, and operations decide the items identified below.
+
+#### Proposed records and immutable boundaries
+
+- `PrimaryRefund`: one buyer, staff, cancellation, chargeback, or reconciliation request scoped to the exact organizer/event/order/payment attempt. Proposed states are `REQUESTED -> PROVIDER_PENDING -> SUCCEEDED | FAILED | RECONCILIATION_REQUIRED`; `REQUESTED -> CANCELLED_BEFORE_PROVIDER` is allowed only before any provider request. No terminal state returns to a prior state.
+- `PrimaryRefundProviderAttempt`: append-only provider request evidence with its own platform-derived idempotency key, expected amount/currency, provider refund ID when attached, request time, last verified provider state, and terminal evidence. A failed attempt is never overwritten; an explicitly authorized retry creates a new attempt under the same refund.
+- `PrimaryRefundItem`: immutable exact ticket selection. A full-order refund materializes every refundable ticket as an item rather than relying on an order-level boolean. A ticket cannot participate in more than one pending or successful refund allocation for the same captured funds.
+- `PrimaryRefundAllocation`: immutable per-item, per-purchase-component allocation containing component ID/code/kind, original allocated minor units, requested refundable minor units, currency, remainder rank, and policy/version evidence. Refund calculations never consult mutable current pricing.
+- `PrimaryEventCancellation`: one event-scoped cancellation decision with requested/activated times, actor, non-empty reason, policy version, and states `REQUESTED -> ACTIVE -> REFUNDING -> RESOLVED | RECONCILIATION_REQUIRED`. Activation and financial resolution are distinct facts.
+- `PrimaryRefundObligation`: append-only liability created by cancellation, late-success exception, chargeback resolution, or another reviewed cause. Proposed states are `OPEN -> REFUND_LINKED -> SATISFIED | WAIVED_WITH_APPROVAL | RECONCILIATION_REQUIRED`. Only a provider-confirmed refund can satisfy a cash-refund obligation.
+- `PrimaryAdmissionRevocation`: append-only evidence naming the exact ticket/credential, cause, actor/system source, reason/policy reference, refund/cancellation link, and effective time. Entitlement and credential scope remain immutable; revocation is never represented by deleting or rewriting issuance or scan evidence.
+- Provider events, refund attempts, allocations, obligations, revocations, and audit evidence are append-only. Mutable aggregate status fields may move only through explicit database-enforced transitions. Composite keys must bind every child to the same organizer, event, order, payment attempt, ticket, credential, buyer, amount, and currency scope.
+
+#### Refund command and provider state machine
+
+1. A request names either the complete paid order or an explicit non-empty set of its admission-ticket IDs. The service reloads current actor and financial state, locks organizer -> event -> order -> payment attempt -> ordered tickets -> any existing refund items, and calculates the command solely from immutable snapshots.
+2. One serializable local transaction validates eligibility, reserves a globally unique platform request key, materializes exact items/allocations, changes eligible tickets to `REFUND_PENDING`, makes their credentials unusable, creates revocation plus audit/outbox evidence, and commits. No Stripe call occurs before this commit.
+3. `REFUND_PENDING` is fail-closed for admission. A provider failure or ambiguous result does not restore the prior credential. It moves the refund/ticket to reviewed exception handling; any future restoration requires an independently reviewed reissue design and a new credential, never resurrection of the revoked credential.
+4. After local commit, the adapter creates or retrieves a Stripe test-mode refund using a platform-owned key bound to refund ID, payment intent/charge, amount, currency, selected items, allocation digest, and attempt number. Changed reuse conflicts before provider work.
+5. Browser/provider synchronous responses are advisory. Only a verified signed provider event or an authenticated reconciliation read can move `PROVIDER_PENDING` to `SUCCEEDED`, `FAILED`, or `RECONCILIATION_REQUIRED`.
+6. Success atomically confirms exact provider ID, amount, currency, original payment, order, and refund metadata; marks items/tickets `REFUNDED`; satisfies linked obligations; and writes revocation/audit/outbox evidence. Mismatch fails closed to reconciliation and does not claim cash reversal.
+7. A provider-declared failure preserves the failed attempt and revoked/pending admission state. A retry is a new provider-attempt row with a new derived key after explicit authorization; it cannot alter allocations or selected tickets.
+8. Duplicate, reordered, changed-content, or late provider events use durable provider-event identity plus payload/material digest. Exact replay is a no-op; changed-content reuse conflicts. A late success after local failure still completes the same refund exactly once. A late failure after success is retained as contradictory provider evidence and escalates without reversing success.
+9. Partial provider success is not inferred. If Stripe cannot atomically refund the exact requested amount, the refund remains pending/reconciliation-required and any subsequent request is another immutable attempt. Local items are not partially marked from an unverified aggregate response.
+
+#### Exact allocation and rounding
+
+- Before refund implementation, every immutable purchase component must have a reviewed `refundable` disposition and policy version. The current `FACE_VALUE`, `MANDATORY_FEE`, and `TAX` names do not by themselves decide refundability, tax treatment, or who bears the reversal.
+- At purchase snapshot time, each component's integer minor units are allocated across ticket units deterministically: quotient to every unit, then one remainder unit in stable `(orderLineId, unitNumber, componentId)` order. The stored per-ticket allocations must sum exactly to the original component and gross order totals.
+- A ticket-level refund is the sum of that ticket's stored refundable allocations. A full-order refund is the sum across the materialized ticket set. Selection order and refund timing cannot change amounts, and refunding every ticket exactly equals the original refundable total.
+- Currency is inherited from the immutable order and must match provider currency. No floating point, recomputation from current prices, client totals, or cross-currency refund is permitted.
+- Previously refunded/pending allocations are subtracted by exact component identity under lock. Requested cumulative refunds must never exceed captured gross or any original component allocation.
+- Processor fees, non-refundable fees, tax adjustments, goodwill payments, chargebacks, and post-entry exceptions require distinct typed allocations. They must not be hidden by modifying face value or rounding residue.
+
+#### Admission-ticket rules
+
+- `ISSUED`: eligible under the approved refund policy. Local request atomically enters `REFUND_PENDING` and revokes the credential before the provider call; provider success enters terminal `REFUNDED`.
+- `VOIDED`: voiding is not proof of cash refund. The ticket may be selected only if its captured allocation has not already been refunded and the void reason is compatible with the approved policy. Existing void/revocation evidence is preserved and the refund creates separate financial evidence.
+- `CHECKED_IN`: ordinary buyer and organizer refunds fail closed. The accepted scan is immutable and admission is never undone. Whether any post-entry cash refund is allowed, who may approve it, and whether organizer or platform bears it is a mandatory policy decision. Until approved, the design creates `POLICY_REVIEW_REQUIRED`/obligation evidence only and makes no provider request.
+- `REFUND_PENDING`, `REFUNDED`, or a reconciliation exception: cannot be selected by another ordinary request. Exact command replay returns the original record; changed selection/amount/scope conflicts.
+- No refund transition restores `ISSUED`, deletes an accepted scan, or makes a revoked credential usable. Transfer/reissue interactions remain a separate design gate.
+
+#### Event cancellation and inventory policy
+
+- Cancellation activation is one serialized event-level transaction with a non-empty reason. It closes future sales/holds, prevents new payment attempts, marks all unscanned usable credentials refund-pending/unusable, records revocations, creates exact per-order/ticket refund obligations, and emits protected audit/outbox evidence. It does not claim that provider cash was refunded.
+- Existing `CHECKED_IN` tickets and accepted scans remain immutable. They receive separately classified post-entry liability/policy-review evidence; no automatic refund is requested until the checked-in policy and cost bearer are approved.
+- Each obligation progresses independently through a linked refund. Event cancellation reaches `RESOLVED` only when every obligation is satisfied or explicitly waived under approved authority; pending, failed, ambiguous, chargeback, and negative-balance amounts remain visible.
+- `HELD` inventory may be released when cancellation activation makes sale impossible. `PAYMENT_COMMITTED` inventory follows the payment reconciliation rules and is never released merely because cancellation was requested. Paid/refunded ticket inventory does not automatically return to availability.
+- Returning refunded inventory requires all of: provider-confirmed refund, ticket revocation, event not cancelled, sales window open, ticket type active, policy permitting resale, and a serialized capacity transaction. Default before that policy is approved is **no return to availability**.
+- Postponement, rescheduling, replacement events, and event abandonment are not aliases for cancellation and require later policy/design.
+
+#### Chargebacks, late outcomes, and reconciliation
+
+- A chargeback/dispute is separate provider evidence and liability, not a refund. It does not reuse refund IDs or silently mark tickets refunded. Admission invalidation timing, representment, fee allocation, and cost bearer require approved policy.
+- Refund reconciliation compares local request/attempt/item/allocation state to Stripe by immutable provider IDs and expected totals. Safe missing terminal events may be applied idempotently; mismatches, unreachable provider state, partial provider evidence, or contradictory outcomes enter `RECONCILIATION_REQUIRED` without restoring admission.
+- Late payment success that cannot be fulfilled keeps its existing refund obligation. Creating the refund must bind to that exact exception and cannot issue admission. Late refund success satisfies the obligation exactly once.
+- Operational queues must expose open cancellation liabilities, refund-pending credentials, provider-pending age, failures, ambiguity, chargebacks, checked-in policy reviews, and negative organizer balances. No automatic write-off or reserve draw is inferred.
+
+#### Authorization and reasons
+
+- Buyer self-service may request only the buyer's own eligible tickets under the approved policy. It cannot select checked-in tickets, override amounts, choose currency, or name organizer/provider scope.
+- Organizer `FINANCE` or `OWNER` may request/refile refunds within the same organizer; event cancellation requires `OWNER` plus a separately approved cancellation authority. `BOX_OFFICE` may record a support recommendation but cannot cause cash movement. `EVENT_MANAGER` cannot refund unless separately granted a future explicit permission.
+- Platform `ADMIN` has no implicit organizer-role bypass. A future emergency/support operation must use a distinct platform-authority path, exact tenant scope, non-empty reason, and immutable audit evidence.
+- Current user role, verification, ban state, membership, organizer suspension, and tenant scope are reloaded inside the transaction. Suspension blocks sales but must not block authorized refunds/cancellation resolution for existing buyers.
+- Staff cancellation, refund, retry, waiver, reconciliation resolution, post-entry exception, and inventory-return commands require trimmed non-empty reasons and request IDs bound to all material inputs.
+
+#### Audit, privacy, retention, and database controls
+
+- Audit/outbox writes share the state-changing transaction. Payloads contain IDs, typed states, integer amounts/currency, allocation digest, actor type, and reason reference only—never card data, client secrets, raw webhook bodies, bearer credentials, buyer contact data, or arbitrary provider payloads.
+- Provider payloads are reduced after signature verification to an allowlisted material digest and identifiers. Idempotency digests are one-way and bind all material command inputs.
+- Refund financial/evidence rows and admission revocations are append-only; corrections use new attempts, reversal/adjustment evidence, or explicit superseding decisions. Database guards reject cross-tenant children, excess cumulative allocations, invalid transitions, evidence deletion/rewrite, and refund success without matching provider confirmation.
+- Retention must preserve financial, tax, dispute, refund, cancellation, credential-revocation, scan, and audit evidence for approved legal periods while minimizing device/buyer data. Legal hold supersedes ordinary deletion. Exact Canadian retention periods and data-controller responsibilities remain unresolved.
+
+#### Mandatory decisions before implementation
+
+1. Merchant of record and contractual party responsible for consumer refunds.
+2. Refundability and cost bearer for face value, mandatory fees, taxes, processor fees, goodwill, chargebacks, and rounding differences.
+3. Checked-in refund rule, approval authority, fraud controls, and organizer/platform liability.
+4. Cancellation/postponement policy, refund deadlines, attendee choice, organizer indemnity/insurance, and abandoned-event treatment.
+5. Reserve percentage/hold period, reserve draw order, negative-balance collection, payout offset, insolvency exposure, and platform loss limits.
+6. Whether/when provider-confirmed refunded inventory may be resold, including tax/invoice and capacity consequences.
+7. Supported Stripe refund semantics, retry limits, reconciliation service levels, manual exception ownership, and chargeback workflow.
+8. Required notices/consents, jurisdiction, tax-credit documents, accounting recognition, privacy retention, and audit access.
+
+#### Proposed PostgreSQL verification matrix
+
+- Clean migration and positive full-order/ticket-level creation with exact component sums, quotient/remainder boundaries, maximum integer values, and refund-all-tickets reconciliation.
+- Concurrent overlapping partial/full requests: only one claim per ticket/allocation; exact replay returns one record; changed item/amount/scope/reason/provider-attempt reuse conflicts with no residue.
+- Direct cross-organizer/event/order/payment/ticket/credential/buyer/currency inserts and cumulative over-refunds fail by composite constraints/guards.
+- `ISSUED`, `VOIDED`, `CHECKED_IN`, already-pending, refunded, payment-exception, late-success, and mismatched-provider eligibility cases; checked-in requests make no provider call.
+- Injected audit/outbox/revocation/allocation failure rolls back local refund reservation, ticket state, credentials, obligations, and all evidence together; provider adapter is not called.
+- Provider success/failure/ambiguity, duplicate/reordered/changed-payload events, attachment races, late success after failure, contradictory late failure, wrong amount/currency/payment/order metadata, and reconciliation repair.
+- Event-cancellation concurrency creates one activation and exact obligations once; credentials become unusable atomically; checked-in history survives; no cash reversal exists before provider confirmation.
+- Inventory tests prove holds close on cancellation, committed payment is not blindly released, refunded inventory defaults unavailable, and any future approved return is serialized against capacity.
+- Direct UPDATE/DELETE/invalid-transition tests for refund, attempt, item, allocation, obligation, revocation, provider-event, ticket, and audit evidence.
+- Authorization tests cover buyer ownership, organizer roles, stale roles, unverified/banned actors, revoked membership, tenant/event mismatch, suspension behavior, required reasons, and platform-admin no-bypass.
 
 ### Settlement
 

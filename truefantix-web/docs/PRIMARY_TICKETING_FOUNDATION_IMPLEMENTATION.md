@@ -196,6 +196,12 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 
 ## Risks and open decisions
 
+### Refund, cancellation, and revocation design gate
+
+- The documentation-only design revision in `PRIMARY_TICKETING_PHASE1_TECHNICAL_DESIGN.md` now defines proposed refund/provider/cancellation/obligation/revocation states, exact ticket-component allocation, fail-closed credential handling, event-cancellation liabilities, inventory-return prerequisites, authorization/reason controls, privacy/database requirements, and a PostgreSQL verification matrix.
+- No refund schema, migration, service, Stripe refund call, ledger entry, route, UI, or runtime behavior is implemented by this revision.
+- Implementation remains blocked on merchant-of-record responsibility, refundable component/tax/processor-fee policy, checked-in refunds, cancellation/insurance obligations, reserves and negative balances, inventory resale, chargebacks, accounting/tax documentation, privacy retention, and operational reconciliation ownership.
+
 - The preflight depends on explicit environment configuration and database naming. Deployment configuration remains intentionally absent until an isolated preview is separately authorized.
 - Event authoring remains pre-publication only. Event publication, discoverability, purchasability, DST-to-instant resolution, ticketing, and operational venue normalization remain deferred.
 - Audit snapshots use a deliberately small allowlist. Each later domain must explicitly add safe fields rather than persisting arbitrary request objects.
