@@ -8,6 +8,8 @@
 
 **Scope:** Small Canadian independent, general-admission events in an isolated test environment
 
+**Revision:** 2 — incorporates review findings 1–12; foundation implementation remains unauthorized pending re-review
+
 ## 1. Purpose and non-negotiable boundaries
 
 This design adds a modular primary-ticketing system without changing the meaning of TrueFanTix's existing secondary-marketplace `Ticket`, `Order`, `OrderItem`, `Payment`, `Payout`, or `Seller` records.
@@ -84,6 +86,14 @@ All monetary values are integer minor units with an ISO currency code. All mutab
 
 - `id`, `organizerId`, `emailNormalized`, `role`, `tokenHash`, `expiresAt`, `acceptedAt?`, `revokedAt?`
 - unique active invitation enforced transactionally
+- acceptance requires an authenticated user whose verified normalized email equals `emailNormalized`; possessing or forwarding the token alone never grants membership
+
+**PrimaryEventStaffAssignment**
+
+- `id`, `eventId`, `membershipId`, `status: ACTIVE | REVOKED`, `assignedByUserId`, `assignedAt`, `revokedByUserId?`, `revokedAt?`, `revocationReason?`
+- unique `(eventId, membershipId)`; an assignment must reference a membership belonging to the event's organizer
+- `OWNER` memberships and platform `ADMIN` users bypass event assignment checks but remain audited; every other operational role requires an active assignment for event-scoped access
+- only `OWNER` may assign/revoke staff by default; `EVENT_MANAGER` may do so only if a later explicit permission is approved
 
 ### 3.2 Event and inventory domains
 
@@ -105,16 +115,30 @@ All monetary values are integer minor units with an ISO currency code. All mutab
 
 - `id`, `eventId`, `name`, `description?`, `inventoryLimit`, `perOrderLimit`, `perBuyerLimit?`
 - `salesStartAt`, `salesEndAt`, `status: DRAFT | ACTIVE | PAUSED | SALES_CLOSED`
-- price snapshot inputs: `basePriceCents`, `mandatoryFeeCents`, `currency`, `taxPolicyRef?`
+- price input: `basePriceCents`, `currency`, `priceScheduleVersion`
 - invariant: sum of ticket-type inventory limits cannot exceed event capacity
+
+**PrimaryPriceComponentRule**
+
+- `id`, `ticketTypeId`, `code`, `label`, `kind: BASE_PRICE | MANDATORY_FEE | GOVERNMENT_TAX`, `calculation: FIXED_PER_TICKET | FIXED_PER_ORDER | PERCENTAGE`, `value`, `includedInDisplayedPrice`, `refundable`, `priority`, `effectiveAt`, `expiresAt?`
+- percentage values use integer basis points; fixed values use integer minor units
+- Phase 1 supports fixed per-ticket and fixed per-order mandatory fees plus exclusive percentage/fixed taxes; tax-inclusive pricing, compound/multiple taxes, waived/conditional fees, discounts, donations, add-ons, and buyer-specific pricing are prohibited unless this design is reviewed again
+- quote calculation allocates per-order components deterministically across lines/tickets using largest-remainder allocation, with stable ticket ordering as the tie-breaker, so allocated minor units always sum exactly to the order component
+
+**PrimaryOrderPriceComponent** and **PrimaryOrderLinePriceComponent**
+
+- immutable quote snapshots: `id`, order/order-line reference, source rule/version, code, label, kind, calculation basis, quantity/basis points, amount, currency, refundable, allocation method
+- unique business keys prevent duplicate snapshots; these rows, rather than current pricing rules, are authoritative for charge, refund, ledger, and reporting calculations
 
 **PrimaryInventoryReservation**
 
-- `id`, `eventId`, `ticketTypeId`, `buyerUserId`, `quantity`, `status: ACTIVE | CONSUMED | EXPIRED | RELEASED`
-- `expiresAt`, `consumedAt?`, `releasedAt?`, `checkoutKey`
+- `id`, `eventId`, `ticketTypeId`, `buyerUserId`, `quantity`, `status: ACTIVE | PAYMENT_COMMITTED | CONSUMED | EXPIRED | RELEASED | EXCEPTION`
+- `expiresAt`, `paymentCommittedAt?`, `paymentResolutionDeadline?`, `consumedAt?`, `releasedAt?`, `exceptionReason?`, `checkoutKey`
 - unique `checkoutKey`; index `(ticketTypeId, status, expiresAt)`
 
-Capacity is not represented by one mutable counter alone. Availability is calculated/locked transactionally from sold quantity plus active, unexpired reservations. PostgreSQL row locking or a serializable transaction locks the `PrimaryTicketType` and `PrimaryEvent` capacity rows before creating a reservation. The transaction rejects any result exceeding either ticket-type inventory or total event capacity.
+Capacity is not represented by one mutable counter alone. Availability is calculated/locked transactionally from sold quantity plus unexpired `ACTIVE` reservations plus every `PAYMENT_COMMITTED` reservation. PostgreSQL row locking or a serializable transaction locks the `PrimaryTicketType` and `PrimaryEvent` capacity rows before creating or committing a reservation. The transaction rejects any result exceeding either ticket-type inventory or total event capacity.
+
+Immediately before returning a client secret that can produce a delayed success, the server atomically changes `ACTIVE -> PAYMENT_COMMITTED` and sets a controlled resolution deadline. A normal expiry worker can expire only `ACTIVE` reservations; it must never release `PAYMENT_COMMITTED` inventory. Payment-committed inventory remains unavailable until a verified terminal provider outcome releases/consumes it or a reconciliation worker proves the PaymentIntent terminal/cancelled after the resolution deadline. Uncertain provider state moves the reservation to `EXCEPTION`, keeps capacity held, and alerts operations.
 
 ### 3.3 Order domain
 
@@ -123,7 +147,7 @@ Capacity is not represented by one mutable counter alone. Availability is calcul
 - `id`, `organizerId`, `eventId`, `buyerUserId`, `reservationId`
 - `status: PENDING_PAYMENT | PAYMENT_PROCESSING | PAID | FULFILLED | CANCELLATION_PENDING | CANCELLED | PARTIALLY_REFUNDED | REFUNDED | PAYMENT_FAILED`
 - `idempotencyKey`, `currency`
-- immutable amount snapshots: `ticketSubtotalCents`, `mandatoryFeeCents`, `taxCents`, `totalCents`, `organizerProceedsCents`, `platformRevenueCents`, `processorFeeEstimateCents?`
+- immutable amount snapshots: `ticketSubtotalCents`, `mandatoryFeeCents`, `taxCents`, `grossCapturedCents`, `grossOrganizerRevenueCents`, `grossPlatformRevenueCents`, `processorFeeCents?`, `reserveHeldCents`, `netOrganizerPayableCents`
 - `taxJurisdiction?`, `taxCalculationRef?`, `paidAt?`, `fulfilledAt?`, `cancelledAt?`
 - unique `idempotencyKey`, unique `reservationId`
 
@@ -140,8 +164,15 @@ Capacity is not represented by one mutable counter alone. Availability is calcul
 **PrimaryRefund**
 
 - `id`, `orderId`, `status: REQUESTED | PROCESSING | SUCCEEDED | FAILED | CANCELLED`
-- `reason`, `requestedByUserId`, amount component snapshots, `providerRefundId?`, timestamps
+- `reason`, `requestedByUserId`, exact amount-component snapshots, `providerRefundId?`, timestamps
 - unique `(providerRefundId)` when present; client idempotency key required
+
+**PrimaryRefundItem**
+
+- `id`, `refundId`, `admissionTicketId`, ticket/fee/tax/refund component amounts, `allocationRemainderRank`
+- unique `(refundId, admissionTicketId)`; a ticket may belong to only one successful refund
+- every partial refund names the exact admission tickets affected; only those credentials are invalidated
+- ticket-scoped components refund their stored allocation; per-order refundable components are allocated across all tickets at purchase using largest-remainder rules, so refund order cannot change totals and refunding every ticket exactly equals the original refundable amount
 
 **PrimaryWebhookDelivery**
 
@@ -172,6 +203,7 @@ This is the durable entitlement. It is deliberately not the existing secondary `
 
 - `id`, `admissionTicketId`, `fromUserId`, `recipientEmailNormalized`, `toUserId?`
 - `status: PENDING | ACCEPTED | EXPIRED | CANCELLED`, `tokenHash`, timestamps
+- acceptance requires authentication and a verified normalized account email matching `recipientEmailNormalized`; a forwarded token cannot change ownership
 
 **AdmissionScan**
 
@@ -182,8 +214,9 @@ This is the durable entitlement. It is deliberately not the existing secondary `
 
 **PrimaryScannerDevice**
 
-- `id`, `organizerId`, `label`, `publicDeviceId`, `status`, `lastSeenAt?`
-- device metadata only; no claim of offline trust
+- `id`, `organizerId`, `label`, `publicDeviceId`, `status: OBSERVED | REVOKED`, `firstSeenAt`, `lastSeenAt?`, `revokedAt?`, `revokedByUserId?`
+- Phase 1 device IDs are telemetry only, never credentials. User session authentication, role, event assignment, CSRF/origin controls, and short scanner-session expiry provide authorization.
+- Prototype enrollment means an authorized user names the observed browser/device; revocation blocks that device identifier but does not replace revoking the user/session. Strong device attestation is deferred and must not be claimed.
 
 ### 3.5 Settlement, reporting, and audit domains
 
@@ -211,13 +244,15 @@ This is the durable entitlement. It is deliberately not the existing secondary `
 
 ```text
 User ──< OrganizerMembership >── PrimaryOrganizer ──< PrimaryEvent ──< PrimaryTicketType
-                                      │                  │                    │
+              │                       │                  │                    │
+              └──< EventStaffAssignment >───────────────┤                    ├──< PriceComponentRule
                                       └──< PrimaryVenue  └──< Reservation >──┘
                                                             │
 User (buyer) ──< PrimaryOrder ──< PrimaryOrderLine ──< PrimaryAdmissionTicket
                        │                                      │
                        ├── PrimaryPayment                     ├──< AdmissionCredential
-                       ├──< PrimaryRefund                     ├──< AdmissionTransfer
+                       ├──< PrimaryRefund ──< RefundItem >────┤
+                       │                                     ├──< AdmissionTransfer
                        └──< OrganizerLedgerEntry              └──< AdmissionScan
 ```
 
@@ -231,25 +266,33 @@ Invalid transitions return `409 INVALID_STATE`; all accepted transitions are aud
 
 - Admin may send `UNDER_REVIEW -> REJECTED` or `APPROVED -> SUSPENDED`.
 - Applicant may revise `REJECTED -> DRAFT`.
-- Only approved organizers may submit events, and suspension blocks new sales and sensitive organizer operations.
+- Only approved organizers may submit events.
+- Organizer suspension immediately blocks new event submission/publication, new reservations/sales, staff invitations, and organizer-initiated profile/payment changes. It does not cancel events or invalidate tickets.
+- Existing buyers retain ticket/credential access; valid approved events continue scanning; finance/support roles and platform admins can process refunds and buyer support. A separate explicit event suspension/cancellation control is required to stop admission. Emergency platform controls must record which scope was affected and why.
 
 ### Event
 
 `DRAFT -> IN_REVIEW -> APPROVED -> PUBLISHED -> SALES_CLOSED -> COMPLETED`
 
 - Admin may return `IN_REVIEW -> DRAFT` with reasons.
-- `CANCELLED` is reachable from `APPROVED`, `PUBLISHED`, or `SALES_CLOSED` and triggers inventory closure, admission invalidation, refund workflow creation, and reversing ledger entries.
+- `CANCELLED` is reachable from `APPROVED`, `PUBLISHED`, or `SALES_CLOSED`. Cancellation immediately closes inventory, invalidates admission, records refund obligations/liabilities, and creates refund workflows. It does **not** record cash refund reversals before provider confirmation.
+- Each provider-confirmed refund creates the corresponding cash/refund reversal entries. Pending and failed obligations remain open and visible in reconciliation until resolved; cancellation completion is not inferred from requested refunds.
 - Publication requires organizer approval, event approval, at least one valid ticket type, coherent sale dates, and inventory not exceeding capacity.
 
 ### Order and reservation
 
-`ACTIVE reservation -> CONSUMED` only when its order reaches `PAID`; otherwise it becomes `EXPIRED` or `RELEASED`.
+`ACTIVE reservation -> PAYMENT_COMMITTED -> CONSUMED` is the successful path.
+
+- `ACTIVE` may become `EXPIRED` or `RELEASED` before a payment-capable attempt begins.
+- `PAYMENT_COMMITTED` continues to consume capacity even after `expiresAt`. Only a verified terminal failure/cancellation can release it.
+- A reconciliation timeout never assumes failure from elapsed time alone. It queries Stripe; ambiguous/unavailable results move to `EXCEPTION` and retain capacity.
+- A delayed success for a committed reservation consumes the held inventory normally. If corrupted state or an invariant violation makes fulfilment impossible, the webhook creates an operational exception and automatic full-refund obligation, issues no credential, and never silently oversells.
 
 `PENDING_PAYMENT -> PAYMENT_PROCESSING -> PAID -> FULFILLED`
 
 - Payment failure returns to `PENDING_PAYMENT` while the reservation is valid, otherwise `PAYMENT_FAILED`.
 - `PAID/FULFILLED -> CANCELLATION_PENDING -> REFUNDED` for a complete refund.
-- Partial ticket refunds produce `PARTIALLY_REFUNDED`; retained tickets and all component totals must reconcile.
+- Partial ticket refunds produce `PARTIALLY_REFUNDED`, identify exact `PrimaryAdmissionTicket` rows through `PrimaryRefundItem`, invalidate only those tickets, and use their purchase-time component allocations. Retained tickets remain active and all component totals must reconcile exactly.
 - Credentials are issued only after a verified, idempotently processed `payment_intent.succeeded` event.
 
 ### Credential and transfer
@@ -259,6 +302,7 @@ Invalid transitions return `409 INVALID_STATE`; all accepted transitions are aud
 - Accepting transfer atomically marks the old credential `SUPERSEDED`, changes ownership, creates the next credential generation, and sets the ticket `TRANSFERRED`.
 - Void/refund atomically invalidates the active credential and marks the entitlement accordingly.
 - No transition restores an invalidated credential. Reissue always creates a new generation.
+- `CHECKED_IN` is terminal for buyer-facing use: transfer, ordinary reissue, and regeneration as an unused ticket are prohibited. A post-entry void/refund may be recorded only by an authorized box-office/finance/admin workflow; it preserves `checkedInAt` and the accepted scan, never creates a usable credential, and records the financial/support outcome separately.
 
 ### Scan
 
@@ -271,7 +315,8 @@ Invalid transitions return `409 INVALID_STATE`; all accepted transitions are aud
 `REQUESTED -> PROCESSING -> SUCCEEDED` or `FAILED`; failed requests can be retried through a new provider attempt while preserving the original record/history.
 
 - Success is driven by a signed Stripe webhook, not the browser response.
-- A successful full refund invalidates all order credentials and creates exact reversing ledger entries in one idempotent transaction.
+- A successful full refund invalidates all unscanned order credentials and creates exact reversing ledger entries in one idempotent transaction. Previously checked-in tickets retain their immutable entry history and remain unusable; whether post-entry refunds are permitted is a policy decision.
+- Event cancellation creates refund obligations, not successful-refund entries. Provider-confirmed results settle those obligations individually; pending/failed amounts remain explicit liabilities.
 
 ### Settlement
 
@@ -324,7 +369,7 @@ Authorization uses deny-by-default service guards and scopes every query by orga
 - `SCANNER`: scan only for explicitly assigned events; no attendee export or financial data.
 - `READ_ONLY`: non-sensitive dashboard/reports only.
 
-`PrimaryEventStaffAssignment` should map membership to specific events for scanner/box-office access. Owner access may span the organizer; all other operational roles should be explicitly constrained.
+`PrimaryEventStaffAssignment` is the required event-scope grant defined in section 3.1. Owner and platform-admin bypasses are explicit and audited; every other operational role requires an active assignment.
 
 Security controls:
 
@@ -338,27 +383,60 @@ Security controls:
 - Audit organizer decisions, permissions, event publication/cancellation, price/inventory changes, refunds, credential lifecycle, scans/overrides, and statement finalization.
 - Add explicit tenant-isolation tests for every organizer-scoped service and route.
 
+### Retention and redaction requirements
+
+Before pilot approval, legal/privacy owners must approve a documented retention schedule. Until then, the preview keeps only synthetic data and uses conservative configurable defaults: rejected scan attempts and token fingerprints 90 days after event completion; IP hashes 30 days; expired/revoked invitation and transfer records 90 days; webhook delivery metadata seven years if classified as a financial audit record, otherwise one year; attendee/order records seven years if legally required for accounting, with non-required personal fields deleted or de-identified earlier.
+
+Raw QR tokens, invitation/transfer bearer tokens, full IP addresses, complete webhook payloads, card data, and secrets are never retained. Audit before/after JSON passes through an allowlist redactor. Retention jobs are idempotent, auditable, tenant-aware, preserve active legal holds, and delete or irreversibly de-identify only the permitted fields. These durations are placeholders, not policy, and must be replaced by approved Canadian legal/privacy requirements before real pilot data.
+
 ## 7. Payment and financial flow proposal
 
-Phase 1 uses Stripe test mode and separate `PRIMARY_STRIPE_*` environment variables. It must not reuse production Stripe objects or silently fall back to existing `STRIPE_*` keys.
+Phase 1 uses Stripe test mode and separate primary Stripe environment variables. It must not reuse production Stripe objects or silently fall back to existing secondary-payment keys.
 
-1. The server quotes an all-in price. The first meaningful displayed price includes base price plus every mandatory non-government fee; taxes are clearly identified separately where permitted/required.
-2. A serializable database transaction creates an expiring reservation and immutable order/line amount snapshots.
-3. The payment adapter creates/reuses one test PaymentIntent using the primary order id and idempotency key.
-4. The dedicated primary webhook verifies its dedicated signature, claims `PrimaryWebhookDelivery`, and processes each provider event once.
-5. `payment_intent.succeeded` validates order, currency, and total, consumes inventory, writes ledger entries, and issues credentials atomically. External email occurs through an idempotent outbox after commit.
-6. Refund requests create local intent first; Stripe test refund success creates reversing ledger entries and invalidates affected credentials idempotently.
-7. Statement preview derives only from ledger entries. No Stripe Transfer or Payout is created.
+### Authoritative retry-safe checkout sequence
 
-Required invariant per order/refund:
+1. **Quote:** the server calculates versioned price components. The first meaningful display includes base price and every mandatory non-government fee; tax is separately identified where required. A quote key makes retries deterministic.
+2. **Reserve and order:** one serializable transaction locks capacity, creates or reuses the ACTIVE reservation, creates or reuses the PENDING_PAYMENT order and immutable line/component snapshots, and binds both to one client checkout idempotency key. A browser disappearing here leaves an expirable ACTIVE reservation.
+3. **Create provider attempt:** the server creates or retrieves exactly one Stripe test PaymentIntent using a provider idempotency key derived from the primary order and attempt number. Before returning its client secret, one transaction verifies the amount, currency, and provider reference and changes the reservation to PAYMENT_COMMITTED and order to PAYMENT_PROCESSING. If provider creation succeeds but the local commit or response fails, a retry retrieves the same PaymentIntent and completes the local transition.
+4. **Client payment:** the browser confirms the PaymentIntent. Browser success or failure is advisory; it never fulfils an order or releases inventory.
+5. **Webhook:** the dedicated endpoint verifies its dedicated signature, claims the provider event, and processes it once. Success validates order, amount, currency, intent, and committed capacity, then atomically consumes inventory, records capture ledger entries, and issues credentials. An idempotent outbox sends receipts after commit.
+6. **Terminal failure/cancellation:** a verified Stripe terminal state returns committed inventory to sale and marks the order failed or cancelled. A retryable state remains committed.
+7. **Abandonment/timeout:** an ACTIVE reservation expires normally. A PAYMENT_COMMITTED reservation is never time-expired blindly. After its resolution deadline, a worker retrieves Stripe state and releases only a proven terminal failure/cancellation, fulfils a proven success, or moves ambiguity to EXCEPTION while retaining capacity and alerting operations.
+8. **Late success:** a delayed success consumes the inventory that remained committed. If corrupted state or an invariant breach makes fulfilment impossible, the system issues no credential and creates an operational exception plus an idempotent automatic full-refund obligation.
+9. **Refund:** the request names exact tickets, creates or reuses a local refund intent from its idempotency key, and calls Stripe with a derived provider key. Only a signed provider-success event posts cash/refund reversals and invalidates the selected credentials.
+10. **Reconciliation:** a scheduled test-only process compares local attempts and deliveries against Stripe, repairs safe missing terminal processing idempotently, and reports every ambiguous order/refund for manual review.
+
+### Financial definitions and invariants
+
+Gross platform revenue means platform fees before processor costs, reserves, chargebacks, refunds, or adjustments. Processor fees are expenses and are never hidden inside platform revenue. Reserve holds are balance-sheet restrictions, not revenue or expense.
 
 ```text
-buyer total = ticket subtotal + mandatory fees + government taxes
-organizer proceeds + platform revenue + tax liability = captured total
-net ledger balance = captures - successful refunds - chargebacks +/- explicit adjustments
+gross captured = ticket subtotal + mandatory fees + government taxes
+gross captured = gross organizer revenue + gross platform revenue + tax liability
+
+net cash after provider activity
+  = gross captured - confirmed refunds - processor fees - chargebacks +/- cash adjustments
+
+net organizer payable
+  = gross organizer revenue
+    - organizer-allocated confirmed refunds
+    - organizer-allocated processor fees
+    - organizer-allocated chargebacks
+    - reserve holds + reserve releases
+    +/- organizer adjustments
+
+net platform position
+  = gross platform revenue
+    - platform-allocated confirmed refunds
+    - platform-allocated processor fees
+    - platform-allocated chargebacks
+    +/- platform adjustments
+
+net cash after provider activity
+  = net organizer payable + reserve balance + net platform position + remaining tax liability
 ```
 
-The precise allocation of processor fees, reserves, tax, platform fees, and chargebacks remains configurable and blocked on business/legal decisions.
+Every equation must reconcile from append-only component ledger entries. Refund obligations created by cancellation are reported separately from confirmed cash refunds. The precise allocation of processor fees, reserves, tax, platform fees, and chargebacks remains configurable and blocked on business/legal decisions.
 
 ## 8. Credential signing and verification
 
@@ -425,7 +503,7 @@ The bridge must never allow a secondary listing to call credential issuance. Int
 ## 11. Concurrency, idempotency, and reconciliation strategy
 
 - Inventory reservation: serializable transaction or explicit `FOR UPDATE` lock on event/ticket type; retry serialization failures with a bounded policy.
-- Reservation expiry: compare database time, conditionally move only `ACTIVE` rows, and make capacity immediately reusable.
+- Reservation expiry: compare database time and expire only `ACTIVE` rows. Never release `PAYMENT_COMMITTED` or `EXCEPTION` capacity without verified provider resolution.
 - Payment/refund webhooks: unique provider event claim plus idempotent domain-operation keys.
 - Credential issuance/rotation: unique ticket-generation keys and conditional invalidation inside one transaction.
 - Scan: conditional `ACTIVE -> CHECKED_IN` update and attempt record in one transaction.
@@ -438,14 +516,22 @@ Before pilot review, automated tests must prove:
 
 - concurrent reservations/checkouts cannot exceed ticket-type or event capacity;
 - expired reservations return inventory;
+- payment-committed inventory cannot expire or be resold while Stripe can still succeed;
+- delayed success consumes committed capacity; impossible fulfilment creates an exception and automatic refund obligation without issuing a credential;
 - Stripe webhook replay changes state and ledger exactly once;
 - first scan succeeds and concurrent/subsequent scans are duplicates;
 - transfer acceptance supersedes the old credential;
+- invitation and transfer acceptance require authenticated control of the matching verified email;
+- checked-in tickets cannot be transferred, reissued, or regenerated as unused;
 - refunded/voided/cancelled credentials fail admission;
 - wrong-event and invalid-signature tokens fail;
 - scanner and box-office staff cannot access unassigned events;
+- device identifiers alone grant no scanner access, and revoked devices/sessions are rejected;
 - Organizer A cannot access Organizer B data through direct IDs or list filters;
+- organizer suspension blocks new sales/publication while preserving buyer ticket access, valid-event scanning, refunds, and support;
 - all mandatory non-government fees are present from the first price display;
+- per-order fee/tax allocation and partial refunds reconcile to exact ticket/component amounts under all rounding cases;
+- event cancellation records liabilities immediately but cash reversals only after provider-confirmed refunds;
 - order, refund, ledger, and statement components reconcile exactly;
 - feature-off primary pages/APIs/webhooks/jobs are unavailable;
 - no primary path accepts secondary `Ticket`/`Order` records;
@@ -454,17 +540,20 @@ Before pilot review, automated tests must prove:
 
 Add service-level integration tests against PostgreSQL for locking/constraints; mocked unit tests alone are insufficient for inventory and scan atomicity. Add a Stripe CLI test-mode replay drill and a manual online scanner drill using two devices.
 
-## 13. Delivery sequence after design approval
+## 13. Deliberately narrow next approval
 
-1. Foundation: feature gate, environment preflight, primary module skeleton, primary audit/outbox conventions.
-2. Organizer administration and tenant-scoped RBAC.
-3. General-admission event/ticket-type management and approval.
-4. Transactional reservations, checkout, test Stripe payments, and ledger writes.
-5. Credential issuance, transfer, invalidation, and QR presentation.
-6. Online scanner, atomic duplicate prevention, and supervised override.
-7. Refund/cancellation workflows, reconciliation, reports, and statement preview.
+Even after this design revision is approved, the next authorization should cover only:
 
-Each milestone requires code, isolated migration, automated tests, update document, preview evidence, risks, open decisions, and exact verification results. No migration should be finalized until this design and the unresolved decisions below are reviewed.
+1. server-side feature gate and environment preflight;
+2. primary module skeleton;
+3. organizer, membership, invitation, and event-assignment models;
+4. tenant authorization guards;
+5. audit and transactional-outbox foundations; and
+6. tests proving feature-off unavailability and cross-tenant denial.
+
+That foundation milestone explicitly excludes event inventory, reservations, checkout, Stripe, credentials, QR generation, transfers, scanning, refunds, ledger/settlement, reports, production migrations, live deployment, and real data. Each excluded domain requires its own implementation review before work begins.
+
+Every authorized milestone requires code, migration limited to the isolated environment, automated tests, update document, preview evidence where applicable, risks, open decisions, and exact verification results. No migration is authorized by this document alone.
 
 ## 14. Decisions required from Marc, legal, accounting, and operations
 
