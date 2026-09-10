@@ -128,6 +128,54 @@ enum VerificationKind {
   PHONE
 }
 
+enum PrimaryOrganizerStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum PrimaryOrganizerPaymentStatus {
+  NOT_STARTED
+  PENDING
+  VERIFIED
+  RESTRICTED
+}
+
+enum PrimaryMembershipRole {
+  OWNER
+  FINANCE
+  EVENT_MANAGER
+  BOX_OFFICE
+  SCANNER
+  READ_ONLY
+}
+
+enum PrimaryMembershipStatus {
+  INVITED
+  ACTIVE
+  REVOKED
+}
+
+enum PrimaryEventStaffAssignmentStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum PrimaryAuditActorType {
+  USER
+  SYSTEM
+}
+
+enum PrimaryOutboxStatus {
+  PENDING
+  PROCESSING
+  DELIVERED
+  FAILED
+}
+
 model User {
   id          String    @id @default(cuid())
   createdAt   DateTime  @default(now())
@@ -240,11 +288,195 @@ model User {
   referralsGiven   Referral[] @relation("Referrer")
   referralReceived Referral?  @relation("Referred")
 
+  // Isolated primary-ticketing foundation.
+  primaryOrganizersCreated         PrimaryOrganizer[]            @relation("PrimaryOrganizerCreatedBy")
+  primaryOrganizersApproved        PrimaryOrganizer[]            @relation("PrimaryOrganizerApprovedBy")
+  primaryOrganizerMemberships      PrimaryOrganizerMembership[]  @relation("PrimaryMembershipUser")
+  primaryMembershipInvitationsSent PrimaryOrganizerMembership[]  @relation("PrimaryMembershipInvitedBy")
+  primaryOrganizerInvitationsSent  PrimaryOrganizerInvitation[]  @relation("PrimaryInvitationInvitedBy")
+  primaryEventAssignmentsMade      PrimaryEventStaffAssignment[] @relation("PrimaryAssignmentAssignedBy")
+  primaryEventAssignmentsRevoked   PrimaryEventStaffAssignment[] @relation("PrimaryAssignmentRevokedBy")
+  primaryAuditEvents               PrimaryAuditEvent[]           @relation("PrimaryAuditActor")
+
   @@index([role])
   @@index([createdAt])
   @@index([acquisitionSource, acquisitionCampaign, createdAt])
   @@index([country, region, city])
   @@index([postalCode])
+}
+
+model PrimaryOrganizer {
+  id                         String                        @id @default(cuid())
+  legalName                  String
+  displayName                String
+  businessNumberEncrypted    String?
+  addressLine1               String
+  addressLine2               String?
+  city                       String
+  region                     String
+  postalCode                 String
+  country                    String
+  supportEmail               String
+  supportPhone               String?
+  website                    String?
+  status                     PrimaryOrganizerStatus        @default(DRAFT)
+  statusReason               String?
+  paymentProvider            String?
+  paymentAccountRefEncrypted String?
+  paymentStatus              PrimaryOrganizerPaymentStatus @default(NOT_STARTED)
+  submittedAt                DateTime?
+  approvedAt                 DateTime?
+  createdAt                  DateTime                      @default(now())
+  updatedAt                  DateTime                      @updatedAt
+
+  createdByUserId  String
+  createdBy        User    @relation("PrimaryOrganizerCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  approvedByUserId String?
+  approvedBy       User?   @relation("PrimaryOrganizerApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  memberships    PrimaryOrganizerMembership[]
+  invitations    PrimaryOrganizerInvitation[]
+  events         PrimaryEvent[]
+  auditEvents    PrimaryAuditEvent[]
+  outboxMessages PrimaryOutboxMessage[]
+
+  @@index([status, createdAt])
+  @@index([createdByUserId])
+}
+
+model PrimaryOrganizerMembership {
+  id          String                  @id @default(cuid())
+  organizerId String
+  userId      String
+  role        PrimaryMembershipRole
+  status      PrimaryMembershipStatus @default(INVITED)
+  invitedAt   DateTime                @default(now())
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  organizer       PrimaryOrganizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  user            User             @relation("PrimaryMembershipUser", fields: [userId], references: [id], onDelete: Restrict)
+  invitedByUserId String
+  invitedBy       User             @relation("PrimaryMembershipInvitedBy", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+
+  eventAssignments PrimaryEventStaffAssignment[]
+
+  @@unique([organizerId, userId])
+  @@unique([id, organizerId])
+  @@index([userId, status])
+  @@index([organizerId, role, status])
+}
+
+model PrimaryOrganizerInvitation {
+  id              String                @id @default(cuid())
+  organizerId     String
+  emailNormalized String
+  role            PrimaryMembershipRole
+  tokenHash       String                @unique
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  organizer       PrimaryOrganizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  invitedByUserId String
+  invitedBy       User             @relation("PrimaryInvitationInvitedBy", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizerId, emailNormalized])
+  @@index([emailNormalized, expiresAt])
+}
+
+// Identity/tenancy shell only. Event authoring and lifecycle fields remain
+// excluded until the dedicated event milestone receives approval.
+model PrimaryEvent {
+  id          String   @id @default(cuid())
+  organizerId String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organizer   PrimaryOrganizer              @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  assignments PrimaryEventStaffAssignment[]
+  auditEvents PrimaryAuditEvent[]
+
+  @@unique([id, organizerId])
+  @@index([organizerId])
+}
+
+model PrimaryEventStaffAssignment {
+  id               String                            @id @default(cuid())
+  eventId          String
+  organizerId      String
+  membershipId     String
+  status           PrimaryEventStaffAssignmentStatus @default(ACTIVE)
+  assignedAt       DateTime                          @default(now())
+  revokedAt        DateTime?
+  revocationReason String?
+  createdAt        DateTime                          @default(now())
+  updatedAt        DateTime                          @updatedAt
+
+  event            PrimaryEvent               @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
+  membership       PrimaryOrganizerMembership @relation(fields: [membershipId, organizerId], references: [id, organizerId], onDelete: Cascade)
+  assignedByUserId String
+  assignedBy       User                       @relation("PrimaryAssignmentAssignedBy", fields: [assignedByUserId], references: [id], onDelete: Restrict)
+  revokedByUserId  String?
+  revokedBy        User?                      @relation("PrimaryAssignmentRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, membershipId])
+  @@index([membershipId, status])
+  @@index([organizerId, eventId, status])
+}
+
+model PrimaryAuditEvent {
+  id          String                @id @default(cuid())
+  organizerId String?
+  eventId     String?
+  actorUserId String?
+  actorType   PrimaryAuditActorType
+  action      String
+  targetType  String
+  targetId    String
+  beforeJson  Json?
+  afterJson   Json?
+  reason      String?
+  requestId   String?
+  ipHash      String?
+  createdAt   DateTime              @default(now())
+
+  organizer PrimaryOrganizer? @relation(fields: [organizerId], references: [id], onDelete: SetNull)
+  event     PrimaryEvent?     @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: SetNull)
+  actor     User?             @relation("PrimaryAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizerId, createdAt])
+  @@index([eventId, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model PrimaryOutboxMessage {
+  id             String              @id @default(cuid())
+  organizerId    String?
+  topic          String
+  aggregateType  String
+  aggregateId    String
+  payloadJson    Json
+  status         PrimaryOutboxStatus @default(PENDING)
+  idempotencyKey String              @unique
+  availableAt    DateTime            @default(now())
+  attempts       Int                 @default(0)
+  processingAt   DateTime?
+  deliveredAt    DateTime?
+  lastError      String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  organizer PrimaryOrganizer? @relation(fields: [organizerId], references: [id], onDelete: SetNull)
+
+  @@index([status, availableAt])
+  @@index([organizerId, createdAt])
+  @@index([aggregateType, aggregateId])
 }
 
 model Seller {

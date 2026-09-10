@@ -8,7 +8,7 @@
 
 **Scope:** Small Canadian independent, general-admission events in an isolated test environment
 
-**Revision:** 2 — incorporates review findings 1–12; foundation implementation remains unauthorized pending re-review
+**Revision:** 2 — incorporates review findings 1–12; approved for the narrow Section 13 foundation milestone
 
 ## 1. Purpose and non-negotiable boundaries
 
