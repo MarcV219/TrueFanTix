@@ -134,6 +134,18 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Migration `20260910160000_add_primary_ga_reservations` adds only the four-state reservation table, positive-quantity/state-metadata constraints, tenant foreign keys, lifecycle indexes, and unique command keys.
 - Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 `primary_ticketing_test` database: all 39 migrations applied and Prisma reported the schema current; all 8 reservation, 7 GA ticket-type, 9 event, and 8 organizer PostgreSQL tests passed; the complete integration-enabled run passed 59 suites / 374 tests; Prisma format/validation/generation, TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and `git diff --check` passed. The disposable database/container was removed afterward.
 
+## Primary Order and Price-Snapshot Foundation
+
+- One provider-free `PrimaryOrder` binds one authenticated buyer and exactly one reservation; the database uniquely enforces one order per reservation. The sole line snapshots ticket-type name, quantity, unit face value, subtotal, and currency.
+- Immutable component rows snapshot an automatic `FACE_VALUE` component plus optional internally configured, explicitly coded `MANDATORY_FEE` or `TAX` test components. No permanent TrueFanTix fee or tax policy is encoded.
+- All money uses positive safe integer minor units. `faceValueSubtotalMinor = quantity × unitFaceValueMinor`; `grossTotalMinor = sum(all component amounts)`. Every component currency equals the order/line ticket currency.
+- Per-unit allocation is deterministic: `allocationBaseMinor = floor(componentAmount / quantity)` and the first `allocationRemainderUnits = componentAmount mod quantity` future units receive one additional minor unit. This always reconciles exactly without floating point.
+- Creation requires a current verified non-admin buyer owning an unexpired `HELD` reservation in an approved/non-suspended organizer, approved event, and active recognized-currency ticket type. Exact replay is idempotent; changed bindings conflict; concurrent one-order attempts serialize.
+- The only order states are `PENDING_PAYMENT` and `PAYMENT_PROCESSING`. The internal test-only preparation transaction locks the full scope, changes `HELD` to `PAYMENT_COMMITTED` with reconciliation timing, writes its audit/outbox pair, and only then changes the order to `PAYMENT_PROCESSING`. No provider object, webhook, client secret, or provider-capable action exists.
+- Order/line/component snapshots have no mutation service. Later reviewed financial work must treat them as authoritative and add database-role immutability proof before real data.
+- Migration `20260910162000_add_primary_order_snapshots` adds only provider-free order, line, and component snapshot records, constraints, relations, indexes, and idempotency keys.
+- Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 `primary_ticketing_test` database: all 40 migrations applied and Prisma reported the schema current; all 7 order, 8 reservation, 7 ticket-type, 9 event, and 8 organizer PostgreSQL tests passed; the complete integration-enabled run passed 60 suites / 381 tests; Prisma format/validation/generation, TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and `git diff --check` passed. The disposable database/container was removed afterward.
+
 ## Risks and open decisions
 
 - The preflight depends on explicit environment configuration and database naming. Deployment configuration remains intentionally absent until an isolated preview is separately authorized.

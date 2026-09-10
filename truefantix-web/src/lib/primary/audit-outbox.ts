@@ -33,6 +33,9 @@ const AUDIT_FIELD_ALLOWLIST = new Set([
   "reconciliationAfter",
   "releasedAt",
   "expiredAt",
+  "faceValueSubtotalMinor",
+  "grossTotalMinor",
+  "paymentProcessingAt",
 ]);
 
 export function redactPrimaryAuditSnapshot(value: Record<string, unknown> | null | undefined) {

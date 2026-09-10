@@ -184,6 +184,17 @@ enum PrimaryInventoryReservationStatus {
   EXPIRED
 }
 
+enum PrimaryOrderStatus {
+  PENDING_PAYMENT
+  PAYMENT_PROCESSING
+}
+
+enum PrimaryPriceComponentKind {
+  FACE_VALUE
+  MANDATORY_FEE
+  TAX
+}
+
 enum PrimaryAuditActorType {
   USER
   SYSTEM
@@ -318,6 +329,7 @@ model User {
   primaryEventAssignmentsRevoked   PrimaryEventStaffAssignment[] @relation("PrimaryAssignmentRevokedBy")
   primaryEventsApproved            PrimaryEvent[]                @relation("PrimaryEventApprovedBy")
   primaryInventoryReservations     PrimaryInventoryReservation[] @relation("PrimaryReservationBuyer")
+  primaryOrders                    PrimaryOrder[]                @relation("PrimaryOrderBuyer")
   primaryAuditEvents               PrimaryAuditEvent[]           @relation("PrimaryAuditActor")
 
   @@index([role])
@@ -446,6 +458,7 @@ model PrimaryEvent {
   auditEvents  PrimaryAuditEvent[]
   ticketTypes  PrimaryTicketType[]
   reservations PrimaryInventoryReservation[]
+  orders       PrimaryOrder[]
 
   @@unique([id, organizerId])
   @@index([organizerId])
@@ -470,6 +483,7 @@ model PrimaryTicketType {
 
   event        PrimaryEvent                  @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
   reservations PrimaryInventoryReservation[]
+  orderLines   PrimaryOrderLine[]
 
   @@unique([id, organizerId, eventId])
   @@index([organizerId, eventId, status])
@@ -498,10 +512,75 @@ model PrimaryInventoryReservation {
   event      PrimaryEvent      @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
   ticketType PrimaryTicketType @relation(fields: [ticketTypeId, organizerId, eventId], references: [id, organizerId, eventId], onDelete: Cascade)
   buyer      User              @relation("PrimaryReservationBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
+  order      PrimaryOrder?
 
   @@index([organizerId, eventId, status, expiresAt])
   @@index([ticketTypeId, status, expiresAt])
   @@index([buyerUserId, createdAt])
+}
+
+model PrimaryOrder {
+  id                     String             @id @default(cuid())
+  organizerId            String
+  eventId                String
+  buyerUserId            String
+  reservationId          String             @unique
+  status                 PrimaryOrderStatus @default(PENDING_PAYMENT)
+  currency               String
+  faceValueSubtotalMinor Int
+  grossTotalMinor        Int
+  createIdempotencyKey   String             @unique
+  prepareIdempotencyKey  String?            @unique
+  paymentProcessingAt    DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  event       PrimaryEvent                 @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
+  buyer       User                         @relation("PrimaryOrderBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
+  reservation PrimaryInventoryReservation  @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  lines       PrimaryOrderLine[]
+  components  PrimaryOrderPriceComponent[]
+
+  @@index([organizerId, eventId, status, createdAt])
+  @@index([buyerUserId, createdAt])
+}
+
+model PrimaryOrderLine {
+  id                     String   @id @default(cuid())
+  orderId                String   @unique
+  ticketTypeId           String
+  quantity               Int
+  ticketTypeNameSnapshot String
+  unitFaceValueMinor     Int
+  faceValueSubtotalMinor Int
+  currency               String
+  createdAt              DateTime @default(now())
+
+  order      PrimaryOrder                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  ticketType PrimaryTicketType            @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+  components PrimaryOrderPriceComponent[]
+}
+
+model PrimaryOrderPriceComponent {
+  id                       String                    @id @default(cuid())
+  orderId                  String
+  orderLineId              String
+  code                     String
+  label                    String
+  kind                     PrimaryPriceComponentKind
+  amountMinor              Int
+  currency                 String
+  allocationBaseMinor      Int
+  allocationRemainderUnits Int
+  position                 Int
+  createdAt                DateTime                  @default(now())
+
+  order PrimaryOrder     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  line  PrimaryOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, code])
+  @@unique([orderId, position])
+  @@index([orderLineId])
 }
 
 model PrimaryEventStaffAssignment {

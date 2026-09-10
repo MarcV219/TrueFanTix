@@ -50,6 +50,10 @@ describe("primary organizer service PostgreSQL integration", () => {
   });
 
   beforeAll(async () => {
+    await db.primaryOrderPriceComponent.deleteMany();
+    await db.primaryOrderLine.deleteMany();
+    await db.primaryOrder.deleteMany();
+    await db.primaryInventoryReservation.deleteMany();
     await db.primaryEventStaffAssignment.deleteMany();
     await db.primaryAuditEvent.deleteMany();
     await db.primaryOutboxMessage.deleteMany();

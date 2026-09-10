@@ -63,6 +63,9 @@ describe("primary reservation PostgreSQL integration", () => {
   beforeAll(async () => {
     process.env.PRIMARY_TICKETING_ENVIRONMENT_ID = "isolated-test";
     internal = createPrimaryReservationInternalCapabilityForTests();
+    await db.primaryOrderPriceComponent.deleteMany();
+    await db.primaryOrderLine.deleteMany();
+    await db.primaryOrder.deleteMany();
     await db.primaryInventoryReservation.deleteMany();
     await db.primaryEventStaffAssignment.deleteMany();
     await db.primaryAuditEvent.deleteMany();
@@ -99,10 +102,12 @@ describe("primary reservation PostgreSQL integration", () => {
     const first = await hold(scope, 2, "reuse-first");
     const released = await service.release({ actor: actor(scope.buyer), organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: first.id, idempotencyKey: "release-first" });
     await expect(service.release({ actor: actor(scope.buyer), organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: first.id, idempotencyKey: "release-first" })).resolves.toEqual(released);
+    await expect(service.release({ actor: actor(scope.buyer), organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: first.id, idempotencyKey: "release-mismatch" })).rejects.toMatchObject({ code: "RESERVATION_NOT_RELEASABLE" });
     const second = await hold(scope, 2, "reuse-second");
     now = new Date(now.getTime() + 60_001);
     const expired = await service.expireHeld({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: second.id, idempotencyKey: "expire-second" });
     await expect(service.expireHeld({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: second.id, idempotencyKey: "expire-second" })).resolves.toEqual(expired);
+    await expect(service.expireHeld({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: second.id, idempotencyKey: "expire-mismatch" })).rejects.toMatchObject({ code: "RESERVATION_NOT_EXPIRABLE" });
     await expect(hold(scope, 2, "reuse-third")).resolves.toMatchObject({ status: "HELD" });
   });
 
@@ -127,13 +132,16 @@ describe("primary reservation PostgreSQL integration", () => {
     const [inactive, suspended, draftOrganizer, draftEvent, valid] = await Promise.all([
       seed({ typeStatus: "INACTIVE" }), seed({ organizerStatus: "SUSPENDED" }), seed({ organizerStatus: "DRAFT" }), seed({ eventStatus: "DRAFT" }), seed(),
     ]);
-    const [unverified, admin] = await Promise.all([
-      db.user.create({ data: { ...userData(), emailVerifiedAt: null } }), db.user.create({ data: userData("ADMIN") }),
+    const [unverified, banned, staleRole, admin] = await Promise.all([
+      db.user.create({ data: { ...userData(), emailVerifiedAt: null } }), db.user.create({ data: { ...userData(), isBanned: true } }),
+      db.user.create({ data: userData() }), db.user.create({ data: userData("ADMIN") }),
     ]);
     const attempts = [
       hold(inactive, 1, "deny-inactive"), hold(suspended, 1, "deny-suspended"), hold(draftOrganizer, 1, "deny-organizer"), hold(draftEvent, 1, "deny-event"),
       service.createHold({ actor: actor(valid.buyer), organizerId: inactive.organizer.id, eventId: valid.event.id, ticketTypeId: valid.ticketType.id, quantity: 1, idempotencyKey: "deny-tenant" }),
-      hold(valid, 1, "deny-unverified", unverified), hold(valid, 1, "deny-admin", admin),
+      hold(valid, 1, "deny-unverified", unverified), hold(valid, 1, "deny-banned", banned),
+      service.createHold({ actor: { id: staleRole.id, role: "ADMIN" }, organizerId: valid.organizer.id, eventId: valid.event.id, ticketTypeId: valid.ticketType.id, quantity: 1, idempotencyKey: "deny-stale-role" }),
+      hold(valid, 1, "deny-admin", admin),
     ];
     expect((await Promise.allSettled(attempts)).every((result) => result.status === "rejected")).toBe(true);
     expect(await db.primaryInventoryReservation.count({ where: { eventId: { in: [inactive.event.id, suspended.event.id, draftOrganizer.event.id, draftEvent.event.id, valid.event.id] } } })).toBe(0);
@@ -146,6 +154,7 @@ describe("primary reservation PostgreSQL integration", () => {
     expect(committed).toMatchObject({ status: "PAYMENT_COMMITTED", paymentCommittedAt: now });
     expect(committed.reconciliationAfter).toEqual(new Date(now.getTime() + 300_000));
     await expect(service.commitForPayment({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: reservation.id, idempotencyKey: "commit-once" })).resolves.toEqual(committed);
+    await expect(service.commitForPayment({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: reservation.id, idempotencyKey: "commit-mismatch" })).rejects.toMatchObject({ code: "RESERVATION_NOT_COMMITTABLE" });
     now = new Date(now.getTime() + 600_000);
     await expect(service.expireHeld({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: reservation.id, idempotencyKey: "must-not-expire" }))
       .rejects.toMatchObject({ code: "PAYMENT_COMMITTED_CANNOT_EXPIRE" });

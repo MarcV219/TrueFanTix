@@ -150,17 +150,19 @@ In future payment work, immediately before returning a client secret that can pr
 
 **PrimaryOrder**
 
-- `id`, `organizerId`, `eventId`, `buyerUserId`, `reservationId`
-- `status: PENDING_PAYMENT | PAYMENT_PROCESSING | PAID | FULFILLED | CANCELLATION_PENDING | CANCELLED | PARTIALLY_REFUNDED | REFUNDED | PAYMENT_FAILED`
-- `idempotencyKey`, `currency`
-- immutable amount snapshots: `ticketSubtotalCents`, `mandatoryFeeCents`, `taxCents`, `grossCapturedCents`, `grossOrganizerRevenueCents`, `grossPlatformRevenueCents`, `processorFeeCents?`, `reserveHeldCents`, `netOrganizerPayableCents`
-- `taxJurisdiction?`, `taxCalculationRef?`, `paidAt?`, `fulfilledAt?`, `cancelledAt?`
-- unique `idempotencyKey`, unique `reservationId`
+- The provider-free foundation stores `id`, `organizerId`, `eventId`, authenticated `buyerUserId`, unique `reservationId`, currency, face-value subtotal, gross total, and create/prepare idempotency keys.
+- Its only current states are `PENDING_PAYMENT | PAYMENT_PROCESSING`. Preparation atomically commits the reservation before advancing the order and cannot create a provider object or client secret.
+- Future reviewed payment/fulfilment work may add `PAID | FULFILLED | CANCELLATION_PENDING | CANCELLED | PARTIALLY_REFUNDED | REFUNDED | PAYMENT_FAILED` and the provider/settlement snapshots described elsewhere; those states and fields are not implemented now.
 
 **PrimaryOrderLine**
 
-- `id`, `orderId`, `ticketTypeId`, `description`, `quantity`
-- per-unit and line snapshots for base price, mandatory fee, tax, total, organizer proceeds, and platform revenue
+- The single current line snapshots ticket type, name, quantity, unit face value, face-value subtotal, and currency. It has no mutation service.
+
+**PrimaryOrderPriceComponent**
+
+- Immutable rows store explicit code/label, `FACE_VALUE | MANDATORY_FEE | TAX`, positive amount/currency, stable position, and deterministic quotient/remainder allocation across quantity.
+- The service derives FACE_VALUE from the ticket-type snapshot. Additional fee/tax components are internal synthetic configuration only; no permanent business or legal policy is encoded.
+- Exact current invariant: `faceValueSubtotalMinor = quantity × unitFaceValueMinor`; `grossTotalMinor = sum(component.amountMinor)` using checked integer arithmetic.
 
 **PrimaryPayment**
 
@@ -287,7 +289,7 @@ Invalid transitions return `409 INVALID_STATE`; all accepted transitions are aud
 
 ### Order and reservation
 
-`ACTIVE reservation -> PAYMENT_COMMITTED -> CONSUMED` is the successful path.
+`HELD reservation -> PAYMENT_COMMITTED -> CONSUMED` is the future successful path.
 
 - `ACTIVE` may become `EXPIRED` or `RELEASED` before a payment-capable attempt begins.
 - `PAYMENT_COMMITTED` continues to consume capacity even after `expiresAt`. Only a verified terminal failure/cancellation can release it.
@@ -402,12 +404,12 @@ Phase 1 uses Stripe test mode and separate primary Stripe environment variables.
 ### Authoritative retry-safe checkout sequence
 
 1. **Quote:** the server calculates versioned price components. The first meaningful display includes base price and every mandatory non-government fee; tax is separately identified where required. A quote key makes retries deterministic.
-2. **Reserve and order:** one serializable transaction locks capacity, creates or reuses the ACTIVE reservation, creates or reuses the PENDING_PAYMENT order and immutable line/component snapshots, and binds both to one client checkout idempotency key. A browser disappearing here leaves an expirable ACTIVE reservation.
+2. **Reserve and order:** serialized transactions create or reuse the HELD reservation, then bind one PENDING_PAYMENT order and immutable line/component snapshots to it. A browser disappearing here leaves an expirable HELD reservation.
 3. **Create provider attempt:** the server creates or retrieves exactly one Stripe test PaymentIntent using a provider idempotency key derived from the primary order and attempt number. Before returning its client secret, one transaction verifies the amount, currency, and provider reference and changes the reservation to PAYMENT_COMMITTED and order to PAYMENT_PROCESSING. If provider creation succeeds but the local commit or response fails, a retry retrieves the same PaymentIntent and completes the local transition.
 4. **Client payment:** the browser confirms the PaymentIntent. Browser success or failure is advisory; it never fulfils an order or releases inventory.
 5. **Webhook:** the dedicated endpoint verifies its dedicated signature, claims the provider event, and processes it once. Success validates order, amount, currency, intent, and committed capacity, then atomically consumes inventory, records capture ledger entries, and issues credentials. An idempotent outbox sends receipts after commit.
 6. **Terminal failure/cancellation:** a verified Stripe terminal state returns committed inventory to sale and marks the order failed or cancelled. A retryable state remains committed.
-7. **Abandonment/timeout:** an ACTIVE reservation expires normally. A PAYMENT_COMMITTED reservation is never time-expired blindly. After its resolution deadline, a worker retrieves Stripe state and releases only a proven terminal failure/cancellation, fulfils a proven success, or moves ambiguity to EXCEPTION while retaining capacity and alerting operations.
+7. **Abandonment/timeout:** a HELD reservation expires normally. A PAYMENT_COMMITTED reservation is never time-expired blindly. After its resolution deadline, a worker retrieves Stripe state and releases only a proven terminal failure/cancellation, fulfils a proven success, or moves ambiguity to EXCEPTION while retaining capacity and alerting operations.
 8. **Late success:** a delayed success consumes the inventory that remained committed. If corrupted state or an invariant breach makes fulfilment impossible, the system issues no credential and creates an operational exception plus an idempotent automatic full-refund obligation.
 9. **Refund:** the request names exact tickets, creates or reuses a local refund intent from its idempotency key, and calls Stripe with a derived provider key. Only a signed provider-success event posts cash/refund reversals and invalidates the selected credentials.
 10. **Reconciliation:** a scheduled test-only process compares local attempts and deliveries against Stripe, repairs safe missing terminal processing idempotently, and reports every ambiguous order/refund for manual review.
@@ -509,7 +511,7 @@ The bridge must never allow a secondary listing to call credential issuance. Int
 ## 11. Concurrency, idempotency, and reconciliation strategy
 
 - Inventory reservation: serializable transaction or explicit `FOR UPDATE` lock on event/ticket type; retry serialization failures with a bounded policy.
-- Reservation expiry: compare database time and expire only `ACTIVE` rows. Never release `PAYMENT_COMMITTED` or `EXCEPTION` capacity without verified provider resolution.
+- Reservation expiry: compare the server-owned operation clock and expire only `HELD` rows. Never release `PAYMENT_COMMITTED` or future `EXCEPTION` capacity without verified provider resolution.
 - Payment/refund webhooks: unique provider event claim plus idempotent domain-operation keys.
 - Credential issuance/rotation: unique ticket-generation keys and conditional invalidation inside one transaction.
 - Scan: conditional `ACTIVE -> CHECKED_IN` update and attempt record in one transaction.
