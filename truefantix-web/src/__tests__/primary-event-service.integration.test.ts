@@ -169,5 +169,74 @@ describe("primary event service PostgreSQL integration", () => {
     expect(await db.primaryAuditEvent.count({ where: { eventId: event.id } })).toBe(before);
     expect(await db.primaryOutboxMessage.count({ where: { aggregateId: event.id } })).toBe(before);
   });
+
+  it("refuses migrated placeholder events at submission with no audit or outbox residue", async () => {
+    const owner = await db.user.create({ data: userData("7000001") });
+    const organizer = await seedOrganizer(owner, "event-placeholder");
+    const placeholderTime = new Date("1970-01-01T00:00:00.000Z");
+    const event = await db.primaryEvent.create({ data: {
+      organizerId: organizer.id, title: "Untitled draft", description: "", category: "UNSET",
+      venueName: "", venueAddressLine1: "", venueCity: "", venueRegion: "",
+      venuePostalCode: "", venueCountry: "", startsAtLocal: placeholderTime,
+      endsAtLocal: placeholderTime, timezone: "UTC", contactEmail: "",
+      draftPolicyText: "",
+    } });
+    const [auditBefore, outboxBefore] = await Promise.all([
+      db.primaryAuditEvent.count({ where: { eventId: event.id } }),
+      db.primaryOutboxMessage.count({ where: { aggregateId: event.id } }),
+    ]);
+
+    await expect(service.submit({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, requestId: "placeholder-submit" }))
+      .rejects.toMatchObject({ code: "INVALID_EVENT_DATE_RANGE" });
+    expect(await db.primaryEvent.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({ status: "DRAFT", submittedAt: null });
+    expect(await db.primaryAuditEvent.count({ where: { eventId: event.id } })).toBe(auditBefore);
+    expect(await db.primaryOutboxMessage.count({ where: { aggregateId: event.id } })).toBe(outboxBefore);
+  });
+
+  it("requires a rejected event to be edited back to draft before resubmission", async () => {
+    const [owner, admin] = await Promise.all([
+      db.user.create({ data: userData("8000001") }), db.user.create({ data: userData("8000002", "ADMIN") }),
+    ]);
+    const organizer = await seedOrganizer(owner, "event-resubmission");
+    const event = await service.createDraft({ actor: actor(owner), organizerId: organizer.id, requestId: "resubmit-create", fields: fields() });
+    await service.submit({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, requestId: "resubmit-first" });
+    await service.review({ actor: actor(admin), organizerId: organizer.id, eventId: event.id, requestId: "resubmit-reject", toStatus: "REJECTED", reason: "Revise venue details" });
+    const before = await db.primaryAuditEvent.count({ where: { eventId: event.id } });
+
+    await expect(service.submit({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, requestId: "resubmit-direct" }))
+      .rejects.toMatchObject({ code: "INVALID_EVENT_STATE" });
+    expect(await db.primaryAuditEvent.count({ where: { eventId: event.id } })).toBe(before);
+    await service.editDraft({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, requestId: "resubmit-edit", fields: fields("Revised Synthetic Concert") });
+    const submitted = await service.submit({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, requestId: "resubmit-after-edit" });
+    expect(submitted).toMatchObject({ status: "SUBMITTED", title: "Revised Synthetic Concert", statusReason: null });
+  });
+
+  it("rejects unverified, banned, and stale-role actors without event, audit, or outbox writes", async () => {
+    const [unverified, banned, staleRole] = await Promise.all([
+      db.user.create({ data: { ...userData("9000001"), emailVerifiedAt: null } }),
+      db.user.create({ data: { ...userData("9000002"), isBanned: true } }),
+      db.user.create({ data: userData("9000003") }),
+    ]);
+    const organizers = await Promise.all([
+      seedOrganizer(unverified, "event-unverified"), seedOrganizer(banned, "event-banned"), seedOrganizer(staleRole, "event-stale-role"),
+    ]);
+    const before = await Promise.all(organizers.map(async (organizer) => ({
+      events: await db.primaryEvent.count({ where: { organizerId: organizer.id } }),
+      audits: await db.primaryAuditEvent.count({ where: { organizerId: organizer.id } }),
+      outbox: await db.primaryOutboxMessage.count({ where: { organizerId: organizer.id } }),
+    })));
+
+    const results = await Promise.allSettled([
+      service.createDraft({ actor: actor(unverified), organizerId: organizers[0].id, requestId: "actor-unverified", fields: fields() }),
+      service.createDraft({ actor: actor(banned), organizerId: organizers[1].id, requestId: "actor-banned", fields: fields() }),
+      service.createDraft({ actor: { id: staleRole.id, role: "ADMIN" }, organizerId: organizers[2].id, requestId: "actor-stale-role", fields: fields() }),
+    ]);
+    expect(results.every((result) => result.status === "rejected")).toBe(true);
+    await Promise.all(organizers.map(async (organizer, index) => {
+      expect(await db.primaryEvent.count({ where: { organizerId: organizer.id } })).toBe(before[index].events);
+      expect(await db.primaryAuditEvent.count({ where: { organizerId: organizer.id } })).toBe(before[index].audits);
+      expect(await db.primaryOutboxMessage.count({ where: { organizerId: organizer.id } })).toBe(before[index].outbox);
+    }));
+  });
 });
 }

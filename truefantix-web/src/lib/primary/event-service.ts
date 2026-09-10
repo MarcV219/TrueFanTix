@@ -1,4 +1,4 @@
-import type { PrimaryEventStatus, Prisma, UserRole } from "@prisma/client";
+import type { PrimaryEvent, PrimaryEventStatus, Prisma, UserRole } from "@prisma/client";
 import { recordPrimaryAuditAndOutbox } from "./audit-outbox";
 import { authorizePrimaryEvent, authorizePrimaryOrganizer, PrimaryAccessError } from "./authorization";
 import type { PrimaryPreflightCapability } from "./config";
@@ -86,6 +86,28 @@ function validateFields(fields: PrimaryEventDraftFields) {
   };
 }
 
+function validatePersistedEvent(event: PrimaryEvent) {
+  return validateFields({
+    title: event.title,
+    description: event.description,
+    category: event.category,
+    venueName: event.venueName,
+    venueAddressLine1: event.venueAddressLine1,
+    venueAddressLine2: event.venueAddressLine2 ?? undefined,
+    venueCity: event.venueCity,
+    venueRegion: event.venueRegion,
+    venuePostalCode: event.venuePostalCode,
+    venueCountry: event.venueCountry,
+    startsAtLocal: event.startsAtLocal.toISOString().slice(0, 19),
+    endsAtLocal: event.endsAtLocal.toISOString().slice(0, 19),
+    timezone: event.timezone,
+    accessibilityInfo: event.accessibilityInfo ?? undefined,
+    contactEmail: event.contactEmail,
+    contactPhone: event.contactPhone ?? undefined,
+    draftPolicyText: event.draftPolicyText,
+  });
+}
+
 async function requireCurrentActor(tx: Tx, actor: Actor) {
   const user = await tx.user.findUnique({ where: { id: actor.id }, select: { id: true, role: true, emailVerifiedAt: true, isBanned: true } });
   if (!user || user.isBanned) throw new PrimaryAccessError("NOT_FOUND", 404);
@@ -147,8 +169,9 @@ export class PrimaryEventService {
       await lockEvent(tx, input.organizerId, input.eventId);
       await authorizePrimaryEvent({ store: tx, actor: input.actor, organizerId: input.organizerId, eventId: input.eventId, allowedRoles: ["OWNER"], capability: this.capability, allowPlatformAdmin: false });
       await requireApprovedOrganizer(tx, input.organizerId);
-      const event = await tx.primaryEvent.findFirst({ where: { id: input.eventId, organizerId: input.organizerId, status: { in: ["DRAFT", "REJECTED"] } } });
+      const event = await tx.primaryEvent.findFirst({ where: { id: input.eventId, organizerId: input.organizerId, status: "DRAFT" } });
       if (!event) throw new PrimaryDomainError("INVALID_EVENT_STATE");
+      validatePersistedEvent(event);
       const updated = await tx.primaryEvent.update({ where: { id: event.id }, data: { status: "SUBMITTED", statusReason: null, submittedAt: new Date() } });
       await this.audit(tx, input, "EVENT_SUBMITTED", event.id, event, updated, "primary.event.submitted");
       return updated;

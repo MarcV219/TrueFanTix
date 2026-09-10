@@ -96,17 +96,24 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 
 - `PrimaryEvent` now contains required draft identity, description/category, inline venue/address, local start/end, IANA timezone, accessibility/contact, and draft-policy fields.
 - Its only states are `DRAFT`, `SUBMITTED`, `UNDER_REVIEW`, `APPROVED`, and `REJECTED`; there is no public/published state.
-- An active OWNER of an approved, non-suspended organizer may create and submit drafts. Active OWNERs and active assigned EVENT_MANAGERs may edit in `DRAFT` or `REJECTED`; editing a rejected draft returns it to `DRAFT` and clears the rejection reason.
+- An active OWNER of an approved, non-suspended organizer may create and submit drafts. Submission accepts `DRAFT` only and revalidates the complete persisted event snapshot while the organizer and event rows are locked. Active OWNERs and active assigned EVENT_MANAGERs may edit in `DRAFT` or `REJECTED`; editing a rejected draft returns it to `DRAFT` and clears the rejection reason before it may be resubmitted.
 - Platform admins may review submitted events but cannot create, edit, or submit them through organizer permissions. Review transitions lock both organizer and event rows and run serializably.
 - Every successful create, edit, submit, or review transition writes its redacted event audit and outbox intent in the same transaction.
 - ISO local inputs intentionally contain no UTC offset. They are stored as PostgreSQL wall-clock timestamps and paired with a validated IANA timezone. Conversion to an admission/sales instant, including explicit ambiguous/nonexistent DST-time handling, is deferred and must be resolved before publication or sales is authorized.
 - Migration `20260910151000_add_primary_event_authoring` backfills any synthetic shell row with inert placeholders solely so the required-column migration is deployable. Such a row cannot pass service validation or submission until edited with complete valid draft data.
 - Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 `primary_ticketing_test` database: all 37 migrations applied and Prisma reported the schema current; all 6 event tests plus the existing 8 organizer tests passed; the complete integration-enabled run passed 57 suites / 356 tests; Prisma format/validation/generation, TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and diff checks passed. The disposable database/container was removed afterward.
 
+### Event Revision 1 hardening
+
+- Submission revalidates the locked database snapshot rather than trusting earlier create/edit validation. A PostgreSQL test proves a migrated placeholder row remains `DRAFT` and leaves no audit/outbox residue after failed submission.
+- `REJECTED` events cannot be submitted directly. The lifecycle test proves rejection must be followed by a valid edit back to `DRAFT` before resubmission.
+- Event-service PostgreSQL coverage separately proves unverified, banned, and stale-role actors cannot create events and leave no event, audit, or outbox writes.
+- Revision 1 verification on a newly provisioned disposable PostgreSQL 16 database: all 37 migrations applied and Prisma reported the schema current; all 9 event tests plus the existing 8 organizer tests passed; the complete integration-enabled run passed 57 suites / 359 tests; Prisma format/validation/generation, TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and `git diff --check` passed. The disposable database/container was removed afterward.
+
 ## Risks and open decisions
 
 - The preflight depends on explicit environment configuration and database naming. Deployment configuration remains intentionally absent until an isolated preview is separately authorized.
-- The event model is only an identity/tenancy shell required for staff assignments; event authoring and lifecycle fields are not included.
+- Event authoring remains pre-publication only. Event publication, discoverability, purchasability, DST-to-instant resolution, ticketing, and operational venue normalization remain deferred.
 - Audit snapshots use a deliberately small allowlist. Each later domain must explicitly add safe fields rather than persisting arbitrary request objects.
 - The outbox foundation stores delivery intent only. No dispatcher, email, webhook, or external side effect is implemented.
 - CRUD endpoints remain out of scope. Invitation acceptance is service-only and enforces authenticated ownership of the normalized verified email.
