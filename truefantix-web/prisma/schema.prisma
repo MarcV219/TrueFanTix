@@ -187,6 +187,22 @@ enum PrimaryInventoryReservationStatus {
 enum PrimaryOrderStatus {
   PENDING_PAYMENT
   PAYMENT_PROCESSING
+  PAID
+  PAYMENT_FAILED
+}
+
+enum PrimaryPaymentAttemptStatus {
+  PENDING_PROVIDER
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  RECONCILIATION_REQUIRED
+}
+
+enum PrimaryPaymentExceptionKind {
+  PROVIDER_MISMATCH
+  LATE_SUCCESS_REFUND_REQUIRED
 }
 
 enum PrimaryPriceComponentKind {
@@ -330,6 +346,7 @@ model User {
   primaryEventsApproved            PrimaryEvent[]                @relation("PrimaryEventApprovedBy")
   primaryInventoryReservations     PrimaryInventoryReservation[] @relation("PrimaryReservationBuyer")
   primaryOrders                    PrimaryOrder[]                @relation("PrimaryOrderBuyer")
+  primaryPaymentAttempts           PrimaryPaymentAttempt[]       @relation("PrimaryPaymentAttemptBuyer")
   primaryAuditEvents               PrimaryAuditEvent[]           @relation("PrimaryAuditActor")
 
   @@index([role])
@@ -452,13 +469,14 @@ model PrimaryEvent {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
-  organizer    PrimaryOrganizer              @relation(fields: [organizerId], references: [id], onDelete: Cascade)
-  approvedBy   User?                         @relation("PrimaryEventApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
-  assignments  PrimaryEventStaffAssignment[]
-  auditEvents  PrimaryAuditEvent[]
-  ticketTypes  PrimaryTicketType[]
-  reservations PrimaryInventoryReservation[]
-  orders       PrimaryOrder[]
+  organizer       PrimaryOrganizer              @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  approvedBy      User?                         @relation("PrimaryEventApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  assignments     PrimaryEventStaffAssignment[]
+  auditEvents     PrimaryAuditEvent[]
+  ticketTypes     PrimaryTicketType[]
+  reservations    PrimaryInventoryReservation[]
+  orders          PrimaryOrder[]
+  paymentAttempts PrimaryPaymentAttempt[]
 
   @@unique([id, organizerId])
   @@index([organizerId])
@@ -509,11 +527,12 @@ model PrimaryInventoryReservation {
   createdAt             DateTime                          @default(now())
   updatedAt             DateTime                          @updatedAt
 
-  event      PrimaryEvent       @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
-  ticketType PrimaryTicketType  @relation(fields: [ticketTypeId, organizerId, eventId], references: [id, organizerId, eventId], onDelete: Cascade)
-  buyer      User               @relation("PrimaryReservationBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
-  order      PrimaryOrder?
-  orderLines PrimaryOrderLine[]
+  event           PrimaryEvent            @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
+  ticketType      PrimaryTicketType       @relation(fields: [ticketTypeId, organizerId, eventId], references: [id, organizerId, eventId], onDelete: Cascade)
+  buyer           User                    @relation("PrimaryReservationBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
+  order           PrimaryOrder?
+  orderLines      PrimaryOrderLine[]
+  paymentAttempts PrimaryPaymentAttempt[]
 
   @@unique([id, organizerId, eventId, buyerUserId], map: "PrimaryInventoryReservation_id_organizerId_eventId_buyerUserId_")
   @@unique([id, ticketTypeId])
@@ -536,15 +555,19 @@ model PrimaryOrder {
   prepareIdempotencyKey        String?            @unique
   prepareReconciliationDelayMs Int?
   paymentProcessingAt          DateTime?
+  paidAt                       DateTime?
+  paymentFailedAt              DateTime?
   createdAt                    DateTime           @default(now())
   updatedAt                    DateTime           @updatedAt
 
-  event       PrimaryEvent                 @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
-  buyer       User                         @relation("PrimaryOrderBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
-  reservation PrimaryInventoryReservation  @relation(fields: [reservationId, organizerId, eventId, buyerUserId], references: [id, organizerId, eventId, buyerUserId], onDelete: Restrict, map: "PrimaryOrder_reservation_scope_fkey")
-  lines       PrimaryOrderLine[]
-  components  PrimaryOrderPriceComponent[]
+  event          PrimaryEvent                 @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
+  buyer          User                         @relation("PrimaryOrderBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
+  reservation    PrimaryInventoryReservation  @relation(fields: [reservationId, organizerId, eventId, buyerUserId], references: [id, organizerId, eventId, buyerUserId], onDelete: Restrict, map: "PrimaryOrder_reservation_scope_fkey")
+  lines          PrimaryOrderLine[]
+  components     PrimaryOrderPriceComponent[]
+  paymentAttempt PrimaryPaymentAttempt?
 
+  @@unique([id, organizerId, eventId, buyerUserId, reservationId])
   @@unique([id, reservationId])
   @@unique([reservationId, organizerId, eventId, buyerUserId])
   @@index([organizerId, eventId, status, createdAt])
@@ -591,6 +614,66 @@ model PrimaryOrderPriceComponent {
   @@unique([orderId, code])
   @@unique([orderId, position])
   @@index([orderLineId])
+}
+
+model PrimaryPaymentAttempt {
+  id                   String                      @id @default(cuid())
+  organizerId          String
+  eventId              String
+  buyerUserId          String
+  reservationId        String
+  orderId              String                      @unique
+  status               PrimaryPaymentAttemptStatus @default(PENDING_PROVIDER)
+  expectedAmountMinor  Int
+  currency             String
+  createIdempotencyKey String                      @unique
+  providerIntentId     String?                     @unique
+  providerCreatedAt    DateTime?
+  terminalAt           DateTime?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+
+  order          PrimaryOrder                  @relation(fields: [orderId, organizerId, eventId, buyerUserId, reservationId], references: [id, organizerId, eventId, buyerUserId, reservationId], onDelete: Restrict)
+  event          PrimaryEvent                  @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
+  buyer          User                          @relation("PrimaryPaymentAttemptBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
+  reservation    PrimaryInventoryReservation   @relation(fields: [reservationId, organizerId, eventId, buyerUserId], references: [id, organizerId, eventId, buyerUserId], onDelete: Restrict)
+  providerEvents PrimaryPaymentProviderEvent[]
+  exceptions     PrimaryPaymentException[]
+
+  @@unique([orderId, organizerId, eventId, buyerUserId, reservationId])
+  @@unique([id, orderId, organizerId, eventId, buyerUserId, reservationId])
+  @@index([organizerId, eventId, status])
+}
+
+model PrimaryPaymentProviderEvent {
+  id                String   @id @default(cuid())
+  providerEventId   String   @unique
+  attemptId         String
+  orderId           String
+  organizerId       String
+  eventId           String
+  buyerUserId       String
+  reservationId     String
+  eventType         String
+  payloadDigest     String
+  providerCreatedAt DateTime
+  processedAt       DateTime @default(now())
+
+  attempt PrimaryPaymentAttempt @relation(fields: [attemptId, orderId, organizerId, eventId, buyerUserId, reservationId], references: [id, orderId, organizerId, eventId, buyerUserId, reservationId], onDelete: Restrict)
+
+  @@index([attemptId, providerCreatedAt])
+}
+
+model PrimaryPaymentException {
+  id              String                      @id @default(cuid())
+  attemptId       String
+  kind            PrimaryPaymentExceptionKind
+  providerEventId String
+  createdAt       DateTime                    @default(now())
+
+  attempt PrimaryPaymentAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+
+  @@unique([attemptId, providerEventId, kind])
 }
 
 model PrimaryEventStaffAssignment {

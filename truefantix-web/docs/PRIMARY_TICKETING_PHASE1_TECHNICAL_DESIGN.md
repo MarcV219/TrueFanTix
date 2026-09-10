@@ -170,6 +170,8 @@ In future payment work, immediately before returning a client secret that can pr
 
 - `id`, `orderId`, `provider`, `providerIntentId`, `status`, amount/currency, `lastProviderEventAt?`
 - unique `orderId`, unique `(provider, providerIntentId)`
+- The isolated foundation realizes this boundary as scoped `PrimaryPaymentAttempt`, deduplicated `PrimaryPaymentProviderEvent`, and explicit `PrimaryPaymentException` evidence. It creates only unconfirmed Stripe test-mode intents after the local committed transaction and exposes no client secret or checkout route.
+- Webhook success is fail-closed against immutable amount/currency and server-owned order/organizer/event/reservation metadata. A released-inventory late success creates a refund-required exception rather than tickets; terminal failure release requires a signed event explicitly carrying the adapter's terminal guarantee.
 
 **PrimaryRefund**
 
