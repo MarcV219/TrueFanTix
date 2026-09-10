@@ -41,6 +41,11 @@ export async function GET(req: Request) {
   if (sendable === "true") { where.email = { not: null }; where.normalizedEmail = { not: null }; where.unsubscribedAt = null; where.consentBasis = { not: "UNASSESSED" }; where.sourceUrl = { not: null }; }
   if (email === "yes") where.email = { not: null };
   if (email === "no") where.email = null;
+  const cityFacetWhere: any = { AND: [selectedCategoryWhere, { city: { not: null } }] };
+  if (league) cityFacetWhere.AND.push({ league });
+  const teamFacetWhere: any = { AND: [selectedCategoryWhere, { subjectName: { not: null } }] };
+  if (league) teamFacetWhere.AND.push({ league });
+  if (city) teamFacetWhere.AND.push({ city });
   const [items, count, totalCount, categories, leagues, allLeagues, cities, teams, researchStatuses, relationships, suppressions] = await prisma.$transaction([
     prisma.outreachContact.findMany({
       where,
@@ -59,8 +64,8 @@ export async function GET(req: Request) {
     prisma.outreachContact.groupBy({ by: ["category"], _count: { _all: true }, orderBy: { category: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["league"], where: { AND: [selectedCategoryWhere, { league: { not: null } }] }, _count: { _all: true }, orderBy: { league: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["league"], where: { league: { not: null } }, _count: { _all: true }, orderBy: { league: "asc" } }),
-    prisma.outreachContact.groupBy({ by: ["city"], where: { city: { not: null } }, _count: { _all: true }, orderBy: { city: "asc" } }),
-    prisma.outreachContact.groupBy({ by: ["subjectName"], where: { subjectName: { not: null } }, _count: { _all: true }, orderBy: { subjectName: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["city"], where: cityFacetWhere, _count: { _all: true }, orderBy: { city: "asc" } }),
+    prisma.outreachContact.groupBy({ by: ["subjectName"], where: teamFacetWhere, _count: { _all: true }, orderBy: { subjectName: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["researchStatus"], where: { researchStatus: { not: null } }, _count: { _all: true }, orderBy: { researchStatus: "asc" } }),
     prisma.outreachContact.groupBy({ by: ["engagementStage"], _count: { _all: true }, orderBy: { engagementStage: "asc" } }),
     prisma.outreachSuppression.findMany({ select: { normalizedEmail: true, reason: true } }),

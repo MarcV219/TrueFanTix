@@ -1139,6 +1139,8 @@ export default function OutreachPage() {
             onChange={(e) => {
               setCategory(e.target.value);
               setLeague("");
+              setCity("");
+              setTeam("");
             }}
           >
             <option value="">All categories ({totalCount.toLocaleString()})</option>
@@ -1149,7 +1151,11 @@ export default function OutreachPage() {
           <select
             style={field}
             value={league}
-            onChange={(e) => setLeague(e.target.value)}
+            onChange={(e) => {
+              setLeague(e.target.value);
+              setCity("");
+              setTeam("");
+            }}
           >
             <option value="">All sports / leagues</option>
             {leagues.map((x) => (
@@ -1159,7 +1165,10 @@ export default function OutreachPage() {
           <select
             style={field}
             value={city}
-            onChange={(e) => setCity(e.target.value)}
+            onChange={(e) => {
+              setCity(e.target.value);
+              setTeam("");
+            }}
           >
             <option value="">All cities</option>
             {cities.map((x) => (
