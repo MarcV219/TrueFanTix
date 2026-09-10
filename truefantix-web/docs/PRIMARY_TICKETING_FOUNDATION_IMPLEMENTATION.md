@@ -92,6 +92,17 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - The PostgreSQL suite now separately proves conflicting-transition serialization; concurrent final-owner protection; ADMIN denial across all OWNER-only mutation families; banned and stale-role denial; invitation duplicate, expiry, replay, and suspended-acceptance behavior; reason enforcement; cross-tenant denial; and complete rollback with no audit/outbox residue when protected persistence fails.
 - Revision 2 verification on a newly provisioned disposable PostgreSQL 16 database: all 36 migrations applied; all 8 organizer integration tests and the complete 56-suite / 350-test run passed; TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and `git diff --check` passed. The database/container was removed after verification.
 
+## Draft Event Authoring Services milestone
+
+- `PrimaryEvent` now contains required draft identity, description/category, inline venue/address, local start/end, IANA timezone, accessibility/contact, and draft-policy fields.
+- Its only states are `DRAFT`, `SUBMITTED`, `UNDER_REVIEW`, `APPROVED`, and `REJECTED`; there is no public/published state.
+- An active OWNER of an approved, non-suspended organizer may create and submit drafts. Active OWNERs and active assigned EVENT_MANAGERs may edit in `DRAFT` or `REJECTED`; editing a rejected draft returns it to `DRAFT` and clears the rejection reason.
+- Platform admins may review submitted events but cannot create, edit, or submit them through organizer permissions. Review transitions lock both organizer and event rows and run serializably.
+- Every successful create, edit, submit, or review transition writes its redacted event audit and outbox intent in the same transaction.
+- ISO local inputs intentionally contain no UTC offset. They are stored as PostgreSQL wall-clock timestamps and paired with a validated IANA timezone. Conversion to an admission/sales instant, including explicit ambiguous/nonexistent DST-time handling, is deferred and must be resolved before publication or sales is authorized.
+- Migration `20260910151000_add_primary_event_authoring` backfills any synthetic shell row with inert placeholders solely so the required-column migration is deployable. Such a row cannot pass service validation or submission until edited with complete valid draft data.
+- Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 `primary_ticketing_test` database: all 37 migrations applied and Prisma reported the schema current; all 6 event tests plus the existing 8 organizer tests passed; the complete integration-enabled run passed 57 suites / 356 tests; Prisma format/validation/generation, TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and diff checks passed. The disposable database/container was removed afterward.
+
 ## Risks and open decisions
 
 - The preflight depends on explicit environment configuration and database naming. Deployment configuration remains intentionally absent until an isolated preview is separately authorized.
@@ -102,6 +113,9 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Service inputs assume the route boundary has authenticated the supplied actor identity; the service independently reloads the user to enforce current role, verified email, and ban state. No route is included in this milestone.
 - Invitation delivery is intentionally absent. The raw invitation token is returned once to a future approved delivery boundary and is never persisted or audited.
 - Organizer rejection reasons and operational review policy remain product/operations decisions. The service requires a reason but does not expose a workflow or send notifications.
+- Event categories remain normalized free text pending an approved product taxonomy. No category drives public navigation or policy behavior.
+- Venue data is a denormalized draft snapshot for this milestone and remains editable only in allowed draft states; venue deduplication and a reusable `PrimaryVenue` entity remain deferred.
+- Draft policy text is not buyer-facing and has no legal effect. Legal must approve the final refund/cancellation/terms structure before publication.
 
 ### Append-only audit enforcement before real data
 
@@ -109,4 +123,4 @@ The current synthetic-only foundation treats `PrimaryAuditEvent` rows as append-
 
 ## Explicit exclusions
 
-This implementation contains no organizer UI/route, external email delivery, full event authoring, inventory, reservation, checkout, Stripe/banking, credential, QR, transfer, scan, refund, ledger, settlement, report, public-navigation, real-data, or deployment functionality. Future payment work must keep a PaymentIntent unconfirmed and incapable of success until the local `PAYMENT_COMMITTED` transaction completes.
+This implementation contains no organizer/event UI or route, external email delivery, event publication/discovery, ticket types, sellable capacity, holds/comps, inventory, reservation, checkout, Stripe/banking, fee/tax calculation, credential, QR, transfer, scan, refund, ledger, settlement, report, public-navigation, real-data, or deployment functionality. Future payment work must keep a PaymentIntent unconfirmed and incapable of success until the local `PAYMENT_COMMITTED` transaction completes.

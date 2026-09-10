@@ -13,6 +13,12 @@ const AUDIT_FIELD_ALLOWLIST = new Set([
   "organizerId",
   "membershipId",
   "revokedAt",
+  "title",
+  "category",
+  "venueName",
+  "timezone",
+  "startsAtLocal",
+  "endsAtLocal",
 ]);
 
 export function redactPrimaryAuditSnapshot(value: Record<string, unknown> | null | undefined) {

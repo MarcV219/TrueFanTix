@@ -104,9 +104,12 @@ All monetary values are integer minor units with an ISO currency code. All mutab
 
 **PrimaryEvent**
 
-- `id`, `organizerId`, `venueId`, `title`, `description`, `timezone`
-- `doorsAt?`, `startsAt`, `endsAt?`
-- `capacity`, `status: DRAFT | IN_REVIEW | APPROVED | PUBLISHED | SALES_CLOSED | CANCELLED | COMPLETED`
+- The isolated draft-authoring milestone stores `id`, `organizerId`, `title`, `description`, and free-text `category`.
+- Until the separately reviewed venue domain exists, draft snapshots store `venueName`, address lines, city, region, postal code, country, and optional accessibility information directly on the event.
+- `startsAtLocal` and `endsAtLocal` are wall-clock `TIMESTAMP WITHOUT TIME ZONE` values paired with a required recognized IANA `timezone`. The service accepts ISO local strings without an offset, validates the zone and positive local range, and does not derive a sales/admission instant yet.
+- Draft contact fields are `contactEmail` and optional `contactPhone`; `draftPolicyText` is required but has no public or contractual effect.
+- The pre-publication lifecycle is `DRAFT | SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED`. This milestone deliberately has no `PUBLISHED` state or discoverability/sales behavior.
+- The later reviewed event/inventory milestone may add `venueId`, `doorsAt`, capacity, `PUBLISHED | SALES_CLOSED | CANCELLED | COMPLETED`, and the finalized policy/version fields below.
 - `refundPolicy`, `cancellationPolicy`, `termsVersion`
 - `submittedAt?`, `approvedAt?`, `approvedByUserId?`, `publishedAt?`, `cancelledAt?`, `completedAt?`
 - Phase 1 treats one event as one admission performance; a later `PrimaryPerformance` extraction is possible without changing credential claims

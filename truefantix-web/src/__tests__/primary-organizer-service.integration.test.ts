@@ -41,6 +41,13 @@ describe("primary organizer service PostgreSQL integration", () => {
     addressLine1: "1 Test Street", city: "Toronto", region: "ON", postalCode: "A1A1A1", country: "CA",
     supportEmail: `${key}@example.test`,
   });
+  const eventData = (organizerId: string) => ({
+    organizerId, title: "Synthetic Event", description: "Synthetic only", category: "OTHER",
+    venueName: "Synthetic Venue", venueAddressLine1: "1 Test Street", venueCity: "Toronto",
+    venueRegion: "ON", venuePostalCode: "A1A1A1", venueCountry: "CA",
+    startsAtLocal: new Date("2030-01-01T19:00:00Z"), endsAtLocal: new Date("2030-01-01T21:00:00Z"),
+    timezone: "America/Toronto", contactEmail: "event@example.test", draftPolicyText: "Synthetic draft policy",
+  });
 
   beforeAll(async () => {
     await db.primaryEventStaffAssignment.deleteMany();
@@ -95,7 +102,7 @@ describe("primary organizer service PostgreSQL integration", () => {
     await expect(service.acceptInvitation({ actor: { id: other.id, role: other.role }, requestId: "accept-revoked", token: pending.token }))
       .rejects.toMatchObject({ code: "INVITATION_INVALID" });
 
-    const event = await db.primaryEvent.create({ data: { organizerId: organizer.id } });
+    const event = await db.primaryEvent.create({ data: eventData(organizer.id) });
     const assignment = await service.assignEvent({ actor: ownerActor, organizerId: organizer.id, eventId: event.id, membershipId: membership.id, requestId: "assign-1" });
     await expect(service.revokeEventAssignment({ actor: ownerActor, organizerId: organizer.id, eventId: event.id, assignmentId: assignment.id, requestId: "blank-unassign", reason: "\t" })).rejects.toMatchObject({ code: "REASON_REQUIRED" });
     await service.revokeEventAssignment({ actor: ownerActor, organizerId: organizer.id, eventId: event.id, assignmentId: assignment.id, requestId: "unassign-1", reason: "Synthetic rotation" });
@@ -118,8 +125,9 @@ describe("primary organizer service PostgreSQL integration", () => {
       db.user.create({ data: userData("2000002") }), db.user.create({ data: userData("2000003") }),
     ]);
     const make = (actor: typeof ownerA, requestId: string) => service.createDraft({ actor: { id: actor.id, role: actor.role }, requestId, legalName: requestId, displayName: requestId, addressLine1: "1", city: "T", region: "ON", postalCode: "A1A1A1", country: "CA", supportEmail: `${requestId}@example.test` });
-    const [a, b] = await Promise.all([make(ownerA, "tenant-a"), make(ownerB, "tenant-b")]);
-    const eventA = await db.primaryEvent.create({ data: { organizerId: a.id } });
+    const a = await make(ownerA, "tenant-a");
+    const b = await make(ownerB, "tenant-b");
+    const eventA = await db.primaryEvent.create({ data: eventData(a.id) });
     const memberB = await db.primaryOrganizerMembership.findFirstOrThrow({ where: { organizerId: b.id, userId: ownerB.id } });
     await expect(service.assignEvent({ actor: { id: ownerA.id, role: ownerA.role }, organizerId: a.id, eventId: eventA.id, membershipId: memberB.id, requestId: "cross-tenant" }))
       .rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -154,7 +162,7 @@ describe("primary organizer service PostgreSQL integration", () => {
     const accepted = await service.invite({ actor: actor(owner), organizerId: organizer.id, requestId: "admin-staff", email: staff.email, role: "SCANNER", expiresAt: new Date(Date.now() + 3_600_000) });
     const membership = await service.acceptInvitation({ actor: actor(staff), requestId: "admin-staff-accept", token: accepted.token });
     const pending = await service.invite({ actor: actor(owner), organizerId: organizer.id, requestId: "admin-pending", email: pendingUser.email, role: "READ_ONLY", expiresAt: new Date(Date.now() + 3_600_000) });
-    const event = await db.primaryEvent.create({ data: { organizerId: organizer.id } });
+    const event = await db.primaryEvent.create({ data: eventData(organizer.id) });
     const assignment = await service.assignEvent({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, membershipId: membership.id, requestId: "admin-assignment" });
     const before = await db.primaryAuditEvent.count({ where: { organizerId: organizer.id } });
     const adminActor = actor(admin);
