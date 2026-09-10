@@ -137,13 +137,14 @@ All monetary values are integer minor units with an ISO currency code. All mutab
 
 **PrimaryInventoryReservation**
 
-- `id`, `eventId`, `ticketTypeId`, `buyerUserId`, `quantity`, `status: ACTIVE | PAYMENT_COMMITTED | CONSUMED | EXPIRED | RELEASED | EXCEPTION`
-- `expiresAt`, `paymentCommittedAt?`, `paymentResolutionDeadline?`, `consumedAt?`, `releasedAt?`, `exceptionReason?`, `checkoutKey`
-- unique `checkoutKey`; index `(ticketTypeId, status, expiresAt)`
+- The isolated reservation foundation stores `id`, `organizerId`, `eventId`, `ticketTypeId`, authenticated `buyerUserId`, positive `quantity`, and `status: HELD | PAYMENT_COMMITTED | RELEASED | EXPIRED`.
+- It stores server-clock `expiresAt`, `paymentCommittedAt?`, `reconciliationAfter?`, lifecycle timestamps, and unique idempotency keys for create/commit/release/expire commands.
+- `HELD` replaces the design's earlier `ACTIVE` name. A HELD row consumes capacity only while `expiresAt > database-operation clock`; every `PAYMENT_COMMITTED` row consumes capacity regardless of hold expiry.
+- The foundation has no order, checkout, price quote, payment provider identifier, or provider operation. `PAYMENT_COMMITTED` is reachable only through an opaque internal capability issued in the isolated test runtime.
 
-Capacity is not represented by one mutable counter alone. Availability is calculated/locked transactionally from sold quantity plus unexpired `ACTIVE` reservations plus every `PAYMENT_COMMITTED` reservation. PostgreSQL row locking or a serializable transaction locks the `PrimaryTicketType` and `PrimaryEvent` capacity rows before creating or committing a reservation. The transaction rejects any result exceeding either ticket-type inventory or total event capacity.
+Capacity is not represented by one mutable counter alone. During this foundation, reservable quantity is `allocated quantity - unexpired HELD quantity - PAYMENT_COMMITTED quantity`; the same committed quantities across all types must also remain within event capacity. PostgreSQL serializable transactions use the lock order organizer, event, all event ticket types ordered by ID, then all event reservations ordered by ID. The transaction rejects any result exceeding either ticket-type allocation or total event capacity.
 
-Immediately before returning a client secret that can produce a delayed success, the server atomically changes `ACTIVE -> PAYMENT_COMMITTED` and sets a controlled resolution deadline. A normal expiry worker can expire only `ACTIVE` reservations; it must never release `PAYMENT_COMMITTED` inventory. Payment-committed inventory remains unavailable until a verified terminal provider outcome releases/consumes it or a reconciliation worker proves the PaymentIntent terminal/cancelled after the resolution deadline. Uncertain provider state moves the reservation to `EXCEPTION`, keeps capacity held, and alerts operations.
+In future payment work, immediately before returning a client secret that can produce a delayed success, the server must atomically change `HELD -> PAYMENT_COMMITTED` and set a controlled reconciliation time. The current internal test-only transition models this invariant without creating a PaymentIntent. Expiry can transition only an elapsed HELD reservation and must reject PAYMENT_COMMITTED. Payment-committed inventory remains unavailable until separately reviewed provider reconciliation implements a verified terminal outcome; elapsed time alone never releases it.
 
 ### 3.3 Order domain
 

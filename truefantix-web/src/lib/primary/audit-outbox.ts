@@ -26,6 +26,13 @@ const AUDIT_FIELD_ALLOWLIST = new Set([
   "maximumPerOrder",
   "currency",
   "basePriceMinor",
+  "ticketTypeId",
+  "quantity",
+  "expiresAt",
+  "paymentCommittedAt",
+  "reconciliationAfter",
+  "releasedAt",
+  "expiredAt",
 ]);
 
 export function redactPrimaryAuditSnapshot(value: Record<string, unknown> | null | undefined) {

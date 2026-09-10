@@ -177,6 +177,13 @@ enum PrimaryTicketTypeStatus {
   INACTIVE
 }
 
+enum PrimaryInventoryReservationStatus {
+  HELD
+  PAYMENT_COMMITTED
+  RELEASED
+  EXPIRED
+}
+
 enum PrimaryAuditActorType {
   USER
   SYSTEM
@@ -310,6 +317,7 @@ model User {
   primaryEventAssignmentsMade      PrimaryEventStaffAssignment[] @relation("PrimaryAssignmentAssignedBy")
   primaryEventAssignmentsRevoked   PrimaryEventStaffAssignment[] @relation("PrimaryAssignmentRevokedBy")
   primaryEventsApproved            PrimaryEvent[]                @relation("PrimaryEventApprovedBy")
+  primaryInventoryReservations     PrimaryInventoryReservation[] @relation("PrimaryReservationBuyer")
   primaryAuditEvents               PrimaryAuditEvent[]           @relation("PrimaryAuditActor")
 
   @@index([role])
@@ -432,11 +440,12 @@ model PrimaryEvent {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
-  organizer   PrimaryOrganizer              @relation(fields: [organizerId], references: [id], onDelete: Cascade)
-  approvedBy  User?                         @relation("PrimaryEventApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
-  assignments PrimaryEventStaffAssignment[]
-  auditEvents PrimaryAuditEvent[]
-  ticketTypes PrimaryTicketType[]
+  organizer    PrimaryOrganizer              @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  approvedBy   User?                         @relation("PrimaryEventApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  assignments  PrimaryEventStaffAssignment[]
+  auditEvents  PrimaryAuditEvent[]
+  ticketTypes  PrimaryTicketType[]
+  reservations PrimaryInventoryReservation[]
 
   @@unique([id, organizerId])
   @@index([organizerId])
@@ -459,10 +468,40 @@ model PrimaryTicketType {
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
 
-  event PrimaryEvent @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
+  event        PrimaryEvent                  @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
+  reservations PrimaryInventoryReservation[]
 
   @@unique([id, organizerId, eventId])
   @@index([organizerId, eventId, status])
+}
+
+model PrimaryInventoryReservation {
+  id                    String                            @id @default(cuid())
+  organizerId           String
+  eventId               String
+  ticketTypeId          String
+  buyerUserId           String
+  quantity              Int
+  status                PrimaryInventoryReservationStatus @default(HELD)
+  expiresAt             DateTime
+  paymentCommittedAt    DateTime?
+  reconciliationAfter   DateTime?
+  releasedAt            DateTime?
+  expiredAt             DateTime?
+  createIdempotencyKey  String                            @unique
+  commitIdempotencyKey  String?                           @unique
+  releaseIdempotencyKey String?                           @unique
+  expireIdempotencyKey  String?                           @unique
+  createdAt             DateTime                          @default(now())
+  updatedAt             DateTime                          @updatedAt
+
+  event      PrimaryEvent      @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
+  ticketType PrimaryTicketType @relation(fields: [ticketTypeId, organizerId, eventId], references: [id, organizerId, eventId], onDelete: Cascade)
+  buyer      User              @relation("PrimaryReservationBuyer", fields: [buyerUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizerId, eventId, status, expiresAt])
+  @@index([ticketTypeId, status, expiresAt])
+  @@index([buyerUserId, createdAt])
 }
 
 model PrimaryEventStaffAssignment {
