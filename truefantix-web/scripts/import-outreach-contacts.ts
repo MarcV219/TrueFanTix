@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isAutoApprovalEligible } from "../src/lib/outreach-import-policy";
+import { isGenericOutreachEmail } from "../src/lib/outreach";
 
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -60,17 +61,18 @@ async function main() {
     const mappedRows = rows.map((row) => {
         const isArtist = source.kind === "artist"; const organization = value(row.organization) || (isArtist ? null : value(row.team)); const rawSubjectName = isArtist ? value(row.artist) : value(row.team); const subjectName = isArtist ? rawSubjectName : sportsSubjectName(row.team, row.league);
         const role = value(row.role) || value(row.title) || value(row.department) || value(row.contact_type); const email = value(row.email); const normalizedEmail = email?.toLowerCase() || null; const sourceUrl = value(row.source_url);
-        const contactName = value(row.contact_name);
+        const researchedContactName = value(row.contact_name);
+        const contactName = isGenericOutreachEmail(email) ? null : researchedContactName;
         // A named person at one subject is one outreach contact. Research upgrades
         // (especially adding an email) must update that contact instead of creating a duplicate.
-        const legacyExternalKey = key([source.namespace, rawSubjectName, organization, contactName, role, email, value(row.phone), sourceUrl]);
+        const legacyExternalKey = key([source.namespace, rawSubjectName, organization, researchedContactName, role, email, value(row.phone), sourceUrl]);
         const accidentalExternalKey = key([source.namespace, rawSubjectName, organization, role, email, value(row.phone), sourceUrl]);
-        const externalKey = source.kind === "sports" && contactName
-          ? key([source.namespace, rawSubjectName || organization, contactName])
+        const externalKey = source.kind === "sports" && researchedContactName
+          ? key([source.namespace, rawSubjectName || organization, researchedContactName])
           : legacyExternalKey;
         if (legacyExternalKey !== externalKey) supersededExternalKeys.add(legacyExternalKey);
         if (accidentalExternalKey !== externalKey) supersededExternalKeys.add(accidentalExternalKey);
-        const data = { category: source.category, league: value(row.league), city: value(row.city), region: value(row.region), country: value(row.country), organization, subjectName, contactName: value(row.contact_name), role, email, normalizedEmail, phone: value(row.phone), websiteUrl: value(row.official_website) || value(row.team_website), sourceUrl, sourceType: value(row.source_type), verifiedAt: date(row.verified_date), confidence: value(row.confidence)?.toUpperCase() || null, researchStatus: value(row.status)?.toUpperCase() || null, notes: value(row.notes) };
+        const data = { category: source.category, league: value(row.league), city: value(row.city), region: value(row.region), country: value(row.country), organization, subjectName, contactName, role, email, normalizedEmail, phone: value(row.phone), websiteUrl: value(row.official_website) || value(row.team_website), sourceUrl, sourceType: value(row.source_type), verifiedAt: date(row.verified_date), confidence: value(row.confidence)?.toUpperCase() || null, researchStatus: value(row.status)?.toUpperCase() || null, notes: value(row.notes) };
         return { externalKey, ...data };
       });
     const bestByKey = new Map<string, (typeof mappedRows)[number]>();

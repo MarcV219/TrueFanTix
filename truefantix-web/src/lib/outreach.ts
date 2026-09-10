@@ -1,6 +1,29 @@
 import crypto from "crypto";
 
 export function normalizeEmail(value: string) { return value.trim().toLowerCase(); }
+const GENERIC_OUTREACH_MAILBOXES = new Set([
+  "admin", "administration", "athletic.office", "athletic.tickets", "athletics",
+  "athtickets", "booking", "bookings", "boxoffice", "business", "community",
+  "communications", "contact", "corporate", "customerservice", "enquiries",
+  "events", "fanservices", "general", "groups", "group.sales", "hello", "hospitality",
+  "info", "inquiries", "management", "manager", "marketing", "media", "membership",
+  "memberships", "mgmt", "office", "partnership", "partnerships", "press", "presse",
+  "premium", "premium.sales", "reception", "sales", "season.tickets", "seasontickets",
+  "service", "sponsorship", "sponsorships", "support", "ticket", "ticketing",
+  "ticketoffice", "tickets",
+]);
+
+/** True when an address identifies a department/role rather than an individual. */
+export function isGenericOutreachEmail(value: string | null | undefined) {
+  if (!value) return false;
+  const localPart = normalizeEmail(value).split("@", 1)[0]
+    .replace(/[+_-]+/g, ".")
+    .replace(/\.+/g, ".")
+    .replace(/^\.|\.$/g, "");
+  if (GENERIC_OUTREACH_MAILBOXES.has(localPart)) return true;
+  const firstSegment = localPart.split(".")[0];
+  return GENERIC_OUTREACH_MAILBOXES.has(firstSegment);
+}
 export const OUTREACH_RECENT_CONTACT_DAYS = 30;
 export const OUTREACH_DEFAULT_FOLLOW_UP_DAYS = 45;
 export function recentContactCutoff(now = new Date()) {
@@ -36,11 +59,15 @@ export function emailFromUnsubscribeToken(token: string) {
 }
 export function unsubscribeUrl(email: string) { return `${outreachOrigin()}/unsubscribe/outreach?token=${encodeURIComponent(unsubscribeToken(email))}`; }
 export function contactMergeVars(contact: { contactName?: string | null; subjectName?: string | null; organization?: string | null; role?: string | null; email?: string | null }) {
-  const firstName = (contact.contactName || "").trim().split(/\s+/)[0] || "there";
+  // A staff directory can identify a person near a shared departmental address
+  // without establishing that the inbox belongs to that person. Never personalize
+  // a message to an individual unless the address itself is person-level.
+  const contactName = isGenericOutreachEmail(contact.email) ? "" : (contact.contactName || "").trim();
+  const firstName = contactName.split(/\s+/)[0] || "there";
   const subjectName = contact.subjectName || "";
   return {
     firstName,
-    contactName: contact.contactName || "",
+    contactName,
     subjectName,
     // Sports imports may identify a league or venue as the contact's employer.
     // Campaigns are addressed to the team/artist itself, which is subjectName.

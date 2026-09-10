@@ -42,7 +42,18 @@ export async function GET(req: Request) {
   if (email === "yes") where.email = { not: null };
   if (email === "no") where.email = null;
   const [items, count, totalCount, categories, leagues, allLeagues, cities, teams, researchStatuses, relationships, suppressions] = await prisma.$transaction([
-    prisma.outreachContact.findMany({ where, orderBy: [{ lastContactedAt: "asc" }, { organization: "asc" }], skip: (page - 1) * take, take }),
+    prisma.outreachContact.findMany({
+      where,
+      // Put verified people ahead of departmental fallbacks. Import normalization
+      // deliberately clears contactName for shared role-based mailboxes.
+      orderBy: [
+        { lastContactedAt: { sort: "asc", nulls: "first" } },
+        { contactName: { sort: "asc", nulls: "last" } },
+        { organization: "asc" },
+      ],
+      skip: (page - 1) * take,
+      take,
+    }),
     prisma.outreachContact.count({ where }),
     prisma.outreachContact.count(),
     prisma.outreachContact.groupBy({ by: ["category"], _count: { _all: true }, orderBy: { category: "asc" } }),

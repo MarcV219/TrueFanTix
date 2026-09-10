@@ -1,10 +1,20 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
-import { contactMergeVars, defaultOutreachFollowUpAt, emailFromUnsubscribeToken, normalizeEmail, recentContactCutoff, renderMerge, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
+import { contactMergeVars, defaultOutreachFollowUpAt, emailFromUnsubscribeToken, isGenericOutreachEmail, normalizeEmail, recentContactCutoff, renderMerge, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
 import { completeQuebecCollaborationHtml, outreachHtmlDocument, outreachHtmlToText, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 
 describe("outreach security and personalization", () => {
+  test("recognizes shared role mailboxes and never addresses them as an individual", () => {
+    expect(isGenericOutreachEmail("tickets@ottawasenators.com")).toBe(true);
+    expect(isGenericOutreachEmail("group-sales@example.com")).toBe(true);
+    expect(isGenericOutreachEmail("brendan.duvall@ottawasenators.com")).toBe(false);
+    expect(contactMergeVars({
+      contactName: "Brendan Duvall",
+      subjectName: "Ottawa Senators",
+      email: "tickets@ottawasenators.com",
+    })).toMatchObject({ firstName: "there", contactName: "" });
+  });
   beforeEach(() => {
     process.env.OUTREACH_FROM_EMAIL = "marc@truefantix.com";
     process.env.OUTREACH_UNSUBSCRIBE_SECRET = "another-secure-test-key-at-least-32-characters";
