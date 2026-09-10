@@ -750,6 +750,8 @@ model PrimaryAdmissionCredential {
 
 model PrimaryAdmissionScan {
   id                String                     @id @default(cuid())
+  requestId         String                     @unique
+  commandDigest     String
   organizerId       String
   eventId           String
   admissionTicketId String?

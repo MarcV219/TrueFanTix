@@ -206,6 +206,8 @@ The isolated credential foundation implements only `ISSUED -> VOIDED`, one crede
 
 The isolated online scan foundation adds service-level `ISSUED -> CHECKED_IN` only. It uses a test public-key keyring so retired issuer public keys can verify historical credentials without retaining old private keys. Every accepted entry is serialized on the entitlement and atomically records append-only scan plus audit/outbox evidence; concurrent and later scans are duplicates. Event-day access requires an active exact-event assignment and an active `OWNER`, `EVENT_MANAGER`, `BOX_OFFICE`, or `SCANNER` membership, including for owners, with no platform-admin bypass. Authenticated invalid attempts retain only minimal expected-event/operator evidence when no entitlement can safely be identified. This is an online-only claim: routes, UI, QR presentation, overrides, offline sync, transfer, reissue, refunds, and check-in reversal remain deferred.
 
+Scan commands are idempotent by a globally unique normalized request ID plus a SHA-256 digest of all material scope/device inputs and a SHA-256 bearer-token digest. Exact response-delivery retries return the original accepted or rejected result without new evidence; changed-input reuse conflicts. The database independently enforces result/binding/state consistency before immutable scan evidence is inserted.
+
 **AdmissionCredential**
 
 - `id` generated from cryptographically secure random bytes, not a sequential identifier
