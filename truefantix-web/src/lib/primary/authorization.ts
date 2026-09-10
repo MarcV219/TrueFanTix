@@ -43,10 +43,14 @@ export async function authorizePrimaryOrganizer(input: {
   allowedRoles?: readonly PrimaryMembershipRole[];
   env?: NodeJS.ProcessEnv;
   capability?: PrimaryPreflightCapability;
+  allowPlatformAdmin?: boolean;
 }) {
   if (input.capability) assertPrimaryPreflightCapability(input.capability);
   else requirePrimaryPreflight(input.env);
-  if (input.actor.role === "ADMIN") return { platformAdmin: true as const, membership: null };
+  if (input.actor.role === "ADMIN") {
+    if (input.allowPlatformAdmin === false) throw new PrimaryAccessError("FORBIDDEN", 403);
+    return { platformAdmin: true as const, membership: null };
+  }
 
   const allowedRoles = input.allowedRoles ?? ALL_ORGANIZER_ROLES;
   const membership = await input.store.primaryOrganizerMembership.findFirst({
@@ -72,6 +76,7 @@ export async function authorizePrimaryEvent(input: {
   allowedRoles?: readonly PrimaryMembershipRole[];
   env?: NodeJS.ProcessEnv;
   capability?: PrimaryPreflightCapability;
+  allowPlatformAdmin?: boolean;
 }) {
   const organizerAccess = await authorizePrimaryOrganizer(input);
   const event = await input.store.primaryEvent.findFirst({

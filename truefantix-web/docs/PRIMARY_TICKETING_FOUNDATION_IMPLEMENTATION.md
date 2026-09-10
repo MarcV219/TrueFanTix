@@ -83,6 +83,15 @@ The PostgreSQL integration suite uses only synthetic users on a disposable isola
 
 Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 database named `primary_ticketing_test`: all 36 migrations deployed cleanly; the 2 database-backed organizer integration tests passed; all 56 suites / 344 tests passed with integration enabled; TypeScript and the production build passed; focused lint passed; full lint completed with 0 errors and 619 pre-existing warnings; and `git diff --check` passed. The disposable database was destroyed after verification.
 
+### Foundation Revision 2 hardening
+
+- Organizer submission and admin review transitions acquire a PostgreSQL row lock before reading the current state. Concurrent conflicting transitions cannot both commit or emit audit/outbox records.
+- Platform `ADMIN` bypass remains available only to explicit platform review/suspension operations. Every OWNER-only invitation, membership, and event-assignment service call passes `allowPlatformAdmin: false` and requires a current active OWNER membership after the organizer lock is acquired.
+- Suspension blocks invitation creation and acceptance, invitation revocation, membership role/revocation changes, and event-assignment changes. Only the defined platform review/restoration path remains available while suspended.
+- Review, invitation revocation, membership change/revocation, and assignment revocation require a trimmed non-empty reason before mutation.
+- The PostgreSQL suite now separately proves conflicting-transition serialization; concurrent final-owner protection; ADMIN denial across all OWNER-only mutation families; banned and stale-role denial; invitation duplicate, expiry, replay, and suspended-acceptance behavior; reason enforcement; cross-tenant denial; and complete rollback with no audit/outbox residue when protected persistence fails.
+- Revision 2 verification on a newly provisioned disposable PostgreSQL 16 database: all 36 migrations applied; all 8 organizer integration tests and the complete 56-suite / 350-test run passed; TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and `git diff --check` passed. The database/container was removed after verification.
+
 ## Risks and open decisions
 
 - The preflight depends on explicit environment configuration and database naming. Deployment configuration remains intentionally absent until an isolated preview is separately authorized.

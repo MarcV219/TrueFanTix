@@ -56,6 +56,19 @@ async function lockOrganizer(tx: Tx, organizerId: string) {
   await tx.$queryRaw`SELECT id FROM "PrimaryOrganizer" WHERE id = ${organizerId} FOR UPDATE`;
 }
 
+function requireReason(reason: string) {
+  const trimmed = reason.trim();
+  if (!trimmed) throw new PrimaryDomainError("REASON_REQUIRED");
+  return trimmed;
+}
+
+async function requireOperationalOrganizer(tx: Tx, organizerId: string) {
+  const organizer = await tx.primaryOrganizer.findUnique({ where: { id: organizerId }, select: { status: true } });
+  if (!organizer) throw new PrimaryAccessError("NOT_FOUND", 404);
+  if (organizer.status === "SUSPENDED") throw new PrimaryDomainError("ORGANIZER_SUSPENDED");
+  return organizer;
+}
+
 export class PrimaryOrganizerService {
   constructor(
     private readonly db: ServiceDb,
@@ -104,39 +117,42 @@ export class PrimaryOrganizerService {
   submit(input: { actor: PrimaryServiceActor; organizerId: string; requestId: string }) {
     return this.db.$transaction(async (tx) => {
       await requireVerifiedActor(tx, input.actor);
-      await authorizePrimaryOrganizer({ store: tx, actor: input.actor, organizerId: input.organizerId, allowedRoles: ["OWNER"], capability: this.capability });
+      await lockOrganizer(tx, input.organizerId);
+      await authorizePrimaryOrganizer({ store: tx, actor: input.actor, organizerId: input.organizerId, allowedRoles: ["OWNER"], capability: this.capability, allowPlatformAdmin: false });
       const organizer = await tx.primaryOrganizer.findFirst({ where: { id: input.organizerId, status: "DRAFT" } });
       if (!organizer) throw new PrimaryDomainError("INVALID_ORGANIZER_STATE");
       const updated = await tx.primaryOrganizer.update({ where: { id: organizer.id }, data: { status: "SUBMITTED", statusReason: null, submittedAt: new Date() } });
       await this.audit(tx, input, "ORGANIZER_SUBMITTED", organizer.id, { status: organizer.status }, { status: updated.status }, "primary.organizer.submitted");
       return updated;
-    });
+    }, { isolationLevel: "Serializable" });
   }
 
   review(input: { actor: PrimaryServiceActor; organizerId: string; requestId: string; toStatus: "UNDER_REVIEW" | "APPROVED" | "REJECTED" | "SUSPENDED" | "DRAFT"; reason: string }) {
     return this.db.$transaction(async (tx) => {
+      const reason = requireReason(input.reason);
       await requireVerifiedActor(tx, input.actor);
       if (input.actor.role !== "ADMIN") throw new PrimaryAccessError("FORBIDDEN", 403);
+      await lockOrganizer(tx, input.organizerId);
       const organizer = await tx.primaryOrganizer.findUnique({ where: { id: input.organizerId } });
       if (!organizer) throw new PrimaryAccessError("NOT_FOUND", 404);
       if (!REVIEW_TRANSITIONS[organizer.status].includes(input.toStatus)) throw new PrimaryDomainError("INVALID_ORGANIZER_STATE");
       const approved = input.toStatus === "APPROVED";
       const updated = await tx.primaryOrganizer.update({ where: { id: organizer.id }, data: {
-        status: input.toStatus, statusReason: input.reason.trim() || null,
+        status: input.toStatus, statusReason: reason,
         approvedAt: approved ? new Date() : organizer.approvedAt,
         approvedByUserId: approved ? input.actor.id : organizer.approvedByUserId,
       } });
-      await this.audit(tx, input, `ORGANIZER_${input.toStatus}`, organizer.id, { status: organizer.status }, { status: updated.status }, `primary.organizer.${input.toStatus.toLowerCase()}`, input.reason);
+      await this.audit(tx, input, `ORGANIZER_${input.toStatus}`, organizer.id, { status: organizer.status }, { status: updated.status }, `primary.organizer.${input.toStatus.toLowerCase()}`, reason);
       return updated;
-    });
+    }, { isolationLevel: "Serializable" });
   }
 
   invite(input: { actor: PrimaryServiceActor; organizerId: string; requestId: string; email: string; role: PrimaryMembershipRole; expiresAt: Date }) {
     return this.db.$transaction(async (tx) => {
       await requireVerifiedActor(tx, input.actor);
-      await authorizePrimaryOrganizer({ store: tx, actor: input.actor, organizerId: input.organizerId, allowedRoles: ["OWNER"], capability: this.capability });
-      const organizer = await tx.primaryOrganizer.findUnique({ where: { id: input.organizerId }, select: { status: true } });
-      if (!organizer || organizer.status === "SUSPENDED") throw new PrimaryDomainError("ORGANIZER_SUSPENDED");
+      await lockOrganizer(tx, input.organizerId);
+      await authorizePrimaryOrganizer({ store: tx, actor: input.actor, organizerId: input.organizerId, allowedRoles: ["OWNER"], capability: this.capability, allowPlatformAdmin: false });
+      await requireOperationalOrganizer(tx, input.organizerId);
       if (!STAFF_ROLES.includes(input.role)) throw new PrimaryDomainError("INVALID_ROLE");
       if (input.expiresAt.getTime() <= Date.now()) throw new PrimaryDomainError("INVALID_INVITATION_EXPIRY");
       const emailNormalized = normalizeEmail(input.email);
@@ -158,6 +174,8 @@ export class PrimaryOrganizerService {
       const invitation = await tx.primaryOrganizerInvitation.findUnique({ where: { tokenHash: invitationHash(input.token, this.invitationPepper) } });
       if (!invitation || invitation.acceptedAt || invitation.revokedAt || invitation.expiresAt <= new Date()) throw new PrimaryDomainError("INVITATION_INVALID");
       if (invitation.emailNormalized !== user.emailNormalized) throw new PrimaryAccessError("NOT_FOUND", 404);
+      await lockOrganizer(tx, invitation.organizerId);
+      await requireOperationalOrganizer(tx, invitation.organizerId);
       const membership = await tx.primaryOrganizerMembership.upsert({
         where: { organizerId_userId: { organizerId: invitation.organizerId, userId: user.id } },
         create: { organizerId: invitation.organizerId, userId: user.id, role: invitation.role, status: "ACTIVE", invitedByUserId: invitation.invitedByUserId, acceptedAt: new Date() },
@@ -171,21 +189,26 @@ export class PrimaryOrganizerService {
 
   revokeInvitation(input: { actor: PrimaryServiceActor; organizerId: string; invitationId: string; requestId: string; reason: string }) {
     return this.db.$transaction(async (tx) => {
+      const reason = requireReason(input.reason);
       await requireVerifiedActor(tx, input.actor);
-      await authorizePrimaryOrganizer({ store: tx, actor: input.actor, organizerId: input.organizerId, allowedRoles: ["OWNER"], capability: this.capability });
+      await lockOrganizer(tx, input.organizerId);
+      await authorizePrimaryOrganizer({ store: tx, actor: input.actor, organizerId: input.organizerId, allowedRoles: ["OWNER"], capability: this.capability, allowPlatformAdmin: false });
+      await requireOperationalOrganizer(tx, input.organizerId);
       const invitation = await tx.primaryOrganizerInvitation.findFirst({ where: { id: input.invitationId, organizerId: input.organizerId, acceptedAt: null, revokedAt: null } });
       if (!invitation) throw new PrimaryAccessError("NOT_FOUND", 404);
       const updated = await tx.primaryOrganizerInvitation.update({ where: { id: invitation.id }, data: { revokedAt: new Date() } });
-      await this.audit(tx, input, "STAFF_INVITATION_REVOKED", invitation.id, undefined, { role: invitation.role }, "primary.invitation.revoked", input.reason);
+      await this.audit(tx, input, "STAFF_INVITATION_REVOKED", invitation.id, undefined, { role: invitation.role }, "primary.invitation.revoked", reason);
       return updated;
     });
   }
 
   changeMembership(input: { actor: PrimaryServiceActor; organizerId: string; membershipId: string; requestId: string; role?: PrimaryMembershipRole; revoke?: boolean; reason: string }) {
     return this.db.$transaction(async (tx) => {
+      const reason = requireReason(input.reason);
       await requireVerifiedActor(tx, input.actor);
-      await authorizePrimaryOrganizer({ store: tx, actor: input.actor, organizerId: input.organizerId, allowedRoles: ["OWNER"], capability: this.capability });
       await lockOrganizer(tx, input.organizerId);
+      await authorizePrimaryOrganizer({ store: tx, actor: input.actor, organizerId: input.organizerId, allowedRoles: ["OWNER"], capability: this.capability, allowPlatformAdmin: false });
+      await requireOperationalOrganizer(tx, input.organizerId);
       const membership = await tx.primaryOrganizerMembership.findFirst({ where: { id: input.membershipId, organizerId: input.organizerId, status: "ACTIVE" } });
       if (!membership) throw new PrimaryAccessError("NOT_FOUND", 404);
       if (membership.role === "OWNER" && (input.revoke || (input.role && input.role !== "OWNER"))) {
@@ -196,7 +219,7 @@ export class PrimaryOrganizerService {
       const updated = await tx.primaryOrganizerMembership.update({ where: { id: membership.id }, data: input.revoke
         ? { status: "REVOKED", revokedAt: new Date() }
         : { role: input.role, status: "ACTIVE", revokedAt: null } });
-      await this.audit(tx, input, input.revoke ? "MEMBERSHIP_REVOKED" : "MEMBERSHIP_ROLE_CHANGED", membership.id, { role: membership.role, status: membership.status }, { role: updated.role, status: updated.status }, input.revoke ? "primary.membership.revoked" : "primary.membership.role-changed", input.reason);
+      await this.audit(tx, input, input.revoke ? "MEMBERSHIP_REVOKED" : "MEMBERSHIP_ROLE_CHANGED", membership.id, { role: membership.role, status: membership.status }, { role: updated.role, status: updated.status }, input.revoke ? "primary.membership.revoked" : "primary.membership.role-changed", reason);
       return updated;
     }, { isolationLevel: "Serializable" });
   }
@@ -204,7 +227,9 @@ export class PrimaryOrganizerService {
   assignEvent(input: { actor: PrimaryServiceActor; organizerId: string; eventId: string; membershipId: string; requestId: string }) {
     return this.db.$transaction(async (tx) => {
       await requireVerifiedActor(tx, input.actor);
-      await authorizePrimaryEvent({ store: tx, actor: input.actor, organizerId: input.organizerId, eventId: input.eventId, allowedRoles: ["OWNER"], capability: this.capability });
+      await lockOrganizer(tx, input.organizerId);
+      await authorizePrimaryEvent({ store: tx, actor: input.actor, organizerId: input.organizerId, eventId: input.eventId, allowedRoles: ["OWNER"], capability: this.capability, allowPlatformAdmin: false });
+      await requireOperationalOrganizer(tx, input.organizerId);
       const membership = await tx.primaryOrganizerMembership.findFirst({ where: { id: input.membershipId, organizerId: input.organizerId, status: "ACTIVE" } });
       if (!membership) throw new PrimaryAccessError("NOT_FOUND", 404);
       const assignment = await tx.primaryEventStaffAssignment.upsert({
@@ -219,12 +244,15 @@ export class PrimaryOrganizerService {
 
   revokeEventAssignment(input: { actor: PrimaryServiceActor; organizerId: string; eventId: string; assignmentId: string; requestId: string; reason: string }) {
     return this.db.$transaction(async (tx) => {
+      const reason = requireReason(input.reason);
       await requireVerifiedActor(tx, input.actor);
-      await authorizePrimaryEvent({ store: tx, actor: input.actor, organizerId: input.organizerId, eventId: input.eventId, allowedRoles: ["OWNER"], capability: this.capability });
+      await lockOrganizer(tx, input.organizerId);
+      await authorizePrimaryEvent({ store: tx, actor: input.actor, organizerId: input.organizerId, eventId: input.eventId, allowedRoles: ["OWNER"], capability: this.capability, allowPlatformAdmin: false });
+      await requireOperationalOrganizer(tx, input.organizerId);
       const assignment = await tx.primaryEventStaffAssignment.findFirst({ where: { id: input.assignmentId, organizerId: input.organizerId, eventId: input.eventId, status: "ACTIVE" } });
       if (!assignment) throw new PrimaryAccessError("NOT_FOUND", 404);
-      const updated = await tx.primaryEventStaffAssignment.update({ where: { id: assignment.id }, data: { status: "REVOKED", revokedAt: new Date(), revokedByUserId: input.actor.id, revocationReason: input.reason.trim() } });
-      await this.audit(tx, input, "EVENT_STAFF_REVOKED", assignment.id, { status: assignment.status }, { status: updated.status }, "primary.event-staff.revoked", input.reason);
+      const updated = await tx.primaryEventStaffAssignment.update({ where: { id: assignment.id }, data: { status: "REVOKED", revokedAt: new Date(), revokedByUserId: input.actor.id, revocationReason: reason } });
+      await this.audit(tx, input, "EVENT_STAFF_REVOKED", assignment.id, { status: assignment.status }, { status: updated.status }, "primary.event-staff.revoked", reason);
       return updated;
     });
   }
