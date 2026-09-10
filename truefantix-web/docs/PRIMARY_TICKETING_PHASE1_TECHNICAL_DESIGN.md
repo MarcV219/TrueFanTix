@@ -202,6 +202,8 @@ In future payment work, immediately before returning a client secret that can pr
 
 This is the durable entitlement. It is deliberately not the existing secondary `Ticket` model.
 
+The isolated credential foundation implements only `ISSUED -> VOIDED`, one credential generation, and internal synthetic issuance/verification. It binds entitlement scope to the exact paid order/line/reservation/ticket type with composite foreign keys and creates exactly one entitlement per line unit. The PII-free canonical Ed25519 v1 payload contains only credential UUID, event ID, issuance time, and test key ID. No QR presentation, transfer, reissue, scan, check-in, refund, public route, or browser surface is included at this milestone.
+
 **AdmissionCredential**
 
 - `id` generated from cryptographically secure random bytes, not a sequential identifier
