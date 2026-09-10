@@ -28,6 +28,7 @@ export type PrimaryEventDraftFields = {
   contactEmail: string;
   contactPhone?: string;
   draftPolicyText: string;
+  totalCapacity: number;
 };
 
 const REVIEW_TRANSITIONS: Record<PrimaryEventStatus, readonly PrimaryEventStatus[]> = {
@@ -68,6 +69,7 @@ function validateFields(fields: PrimaryEventDraftFields) {
   if (endsAtLocal <= startsAtLocal) throw new PrimaryDomainError("INVALID_EVENT_DATE_RANGE");
   const contactEmail = required(fields.contactEmail, "CONTACT_EMAIL_REQUIRED").toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) throw new PrimaryDomainError("INVALID_CONTACT_EMAIL");
+  if (!Number.isSafeInteger(fields.totalCapacity) || fields.totalCapacity <= 0) throw new PrimaryDomainError("INVALID_TOTAL_CAPACITY");
   return {
     title: required(fields.title, "TITLE_REQUIRED"),
     description: required(fields.description, "DESCRIPTION_REQUIRED"),
@@ -83,6 +85,7 @@ function validateFields(fields: PrimaryEventDraftFields) {
     accessibilityInfo: fields.accessibilityInfo?.trim() || null,
     contactEmail, contactPhone: fields.contactPhone?.trim() || null,
     draftPolicyText: required(fields.draftPolicyText, "DRAFT_POLICY_REQUIRED"),
+    totalCapacity: fields.totalCapacity,
   };
 }
 
@@ -105,6 +108,7 @@ function validatePersistedEvent(event: PrimaryEvent) {
     contactEmail: event.contactEmail,
     contactPhone: event.contactPhone ?? undefined,
     draftPolicyText: event.draftPolicyText,
+    totalCapacity: event.totalCapacity,
   });
 }
 
@@ -121,6 +125,10 @@ async function lockOrganizer(tx: Tx, organizerId: string) {
 
 async function lockEvent(tx: Tx, organizerId: string, eventId: string) {
   await tx.$queryRaw`SELECT id FROM "PrimaryEvent" WHERE id = ${eventId} AND "organizerId" = ${organizerId} FOR UPDATE`;
+}
+
+async function lockTicketTypes(tx: Tx, organizerId: string, eventId: string) {
+  await tx.$queryRaw`SELECT id FROM "PrimaryTicketType" WHERE "organizerId" = ${organizerId} AND "eventId" = ${eventId} ORDER BY id FOR UPDATE`;
 }
 
 async function requireApprovedOrganizer(tx: Tx, organizerId: string) {
@@ -152,10 +160,17 @@ export class PrimaryEventService {
       await requireCurrentActor(tx, input.actor);
       await lockOrganizer(tx, input.organizerId);
       await lockEvent(tx, input.organizerId, input.eventId);
+      await lockTicketTypes(tx, input.organizerId, input.eventId);
       await authorizePrimaryEvent({ store: tx, actor: input.actor, organizerId: input.organizerId, eventId: input.eventId, allowedRoles: ["OWNER", "EVENT_MANAGER"], capability: this.capability, allowPlatformAdmin: false });
       await requireApprovedOrganizer(tx, input.organizerId);
       const event = await tx.primaryEvent.findFirst({ where: { id: input.eventId, organizerId: input.organizerId, status: { in: ["DRAFT", "REJECTED"] } } });
       if (!event) throw new PrimaryDomainError("INVALID_EVENT_STATE");
+      if (event.status !== "DRAFT" && fields.totalCapacity !== event.totalCapacity) throw new PrimaryDomainError("CAPACITY_EDIT_REQUIRES_DRAFT");
+      const activeAllocation = await tx.primaryTicketType.aggregate({
+        where: { organizerId: input.organizerId, eventId: event.id, status: "ACTIVE" },
+        _sum: { allocatedQuantity: true },
+      });
+      if ((activeAllocation._sum.allocatedQuantity ?? 0) > fields.totalCapacity) throw new PrimaryDomainError("CAPACITY_BELOW_ACTIVE_ALLOCATION");
       const updated = await tx.primaryEvent.update({ where: { id: event.id }, data: { ...fields, status: "DRAFT", statusReason: null } });
       await this.audit(tx, input, "EVENT_DRAFT_UPDATED", event.id, event, updated, "primary.event.updated");
       return updated;
@@ -172,6 +187,13 @@ export class PrimaryEventService {
       const event = await tx.primaryEvent.findFirst({ where: { id: input.eventId, organizerId: input.organizerId, status: "DRAFT" } });
       if (!event) throw new PrimaryDomainError("INVALID_EVENT_STATE");
       validatePersistedEvent(event);
+      const activeTicketTypes = await tx.primaryTicketType.findMany({
+        where: { organizerId: input.organizerId, eventId: event.id, status: "ACTIVE" },
+        select: { allocatedQuantity: true, currency: true },
+      });
+      if (activeTicketTypes.length === 0 || new Set(activeTicketTypes.map((ticketType) => ticketType.currency)).size !== 1 || activeTicketTypes.reduce((sum, ticketType) => sum + ticketType.allocatedQuantity, 0) > event.totalCapacity) {
+        throw new PrimaryDomainError("EVENT_CAPACITY_NOT_READY");
+      }
       const updated = await tx.primaryEvent.update({ where: { id: event.id }, data: { status: "SUBMITTED", statusReason: null, submittedAt: new Date() } });
       await this.audit(tx, input, "EVENT_SUBMITTED", event.id, event, updated, "primary.event.submitted");
       return updated;

@@ -36,6 +36,7 @@ describe("primary event service PostgreSQL integration", () => {
     timezone: "America/Toronto", accessibilityInfo: "Synthetic accessible entrance",
     contactEmail: "EVENTS@EXAMPLE.TEST", contactPhone: "+14165550100",
     draftPolicyText: "Synthetic draft policy; not offered to the public.",
+    totalCapacity: 100,
   });
   const seedOrganizer = async (owner: { id: string }, key: string, status: "APPROVED" | "DRAFT" | "SUSPENDED" = "APPROVED") => db.primaryOrganizer.create({
     data: {
@@ -44,6 +45,10 @@ describe("primary event service PostgreSQL integration", () => {
       createdByUserId: owner.id, memberships: { create: { userId: owner.id, role: "OWNER", status: "ACTIVE", invitedByUserId: owner.id, acceptedAt: new Date() } },
     },
   });
+  const seedTicketType = (organizerId: string, eventId: string) => db.primaryTicketType.create({ data: {
+    organizerId, eventId, name: "General Admission", allocatedQuantity: 100,
+    status: "ACTIVE", currency: "CAD", basePriceMinor: 2500,
+  } });
 
   beforeAll(async () => {
     await db.primaryEventStaffAssignment.deleteMany();
@@ -72,6 +77,7 @@ describe("primary event service PostgreSQL integration", () => {
     const membership = await db.primaryOrganizerMembership.create({ data: { organizerId: organizer.id, userId: manager.id, role: "EVENT_MANAGER", status: "ACTIVE", invitedByUserId: owner.id, acceptedAt: new Date() } });
     await db.primaryEventStaffAssignment.create({ data: { organizerId: organizer.id, eventId: event.id, membershipId: membership.id, assignedByUserId: owner.id } });
     await service.editDraft({ actor: actor(manager), organizerId: organizer.id, eventId: event.id, requestId: "event-edit-1", fields: fields("Edited Synthetic Concert") });
+    await seedTicketType(organizer.id, event.id);
     await service.submit({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, requestId: "event-submit-1" });
     await service.review({ actor: actor(admin), organizerId: organizer.id, eventId: event.id, requestId: "event-review-1", toStatus: "UNDER_REVIEW", reason: "Review started" });
     const approved = await service.review({ actor: actor(admin), organizerId: organizer.id, eventId: event.id, requestId: "event-approve-1", toStatus: "APPROVED", reason: "Synthetic approval" });
@@ -119,6 +125,7 @@ describe("primary event service PostgreSQL integration", () => {
     const approvedOrganizer = await seedOrganizer(owner, "event-later-suspended");
     const draftEvent = await service.createDraft({ actor: actor(owner), organizerId: approvedOrganizer.id, requestId: "pre-suspend-draft", fields: fields("Draft") });
     const submittedEvent = await service.createDraft({ actor: actor(owner), organizerId: approvedOrganizer.id, requestId: "pre-suspend-submitted", fields: fields("Submitted") });
+    await seedTicketType(approvedOrganizer.id, submittedEvent.id);
     await service.submit({ actor: actor(owner), organizerId: approvedOrganizer.id, eventId: submittedEvent.id, requestId: "pre-suspend-submit" });
     await db.primaryOrganizer.update({ where: { id: approvedOrganizer.id }, data: { status: "SUSPENDED" } });
     const before = await db.primaryAuditEvent.count({ where: { organizerId: approvedOrganizer.id } });
@@ -146,6 +153,7 @@ describe("primary event service PostgreSQL integration", () => {
     ]);
     const organizer = await seedOrganizer(owner, "event-concurrency");
     const event = await service.createDraft({ actor: actor(owner), organizerId: organizer.id, requestId: "concurrent-event-create", fields: fields() });
+    await seedTicketType(organizer.id, event.id);
     await service.submit({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, requestId: "concurrent-event-submit" });
     const before = await db.primaryAuditEvent.count({ where: { eventId: event.id } });
     const results = await Promise.allSettled([
@@ -180,6 +188,7 @@ describe("primary event service PostgreSQL integration", () => {
       venuePostalCode: "", venueCountry: "", startsAtLocal: placeholderTime,
       endsAtLocal: placeholderTime, timezone: "UTC", contactEmail: "",
       draftPolicyText: "",
+      totalCapacity: 1,
     } });
     const [auditBefore, outboxBefore] = await Promise.all([
       db.primaryAuditEvent.count({ where: { eventId: event.id } }),
@@ -199,6 +208,7 @@ describe("primary event service PostgreSQL integration", () => {
     ]);
     const organizer = await seedOrganizer(owner, "event-resubmission");
     const event = await service.createDraft({ actor: actor(owner), organizerId: organizer.id, requestId: "resubmit-create", fields: fields() });
+    await seedTicketType(organizer.id, event.id);
     await service.submit({ actor: actor(owner), organizerId: organizer.id, eventId: event.id, requestId: "resubmit-first" });
     await service.review({ actor: actor(admin), organizerId: organizer.id, eventId: event.id, requestId: "resubmit-reject", toStatus: "REJECTED", reason: "Revise venue details" });
     const before = await db.primaryAuditEvent.count({ where: { eventId: event.id } });

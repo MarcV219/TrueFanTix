@@ -46,7 +46,7 @@ describe("primary organizer service PostgreSQL integration", () => {
     venueName: "Synthetic Venue", venueAddressLine1: "1 Test Street", venueCity: "Toronto",
     venueRegion: "ON", venuePostalCode: "A1A1A1", venueCountry: "CA",
     startsAtLocal: new Date("2030-01-01T19:00:00Z"), endsAtLocal: new Date("2030-01-01T21:00:00Z"),
-    timezone: "America/Toronto", contactEmail: "event@example.test", draftPolicyText: "Synthetic draft policy",
+    timezone: "America/Toronto", contactEmail: "event@example.test", draftPolicyText: "Synthetic draft policy", totalCapacity: 100,
   });
 
   beforeAll(async () => {

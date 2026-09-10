@@ -108,18 +108,20 @@ All monetary values are integer minor units with an ISO currency code. All mutab
 - Until the separately reviewed venue domain exists, draft snapshots store `venueName`, address lines, city, region, postal code, country, and optional accessibility information directly on the event.
 - `startsAtLocal` and `endsAtLocal` are wall-clock `TIMESTAMP WITHOUT TIME ZONE` values paired with a required recognized IANA `timezone`. The service accepts ISO local strings without an offset, validates the zone and positive local range, and does not derive a sales/admission instant yet.
 - Draft contact fields are `contactEmail` and optional `contactPhone`; `draftPolicyText` is required but has no public or contractual effect.
+- The GA capacity foundation adds positive integer `totalCapacity`, editable only through serialized draft-event mutations. It is an allocation ceiling, not an availability or inventory claim.
 - The pre-publication lifecycle is `DRAFT | SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED`. This milestone deliberately has no `PUBLISHED` state or discoverability/sales behavior.
-- The later reviewed event/inventory milestone may add `venueId`, `doorsAt`, capacity, `PUBLISHED | SALES_CLOSED | CANCELLED | COMPLETED`, and the finalized policy/version fields below.
+- A later reviewed event/inventory milestone may add `venueId`, `doorsAt`, `PUBLISHED | SALES_CLOSED | CANCELLED | COMPLETED`, and the finalized policy/version fields below.
 - `refundPolicy`, `cancellationPolicy`, `termsVersion`
 - `submittedAt?`, `approvedAt?`, `approvedByUserId?`, `publishedAt?`, `cancelledAt?`, `completedAt?`
 - Phase 1 treats one event as one admission performance; a later `PrimaryPerformance` extraction is possible without changing credential claims
 
 **PrimaryTicketType**
 
-- `id`, `eventId`, `name`, `description?`, `inventoryLimit`, `perOrderLimit`, `perBuyerLimit?`
-- `salesStartAt`, `salesEndAt`, `status: DRAFT | ACTIVE | PAUSED | SALES_CLOSED`
-- price input: `basePriceCents`, `currency`, `priceScheduleVersion`
-- invariant: sum of ticket-type inventory limits cannot exceed event capacity
+- The GA capacity foundation stores organizer/event tenancy, `name`, `description?`, positive `allocatedQuantity`, draft-only `ACTIVE | INACTIVE`, optional positive `minimumPerOrder`/`maximumPerOrder`, recognized ISO currency, and positive integer `basePriceMinor`.
+- All types are general admission. Active allocations use one event currency and may never sum above `PrimaryEvent.totalCapacity`; organizer/event/type rows are locked in a consistent order for every capacity or allocation mutation.
+- Event submission requires positive capacity and at least one active, positively allocated type. This does not create sellable inventory or make any availability promise.
+- `basePriceMinor` is only the draft face-value input. Buyer fees, tax, processor cost, organizer proceeds, and all-in pricing remain uncalculated and unauthorized.
+- Future reviewed milestones may add sales windows, price schedule versions, per-buyer limits, and sales states only alongside the inventory/quote design below.
 
 **PrimaryPriceComponentRule**
 

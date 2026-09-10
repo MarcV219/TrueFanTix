@@ -172,6 +172,11 @@ enum PrimaryEventStatus {
   REJECTED
 }
 
+enum PrimaryTicketTypeStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum PrimaryAuditActorType {
   USER
   SYSTEM
@@ -418,6 +423,7 @@ model PrimaryEvent {
   contactEmail      String
   contactPhone      String?
   draftPolicyText   String
+  totalCapacity     Int
   status            PrimaryEventStatus @default(DRAFT)
   statusReason      String?
   submittedAt       DateTime?
@@ -430,11 +436,33 @@ model PrimaryEvent {
   approvedBy  User?                         @relation("PrimaryEventApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
   assignments PrimaryEventStaffAssignment[]
   auditEvents PrimaryAuditEvent[]
+  ticketTypes PrimaryTicketType[]
 
   @@unique([id, organizerId])
   @@index([organizerId])
   @@index([organizerId, status, createdAt])
   @@index([startsAtLocal])
+}
+
+model PrimaryTicketType {
+  id                String                  @id @default(cuid())
+  organizerId       String
+  eventId           String
+  name              String
+  description       String?
+  allocatedQuantity Int
+  status            PrimaryTicketTypeStatus @default(ACTIVE)
+  minimumPerOrder   Int?
+  maximumPerOrder   Int?
+  currency          String
+  basePriceMinor    Int
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  event PrimaryEvent @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Cascade)
+
+  @@unique([id, organizerId, eventId])
+  @@index([organizerId, eventId, status])
 }
 
 model PrimaryEventStaffAssignment {

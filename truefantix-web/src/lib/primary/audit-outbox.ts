@@ -19,6 +19,13 @@ const AUDIT_FIELD_ALLOWLIST = new Set([
   "timezone",
   "startsAtLocal",
   "endsAtLocal",
+  "totalCapacity",
+  "name",
+  "allocatedQuantity",
+  "minimumPerOrder",
+  "maximumPerOrder",
+  "currency",
+  "basePriceMinor",
 ]);
 
 export function redactPrimaryAuditSnapshot(value: Record<string, unknown> | null | undefined) {

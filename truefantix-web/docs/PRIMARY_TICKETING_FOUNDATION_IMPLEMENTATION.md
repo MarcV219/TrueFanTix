@@ -110,6 +110,17 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Event-service PostgreSQL coverage separately proves unverified, banned, and stale-role actors cannot create events and leave no event, audit, or outbox writes.
 - Revision 1 verification on a newly provisioned disposable PostgreSQL 16 database: all 37 migrations applied and Prisma reported the schema current; all 9 event tests plus the existing 8 organizer tests passed; the complete integration-enabled run passed 57 suites / 359 tests; Prisma format/validation/generation, TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and `git diff --check` passed. The disposable database/container was removed afterward.
 
+## GA Capacity and Ticket-Type Foundation
+
+- `PrimaryEvent.totalCapacity` is a positive integer allocation ceiling. It is mutable only while the event is in the editable draft workflow and does not represent on-sale inventory or availability.
+- `PrimaryTicketType` is isolated from secondary marketplace tickets and stores only general-admission draft configuration: organizer/event tenancy, name/optional description, positive allocation, `ACTIVE | INACTIVE`, optional positive per-order limits, one recognized ISO currency, and a positive integer face-value amount in minor units.
+- Capacity and ticket-type mutations run serializably and lock organizer, event, and ticket-type rows in that order. Active allocations are summed inside the transaction; inactive allocations do not consume the event ceiling. Active types for an event must share one currency.
+- OWNERs and active assigned EVENT_MANAGERs may mutate these draft records for approved, non-suspended organizers. Platform-admin bypass, cross-tenant access, unassigned managers, and post-draft mutation are denied.
+- Event submission now requires a valid positive capacity and at least one active, positively allocated ticket type. This is configuration readiness only and makes no public sale, reservation, or availability claim.
+- `basePriceMinor` is draft face value only. It is not an all-in price and does not calculate or promise fees, tax, processor costs, organizer proceeds, settlement, or refunds.
+- Migration `20260910154500_add_primary_ga_capacity_ticket_types` backfills existing synthetic events with capacity `1`, removes the default for new events, creates the isolated ticket-type table, and enforces positive integer money/allocation/order-limit and currency-shape checks at the database layer.
+- Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 `primary_ticketing_test` database: all 38 migrations applied and Prisma reported the schema current; all 7 GA ticket-type, 9 event, and 8 organizer PostgreSQL tests passed; the complete integration-enabled run passed 58 suites / 366 tests; Prisma format/validation/generation, TypeScript, production build, focused lint, full lint with 0 errors and 619 pre-existing warnings, and `git diff --check` passed. The disposable database/container was removed afterward.
+
 ## Risks and open decisions
 
 - The preflight depends on explicit environment configuration and database naming. Deployment configuration remains intentionally absent until an isolated preview is separately authorized.
