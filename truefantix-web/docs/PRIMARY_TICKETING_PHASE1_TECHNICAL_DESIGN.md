@@ -156,11 +156,12 @@ In future payment work, immediately before returning a client secret that can pr
 
 **PrimaryOrderLine**
 
-- The single current line snapshots ticket type, reservation, name, quantity, unit face value, face-value subtotal, and currency. Its composite reservation/type foreign key proves it is the type actually reserved.
+- The single current line snapshots ticket type, reservation, name, quantity, unit face value, face-value subtotal, and currency. Composite keys prove both that its reservation/type pair is valid and that its order/reservation pair matches the parent order.
 
 **PrimaryOrderPriceComponent**
 
 - Immutable rows store explicit code/label, `FACE_VALUE | MANDATORY_FEE | TAX`, positive amount/currency, stable position, and deterministic quotient/remainder allocation across quantity.
+- Each component's `(orderLineId, orderId)` must reference one matching line/order pair, preventing a component from naming another order's line.
 - The service derives FACE_VALUE from the ticket-type snapshot. Additional fee/tax components are internal synthetic configuration only; no permanent business or legal policy is encoded.
 - Exact current invariant: `faceValueSubtotalMinor = quantity × unitFaceValueMinor`; `grossTotalMinor = sum(component.amountMinor)`. Every stored quantity, unit amount, component amount, subtotal, and total is at most PostgreSQL `INTEGER` maximum `2,147,483,647`; multiplication is checked in the service and evaluated as `BIGINT` in the database constraint.
 - Database triggers make line/component evidence update/delete immutable and prevent changes to an order's financial scope, reservation, currency, totals, create key, and creation timestamp. Only reviewed status/preparation metadata may transition; the future non-owner runtime role must lack `TRUNCATE`.

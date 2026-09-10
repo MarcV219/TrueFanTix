@@ -120,6 +120,18 @@ describe("primary order PostgreSQL integration", () => {
     await expect(db.$executeRaw`INSERT INTO "PrimaryOrderLine" ("id", "orderId", "reservationId", "ticketTypeId", "quantity", "ticketTypeNameSnapshot", "unitFaceValueMinor", "faceValueSubtotalMinor", "currency") VALUES ('line-binding-line', 'line-binding-order', ${first.reservation.id}, ${second.ticketType.id}, 3, 'Wrong type', 2500, 7500, 'CAD')`).rejects.toBeTruthy();
   });
 
+  it("rejects an order line bound to another reservation parent", async () => {
+    const parent = await seed(); const foreign = await seed();
+    await db.$executeRaw`INSERT INTO "PrimaryOrder" ("id", "organizerId", "eventId", "buyerUserId", "reservationId", "currency", "faceValueSubtotalMinor", "grossTotalMinor", "createIdempotencyKey", "updatedAt") VALUES ('cross-reservation-order', ${parent.organizer.id}, ${parent.event.id}, ${parent.buyer.id}, ${parent.reservation.id}, 'CAD', 7500, 7500, 'cross-reservation-order-key', CURRENT_TIMESTAMP)`;
+    await expect(db.$executeRaw`INSERT INTO "PrimaryOrderLine" ("id", "orderId", "reservationId", "ticketTypeId", "quantity", "ticketTypeNameSnapshot", "unitFaceValueMinor", "faceValueSubtotalMinor", "currency") VALUES ('cross-reservation-line', 'cross-reservation-order', ${foreign.reservation.id}, ${foreign.ticketType.id}, 3, 'Foreign reservation', 2500, 7500, 'CAD')`).rejects.toBeTruthy();
+  });
+
+  it("rejects a price component bound to another order's line", async () => {
+    const firstScope = await seed(); const secondScope = await seed();
+    const first = await create(firstScope, "cross-component-first", []); const second = await create(secondScope, "cross-component-second", []);
+    await expect(db.$executeRaw`INSERT INTO "PrimaryOrderPriceComponent" ("id", "orderId", "orderLineId", "code", "label", "kind", "amountMinor", "currency", "allocationBaseMinor", "allocationRemainderUnits", "position") VALUES ('cross-order-component', ${first.id}, ${second.lines[0].id}, 'CROSS_ORDER', 'Cross order', 'MANDATORY_FEE', 1, 'CAD', 0, 1, 99)`).rejects.toBeTruthy();
+  });
+
   it("enforces financial snapshot immutability in PostgreSQL", async () => {
     const scope = await seed(); const order = await create(scope, "immutable-database", []); const line = order.lines[0]; const component = order.components[0];
     await expect(db.$executeRaw`UPDATE "PrimaryOrder" SET "grossTotalMinor" = "grossTotalMinor" + 1 WHERE "id" = ${order.id}`).rejects.toBeTruthy();

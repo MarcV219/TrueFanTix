@@ -545,6 +545,7 @@ model PrimaryOrder {
   lines       PrimaryOrderLine[]
   components  PrimaryOrderPriceComponent[]
 
+  @@unique([id, reservationId])
   @@unique([reservationId, organizerId, eventId, buyerUserId])
   @@index([organizerId, eventId, status, createdAt])
   @@index([buyerUserId, createdAt])
@@ -562,10 +563,12 @@ model PrimaryOrderLine {
   currency               String
   createdAt              DateTime @default(now())
 
-  order       PrimaryOrder                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  order       PrimaryOrder                 @relation(fields: [orderId, reservationId], references: [id, reservationId], onDelete: Restrict, map: "PrimaryOrderLine_order_reservation_fkey")
   ticketType  PrimaryTicketType            @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
   reservation PrimaryInventoryReservation  @relation(fields: [reservationId, ticketTypeId], references: [id, ticketTypeId], onDelete: Restrict, map: "PrimaryOrderLine_reservation_ticketType_fkey")
   components  PrimaryOrderPriceComponent[]
+
+  @@unique([id, orderId])
 }
 
 model PrimaryOrderPriceComponent {
@@ -583,7 +586,7 @@ model PrimaryOrderPriceComponent {
   createdAt                DateTime                  @default(now())
 
   order PrimaryOrder     @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  line  PrimaryOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Restrict)
+  line  PrimaryOrderLine @relation(fields: [orderLineId, orderId], references: [id, orderId], onDelete: Restrict, map: "PrimaryOrderPriceComponent_line_order_fkey")
 
   @@unique([orderId, code])
   @@unique([orderId, position])
