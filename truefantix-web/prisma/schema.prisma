@@ -208,6 +208,18 @@ enum PrimaryPaymentExceptionKind {
 enum PrimaryAdmissionStatus {
   ISSUED
   VOIDED
+  CHECKED_IN
+}
+
+enum PrimaryAdmissionScanResult {
+  ACCEPTED
+  DUPLICATE
+  VOIDED
+  WRONG_EVENT
+  UNKNOWN_CREDENTIAL
+  INVALID_CREDENTIAL
+  UNSUPPORTED_KEY
+  UNSUPPORTED_VERSION
 }
 
 enum PrimaryPriceComponentKind {
@@ -353,6 +365,7 @@ model User {
   primaryOrders                    PrimaryOrder[]                @relation("PrimaryOrderBuyer")
   primaryPaymentAttempts           PrimaryPaymentAttempt[]       @relation("PrimaryPaymentAttemptBuyer")
   primaryAuditEvents               PrimaryAuditEvent[]           @relation("PrimaryAuditActor")
+  primaryAdmissionScans            PrimaryAdmissionScan[]        @relation("PrimaryAdmissionScanOperator")
 
   @@index([role])
   @@index([createdAt])
@@ -482,6 +495,7 @@ model PrimaryEvent {
   reservations    PrimaryInventoryReservation[]
   orders          PrimaryOrder[]
   paymentAttempts PrimaryPaymentAttempt[]
+  admissionScans  PrimaryAdmissionScan[]
 
   @@unique([id, organizerId])
   @@index([organizerId])
@@ -707,6 +721,7 @@ model PrimaryAdmissionTicket {
   line        PrimaryOrderLine            @relation(fields: [orderLineId, orderId, reservationId, ticketTypeId], references: [id, orderId, reservationId, ticketTypeId], onDelete: Restrict)
   reservation PrimaryInventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
   credential  PrimaryAdmissionCredential?
+  scans       PrimaryAdmissionScan[]
 
   @@unique([orderId, unitNumber])
   @@unique([id, eventId])
@@ -725,9 +740,34 @@ model PrimaryAdmissionCredential {
   createdAt         DateTime @default(now())
 
   ticket PrimaryAdmissionTicket @relation(fields: [admissionTicketId, eventId], references: [id, eventId], onDelete: Restrict)
+  scans  PrimaryAdmissionScan[]
 
+  @@unique([id, eventId])
+  @@unique([id, admissionTicketId, eventId])
   @@unique([admissionTicketId, eventId])
   @@index([eventId, keyId])
+}
+
+model PrimaryAdmissionScan {
+  id                String                     @id @default(cuid())
+  organizerId       String
+  eventId           String
+  admissionTicketId String?
+  credentialId      String?
+  operatorUserId    String
+  result            PrimaryAdmissionScanResult
+  deviceId          String?
+  scannedAt         DateTime                   @default(now())
+  createdAt         DateTime                   @default(now())
+
+  event      PrimaryEvent                @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
+  ticket     PrimaryAdmissionTicket?     @relation(fields: [admissionTicketId, eventId], references: [id, eventId], onDelete: Restrict)
+  credential PrimaryAdmissionCredential? @relation(fields: [credentialId, admissionTicketId, eventId], references: [id, admissionTicketId, eventId], onDelete: Restrict)
+  operator   User                        @relation("PrimaryAdmissionScanOperator", fields: [operatorUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizerId, eventId, scannedAt])
+  @@index([admissionTicketId, scannedAt])
+  @@index([operatorUserId, scannedAt])
 }
 
 model PrimaryEventStaffAssignment {

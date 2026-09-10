@@ -1,11 +1,12 @@
 /** @jest-environment node */
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { requirePrimaryPreflight } from "@/lib/primary/config";
 import { createPrimaryOrderInternalCapabilityForTests, PrimaryOrderService } from "@/lib/primary/order-service";
 import { createPrimaryAdmissionInternalCapabilityForTests, PrimaryAdmissionService, requirePrimaryAdmissionTestConfig } from "@/lib/primary/admission-service";
+import { PrimaryAdmissionScanService } from "@/lib/primary/admission-scan-service";
 
 const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
 if (!databaseUrl) describe.skip("primary admission PostgreSQL integration", () => { it("requires an isolated database", () => undefined); });
@@ -37,6 +38,12 @@ else describe("primary admission PostgreSQL integration", () => {
     return { id: `direct-${runId}-${++sequence}`, organizerId: scope.organizer.id, eventId: scope.event.id, buyerUserId: scope.buyer.id, reservationId: scope.reservation.id, orderId: scope.order.id, orderLineId: line.id, ticketTypeId: scope.ticketType.id, unitNumber, issuanceIdempotencyKey: `direct-key-${runId}-${sequence}`, issuedAt: now };
   }
   function signedToken(payload: Record<string, unknown>) { const body = JSON.stringify(payload); return `${Buffer.from(body).toString("base64url")}.${sign(null, Buffer.from(body), pair.privateKey).toString("base64url")}`; }
+  async function scanner(scope: Awaited<ReturnType<typeof seed>>, role: "OWNER" | "EVENT_MANAGER" | "BOX_OFFICE" | "SCANNER" = "SCANNER", assigned = true) {
+    const n = ++sequence; const user = await db.user.create({ data: { email: `scanner-${runId}-${n}@example.test`, passwordHash: "synthetic", emailVerifiedAt: now, firstName: "Scanner", lastName: `${n}`, phone: `+2${String(Date.now() + n).slice(-10)}`, phoneVerifiedAt: now, streetAddress1: "1 Test", city: "Toronto", region: "ON", postalCode: "A1A1A1", country: "CA" } });
+    const membership = await db.primaryOrganizerMembership.create({ data: { organizerId: scope.organizer.id, userId: user.id, role, status: "ACTIVE", acceptedAt: now, invitedByUserId: scope.buyer.id } });
+    if (assigned) await db.primaryEventStaffAssignment.create({ data: { organizerId: scope.organizer.id, eventId: scope.event.id, membershipId: membership.id, assignedByUserId: scope.buyer.id } });
+    return user;
+  }
 
   beforeAll(async () => { process.env.PRIMARY_TICKETING_ENVIRONMENT_ID = "isolated-test"; internal = createPrimaryAdmissionInternalCapabilityForTests(); await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryAdmissionCredential", "PrimaryAdmissionTicket", "PrimaryPaymentException", "PrimaryPaymentProviderEvent", "PrimaryPaymentAttempt", "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder", "PrimaryAuditEvent", "PrimaryOutboxMessage" CASCADE'); });
   afterAll(async () => { delete process.env.PRIMARY_TICKETING_ENVIRONMENT_ID; await db.$disconnect(); await pool.end(); });
@@ -99,5 +106,57 @@ else describe("primary admission PostgreSQL integration", () => {
     const scope = await seed(2); const service = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); await db.primaryOutboxMessage.create({ data: { organizerId: scope.organizer.id, topic: "synthetic", aggregateType: "Synthetic", aggregateId: scope.order.id, payloadJson: {}, idempotencyKey: "rollback-issue:2:admission_issued" } });
     const auditBefore = await db.primaryAuditEvent.count(); const outboxBefore = await db.primaryOutboxMessage.count(); await expect(service.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "rollback-issue" })).rejects.toBeTruthy();
     expect(await db.primaryAdmissionTicket.count({ where: { orderId: scope.order.id } })).toBe(0); expect(await db.primaryAdmissionCredential.count({ where: { ticket: { orderId: scope.order.id } } })).toBe(0); expect(await db.primaryAuditEvent.count()).toBe(auditBefore); expect(await db.primaryOutboxMessage.count()).toBe(outboxBefore);
+  });
+
+  it("atomically accepts one concurrent online scan and records later duplicates", async () => {
+    const scope = await seed(1); const admission = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const [issued] = await admission.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "scan-concurrent-issue" }); const operator = await scanner(scope);
+    const scans = new PrimaryAdmissionScanService(db, capability, admission, () => new Date(now));
+    const [a, b] = await Promise.all(["a", "b"].map((suffix) => scans.scan({ actor: { id: operator.id, role: operator.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId: `scan-concurrent-${suffix}`, deviceId: "gate-a" })));
+    expect([a.result, b.result].sort()).toEqual(["ACCEPTED", "DUPLICATE"]); expect(await db.primaryAdmissionScan.count({ where: { admissionTicketId: issued.ticket.id } })).toBe(2); expect((await db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: issued.ticket.id } })).status).toBe("CHECKED_IN");
+    await expect(db.primaryAdmissionScan.update({ where: { id: a.scanId! }, data: { deviceId: "changed" } })).rejects.toBeTruthy(); await expect(db.primaryAdmissionScan.delete({ where: { id: b.scanId! } })).rejects.toBeTruthy();
+  });
+
+  it("denies unassigned, stale-role, banned, cross-tenant, suspended, and platform-admin operators without evidence", async () => {
+    const scope = await seed(1); const admission = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const [issued] = await admission.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "scan-auth-issue" }); const scans = new PrimaryAdmissionScanService(db, capability, admission, () => new Date(now));
+    const unassigned = await scanner(scope, "SCANNER", false); const before = await db.primaryAdmissionScan.count();
+    await expect(scans.scan({ actor: { id: unassigned.id, role: unassigned.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId: "scan-unassigned" })).resolves.toMatchObject({ result: "UNAUTHORIZED_OPERATOR" });
+    const assigned = await scanner(scope); await db.user.update({ where: { id: assigned.id }, data: { isBanned: true } }); await expect(scans.scan({ actor: { id: assigned.id, role: assigned.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId: "scan-banned" })).resolves.toMatchObject({ result: "UNAUTHORIZED_OPERATOR" });
+    await db.user.update({ where: { id: assigned.id }, data: { isBanned: false, role: "ADMIN" } }); await expect(scans.scan({ actor: { id: assigned.id, role: "USER" }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId: "scan-stale" })).resolves.toMatchObject({ result: "UNAUTHORIZED_OPERATOR" }); await expect(scans.scan({ actor: { id: assigned.id, role: "ADMIN" }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId: "scan-admin" })).resolves.toMatchObject({ result: "UNAUTHORIZED_OPERATOR" });
+    await db.primaryOrganizer.update({ where: { id: scope.organizer.id }, data: { status: "SUSPENDED", statusReason: "Synthetic" } }); await expect(scans.scan({ actor: { id: unassigned.id, role: unassigned.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId: "scan-suspended" })).resolves.toMatchObject({ result: "UNAUTHORIZED_OPERATOR" }); expect(await db.primaryAdmissionScan.count()).toBe(before);
+  });
+
+  it("returns bounded evidence codes for wrong-event, voided, unknown, tampered, and unsupported credentials", async () => {
+    const scope = await seed(1); const other = await seed(1); const admission = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const [issued] = await admission.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "scan-results-issue" }); const operator = await scanner(scope); const scans = new PrimaryAdmissionScanService(db, capability, admission, () => new Date(now)); const base = { actor: { id: operator.id, role: operator.role }, organizerId: scope.organizer.id, eventId: scope.event.id, requestId: "scan-code" };
+    const wrongToken = (await admission.issue({ internalCapability: internal, organizerId: other.organizer.id, eventId: other.event.id, orderId: other.order.id, idempotencyKey: "other-issue" }))[0].token; await expect(scans.scan({ ...base, token: wrongToken, requestId: "scan-wrong-event" })).resolves.toMatchObject({ result: "WRONG_EVENT" });
+    await admission.void({ internalCapability: internal, admissionTicketId: issued.ticket.id, reason: "Synthetic", idempotencyKey: "void-before-scan" }); await expect(scans.scan({ ...base, token: issued.token, requestId: "scan-voided" })).resolves.toMatchObject({ result: "VOIDED" });
+    const unknown = signedToken({ v: 1, cid: "11111111-1111-4111-8111-111111111111", eventId: scope.event.id, iat: now.toISOString(), kid: "test_admission_1" }); await expect(scans.scan({ ...base, token: unknown, requestId: "scan-unknown" })).resolves.toMatchObject({ result: "UNKNOWN_CREDENTIAL" }); await expect(scans.scan({ ...base, token: `${issued.token}x`, requestId: "scan-tampered" })).resolves.toMatchObject({ result: "INVALID_CREDENTIAL" });
+    const foreign = generateKeyPairSync("ed25519"); const foreignPayload = { v: 1, cid: "22222222-2222-4222-8222-222222222222", eventId: scope.event.id, iat: now.toISOString(), kid: "test_unknown" }; const body = JSON.stringify(foreignPayload); const foreignToken = `${Buffer.from(body).toString("base64url")}.${sign(null, Buffer.from(body), foreign.privateKey).toString("base64url")}`; await expect(scans.scan({ ...base, token: foreignToken, requestId: "scan-key" })).resolves.toMatchObject({ result: "UNSUPPORTED_KEY" });
+  });
+
+  it("verifies prior public keys without prior private signing material", async () => {
+    const old = generateKeyPairSync("ed25519"); const scope = await seed(1); const currentAdmission = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const operator = await scanner(scope); const ticketData = await directTicket(scope, 1); const credentialId = "33333333-3333-4333-8333-333333333333"; const payload = { v: 1, cid: credentialId, eventId: scope.event.id, iat: now.toISOString(), kid: "test_prior" }; const body = JSON.stringify(payload); const token = `${Buffer.from(body).toString("base64url")}.${sign(null, Buffer.from(body), old.privateKey).toString("base64url")}`;
+    await db.primaryAdmissionTicket.create({ data: { ...ticketData, credential: { create: { id: credentialId, payloadVersion: 1, keyId: "test_prior", payloadDigest: createHash("sha256").update(body).digest("hex"), issuedAt: now } } } });
+    const keyring = requirePrimaryAdmissionTestConfig(capability, { NODE_ENV: "test", PRIMARY_ADMISSION_SIGNING_KEY_ID: "test_admission_1", PRIMARY_ADMISSION_PRIVATE_KEY: privatePem, PRIMARY_ADMISSION_PUBLIC_KEY: publicPem, PRIMARY_ADMISSION_PRIOR_PUBLIC_KEYS_JSON: JSON.stringify({ test_prior: old.publicKey.export({ type: "spki", format: "pem" }).toString() }) } as NodeJS.ProcessEnv); const scans = new PrimaryAdmissionScanService(db, capability, new PrimaryAdmissionService(db, capability, keyring), () => new Date(now));
+    await expect(scans.scan({ actor: { id: operator.id, role: operator.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token, requestId: "scan-prior-key" })).resolves.toMatchObject({ result: "ACCEPTED" });
+    await expect(new PrimaryAdmissionScanService(db, capability, currentAdmission).scan({ actor: { id: operator.id, role: operator.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token, requestId: "scan-prior-missing" })).resolves.toMatchObject({ result: "UNSUPPORTED_KEY" });
+    const revoked = requirePrimaryAdmissionTestConfig(capability, { NODE_ENV: "test", PRIMARY_ADMISSION_SIGNING_KEY_ID: "test_admission_1", PRIMARY_ADMISSION_PRIVATE_KEY: privatePem, PRIMARY_ADMISSION_PUBLIC_KEY: publicPem, PRIMARY_ADMISSION_PRIOR_PUBLIC_KEYS_JSON: JSON.stringify({ test_prior: old.publicKey.export({ type: "spki", format: "pem" }).toString() }), PRIMARY_ADMISSION_REVOKED_KEY_IDS: "test_prior" } as NodeJS.ProcessEnv); await expect(new PrimaryAdmissionScanService(db, capability, new PrimaryAdmissionService(db, capability, revoked)).scan({ actor: { id: operator.id, role: operator.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token, requestId: "scan-prior-revoked" })).resolves.toMatchObject({ result: "UNSUPPORTED_KEY" });
+  });
+
+  it("allows every assigned event-day role and requires assignment even for owners", async () => {
+    for (const role of ["OWNER", "EVENT_MANAGER", "BOX_OFFICE", "SCANNER"] as const) {
+      const scope = await seed(1); const admission = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const [issued] = await admission.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: `role-${role}` }); const operator = await scanner(scope, role); const scans = new PrimaryAdmissionScanService(db, capability, admission); await expect(scans.scan({ actor: { id: operator.id, role: operator.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId: `role-scan-${role}` })).resolves.toMatchObject({ result: "ACCEPTED" });
+    }
+    const scope = await seed(1); const admission = new PrimaryAdmissionService(db, capability, config); const [issued] = await admission.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "owner-no-assignment" }); const owner = await scanner(scope, "OWNER", false); await expect(new PrimaryAdmissionScanService(db, capability, admission).scan({ actor: { id: owner.id, role: owner.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId: "owner-no-assignment-scan" })).resolves.toMatchObject({ result: "UNAUTHORIZED_OPERATOR" });
+  });
+
+  it("rolls back check-in and scan evidence when successful-admission outbox persistence fails", async () => {
+    const scope = await seed(1); const admission = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const [issued] = await admission.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "scan-rollback-issue" }); const operator = await scanner(scope); const requestId = "scan-rollback"; await db.primaryOutboxMessage.create({ data: { organizerId: scope.organizer.id, topic: "synthetic", aggregateType: "Synthetic", aggregateId: scope.order.id, payloadJson: {}, idempotencyKey: `${requestId}:admission_checked_in` } }); const scansBefore = await db.primaryAdmissionScan.count(); const auditsBefore = await db.primaryAuditEvent.count();
+    await expect(new PrimaryAdmissionScanService(db, capability, admission).scan({ actor: { id: operator.id, role: operator.role }, organizerId: scope.organizer.id, eventId: scope.event.id, token: issued.token, requestId })).rejects.toBeTruthy(); expect((await db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: issued.ticket.id } })).status).toBe("ISSUED"); expect(await db.primaryAdmissionScan.count()).toBe(scansBefore); expect(await db.primaryAuditEvent.count()).toBe(auditsBefore);
+  });
+
+  it("database constraints reject cross-ticket scan evidence and invalid telemetry", async () => {
+    const scope = await seed(2); const admission = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const issued = await admission.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "scan-scope-issue" }); const operator = await scanner(scope);
+    await expect(db.primaryAdmissionScan.create({ data: { organizerId: scope.organizer.id, eventId: scope.event.id, admissionTicketId: issued[0].ticket.id, credentialId: issued[1].ticket.credential!.id, operatorUserId: operator.id, result: "DUPLICATE" } })).rejects.toBeTruthy();
+    await expect(db.primaryAdmissionScan.create({ data: { organizerId: scope.organizer.id, eventId: scope.event.id, operatorUserId: operator.id, result: "INVALID_CREDENTIAL", deviceId: "raw device label with spaces" } })).rejects.toBeTruthy();
   });
 });

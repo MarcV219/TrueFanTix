@@ -6,7 +6,7 @@ import { PrimaryDomainError } from "./organizer-service";
 
 type Tx = Prisma.TransactionClient;
 type Db = { $transaction<T>(fn: (tx: Tx) => Promise<T>, options?: { isolationLevel?: Prisma.TransactionIsolationLevel }): Promise<T> };
-type AdmissionConfig = Readonly<{ keyId: string; privateKey: KeyObject; publicKey: KeyObject }>;
+export type AdmissionConfig = Readonly<{ keyId: string; privateKey: KeyObject; publicKey: KeyObject; verificationKeys: ReadonlyMap<string, KeyObject>; revokedKeyIds: ReadonlySet<string> }>;
 export type PrimaryAdmissionInternalCapability = { readonly kind: "PrimaryAdmissionInternalCapability" };
 const configs = new WeakSet<object>(); const internalCapabilities = new WeakSet<object>();
 const VERSION = 1;
@@ -29,27 +29,42 @@ export function requirePrimaryAdmissionTestConfig(capability: PrimaryPreflightCa
     if (privateKey.asymmetricKeyType !== "ed25519" || publicKey.asymmetricKeyType !== "ed25519") throw new Error("wrong key type");
     const challenge = Buffer.from("primary-admission-key-pair");
     if (!verify(null, challenge, publicKey, sign(null, challenge, privateKey))) throw new Error("key mismatch");
-    const config = Object.freeze({ keyId, privateKey, publicKey }); configs.add(config); return config;
+    const verificationKeys = new Map<string, KeyObject>([[keyId, publicKey]]);
+    const prior = env.PRIMARY_ADMISSION_PRIOR_PUBLIC_KEYS_JSON?.trim();
+    if (prior) {
+      const parsed = JSON.parse(prior) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid prior keyring");
+      for (const [priorKeyId, pem] of Object.entries(parsed)) {
+        if (!priorKeyId.startsWith("test_") || priorKeyId === keyId || typeof pem !== "string") throw new Error("invalid prior key");
+        const priorKey = createPublicKey(pem); if (priorKey.asymmetricKeyType !== "ed25519") throw new Error("wrong prior key type");
+        verificationKeys.set(priorKeyId, priorKey);
+      }
+    }
+    const revokedKeyIds = new Set((env.PRIMARY_ADMISSION_REVOKED_KEY_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
+    if ([...revokedKeyIds].some((revoked) => !revoked.startsWith("test_") || revoked === keyId)) throw new Error("invalid revoked key");
+    const config = Object.freeze({ keyId, privateKey, publicKey, verificationKeys, revokedKeyIds }); configs.add(config); return config;
   } catch { throw new PrimaryDomainError("ADMISSION_TEST_KEY_PREFLIGHT_REQUIRED"); }
 }
 
-type Payload = { v: 1; cid: string; eventId: string; iat: string; kid: string };
+export type PrimaryAdmissionPayload = { v: 1; cid: string; eventId: string; iat: string; kid: string };
+type Payload = PrimaryAdmissionPayload;
+type ParsedPayload = Omit<Payload, "v"> & { v: number };
 function encode(value: Buffer | string) { return Buffer.from(value).toString("base64url"); }
-function canonical(payload: Payload) { return JSON.stringify({ v: payload.v, cid: payload.cid, eventId: payload.eventId, iat: payload.iat, kid: payload.kid }); }
+function canonical(payload: ParsedPayload) { return JSON.stringify({ v: payload.v, cid: payload.cid, eventId: payload.eventId, iat: payload.iat, kid: payload.kid }); }
 function tokenFor(payload: Payload, signature: string) { return `${encode(canonical(payload))}.${signature}`; }
 function digest(payload: Payload) { return createHash("sha256").update(canonical(payload)).digest("hex"); }
 function cleanKey(value: string) { const result = value.trim(); if (!result) throw new PrimaryDomainError("IDEMPOTENCY_KEY_REQUIRED"); return result; }
-function parsePayload(encoded: string): Payload {
+function parsePayload(encoded: string): ParsedPayload {
   let value: unknown;
   try { value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")); } catch { throw new PrimaryDomainError("INVALID_CREDENTIAL"); }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new PrimaryDomainError("INVALID_CREDENTIAL");
   const record = value as Record<string, unknown>; const keys = Object.keys(record).sort();
   if (JSON.stringify(keys) !== JSON.stringify(["cid", "eventId", "iat", "kid", "v"])) throw new PrimaryDomainError("INVALID_CREDENTIAL");
-  if (record.v !== VERSION || typeof record.cid !== "string" || typeof record.eventId !== "string" || typeof record.iat !== "string" || typeof record.kid !== "string") throw new PrimaryDomainError("INVALID_CREDENTIAL");
+  if (typeof record.v !== "number" || typeof record.cid !== "string" || typeof record.eventId !== "string" || typeof record.iat !== "string" || typeof record.kid !== "string") throw new PrimaryDomainError("INVALID_CREDENTIAL");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.cid)) throw new PrimaryDomainError("INVALID_CREDENTIAL");
   const parsedTime = new Date(record.iat); if (!Number.isFinite(parsedTime.getTime()) || parsedTime.toISOString() !== record.iat) throw new PrimaryDomainError("INVALID_CREDENTIAL");
   if (!record.eventId || !record.kid) throw new PrimaryDomainError("INVALID_CREDENTIAL");
-  return record as Payload;
+  return record as ParsedPayload;
 }
 
 export class PrimaryAdmissionService {
@@ -102,15 +117,25 @@ export class PrimaryAdmissionService {
   }
 
   async verify(token: string, expectedEventId: string) {
-    const parts = token.split("."); if (parts.length !== 2) throw new PrimaryDomainError("INVALID_CREDENTIAL");
-    const payload = parsePayload(parts[0]);
-    if (payload.v !== VERSION || payload.kid !== this.config.keyId || payload.eventId !== expectedEventId || !payload.cid || !payload.iat) throw new PrimaryDomainError("INVALID_CREDENTIAL");
-    let signature: Buffer; try { signature = Buffer.from(parts[1], "base64url"); } catch { throw new PrimaryDomainError("INVALID_CREDENTIAL"); }
-    if (signature.length !== 64 || signature.toString("base64url") !== parts[1]) throw new PrimaryDomainError("INVALID_CREDENTIAL");
-    const body = canonical(payload); if (encode(body) !== parts[0] || !verify(null, Buffer.from(body), this.config.publicKey, signature)) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+    let payload: Payload;
+    try { payload = this.verifyToken(token); } catch { throw new PrimaryDomainError("INVALID_CREDENTIAL"); }
+    if (payload.eventId !== expectedEventId) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+    const body = canonical(payload);
     const credential = await this.db.$transaction((tx) => tx.primaryAdmissionCredential.findUnique({ where: { id: payload.cid }, include: { ticket: true } }));
     if (!credential || credential.eventId !== expectedEventId || credential.payloadVersion !== VERSION || credential.keyId !== payload.kid || credential.payloadDigest !== createHash("sha256").update(body).digest("hex") || credential.issuedAt.toISOString() !== payload.iat || credential.ticket.status !== "ISSUED") throw new PrimaryDomainError("INVALID_CREDENTIAL");
     return { credentialId: credential.id, admissionTicketId: credential.admissionTicketId, eventId: credential.eventId, status: credential.ticket.status };
+  }
+
+  verifyToken(token: string): Payload {
+    const parts = token.split("."); if (parts.length !== 2) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+    const payload = parsePayload(parts[0]);
+    if (this.config.revokedKeyIds.has(payload.kid) || !this.config.verificationKeys.has(payload.kid)) throw new PrimaryDomainError("UNSUPPORTED_CREDENTIAL_KEY");
+    let signature: Buffer; try { signature = Buffer.from(parts[1], "base64url"); } catch { throw new PrimaryDomainError("INVALID_CREDENTIAL"); }
+    if (signature.length !== 64 || signature.toString("base64url") !== parts[1]) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+    const body = canonical(payload); const key = this.config.verificationKeys.get(payload.kid)!;
+    if (encode(body) !== parts[0] || !verify(null, Buffer.from(body), key, signature)) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+    if (payload.v !== VERSION) throw new PrimaryDomainError("UNSUPPORTED_CREDENTIAL_VERSION");
+    return payload as Payload;
   }
 
   private reconstruct(credential: { id: string; eventId: string; payloadVersion: number; keyId: string; issuedAt: Date }) {
