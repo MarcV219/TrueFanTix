@@ -150,19 +150,20 @@ In future payment work, immediately before returning a client secret that can pr
 
 **PrimaryOrder**
 
-- The provider-free foundation stores `id`, `organizerId`, `eventId`, authenticated `buyerUserId`, unique `reservationId`, currency, face-value subtotal, gross total, and create/prepare idempotency keys.
-- Its only current states are `PENDING_PAYMENT | PAYMENT_PROCESSING`. Preparation atomically commits the reservation before advancing the order and cannot create a provider object or client secret.
+- The provider-free foundation stores `id`, `organizerId`, `eventId`, authenticated `buyerUserId`, unique `reservationId`, currency, face-value subtotal, gross total, and create/prepare idempotency keys. A composite foreign key binds reservation, organizer, event, and buyer at the database boundary.
+- Its only current states are `PENDING_PAYMENT | PAYMENT_PROCESSING`. Preparation atomically commits the reservation before advancing the order, persists the material reconciliation-delay command input, and treats reuse against another order/scope/delay as an idempotency conflict.
 - Future reviewed payment/fulfilment work may add `PAID | FULFILLED | CANCELLATION_PENDING | CANCELLED | PARTIALLY_REFUNDED | REFUNDED | PAYMENT_FAILED` and the provider/settlement snapshots described elsewhere; those states and fields are not implemented now.
 
 **PrimaryOrderLine**
 
-- The single current line snapshots ticket type, name, quantity, unit face value, face-value subtotal, and currency. It has no mutation service.
+- The single current line snapshots ticket type, reservation, name, quantity, unit face value, face-value subtotal, and currency. Its composite reservation/type foreign key proves it is the type actually reserved.
 
 **PrimaryOrderPriceComponent**
 
 - Immutable rows store explicit code/label, `FACE_VALUE | MANDATORY_FEE | TAX`, positive amount/currency, stable position, and deterministic quotient/remainder allocation across quantity.
 - The service derives FACE_VALUE from the ticket-type snapshot. Additional fee/tax components are internal synthetic configuration only; no permanent business or legal policy is encoded.
-- Exact current invariant: `faceValueSubtotalMinor = quantity × unitFaceValueMinor`; `grossTotalMinor = sum(component.amountMinor)` using checked integer arithmetic.
+- Exact current invariant: `faceValueSubtotalMinor = quantity × unitFaceValueMinor`; `grossTotalMinor = sum(component.amountMinor)`. Every stored quantity, unit amount, component amount, subtotal, and total is at most PostgreSQL `INTEGER` maximum `2,147,483,647`; multiplication is checked in the service and evaluated as `BIGINT` in the database constraint.
+- Database triggers make line/component evidence update/delete immutable and prevent changes to an order's financial scope, reservation, currency, totals, create key, and creation timestamp. Only reviewed status/preparation metadata may transition; the future non-owner runtime role must lack `TRUNCATE`.
 
 **PrimaryPayment**
 

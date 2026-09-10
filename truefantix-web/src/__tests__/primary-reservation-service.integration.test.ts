@@ -63,6 +63,7 @@ describe("primary reservation PostgreSQL integration", () => {
   beforeAll(async () => {
     process.env.PRIMARY_TICKETING_ENVIRONMENT_ID = "isolated-test";
     internal = createPrimaryReservationInternalCapabilityForTests();
+    await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder" CASCADE');
     await db.primaryOrderPriceComponent.deleteMany();
     await db.primaryOrderLine.deleteMany();
     await db.primaryOrder.deleteMany();

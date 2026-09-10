@@ -10,6 +10,7 @@ type Actor = { id: string; role: UserRole };
 export type PrimaryOrderInternalCapability = { readonly kind: "PrimaryOrderInternalCapability" };
 const internalCapabilities = new WeakSet<object>();
 const supportedCurrencies = new Set((Intl as typeof Intl & { supportedValuesOf?: (key: "currency") => string[] }).supportedValuesOf?.("currency") ?? ["CAD", "USD"]);
+export const PRIMARY_ORDER_INTEGER_MAX = 2_147_483_647;
 
 export type PrimaryOrderAdditionalComponent = {
   code: string;
@@ -36,13 +37,13 @@ function key(value: string) {
 }
 
 function safePositive(value: number, code: string) {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new PrimaryDomainError(code);
+  if (!Number.isSafeInteger(value) || value <= 0 || value > PRIMARY_ORDER_INTEGER_MAX) throw new PrimaryDomainError(code);
   return value;
 }
 
 function checkedAdd(left: number, right: number) {
   const result = left + right;
-  if (!Number.isSafeInteger(result)) throw new PrimaryDomainError("ORDER_AMOUNT_OVERFLOW");
+  if (!Number.isSafeInteger(result) || result > PRIMARY_ORDER_INTEGER_MAX) throw new PrimaryDomainError("ORDER_AMOUNT_OVERFLOW");
   return result;
 }
 
@@ -114,8 +115,10 @@ export class PrimaryOrderService {
       if (!supportedCurrencies.has(ticketType.currency)) throw new PrimaryDomainError("INVALID_CURRENCY");
       const existingForReservation = await tx.primaryOrder.findUnique({ where: { reservationId: reservation.id } });
       if (existingForReservation) throw new PrimaryDomainError("RESERVATION_ALREADY_HAS_ORDER");
-      const faceValueSubtotalMinor = ticketType.basePriceMinor * reservation.quantity;
-      if (!Number.isSafeInteger(faceValueSubtotalMinor) || faceValueSubtotalMinor <= 0) throw new PrimaryDomainError("ORDER_AMOUNT_OVERFLOW");
+      const unitFaceValueMinor = safePositive(ticketType.basePriceMinor, "ORDER_AMOUNT_OVERFLOW");
+      const quantity = safePositive(reservation.quantity, "ORDER_AMOUNT_OVERFLOW");
+      const faceValueSubtotalMinor = unitFaceValueMinor * quantity;
+      if (!Number.isSafeInteger(faceValueSubtotalMinor) || faceValueSubtotalMinor <= 0 || faceValueSubtotalMinor > PRIMARY_ORDER_INTEGER_MAX) throw new PrimaryDomainError("ORDER_AMOUNT_OVERFLOW");
       const additional = validateComponents(input.additionalComponents ?? [], reservation.quantity);
       const grossTotalMinor = additional.reduce((sum, component) => checkedAdd(sum, component.amountMinor), faceValueSubtotalMinor);
       const order = await tx.primaryOrder.create({ data: {
@@ -123,8 +126,8 @@ export class PrimaryOrderService {
         currency: ticketType.currency, faceValueSubtotalMinor, grossTotalMinor, createIdempotencyKey: idempotencyKey,
       } });
       const line = await tx.primaryOrderLine.create({ data: {
-        orderId: order.id, ticketTypeId: ticketType.id, quantity: reservation.quantity, ticketTypeNameSnapshot: ticketType.name,
-        unitFaceValueMinor: ticketType.basePriceMinor, faceValueSubtotalMinor, currency: ticketType.currency,
+        orderId: order.id, reservationId: reservation.id, ticketTypeId: ticketType.id, quantity, ticketTypeNameSnapshot: ticketType.name,
+        unitFaceValueMinor, faceValueSubtotalMinor, currency: ticketType.currency,
       } });
       await tx.primaryOrderPriceComponent.createMany({ data: [
         { orderId: order.id, orderLineId: line.id, code: "FACE_VALUE", label: "Face value", kind: "FACE_VALUE", amountMinor: faceValueSubtotalMinor, currency: ticketType.currency, allocationBaseMinor: ticketType.basePriceMinor, allocationRemainderUnits: 0, position: 0 },
@@ -135,16 +138,21 @@ export class PrimaryOrderService {
     }, { isolationLevel: "Serializable" });
   }
 
-  prepareForPayment(input: { internalCapability: PrimaryOrderInternalCapability; organizerId: string; eventId: string; orderId: string; idempotencyKey: string; reconciliationDelayMs?: number }) {
+  async prepareForPayment(input: { internalCapability: PrimaryOrderInternalCapability; organizerId: string; eventId: string; orderId: string; idempotencyKey: string; reconciliationDelayMs?: number }) {
     assertInternal(input.internalCapability);
-    return this.db.$transaction(async (tx) => {
+    try {
+      return await this.db.$transaction(async (tx) => {
       const idempotencyKey = key(input.idempotencyKey);
       const now = this.clock();
       const delay = safePositive(input.reconciliationDelayMs ?? 30 * 60 * 1000, "INVALID_RECONCILIATION_DELAY");
       await lockScope(tx, input.organizerId, input.eventId);
+      const existingCommand = await tx.primaryOrder.findUnique({ where: { prepareIdempotencyKey: idempotencyKey } });
+      if (existingCommand) {
+        if (existingCommand.id !== input.orderId || existingCommand.organizerId !== input.organizerId || existingCommand.eventId !== input.eventId || existingCommand.prepareReconciliationDelayMs !== delay) throw new PrimaryDomainError("IDEMPOTENCY_CONFLICT");
+        return existingCommand;
+      }
       const order = await tx.primaryOrder.findFirst({ where: { id: input.orderId, organizerId: input.organizerId, eventId: input.eventId } });
       if (!order) throw new PrimaryAccessError("NOT_FOUND", 404);
-      if (order.prepareIdempotencyKey === idempotencyKey) return order;
       if (order.status !== "PENDING_PAYMENT") throw new PrimaryDomainError("ORDER_NOT_PREPARABLE");
       const reservation = await tx.primaryInventoryReservation.findUnique({ where: { id: order.reservationId } });
       if (!reservation || reservation.status !== "HELD" || reservation.expiresAt <= now) throw new PrimaryDomainError("RESERVATION_NOT_COMMITTABLE");
@@ -153,10 +161,14 @@ export class PrimaryOrderService {
         status: "PAYMENT_COMMITTED", paymentCommittedAt: now, reconciliationAfter: new Date(now.getTime() + delay), commitIdempotencyKey: `${idempotencyKey}:reservation`,
       } });
       await this.audit(tx, committed, "RESERVATION_PAYMENT_COMMITTED", `${idempotencyKey}:reservation`, undefined, "SYSTEM");
-      const updated = await tx.primaryOrder.update({ where: { id: order.id }, data: { status: "PAYMENT_PROCESSING", paymentProcessingAt: now, prepareIdempotencyKey: idempotencyKey } });
+      const updated = await tx.primaryOrder.update({ where: { id: order.id }, data: { status: "PAYMENT_PROCESSING", paymentProcessingAt: now, prepareIdempotencyKey: idempotencyKey, prepareReconciliationDelayMs: delay } });
       await this.audit(tx, updated, "ORDER_PAYMENT_PROCESSING", idempotencyKey, undefined, "SYSTEM");
       return updated;
-    }, { isolationLevel: "Serializable" });
+      }, { isolationLevel: "Serializable" });
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") throw new PrimaryDomainError("IDEMPOTENCY_CONFLICT");
+      throw error;
+    }
   }
 
   private audit(tx: Tx, target: { id: string; organizerId: string; eventId: string; status: string }, action: string, requestId: string, actorUserId: string | undefined, actorType: "USER" | "SYSTEM") {

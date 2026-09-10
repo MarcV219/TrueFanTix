@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { requirePrimaryPreflight } from "@/lib/primary/config";
-import { createPrimaryOrderInternalCapabilityForTests, PrimaryOrderService, type PrimaryOrderInternalCapability } from "@/lib/primary/order-service";
+import { createPrimaryOrderInternalCapabilityForTests, PRIMARY_ORDER_INTEGER_MAX, PrimaryOrderService, type PrimaryOrderInternalCapability } from "@/lib/primary/order-service";
 
 const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
 if (!databaseUrl) {
@@ -17,13 +17,13 @@ describe("primary order PostgreSQL integration", () => {
   const service = new PrimaryOrderService(db, capability, () => new Date(now));
   let internal: PrimaryOrderInternalCapability;
   let sequence = 0;
-  const seed = async (reservationStatus: "HELD" | "RELEASED" = "HELD", expiresAt = new Date(now.getTime() + 60_000)) => {
+  const seed = async (reservationStatus: "HELD" | "RELEASED" = "HELD", expiresAt = new Date(now.getTime() + 60_000), quantity = 3, basePriceMinor = 2500) => {
     const id = ++sequence;
     const buyer = await db.user.create({ data: { email: `order-${id}@example.test`, passwordHash: "synthetic", emailVerifiedAt: new Date(), firstName: "Order", lastName: `${id}`, phone: `+1999${String(id).padStart(7, "0")}`, phoneVerifiedAt: new Date(), streetAddress1: "1 Test", city: "Toronto", region: "ON", postalCode: "A1A1A1", country: "CA" } });
     const organizer = await db.primaryOrganizer.create({ data: { legalName: `Order ${id}`, displayName: `Order ${id}`, addressLine1: "1 Test", city: "Toronto", region: "ON", postalCode: "A1A1A1", country: "CA", supportEmail: `order-org-${id}@example.test`, status: "APPROVED", createdByUserId: buyer.id } });
     const event = await db.primaryEvent.create({ data: { organizerId: organizer.id, title: "Order Event", description: "Synthetic", category: "CONCERT", venueName: "Hall", venueAddressLine1: "1 Test", venueCity: "Toronto", venueRegion: "ON", venuePostalCode: "A1A1A1", venueCountry: "CA", startsAtLocal: new Date("2036-01-01T19:00:00Z"), endsAtLocal: new Date("2036-01-01T22:00:00Z"), timezone: "America/Toronto", contactEmail: "events@example.test", draftPolicyText: "Synthetic", totalCapacity: 10, status: "APPROVED" } });
-    const ticketType = await db.primaryTicketType.create({ data: { organizerId: organizer.id, eventId: event.id, name: "GA Snapshot", allocatedQuantity: 10, status: "ACTIVE", currency: "CAD", basePriceMinor: 2500 } });
-    const reservation = await db.primaryInventoryReservation.create({ data: { organizerId: organizer.id, eventId: event.id, ticketTypeId: ticketType.id, buyerUserId: buyer.id, quantity: 3, status: reservationStatus, expiresAt, releasedAt: reservationStatus === "RELEASED" ? now : undefined, createIdempotencyKey: `order-reservation-${id}` } });
+    const ticketType = await db.primaryTicketType.create({ data: { organizerId: organizer.id, eventId: event.id, name: "GA Snapshot", allocatedQuantity: Math.max(10, quantity), status: "ACTIVE", currency: "CAD", basePriceMinor } });
+    const reservation = await db.primaryInventoryReservation.create({ data: { organizerId: organizer.id, eventId: event.id, ticketTypeId: ticketType.id, buyerUserId: buyer.id, quantity, status: reservationStatus, expiresAt, releasedAt: reservationStatus === "RELEASED" ? now : undefined, createIdempotencyKey: `order-reservation-${id}` } });
     return { buyer, organizer, event, ticketType, reservation };
   };
   const create = (scope: Awaited<ReturnType<typeof seed>>, key: string, components = [{ code: "SERVICE_FEE", label: "Synthetic configurable fee", kind: "MANDATORY_FEE" as const, amountMinor: 5 }]) => service.create({ internalCapability: internal, actor: { id: scope.buyer.id, role: scope.buyer.role }, organizerId: scope.organizer.id, eventId: scope.event.id, reservationId: scope.reservation.id, idempotencyKey: key, additionalComponents: components });
@@ -31,6 +31,7 @@ describe("primary order PostgreSQL integration", () => {
   beforeAll(async () => {
     process.env.PRIMARY_TICKETING_ENVIRONMENT_ID = "isolated-test";
     internal = createPrimaryOrderInternalCapabilityForTests();
+    await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder" CASCADE');
     await db.primaryOrderPriceComponent.deleteMany(); await db.primaryOrderLine.deleteMany(); await db.primaryOrder.deleteMany();
     await db.primaryInventoryReservation.deleteMany(); await db.primaryAuditEvent.deleteMany(); await db.primaryOutboxMessage.deleteMany();
     await db.primaryTicketType.deleteMany(); await db.primaryEvent.deleteMany(); await db.primaryOrganizer.deleteMany();
@@ -82,6 +83,51 @@ describe("primary order PostgreSQL integration", () => {
     expect(prepared).toMatchObject({ status: "PAYMENT_PROCESSING", paymentProcessingAt: now });
     expect(await db.primaryInventoryReservation.findUniqueOrThrow({ where: { id: scope.reservation.id } })).toMatchObject({ status: "PAYMENT_COMMITTED", paymentCommittedAt: now });
     await expect(service.prepareForPayment({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: order.id, idempotencyKey: "prepare-once" })).resolves.toEqual(prepared);
+  });
+
+  it("binds preparation idempotency to order scope and reconciliation delay", async () => {
+    const firstScope = await seed(); const secondScope = await seed();
+    const first = await create(firstScope, "prepare-binding-first", []); const second = await create(secondScope, "prepare-binding-second", []);
+    await service.prepareForPayment({ internalCapability: internal, organizerId: firstScope.organizer.id, eventId: firstScope.event.id, orderId: first.id, idempotencyKey: "prepare-binding", reconciliationDelayMs: 60_000 });
+    const auditCount = await db.primaryAuditEvent.count(); const outboxCount = await db.primaryOutboxMessage.count();
+    await expect(service.prepareForPayment({ internalCapability: internal, organizerId: secondScope.organizer.id, eventId: secondScope.event.id, orderId: second.id, idempotencyKey: "prepare-binding", reconciliationDelayMs: 60_000 })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    await expect(service.prepareForPayment({ internalCapability: internal, organizerId: firstScope.organizer.id, eventId: firstScope.event.id, orderId: first.id, idempotencyKey: "prepare-binding", reconciliationDelayMs: 120_000 })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(await db.primaryAuditEvent.count()).toBe(auditCount); expect(await db.primaryOutboxMessage.count()).toBe(outboxCount);
+    expect(await db.primaryOrder.findUniqueOrThrow({ where: { id: second.id } })).toMatchObject({ status: "PENDING_PAYMENT", prepareIdempotencyKey: null });
+  });
+
+  it("enforces the PostgreSQL INTEGER amount boundary before writes", async () => {
+    const boundary = await seed("HELD", new Date(now.getTime() + 60_000), 1, PRIMARY_ORDER_INTEGER_MAX);
+    await expect(create(boundary, "integer-boundary", [])).resolves.toMatchObject({ grossTotalMinor: PRIMARY_ORDER_INTEGER_MAX });
+    const productOverflow = await seed("HELD", new Date(now.getTime() + 60_000), 2, Math.floor(PRIMARY_ORDER_INTEGER_MAX / 2) + 1);
+    await expect(create(productOverflow, "integer-product-overflow", [])).rejects.toMatchObject({ code: "ORDER_AMOUNT_OVERFLOW" });
+    const grossOverflow = await seed("HELD", new Date(now.getTime() + 60_000), 1, PRIMARY_ORDER_INTEGER_MAX);
+    await expect(create(grossOverflow, "integer-gross-overflow", [{ code: "FEE", label: "Fee", kind: "MANDATORY_FEE", amountMinor: 1 }])).rejects.toMatchObject({ code: "ORDER_AMOUNT_OVERFLOW" });
+    expect(await db.primaryOrder.count({ where: { reservationId: { in: [productOverflow.reservation.id, grossOverflow.reservation.id] } } })).toBe(0);
+  });
+
+  it("rejects direct cross-scope financial inserts with composite foreign keys", async () => {
+    const first = await seed(); const second = await seed();
+    const insertOrder = (suffix: string, organizerId: string, eventId: string, buyerUserId: string) => db.$executeRaw`
+      INSERT INTO "PrimaryOrder" ("id", "organizerId", "eventId", "buyerUserId", "reservationId", "currency", "faceValueSubtotalMinor", "grossTotalMinor", "createIdempotencyKey", "updatedAt")
+      VALUES (${`mismatch-order-${suffix}`}, ${organizerId}, ${eventId}, ${buyerUserId}, ${first.reservation.id}, 'CAD', 7500, 7500, ${`mismatch-key-${suffix}`}, CURRENT_TIMESTAMP)
+    `;
+    await expect(insertOrder("organizer", second.organizer.id, second.event.id, first.buyer.id)).rejects.toBeTruthy();
+    const siblingEvent = await db.primaryEvent.create({ data: { organizerId: first.organizer.id, title: "Sibling", description: "Synthetic", category: "CONCERT", venueName: "Hall", venueAddressLine1: "1 Test", venueCity: "Toronto", venueRegion: "ON", venuePostalCode: "A1A1A1", venueCountry: "CA", startsAtLocal: new Date("2036-02-01T19:00:00Z"), endsAtLocal: new Date("2036-02-01T22:00:00Z"), timezone: "America/Toronto", contactEmail: "events@example.test", draftPolicyText: "Synthetic", totalCapacity: 10, status: "APPROVED" } });
+    await expect(insertOrder("event", first.organizer.id, siblingEvent.id, first.buyer.id)).rejects.toBeTruthy();
+    await expect(insertOrder("buyer", first.organizer.id, first.event.id, second.buyer.id)).rejects.toBeTruthy();
+    await db.$executeRaw`INSERT INTO "PrimaryOrder" ("id", "organizerId", "eventId", "buyerUserId", "reservationId", "currency", "faceValueSubtotalMinor", "grossTotalMinor", "createIdempotencyKey", "updatedAt") VALUES ('line-binding-order', ${first.organizer.id}, ${first.event.id}, ${first.buyer.id}, ${first.reservation.id}, 'CAD', 7500, 7500, 'line-binding-order-key', CURRENT_TIMESTAMP)`;
+    await expect(db.$executeRaw`INSERT INTO "PrimaryOrderLine" ("id", "orderId", "reservationId", "ticketTypeId", "quantity", "ticketTypeNameSnapshot", "unitFaceValueMinor", "faceValueSubtotalMinor", "currency") VALUES ('line-binding-line', 'line-binding-order', ${first.reservation.id}, ${second.ticketType.id}, 3, 'Wrong type', 2500, 7500, 'CAD')`).rejects.toBeTruthy();
+  });
+
+  it("enforces financial snapshot immutability in PostgreSQL", async () => {
+    const scope = await seed(); const order = await create(scope, "immutable-database", []); const line = order.lines[0]; const component = order.components[0];
+    await expect(db.$executeRaw`UPDATE "PrimaryOrder" SET "grossTotalMinor" = "grossTotalMinor" + 1 WHERE "id" = ${order.id}`).rejects.toBeTruthy();
+    await expect(db.$executeRaw`UPDATE "PrimaryOrderLine" SET "ticketTypeNameSnapshot" = 'Rewritten' WHERE "id" = ${line.id}`).rejects.toBeTruthy();
+    await expect(db.$executeRaw`DELETE FROM "PrimaryOrderLine" WHERE "id" = ${line.id}`).rejects.toBeTruthy();
+    await expect(db.$executeRaw`UPDATE "PrimaryOrderPriceComponent" SET "amountMinor" = "amountMinor" + 1 WHERE "id" = ${component.id}`).rejects.toBeTruthy();
+    await expect(db.$executeRaw`DELETE FROM "PrimaryOrderPriceComponent" WHERE "id" = ${component.id}`).rejects.toBeTruthy();
+    expect(await db.primaryOrder.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ grossTotalMinor: 7500 });
   });
 
   it("rolls back order, line, component, and audit when outbox persistence fails", async () => {

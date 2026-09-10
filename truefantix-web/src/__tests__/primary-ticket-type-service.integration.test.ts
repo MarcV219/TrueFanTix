@@ -55,6 +55,7 @@ describe("primary ticket type PostgreSQL integration", () => {
   };
 
   beforeAll(async () => {
+    await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder" CASCADE');
     await db.primaryOrderPriceComponent.deleteMany();
     await db.primaryOrderLine.deleteMany();
     await db.primaryOrder.deleteMany();
