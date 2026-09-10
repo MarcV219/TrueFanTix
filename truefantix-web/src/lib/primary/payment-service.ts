@@ -74,7 +74,6 @@ export class PrimaryPaymentService {
 
   async createAttempt(input: { internalCapability: PrimaryOrderInternalCapability; organizerId: string; eventId: string; orderId: string; idempotencyKey: string; reconciliationDelayMs?: number }) {
     const idempotencyKey = cleanKey(input.idempotencyKey);
-    await this.orderService.prepareForPayment({ ...input, idempotencyKey: `payment:${input.orderId}:prepare` });
     const attempt = await this.db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "PrimaryOrder" WHERE id = ${input.orderId} FOR UPDATE`;
       const existing = await tx.primaryPaymentAttempt.findUnique({ where: { createIdempotencyKey: idempotencyKey } });
@@ -83,13 +82,14 @@ export class PrimaryPaymentService {
         return existing;
       }
       const order = await tx.primaryOrder.findFirst({ where: { id: input.orderId, organizerId: input.organizerId, eventId: input.eventId }, include: { reservation: true } });
-      if (!order || order.status !== "PAYMENT_PROCESSING" || order.reservation.status !== "PAYMENT_COMMITTED") throw new PrimaryDomainError("ORDER_NOT_PAYMENT_COMMITTED");
+      if (!order || !["PENDING_PAYMENT", "PAYMENT_PROCESSING"].includes(order.status) || !["HELD", "PAYMENT_COMMITTED"].includes(order.reservation.status)) throw new PrimaryDomainError("ORDER_NOT_PAYMENT_PREPARABLE");
       const existingOrderAttempt = await tx.primaryPaymentAttempt.findUnique({ where: { orderId: order.id } });
       if (existingOrderAttempt) throw new PrimaryDomainError("ORDER_ALREADY_HAS_PAYMENT_ATTEMPT");
       const created = await tx.primaryPaymentAttempt.create({ data: { organizerId: order.organizerId, eventId: order.eventId, buyerUserId: order.buyerUserId, reservationId: order.reservationId, orderId: order.id, expectedAmountMinor: order.grossTotalMinor, currency: order.currency, createIdempotencyKey: idempotencyKey } });
       await this.audit(tx, created, "PAYMENT_ATTEMPT_CREATED", idempotencyKey);
       return created;
     }, { isolationLevel: "Serializable" });
+    await this.orderService.prepareForPayment({ ...input, idempotencyKey: `payment:${input.orderId}:prepare` });
     if (attempt.providerIntentId) return attempt;
     const metadata = { primaryOrderId: attempt.orderId, organizerId: attempt.organizerId, eventId: attempt.eventId, reservationId: attempt.reservationId };
     try {
@@ -119,8 +119,20 @@ export class PrimaryPaymentService {
     const digest = createHash("sha256").update(rawBody).digest("hex");
     return this.db.$transaction(async (tx) => {
       const prior = await tx.primaryPaymentProviderEvent.findUnique({ where: { providerEventId: event.id } });
-      if (prior) return prior;
-      const attempt = await tx.primaryPaymentAttempt.findUnique({ where: { providerIntentId: event.intentId } });
+      if (prior) {
+        const priorAttempt = await tx.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: prior.attemptId } });
+        const exact = prior.payloadDigest === digest && prior.eventType === event.type && prior.providerCreatedAt.getTime() === event.createdAt.getTime() && priorAttempt.providerIntentId === event.intentId;
+        if (!exact) throw new PrimaryDomainError("PROVIDER_EVENT_CONFLICT");
+        return prior;
+      }
+      let attempt = await tx.primaryPaymentAttempt.findUnique({ where: { providerIntentId: event.intentId } });
+      if (!attempt) {
+        const metadata = event.metadata;
+        const candidate = await tx.primaryPaymentAttempt.findFirst({ where: { orderId: metadata.primaryOrderId, organizerId: metadata.organizerId, eventId: metadata.eventId, reservationId: metadata.reservationId, providerIntentId: null } });
+        if (candidate && event.amountMinor === candidate.expectedAmountMinor && event.currency === candidate.currency) {
+          attempt = await tx.primaryPaymentAttempt.update({ where: { id: candidate.id }, data: { providerIntentId: event.intentId, providerCreatedAt: event.createdAt, status: "PROCESSING" } });
+        }
+      }
       if (!attempt) throw new PrimaryDomainError("PAYMENT_ATTEMPT_NOT_FOUND");
       await tx.$queryRaw`SELECT id FROM "PrimaryOrder" WHERE id = ${attempt.orderId} FOR UPDATE`;
       await tx.$queryRaw`SELECT id FROM "PrimaryInventoryReservation" WHERE id = ${attempt.reservationId} FOR UPDATE`;

@@ -49,7 +49,7 @@ describe("primary payment PostgreSQL integration", () => {
 
   beforeAll(async () => {
     internalEnv.PRIMARY_TICKETING_ENVIRONMENT_ID = "isolated-test";
-    await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryPaymentException", "PrimaryPaymentProviderEvent", "PrimaryPaymentAttempt", "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder" CASCADE');
+    await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryPaymentException", "PrimaryPaymentProviderEvent", "PrimaryPaymentAttempt", "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder", "PrimaryAuditEvent", "PrimaryOutboxMessage" CASCADE');
   });
   afterAll(async () => { delete internalEnv.PRIMARY_TICKETING_ENVIRONMENT_ID; await db.$disconnect(); await pool.end(); });
 
@@ -73,6 +73,17 @@ describe("primary payment PostgreSQL integration", () => {
     expect(await db.primaryPaymentAttempt.count({ where: { orderId: scope.order.id } })).toBe(1);
   });
 
+  it("rejects a reused attempt key before committing a different order or reservation", async () => {
+    const first = await seed(); const second = await seed(); const adapter = new FakeStripe(); const service = new PrimaryPaymentService(db, capability, stripeConfig, adapter, orderService, () => new Date(now));
+    await service.createAttempt({ internalCapability: first.internal, organizerId: first.organizer.id, eventId: first.event.id, orderId: first.order.id, idempotencyKey: "attempt-cross-order" });
+    const auditBefore = await db.primaryAuditEvent.count(); const outboxBefore = await db.primaryOutboxMessage.count();
+    await expect(service.createAttempt({ internalCapability: second.internal, organizerId: second.organizer.id, eventId: second.event.id, orderId: second.order.id, idempotencyKey: "attempt-cross-order" })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(await db.primaryOrder.findUniqueOrThrow({ where: { id: second.order.id } })).toMatchObject({ status: "PENDING_PAYMENT" });
+    expect(await db.primaryInventoryReservation.findUniqueOrThrow({ where: { id: second.reservation.id } })).toMatchObject({ status: "HELD" });
+    expect(await db.primaryPaymentAttempt.count({ where: { orderId: second.order.id } })).toBe(0);
+    expect(await db.primaryAuditEvent.count()).toBe(auditBefore); expect(await db.primaryOutboxMessage.count()).toBe(outboxBefore);
+  });
+
   it("verifies, deduplicates, and strictly reconciles success", async () => {
     const scope = await seed(); const adapter = new FakeStripe(); const service = new PrimaryPaymentService(db, capability, stripeConfig, adapter, orderService, () => new Date(now));
     const attempt = await service.createAttempt({ internalCapability: scope.internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "success-attempt" });
@@ -81,6 +92,29 @@ describe("primary payment PostgreSQL integration", () => {
     await service.handleWebhook(body, "valid"); await service.handleWebhook(body, "valid");
     expect(await db.primaryPaymentProviderEvent.count({ where: { providerEventId: "evt_success" } })).toBe(1);
     expect(await db.primaryOrder.findUniqueOrThrow({ where: { id: scope.order.id } })).toMatchObject({ status: "PAID", paidAt: now });
+  });
+
+  it("rejects changed content under a replayed provider event id without new effects", async () => {
+    const scope = await seed(); const adapter = new FakeStripe(); const service = new PrimaryPaymentService(db, capability, stripeConfig, adapter, orderService, () => new Date(now));
+    const attempt = await service.createAttempt({ internalCapability: scope.internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "event-identity" });
+    const body = eventFor(attempt, "evt_identity", "payment_intent.processing"); await service.handleWebhook(body, "valid"); await service.handleWebhook(body, "valid");
+    const auditBefore = await db.primaryAuditEvent.count(); const outboxBefore = await db.primaryOutboxMessage.count();
+    await expect(service.handleWebhook(eventFor(attempt, "evt_identity", "payment_intent.processing", { amountMinor: attempt.expectedAmountMinor - 1 }), "valid")).rejects.toMatchObject({ code: "PROVIDER_EVENT_CONFLICT" });
+    expect(await db.primaryPaymentProviderEvent.count({ where: { providerEventId: "evt_identity" } })).toBe(1);
+    expect(await db.primaryAuditEvent.count()).toBe(auditBefore); expect(await db.primaryOutboxMessage.count()).toBe(outboxBefore);
+  });
+
+  it("correlates and safely attaches a verified webhook that arrives before provider attachment", async () => {
+    const scope = await seed(); let providerCalled!: () => void; let releaseProvider!: () => void;
+    const called = new Promise<void>((resolve) => { providerCalled = resolve; }); const release = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    const adapter = new FakeStripe(); adapter.createUnconfirmedIntent = async (input) => { providerCalled(); await release; return { id: `pi_early_${input.metadata.primaryOrderId}`, createdAt: new Date(now) }; };
+    const service = new PrimaryPaymentService(db, capability, stripeConfig, adapter, orderService, () => new Date(now));
+    const creating = service.createAttempt({ internalCapability: scope.internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "early-webhook" }); await called;
+    const pending = await db.primaryPaymentAttempt.findUniqueOrThrow({ where: { orderId: scope.order.id } });
+    const body = eventFor({ ...pending, providerIntentId: `pi_early_${scope.order.id}` }, "evt_early", "payment_intent.processing");
+    await service.handleWebhook(body, "valid"); releaseProvider(); const completed = await creating;
+    expect(completed).toMatchObject({ providerIntentId: `pi_early_${scope.order.id}`, status: "PROCESSING" });
+    expect(await db.primaryPaymentProviderEvent.count({ where: { providerEventId: "evt_early" } })).toBe(1);
   });
 
   it("fails closed on amount, currency, or metadata mismatch", async () => {
@@ -110,6 +144,18 @@ describe("primary payment PostgreSQL integration", () => {
     await expect(service.handleWebhook(eventFor(attempt, "evt_rollback", "payment_intent.succeeded"), "valid")).rejects.toBeTruthy();
     expect(await db.primaryPaymentProviderEvent.count({ where: { providerEventId: "evt_rollback" } })).toBe(0);
     expect(await db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).toMatchObject({ status: "PROCESSING" });
+  });
+
+  it("enforces database immutability for attempts, provider events, and exceptions", async () => {
+    const scope = await seed(); const adapter = new FakeStripe(); const service = new PrimaryPaymentService(db, capability, stripeConfig, adapter, orderService, () => new Date(now));
+    const attempt = await service.createAttempt({ internalCapability: scope.internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "immutable-payment" });
+    await service.handleWebhook(eventFor(attempt, "evt_immutable", "payment_intent.succeeded", { amountMinor: attempt.expectedAmountMinor - 1 }), "valid");
+    await expect(db.$executeRawUnsafe(`UPDATE "PrimaryPaymentAttempt" SET "expectedAmountMinor" = "expectedAmountMinor" - 1 WHERE id = '${attempt.id}'`)).rejects.toBeTruthy();
+    await expect(db.$executeRawUnsafe(`UPDATE "PrimaryPaymentAttempt" SET "providerIntentId" = 'pi_replaced' WHERE id = '${attempt.id}'`)).rejects.toBeTruthy();
+    await expect(db.$executeRawUnsafe(`UPDATE "PrimaryPaymentProviderEvent" SET "payloadDigest" = 'rewritten' WHERE "providerEventId" = 'evt_immutable'`)).rejects.toBeTruthy();
+    await expect(db.$executeRawUnsafe(`DELETE FROM "PrimaryPaymentProviderEvent" WHERE "providerEventId" = 'evt_immutable'`)).rejects.toBeTruthy();
+    await expect(db.$executeRawUnsafe(`DELETE FROM "PrimaryPaymentException" WHERE "attemptId" = '${attempt.id}'`)).rejects.toBeTruthy();
+    await expect(db.$executeRawUnsafe(`DELETE FROM "PrimaryPaymentAttempt" WHERE id = '${attempt.id}'`)).rejects.toBeTruthy();
   });
 });
 }
