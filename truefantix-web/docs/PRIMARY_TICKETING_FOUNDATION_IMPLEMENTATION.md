@@ -10,15 +10,17 @@
 
 - A server-only feature preflight that fails closed unless all of the following are true:
   - `PRIMARY_TICKETING_ENABLED=true`;
-  - `NODE_ENV` is not `production`;
   - `PRIMARY_TICKETING_ENVIRONMENT_ID` is `isolated-test` or `isolated-preview`;
+  - `PRIMARY_TICKETING_DEPLOYMENT_ID` exactly matches that isolated identity;
+  - live production deployment identity (`VERCEL_ENV=production` or `PRIMARY_TICKETING_DEPLOYMENT_ID=live-production`) is forbidden;
+  - an isolated preview requires `VERCEL_ENV=preview` (and may use the platform-standard `NODE_ENV=production`);
   - `PRIMARY_TICKETING_DATABASE_URL` exactly matches the process `DATABASE_URL`; and
   - the PostgreSQL database name explicitly identifies a primary-ticketing test or preview database.
 - An unavailable-by-default `/api/primary/health` route. Disabled or unsafe configurations return the same `404 NOT_FOUND` response.
 - Dedicated organizer, membership, invitation, minimal event identity, event-staff assignment, audit, and outbox models. They have no relation to secondary `Ticket`, `Order`, `Payment`, `Payout`, or `Seller` records.
 - Composite tenant foreign keys prevent an event assignment or event audit record from crossing organizer boundaries.
 - Deny-by-default organizer and event authorization services. Every tenant query includes `organizerId`; non-owner event access also requires an active assignment belonging to the same organizer.
-- A transactional helper that writes a redacted audit record and idempotent outbox message through the caller's existing database transaction.
+- A transactional helper that writes a redacted audit record and idempotent outbox message through the caller's existing database transaction. It requires an opaque capability issued only by successful primary preflight, so a caller cannot omit the gate and still write.
 
 ## Isolated environment contract
 
@@ -28,6 +30,7 @@ These variables are examples only; no credential or environment file is committe
 NODE_ENV=test
 PRIMARY_TICKETING_ENABLED=true
 PRIMARY_TICKETING_ENVIRONMENT_ID=isolated-test
+PRIMARY_TICKETING_DEPLOYMENT_ID=isolated-test
 DATABASE_URL=postgresql://<isolated-user>:<password>@<isolated-host>/primary_ticketing_test
 PRIMARY_TICKETING_DATABASE_URL=postgresql://<isolated-user>:<password>@<isolated-host>/primary_ticketing_test
 ```
@@ -56,6 +59,14 @@ The migration must be applied only to a newly provisioned isolated database. It 
 - Production build: passed with primary ticketing disabled and the disposable database supplied to the build environment.
 - Diff whitespace validation: passed.
 
+### Foundation Revision 1
+
+- Focused preflight, write-boundary, authorization, and health tests: 4 suites / 19 tests passed.
+- Full regression tests: 55 suites / 342 tests passed.
+- TypeScript and focused lint: passed with no errors.
+- Explicit deployment-identity coverage proves an isolated Vercel preview is accepted with `NODE_ENV=production`, while `VERCEL_ENV=production`, a live-production identity, mismatched identities, and an unverified preview are rejected.
+- Write-boundary coverage proves audit/outbox persistence is rejected before either database create call unless the helper receives a capability issued by successful preflight.
+
 ## Risks and open decisions
 
 - The preflight depends on explicit environment configuration and database naming. Deployment configuration remains intentionally absent until an isolated preview is separately authorized.
@@ -63,6 +74,10 @@ The migration must be applied only to a newly provisioned isolated database. It 
 - Audit snapshots use a deliberately small allowlist. Each later domain must explicitly add safe fields rather than persisting arbitrary request objects.
 - The outbox foundation stores delivery intent only. No dispatcher, email, webhook, or external side effect is implemented.
 - Invitation acceptance, organizer workflows, and CRUD endpoints are not part of this milestone. Future acceptance must enforce authenticated ownership of the normalized verified email.
+
+### Append-only audit enforcement before real data
+
+The current synthetic-only foundation treats `PrimaryAuditEvent` rows as append-only by service convention; Prisma's application role can still technically update or delete them. Before any real organizer or attendee data is permitted, deployment must use a dedicated PostgreSQL application role with `SELECT` and `INSERT` on `PrimaryAuditEvent`, no `UPDATE`, `DELETE`, or `TRUNCATE`, and no table-owner or bypass-RLS privileges. Migrations must run under a separate owner role. A database integration test must prove the runtime role can insert but receives a permission error for update, delete, and truncate. The same test and grants must be release-gate evidence; synthetic development may continue until then.
 
 ## Explicit exclusions
 

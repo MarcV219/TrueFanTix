@@ -5,6 +5,7 @@ const env = {
   NODE_ENV: "test",
   PRIMARY_TICKETING_ENABLED: "true",
   PRIMARY_TICKETING_ENVIRONMENT_ID: "isolated-test",
+  PRIMARY_TICKETING_DEPLOYMENT_ID: "isolated-test",
   PRIMARY_TICKETING_DATABASE_URL: "postgresql://localhost/primary_ticketing_test",
   DATABASE_URL: "postgresql://localhost/primary_ticketing_test",
 } as NodeJS.ProcessEnv;

@@ -1,4 +1,8 @@
 import type { Prisma } from "@prisma/client";
+import {
+  assertPrimaryPreflightCapability,
+  type PrimaryPreflightCapability,
+} from "./config";
 
 const AUDIT_FIELD_ALLOWLIST = new Set([
   "status",
@@ -23,6 +27,7 @@ type FoundationTransaction = {
 
 /** Writes the audit record and delivery intent inside the caller's transaction. */
 export async function recordPrimaryAuditAndOutbox(
+  capability: PrimaryPreflightCapability,
   tx: FoundationTransaction,
   input: {
     organizerId?: string;
@@ -41,6 +46,8 @@ export async function recordPrimaryAuditAndOutbox(
     idempotencyKey: string;
   },
 ) {
+  assertPrimaryPreflightCapability(capability);
+
   const audit = await tx.primaryAuditEvent.create({
     data: {
       organizerId: input.organizerId,

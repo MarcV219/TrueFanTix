@@ -1,5 +1,15 @@
 /** @jest-environment node */
 import { recordPrimaryAuditAndOutbox, redactPrimaryAuditSnapshot } from "@/lib/primary/audit-outbox";
+import { requirePrimaryPreflight } from "@/lib/primary/config";
+
+const isolatedEnv = {
+  NODE_ENV: "test",
+  PRIMARY_TICKETING_ENABLED: "true",
+  PRIMARY_TICKETING_ENVIRONMENT_ID: "isolated-test",
+  PRIMARY_TICKETING_DEPLOYMENT_ID: "isolated-test",
+  PRIMARY_TICKETING_DATABASE_URL: "postgresql://localhost/primary_ticketing_test",
+  DATABASE_URL: "postgresql://localhost/primary_ticketing_test",
+} as NodeJS.ProcessEnv;
 
 describe("primary audit and outbox foundation", () => {
   it("retains only allowlisted audit fields", () => {
@@ -16,7 +26,7 @@ describe("primary audit and outbox foundation", () => {
       primaryAuditEvent: { create: jest.fn().mockResolvedValue({ id: "audit-1" }) },
       primaryOutboxMessage: { create: jest.fn().mockResolvedValue({ id: "outbox-1" }) },
     };
-    await expect(recordPrimaryAuditAndOutbox(tx, {
+    await expect(recordPrimaryAuditAndOutbox(requirePrimaryPreflight(isolatedEnv), tx, {
       organizerId: "organizer-1",
       actorUserId: "user-1",
       actorType: "USER",
@@ -36,5 +46,27 @@ describe("primary audit and outbox foundation", () => {
     expect(tx.primaryOutboxMessage.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ idempotencyKey: "membership-1:revoked:v1" }),
     }));
+  });
+
+  it("rejects writes without a capability issued by successful preflight", async () => {
+    const tx = {
+      primaryAuditEvent: { create: jest.fn() },
+      primaryOutboxMessage: { create: jest.fn() },
+    };
+    await expect(recordPrimaryAuditAndOutbox(
+      { environmentId: "isolated-test", databaseName: "primary_ticketing_test" },
+      tx,
+      {
+        actorType: "SYSTEM",
+        action: "TEST",
+        targetType: "Test",
+        targetId: "test-1",
+        topic: "primary.test",
+        payload: {},
+        idempotencyKey: "test-1:v1",
+      },
+    )).rejects.toMatchObject({ reason: "VERIFIED_PREFLIGHT_REQUIRED" });
+    expect(tx.primaryAuditEvent.create).not.toHaveBeenCalled();
+    expect(tx.primaryOutboxMessage.create).not.toHaveBeenCalled();
   });
 });

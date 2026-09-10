@@ -5,6 +5,7 @@ const isolatedEnv = {
   NODE_ENV: "test",
   PRIMARY_TICKETING_ENABLED: "true",
   PRIMARY_TICKETING_ENVIRONMENT_ID: "isolated-test",
+  PRIMARY_TICKETING_DEPLOYMENT_ID: "isolated-test",
   PRIMARY_TICKETING_DATABASE_URL: "postgresql://localhost:5432/primary_ticketing_test",
   DATABASE_URL: "postgresql://localhost:5432/primary_ticketing_test",
 } as NodeJS.ProcessEnv;
@@ -27,8 +28,23 @@ describe("primary ticketing environment preflight", () => {
     });
   });
 
+  it("accepts an isolated preview even when the runtime NODE_ENV is production", () => {
+    expect(getPrimaryPreflight({
+      ...isolatedEnv,
+      NODE_ENV: "production",
+      VERCEL_ENV: "preview",
+      PRIMARY_TICKETING_ENVIRONMENT_ID: "isolated-preview",
+      PRIMARY_TICKETING_DEPLOYMENT_ID: "isolated-preview",
+      DATABASE_URL: "postgresql://localhost:5432/primary_ticketing_preview",
+      PRIMARY_TICKETING_DATABASE_URL: "postgresql://localhost:5432/primary_ticketing_preview",
+    })).toMatchObject({ ready: true, environmentId: "isolated-preview" });
+  });
+
   it.each([
-    [{ ...isolatedEnv, NODE_ENV: "production" }, "PRODUCTION_FORBIDDEN"],
+    [{ ...isolatedEnv, NODE_ENV: "production", VERCEL_ENV: "production" }, "LIVE_PRODUCTION_FORBIDDEN"],
+    [{ ...isolatedEnv, PRIMARY_TICKETING_DEPLOYMENT_ID: "live-production" }, "LIVE_PRODUCTION_FORBIDDEN"],
+    [{ ...isolatedEnv, PRIMARY_TICKETING_DEPLOYMENT_ID: "isolated-preview" }, "DEPLOYMENT_IDENTITY_MISMATCH"],
+    [{ ...isolatedEnv, PRIMARY_TICKETING_ENVIRONMENT_ID: "isolated-preview", PRIMARY_TICKETING_DEPLOYMENT_ID: "isolated-preview" }, "PREVIEW_IDENTITY_REQUIRED"],
     [{ ...isolatedEnv, PRIMARY_TICKETING_ENVIRONMENT_ID: "development" }, "ISOLATED_ENVIRONMENT_REQUIRED"],
     [{ ...isolatedEnv, PRIMARY_TICKETING_DATABASE_URL: "postgresql://localhost/other" }, "DEDICATED_DATABASE_REQUIRED"],
     [{ ...isolatedEnv, DATABASE_URL: "postgresql://localhost/ordinary_dev", PRIMARY_TICKETING_DATABASE_URL: "postgresql://localhost/ordinary_dev" }, "ISOLATED_DATABASE_NAME_REQUIRED"],

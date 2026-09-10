@@ -1,6 +1,12 @@
 const ENABLED_VALUE = "true";
 const ISOLATED_ENVIRONMENTS = new Set(["isolated-test", "isolated-preview"]);
 const ISOLATED_DATABASE_NAME = /primary[-_].*(test|preview)|(test|preview).*primary[-_]/i;
+const issuedCapabilities = new WeakSet<object>();
+
+export type PrimaryPreflightCapability = Readonly<{
+  environmentId: string;
+  databaseName: string;
+}>;
 
 export type PrimaryPreflightResult =
   | { enabled: false; ready: false; reason: "FEATURE_DISABLED" }
@@ -26,13 +32,20 @@ export function getPrimaryPreflight(env: NodeJS.ProcessEnv = process.env): Prima
     return { enabled: false, ready: false, reason: "FEATURE_DISABLED" };
   }
 
-  if (env.NODE_ENV === "production") {
-    return { enabled: true, ready: false, reason: "PRODUCTION_FORBIDDEN" };
-  }
-
   const environmentId = env.PRIMARY_TICKETING_ENVIRONMENT_ID?.trim() ?? "";
   if (!ISOLATED_ENVIRONMENTS.has(environmentId)) {
     return { enabled: true, ready: false, reason: "ISOLATED_ENVIRONMENT_REQUIRED" };
+  }
+
+  const deploymentId = env.PRIMARY_TICKETING_DEPLOYMENT_ID?.trim() ?? "";
+  if (env.VERCEL_ENV === "production" || deploymentId === "live-production") {
+    return { enabled: true, ready: false, reason: "LIVE_PRODUCTION_FORBIDDEN" };
+  }
+  if (deploymentId !== environmentId) {
+    return { enabled: true, ready: false, reason: "DEPLOYMENT_IDENTITY_MISMATCH" };
+  }
+  if (environmentId === "isolated-preview" && env.VERCEL_ENV !== "preview") {
+    return { enabled: true, ready: false, reason: "PREVIEW_IDENTITY_REQUIRED" };
   }
 
   const primaryUrl = env.PRIMARY_TICKETING_DATABASE_URL?.trim() ?? "";
@@ -64,5 +77,18 @@ export class PrimaryFeatureUnavailableError extends Error {
 export function requirePrimaryPreflight(env: NodeJS.ProcessEnv = process.env) {
   const result = getPrimaryPreflight(env);
   if (!result.ready) throw new PrimaryFeatureUnavailableError(result.reason);
-  return result;
+  const capability = Object.freeze({
+    environmentId: result.environmentId,
+    databaseName: result.databaseName,
+  });
+  issuedCapabilities.add(capability);
+  return capability;
+}
+
+export function assertPrimaryPreflightCapability(
+  capability: PrimaryPreflightCapability,
+): asserts capability is PrimaryPreflightCapability {
+  if (!issuedCapabilities.has(capability)) {
+    throw new PrimaryFeatureUnavailableError("VERIFIED_PREFLIGHT_REQUIRED");
+  }
 }
