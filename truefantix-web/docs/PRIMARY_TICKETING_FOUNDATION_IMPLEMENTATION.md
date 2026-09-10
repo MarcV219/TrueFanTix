@@ -67,13 +67,32 @@ The migration must be applied only to a newly provisioned isolated database. It 
 - Explicit deployment-identity coverage proves an isolated Vercel preview is accepted with `NODE_ENV=production`, while `VERCEL_ENV=production`, a live-production identity, mismatched identities, and an unverified preview are rejected.
 - Write-boundary coverage proves audit/outbox persistence is rejected before either database create call unless the helper receives a capability issued by successful preflight.
 
+## Organizer Domain Services milestone
+
+The service-only `PrimaryOrganizerService` implements the authorized organizer administration boundary with no routes or UI:
+
+- verified-user organizer draft creation and the first active `OWNER` membership in one serializable transaction;
+- owner submission and platform-admin review, approval, rejection, suspension, reopening, and restoration using explicit state transitions;
+- normalized-email invitations with cryptographically random bearer tokens, peppered SHA-256 database hashes, expiry, single-active-invitation checks, matching verified-account acceptance, and revocation;
+- owner-controlled membership role changes and revocation, with organizer-row locking and a final-active-owner invariant;
+- owner-controlled event assignment and revocation against the existing tenancy-only event shell;
+- tenant-scoped lookups that conceal foreign identifiers; and
+- a protected audit and idempotent outbox record in the same transaction as every successful sensitive mutation.
+
+The PostgreSQL integration suite uses only synthetic users on a disposable isolated database. It covers the organizer lifecycle, suspension behavior, invitation matching/revocation, role changes, membership revocation, event assignment/revocation, final-owner protection, unverified-user rejection, cross-tenant rejection, and matching audit/outbox counts. It is opt-in through `PRIMARY_INTEGRATION_DATABASE_URL`; ordinary test runs skip it rather than connecting to an unapproved database.
+
+Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 database named `primary_ticketing_test`: all 36 migrations deployed cleanly; the 2 database-backed organizer integration tests passed; all 56 suites / 344 tests passed with integration enabled; TypeScript and the production build passed; focused lint passed; full lint completed with 0 errors and 619 pre-existing warnings; and `git diff --check` passed. The disposable database was destroyed after verification.
+
 ## Risks and open decisions
 
 - The preflight depends on explicit environment configuration and database naming. Deployment configuration remains intentionally absent until an isolated preview is separately authorized.
 - The event model is only an identity/tenancy shell required for staff assignments; event authoring and lifecycle fields are not included.
 - Audit snapshots use a deliberately small allowlist. Each later domain must explicitly add safe fields rather than persisting arbitrary request objects.
 - The outbox foundation stores delivery intent only. No dispatcher, email, webhook, or external side effect is implemented.
-- Invitation acceptance, organizer workflows, and CRUD endpoints are not part of this milestone. Future acceptance must enforce authenticated ownership of the normalized verified email.
+- CRUD endpoints remain out of scope. Invitation acceptance is service-only and enforces authenticated ownership of the normalized verified email.
+- Service inputs assume the route boundary has authenticated the supplied actor identity; the service independently reloads the user to enforce current role, verified email, and ban state. No route is included in this milestone.
+- Invitation delivery is intentionally absent. The raw invitation token is returned once to a future approved delivery boundary and is never persisted or audited.
+- Organizer rejection reasons and operational review policy remain product/operations decisions. The service requires a reason but does not expose a workflow or send notifications.
 
 ### Append-only audit enforcement before real data
 
@@ -81,4 +100,4 @@ The current synthetic-only foundation treats `PrimaryAuditEvent` rows as append-
 
 ## Explicit exclusions
 
-This implementation contains no inventory, reservation, checkout, Stripe, credential, QR, transfer, scan, refund, ledger, settlement, report, public-navigation, real-data, or deployment functionality. Future payment work must keep a PaymentIntent unconfirmed and incapable of success until the local `PAYMENT_COMMITTED` transaction completes.
+This implementation contains no organizer UI/route, external email delivery, full event authoring, inventory, reservation, checkout, Stripe/banking, credential, QR, transfer, scan, refund, ledger, settlement, report, public-navigation, real-data, or deployment functionality. Future payment work must keep a PaymentIntent unconfirmed and incapable of success until the local `PAYMENT_COMMITTED` transaction completes.

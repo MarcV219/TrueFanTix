@@ -1,5 +1,5 @@
 import type { PrimaryMembershipRole, UserRole } from "@prisma/client";
-import { requirePrimaryPreflight } from "./config";
+import { assertPrimaryPreflightCapability, requirePrimaryPreflight, type PrimaryPreflightCapability } from "./config";
 
 export class PrimaryAccessError extends Error {
   constructor(
@@ -42,8 +42,10 @@ export async function authorizePrimaryOrganizer(input: {
   organizerId: string;
   allowedRoles?: readonly PrimaryMembershipRole[];
   env?: NodeJS.ProcessEnv;
+  capability?: PrimaryPreflightCapability;
 }) {
-  requirePrimaryPreflight(input.env);
+  if (input.capability) assertPrimaryPreflightCapability(input.capability);
+  else requirePrimaryPreflight(input.env);
   if (input.actor.role === "ADMIN") return { platformAdmin: true as const, membership: null };
 
   const allowedRoles = input.allowedRoles ?? ALL_ORGANIZER_ROLES;
@@ -69,6 +71,7 @@ export async function authorizePrimaryEvent(input: {
   eventId: string;
   allowedRoles?: readonly PrimaryMembershipRole[];
   env?: NodeJS.ProcessEnv;
+  capability?: PrimaryPreflightCapability;
 }) {
   const organizerAccess = await authorizePrimaryOrganizer(input);
   const event = await input.store.primaryEvent.findFirst({
