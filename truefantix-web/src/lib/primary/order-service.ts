@@ -141,7 +141,15 @@ export class PrimaryOrderService {
   async prepareForPayment(input: { internalCapability: PrimaryOrderInternalCapability; organizerId: string; eventId: string; orderId: string; idempotencyKey: string; reconciliationDelayMs?: number }) {
     assertInternal(input.internalCapability);
     try {
-      return await this.db.$transaction(async (tx) => {
+      return await this.db.$transaction((tx) => this.prepareForPaymentInTransaction(tx, input), { isolationLevel: "Serializable" });
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") throw new PrimaryDomainError("IDEMPOTENCY_CONFLICT");
+      throw error;
+    }
+  }
+
+  async prepareForPaymentInTransaction(tx: Tx, input: { internalCapability: PrimaryOrderInternalCapability; organizerId: string; eventId: string; orderId: string; idempotencyKey: string; reconciliationDelayMs?: number }) {
+      assertInternal(input.internalCapability);
       const idempotencyKey = key(input.idempotencyKey);
       const now = this.clock();
       const delay = safePositive(input.reconciliationDelayMs ?? 30 * 60 * 1000, "INVALID_RECONCILIATION_DELAY");
@@ -164,11 +172,6 @@ export class PrimaryOrderService {
       const updated = await tx.primaryOrder.update({ where: { id: order.id }, data: { status: "PAYMENT_PROCESSING", paymentProcessingAt: now, prepareIdempotencyKey: idempotencyKey, prepareReconciliationDelayMs: delay } });
       await this.audit(tx, updated, "ORDER_PAYMENT_PROCESSING", idempotencyKey, undefined, "SYSTEM");
       return updated;
-      }, { isolationLevel: "Serializable" });
-    } catch (error) {
-      if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") throw new PrimaryDomainError("IDEMPOTENCY_CONFLICT");
-      throw error;
-    }
   }
 
   private audit(tx: Tx, target: { id: string; organizerId: string; eventId: string; status: string }, action: string, requestId: string, actorUserId: string | undefined, actorType: "USER" | "SYSTEM") {

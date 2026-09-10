@@ -81,15 +81,15 @@ export class PrimaryPaymentService {
         if (existing.orderId !== input.orderId || existing.organizerId !== input.organizerId || existing.eventId !== input.eventId) throw new PrimaryDomainError("IDEMPOTENCY_CONFLICT");
         return existing;
       }
-      const order = await tx.primaryOrder.findFirst({ where: { id: input.orderId, organizerId: input.organizerId, eventId: input.eventId }, include: { reservation: true } });
-      if (!order || !["PENDING_PAYMENT", "PAYMENT_PROCESSING"].includes(order.status) || !["HELD", "PAYMENT_COMMITTED"].includes(order.reservation.status)) throw new PrimaryDomainError("ORDER_NOT_PAYMENT_PREPARABLE");
-      const existingOrderAttempt = await tx.primaryPaymentAttempt.findUnique({ where: { orderId: order.id } });
+      const existingOrderAttempt = await tx.primaryPaymentAttempt.findUnique({ where: { orderId: input.orderId } });
       if (existingOrderAttempt) throw new PrimaryDomainError("ORDER_ALREADY_HAS_PAYMENT_ATTEMPT");
+      await this.orderService.prepareForPaymentInTransaction(tx, { ...input, idempotencyKey: `payment:${input.orderId}:prepare` });
+      const order = await tx.primaryOrder.findFirst({ where: { id: input.orderId, organizerId: input.organizerId, eventId: input.eventId }, include: { reservation: true } });
+      if (!order || order.status !== "PAYMENT_PROCESSING" || order.reservation.status !== "PAYMENT_COMMITTED") throw new PrimaryDomainError("ORDER_NOT_PAYMENT_COMMITTED");
       const created = await tx.primaryPaymentAttempt.create({ data: { organizerId: order.organizerId, eventId: order.eventId, buyerUserId: order.buyerUserId, reservationId: order.reservationId, orderId: order.id, expectedAmountMinor: order.grossTotalMinor, currency: order.currency, createIdempotencyKey: idempotencyKey } });
       await this.audit(tx, created, "PAYMENT_ATTEMPT_CREATED", idempotencyKey);
       return created;
     }, { isolationLevel: "Serializable" });
-    await this.orderService.prepareForPayment({ ...input, idempotencyKey: `payment:${input.orderId}:prepare` });
     if (attempt.providerIntentId) return attempt;
     const metadata = { primaryOrderId: attempt.orderId, organizerId: attempt.organizerId, eventId: attempt.eventId, reservationId: attempt.reservationId };
     try {

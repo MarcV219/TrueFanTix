@@ -84,6 +84,33 @@ describe("primary payment PostgreSQL integration", () => {
     expect(await db.primaryAuditEvent.count()).toBe(auditBefore); expect(await db.primaryOutboxMessage.count()).toBe(outboxBefore);
   });
 
+  it("rolls back an expired preparation completely and permits a clean retry", async () => {
+    const scope = await seed(); const adapter = new FakeStripe(); const service = new PrimaryPaymentService(db, capability, stripeConfig, adapter, orderService, () => new Date(now));
+    await db.primaryInventoryReservation.update({ where: { id: scope.reservation.id }, data: { expiresAt: new Date(now.getTime() - 1) } });
+    const auditBefore = await db.primaryAuditEvent.count(); const outboxBefore = await db.primaryOutboxMessage.count();
+    const input = { internalCapability: scope.internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "expired-attempt" };
+    await expect(service.createAttempt(input)).rejects.toMatchObject({ code: "RESERVATION_NOT_COMMITTABLE" });
+    expect(await db.primaryPaymentAttempt.count({ where: { orderId: scope.order.id } })).toBe(0);
+    expect(await db.primaryOrder.findUniqueOrThrow({ where: { id: scope.order.id } })).toMatchObject({ status: "PENDING_PAYMENT" });
+    expect(await db.primaryInventoryReservation.findUniqueOrThrow({ where: { id: scope.reservation.id } })).toMatchObject({ status: "HELD" });
+    expect(await db.primaryAuditEvent.count()).toBe(auditBefore); expect(await db.primaryOutboxMessage.count()).toBe(outboxBefore);
+    await db.primaryInventoryReservation.update({ where: { id: scope.reservation.id }, data: { expiresAt: new Date(now.getTime() + 60_000) } });
+    await expect(service.createAttempt(input)).resolves.toMatchObject({ status: "PROCESSING" });
+  });
+
+  it("rolls back attempt, order, reservation, and evidence on preparation outbox failure", async () => {
+    const scope = await seed(); const adapter = new FakeStripe(); const service = new PrimaryPaymentService(db, capability, stripeConfig, adapter, orderService, () => new Date(now));
+    const conflictKey = `payment:${scope.order.id}:prepare:reservation:reservation_payment_committed`;
+    await db.primaryOutboxMessage.create({ data: { organizerId: scope.organizer.id, topic: "synthetic.conflict", aggregateType: "Synthetic", aggregateId: scope.order.id, payloadJson: {}, idempotencyKey: conflictKey } });
+    const auditBefore = await db.primaryAuditEvent.count(); const outboxBefore = await db.primaryOutboxMessage.count();
+    await expect(service.createAttempt({ internalCapability: scope.internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "preparation-rollback" })).rejects.toBeTruthy();
+    expect(await db.primaryPaymentAttempt.count({ where: { orderId: scope.order.id } })).toBe(0);
+    expect(await db.primaryOrder.findUniqueOrThrow({ where: { id: scope.order.id } })).toMatchObject({ status: "PENDING_PAYMENT", prepareIdempotencyKey: null });
+    expect(await db.primaryInventoryReservation.findUniqueOrThrow({ where: { id: scope.reservation.id } })).toMatchObject({ status: "HELD", commitIdempotencyKey: null });
+    expect(await db.primaryAuditEvent.count()).toBe(auditBefore); expect(await db.primaryOutboxMessage.count()).toBe(outboxBefore);
+    expect(adapter.creates).toHaveLength(0);
+  });
+
   it("verifies, deduplicates, and strictly reconciles success", async () => {
     const scope = await seed(); const adapter = new FakeStripe(); const service = new PrimaryPaymentService(db, capability, stripeConfig, adapter, orderService, () => new Date(now));
     const attempt = await service.createAttempt({ internalCapability: scope.internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "success-attempt" });
