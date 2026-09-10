@@ -167,6 +167,11 @@ else describe("primary admission PostgreSQL integration", () => {
     await expect(db.primaryAdmissionScan.create({ data: { ...base, requestId: "direct-issued-accepted", admissionTicketId: issued[0].ticket.id, credentialId: issued[0].ticket.credential!.id, result: "ACCEPTED" } })).rejects.toBeTruthy();
     await expect(db.primaryAdmissionScan.create({ data: { ...base, requestId: "direct-issued-duplicate", admissionTicketId: issued[0].ticket.id, credentialId: issued[0].ticket.credential!.id, result: "DUPLICATE" } })).rejects.toBeTruthy();
     await expect(db.primaryAdmissionScan.create({ data: { ...base, requestId: "direct-issued-voided", admissionTicketId: issued[0].ticket.id, credentialId: issued[0].ticket.credential!.id, result: "VOIDED" } })).rejects.toBeTruthy();
+    await db.primaryAdmissionTicket.update({ where: { id: issued[0].ticket.id }, data: { status: "CHECKED_IN" } });
+    await expect(db.primaryAdmissionScan.create({ data: { ...base, requestId: "direct-duplicate-without-accepted", admissionTicketId: issued[0].ticket.id, credentialId: issued[0].ticket.credential!.id, result: "DUPLICATE" } })).rejects.toBeTruthy();
+    await expect(db.primaryAdmissionScan.create({ data: { ...base, requestId: "direct-first-accepted", admissionTicketId: issued[0].ticket.id, credentialId: issued[0].ticket.credential!.id, result: "ACCEPTED" } })).resolves.toBeTruthy();
+    await expect(db.primaryAdmissionScan.create({ data: { ...base, requestId: "direct-second-accepted", admissionTicketId: issued[0].ticket.id, credentialId: issued[0].ticket.credential!.id, result: "ACCEPTED" } })).rejects.toBeTruthy();
+    await expect(db.primaryAdmissionScan.create({ data: { ...base, requestId: "direct-duplicate-after-accepted", admissionTicketId: issued[0].ticket.id, credentialId: issued[0].ticket.credential!.id, result: "DUPLICATE" } })).resolves.toBeTruthy();
   });
 
   it("conflicts reused scan request IDs across changed token, event, operator, or device without residue", async () => {

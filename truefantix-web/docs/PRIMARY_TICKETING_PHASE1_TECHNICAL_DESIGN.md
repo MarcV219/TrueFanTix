@@ -208,6 +208,8 @@ The isolated online scan foundation adds service-level `ISSUED -> CHECKED_IN` on
 
 Scan commands are idempotent by a globally unique normalized request ID plus a SHA-256 digest of all material scope/device inputs and a SHA-256 bearer-token digest. Exact response-delivery retries return the original accepted or rejected result without new evidence; changed-input reuse conflicts. The database independently enforces result/binding/state consistency before immutable scan evidence is inserted.
 
+A partial unique database index permits exactly one `ACCEPTED` evidence row per entitlement. `DUPLICATE` evidence is valid only after an accepted row exists for the same exact ticket, credential, and event; a direct ticket-state change alone cannot manufacture a plausible duplicate history.
+
 **AdmissionCredential**
 
 - `id` generated from cryptographically secure random bytes, not a sequential identifier
