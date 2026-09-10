@@ -720,7 +720,6 @@ model PrimaryAdmissionCredential {
   eventId           String
   payloadVersion    Int
   keyId             String
-  signature         String
   payloadDigest     String
   issuedAt          DateTime
   createdAt         DateTime @default(now())

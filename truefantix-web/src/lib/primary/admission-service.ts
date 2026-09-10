@@ -39,6 +39,18 @@ function canonical(payload: Payload) { return JSON.stringify({ v: payload.v, cid
 function tokenFor(payload: Payload, signature: string) { return `${encode(canonical(payload))}.${signature}`; }
 function digest(payload: Payload) { return createHash("sha256").update(canonical(payload)).digest("hex"); }
 function cleanKey(value: string) { const result = value.trim(); if (!result) throw new PrimaryDomainError("IDEMPOTENCY_KEY_REQUIRED"); return result; }
+function parsePayload(encoded: string): Payload {
+  let value: unknown;
+  try { value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")); } catch { throw new PrimaryDomainError("INVALID_CREDENTIAL"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+  const record = value as Record<string, unknown>; const keys = Object.keys(record).sort();
+  if (JSON.stringify(keys) !== JSON.stringify(["cid", "eventId", "iat", "kid", "v"])) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+  if (record.v !== VERSION || typeof record.cid !== "string" || typeof record.eventId !== "string" || typeof record.iat !== "string" || typeof record.kid !== "string") throw new PrimaryDomainError("INVALID_CREDENTIAL");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.cid)) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+  const parsedTime = new Date(record.iat); if (!Number.isFinite(parsedTime.getTime()) || parsedTime.toISOString() !== record.iat) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+  if (!record.eventId || !record.kid) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+  return record as Payload;
+}
 
 export class PrimaryAdmissionService {
   constructor(private readonly db: Db, private readonly capability: PrimaryPreflightCapability, private readonly config: AdmissionConfig, private readonly clock: () => Date = () => new Date()) {
@@ -64,7 +76,7 @@ export class PrimaryAdmissionService {
         const issuedAt = this.clock(); const credentialId = randomUUID();
         const payload: Payload = { v: VERSION, cid: credentialId, eventId: order.eventId, iat: issuedAt.toISOString(), kid: this.config.keyId };
         const signature = sign(null, Buffer.from(canonical(payload)), this.config.privateKey).toString("base64url");
-        const ticket = await tx.primaryAdmissionTicket.create({ data: { organizerId: order.organizerId, eventId: order.eventId, buyerUserId: order.buyerUserId, reservationId: order.reservationId, orderId: order.id, orderLineId: line.id, ticketTypeId: line.ticketTypeId, unitNumber, issuanceIdempotencyKey: idempotencyKey, issuedAt, credential: { create: { id: credentialId, payloadVersion: VERSION, keyId: this.config.keyId, signature, payloadDigest: digest(payload), issuedAt } } }, include: { credential: true } });
+        const ticket = await tx.primaryAdmissionTicket.create({ data: { organizerId: order.organizerId, eventId: order.eventId, buyerUserId: order.buyerUserId, reservationId: order.reservationId, orderId: order.id, orderLineId: line.id, ticketTypeId: line.ticketTypeId, unitNumber, issuanceIdempotencyKey: idempotencyKey, issuedAt, credential: { create: { id: credentialId, payloadVersion: VERSION, keyId: this.config.keyId, payloadDigest: digest(payload), issuedAt } } }, include: { credential: true } });
         await this.audit(tx, ticket, "ADMISSION_ISSUED", `${idempotencyKey}:${unitNumber}`);
         results.push({ ticket, token: tokenFor(payload, signature) });
       }
@@ -91,17 +103,19 @@ export class PrimaryAdmissionService {
 
   async verify(token: string, expectedEventId: string) {
     const parts = token.split("."); if (parts.length !== 2) throw new PrimaryDomainError("INVALID_CREDENTIAL");
-    let payload: Payload;
-    try { payload = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8")) as Payload; } catch { throw new PrimaryDomainError("INVALID_CREDENTIAL"); }
+    const payload = parsePayload(parts[0]);
     if (payload.v !== VERSION || payload.kid !== this.config.keyId || payload.eventId !== expectedEventId || !payload.cid || !payload.iat) throw new PrimaryDomainError("INVALID_CREDENTIAL");
-    const body = canonical(payload); if (!verify(null, Buffer.from(body), this.config.publicKey, Buffer.from(parts[1], "base64url"))) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+    let signature: Buffer; try { signature = Buffer.from(parts[1], "base64url"); } catch { throw new PrimaryDomainError("INVALID_CREDENTIAL"); }
+    if (signature.length !== 64 || signature.toString("base64url") !== parts[1]) throw new PrimaryDomainError("INVALID_CREDENTIAL");
+    const body = canonical(payload); if (encode(body) !== parts[0] || !verify(null, Buffer.from(body), this.config.publicKey, signature)) throw new PrimaryDomainError("INVALID_CREDENTIAL");
     const credential = await this.db.$transaction((tx) => tx.primaryAdmissionCredential.findUnique({ where: { id: payload.cid }, include: { ticket: true } }));
-    if (!credential || credential.eventId !== expectedEventId || credential.payloadVersion !== VERSION || credential.keyId !== payload.kid || credential.signature !== parts[1] || credential.payloadDigest !== createHash("sha256").update(body).digest("hex") || credential.issuedAt.toISOString() !== payload.iat || credential.ticket.status !== "ISSUED") throw new PrimaryDomainError("INVALID_CREDENTIAL");
+    if (!credential || credential.eventId !== expectedEventId || credential.payloadVersion !== VERSION || credential.keyId !== payload.kid || credential.payloadDigest !== createHash("sha256").update(body).digest("hex") || credential.issuedAt.toISOString() !== payload.iat || credential.ticket.status !== "ISSUED") throw new PrimaryDomainError("INVALID_CREDENTIAL");
     return { credentialId: credential.id, admissionTicketId: credential.admissionTicketId, eventId: credential.eventId, status: credential.ticket.status };
   }
 
-  private reconstruct(credential: { id: string; eventId: string; payloadVersion: number; keyId: string; signature: string; issuedAt: Date }) {
-    return tokenFor({ v: credential.payloadVersion as 1, cid: credential.id, eventId: credential.eventId, iat: credential.issuedAt.toISOString(), kid: credential.keyId }, credential.signature);
+  private reconstruct(credential: { id: string; eventId: string; payloadVersion: number; keyId: string; issuedAt: Date }) {
+    const payload = { v: credential.payloadVersion as 1, cid: credential.id, eventId: credential.eventId, iat: credential.issuedAt.toISOString(), kid: credential.keyId };
+    return tokenFor(payload, sign(null, Buffer.from(canonical(payload)), this.config.privateKey).toString("base64url"));
   }
 
   private audit(tx: Tx, ticket: { id: string; organizerId: string; eventId: string; orderId: string; status: string }, action: string, key: string) {

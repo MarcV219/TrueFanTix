@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -32,6 +32,11 @@ else describe("primary admission PostgreSQL integration", () => {
     }
     return { buyer, organizer, event, ticketType, reservation, order, attempt };
   }
+  async function directTicket(scope: Awaited<ReturnType<typeof seed>>, unitNumber: number) {
+    const line = await db.primaryOrderLine.findUniqueOrThrow({ where: { orderId: scope.order.id } });
+    return { id: `direct-${runId}-${++sequence}`, organizerId: scope.organizer.id, eventId: scope.event.id, buyerUserId: scope.buyer.id, reservationId: scope.reservation.id, orderId: scope.order.id, orderLineId: line.id, ticketTypeId: scope.ticketType.id, unitNumber, issuanceIdempotencyKey: `direct-key-${runId}-${sequence}`, issuedAt: now };
+  }
+  function signedToken(payload: Record<string, unknown>) { const body = JSON.stringify(payload); return `${Buffer.from(body).toString("base64url")}.${sign(null, Buffer.from(body), pair.privateKey).toString("base64url")}`; }
 
   beforeAll(async () => { process.env.PRIMARY_TICKETING_ENVIRONMENT_ID = "isolated-test"; internal = createPrimaryAdmissionInternalCapabilityForTests(); await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryAdmissionCredential", "PrimaryAdmissionTicket", "PrimaryPaymentException", "PrimaryPaymentProviderEvent", "PrimaryPaymentAttempt", "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder", "PrimaryAuditEvent", "PrimaryOutboxMessage" CASCADE'); });
   afterAll(async () => { delete process.env.PRIMARY_TICKETING_ENVIRONMENT_ID; await db.$disconnect(); await pool.end(); });
@@ -56,6 +61,14 @@ else describe("primary admission PostgreSQL integration", () => {
     await expect(db.primaryAdmissionTicket.create({ data: { organizerId: a.organizer.id, eventId: a.event.id, buyerUserId: a.buyer.id, reservationId: a.reservation.id, orderId: a.order.id, orderLineId: bLine.id, ticketTypeId: b.ticketType.id, unitNumber: 2, issuanceIdempotencyKey: "bad-line", issuedAt: now } })).rejects.toBeTruthy();
   });
 
+  it("database guard rejects excess units and every ineligible financial state", async () => {
+    const excess = await seed(2); await expect(db.primaryAdmissionTicket.create({ data: await directTicket(excess, 0) })).rejects.toBeTruthy(); await expect(db.primaryAdmissionTicket.create({ data: await directTicket(excess, 3) })).rejects.toBeTruthy();
+    const unpaid = await seed(1, false); await expect(db.primaryAdmissionTicket.create({ data: await directTicket(unpaid, 1) })).rejects.toBeTruthy();
+    const missing = await seed(1, false); const orderInternal = createPrimaryOrderInternalCapabilityForTests(); await orderService.prepareForPayment({ internalCapability: orderInternal, organizerId: missing.organizer.id, eventId: missing.event.id, orderId: missing.order.id, idempotencyKey: `missing-attempt-${runId}` }); await db.primaryOrder.update({ where: { id: missing.order.id }, data: { status: "PAID", paidAt: now } }); await expect(db.primaryAdmissionTicket.create({ data: await directTicket(missing, 1) })).rejects.toBeTruthy();
+    const processing = await seed(1, false); await orderService.prepareForPayment({ internalCapability: orderInternal, organizerId: processing.organizer.id, eventId: processing.event.id, orderId: processing.order.id, idempotencyKey: `processing-attempt-${runId}` }); await db.primaryPaymentAttempt.create({ data: { organizerId: processing.organizer.id, eventId: processing.event.id, buyerUserId: processing.buyer.id, reservationId: processing.reservation.id, orderId: processing.order.id, status: "PROCESSING", expectedAmountMinor: processing.order.grossTotalMinor, currency: processing.order.currency, createIdempotencyKey: `processing-attempt-key-${runId}`, providerIntentId: `pi_processing_${runId}`, providerCreatedAt: now } }); await db.primaryOrder.update({ where: { id: processing.order.id }, data: { status: "PAID", paidAt: now } }); await expect(db.primaryAdmissionTicket.create({ data: await directTicket(processing, 1) })).rejects.toBeTruthy();
+    const excepted = await seed(1); await db.primaryPaymentException.create({ data: { attemptId: excepted.attempt!.id, kind: "PROVIDER_MISMATCH", providerEventId: `evt_guard_exception_${runId}` } }); await expect(db.primaryAdmissionTicket.create({ data: await directTicket(excepted, 1) })).rejects.toBeTruthy();
+  });
+
   it("denies unpaid, mismatched-scope, and payment-exception orders", async () => {
     const unpaid = await seed(1, false); const service = new PrimaryAdmissionService(db, capability, config, () => new Date(now));
     await expect(service.issue({ internalCapability: internal, organizerId: unpaid.organizer.id, eventId: unpaid.event.id, orderId: unpaid.order.id, idempotencyKey: "unpaid" })).rejects.toMatchObject({ code: "ADMISSION_ORDER_NOT_RECONCILED_PAID" });
@@ -70,14 +83,16 @@ else describe("primary admission PostgreSQL integration", () => {
     await expect(service.verify(`${issued.token.slice(0, -1)}x`, scope.event.id)).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" }); await expect(service.verify(issued.token, "wrong-event")).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
     const other = generateKeyPairSync("ed25519"); const otherConfig = requirePrimaryAdmissionTestConfig(capability, { NODE_ENV: "test", PRIMARY_ADMISSION_SIGNING_KEY_ID: "test_other", PRIMARY_ADMISSION_PRIVATE_KEY: other.privateKey.export({ type: "pkcs8", format: "pem" }).toString(), PRIMARY_ADMISSION_PUBLIC_KEY: other.publicKey.export({ type: "spki", format: "pem" }).toString() } as NodeJS.ProcessEnv);
     await expect(new PrimaryAdmissionService(db, capability, otherConfig).verify(issued.token, scope.event.id)).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
-    const [body, signature] = issued.token.split("."); const payload = JSON.parse(Buffer.from(body, "base64url").toString()); payload.v = 2; const wrongVersion = `${Buffer.from(JSON.stringify(payload)).toString("base64url")}.${signature}`; await expect(service.verify(wrongVersion, scope.event.id)).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
+    const [body] = issued.token.split("."); const payload = JSON.parse(Buffer.from(body, "base64url").toString());
+    for (const invalid of [{ ...payload, extra: "forbidden" }, { ...payload, v: 2 }, { ...payload, v: "1" }, { ...payload, cid: 42 }, { ...payload, eventId: 7 }, { ...payload, kid: 7 }, { ...payload, iat: 7 }, { ...payload, iat: "not-a-time" }, { ...payload, cid: "not-a-uuid" }]) await expect(service.verify(signedToken(invalid), scope.event.id)).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
     await service.void({ internalCapability: internal, admissionTicketId: issued.ticket.id, reason: "Synthetic void", idempotencyKey: "void" }); await expect(service.verify(issued.token, scope.event.id)).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
   });
 
   it("enforces entitlement and credential immutability", async () => {
     const scope = await seed(1); const service = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const [issued] = await service.issue({ internalCapability: internal, organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, idempotencyKey: "immutable" });
     await expect(db.$executeRawUnsafe(`UPDATE "PrimaryAdmissionTicket" SET "eventId" = 'wrong' WHERE id = '${issued.ticket.id}'`)).rejects.toBeTruthy(); await expect(db.$executeRawUnsafe(`DELETE FROM "PrimaryAdmissionTicket" WHERE id = '${issued.ticket.id}'`)).rejects.toBeTruthy();
-    await expect(db.$executeRawUnsafe(`UPDATE "PrimaryAdmissionCredential" SET signature = 'wrong' WHERE id = '${issued.ticket.credential!.id}'`)).rejects.toBeTruthy(); await expect(db.$executeRawUnsafe(`DELETE FROM "PrimaryAdmissionCredential" WHERE id = '${issued.ticket.credential!.id}'`)).rejects.toBeTruthy();
+    await expect(db.$executeRawUnsafe(`UPDATE "PrimaryAdmissionCredential" SET "payloadDigest" = repeat('0', 64) WHERE id = '${issued.ticket.credential!.id}'`)).rejects.toBeTruthy(); await expect(db.$executeRawUnsafe(`DELETE FROM "PrimaryAdmissionCredential" WHERE id = '${issued.ticket.credential!.id}'`)).rejects.toBeTruthy();
+    const stored = await db.$queryRaw<Array<{ evidence: Record<string, unknown> }>>`SELECT to_jsonb(c) AS evidence FROM "PrimaryAdmissionCredential" c WHERE id = ${issued.ticket.credential!.id}`; expect(stored[0].evidence).not.toHaveProperty("signature"); expect(Object.keys(stored[0].evidence)).toEqual(expect.arrayContaining(["id", "eventId", "keyId", "issuedAt", "payloadDigest"]));
   });
 
   it("rolls back all entitlement, credential, and audit evidence on outbox failure", async () => {
