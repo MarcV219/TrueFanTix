@@ -34,7 +34,7 @@ else describe("primary admission PostgreSQL integration", () => {
     return { buyer, organizer, event, ticketType, reservation, order, attempt };
   }
   async function directTicket(scope: Awaited<ReturnType<typeof seed>>, unitNumber: number) {
-    const line = await db.primaryOrderLine.findUniqueOrThrow({ where: { orderId: scope.order.id } });
+    const line = await db.primaryOrderLine.findFirstOrThrow({ where: { orderId: scope.order.id } });
     return { id: `direct-${runId}-${++sequence}`, organizerId: scope.organizer.id, eventId: scope.event.id, buyerUserId: scope.buyer.id, reservationId: scope.reservation.id, orderId: scope.order.id, orderLineId: line.id, ticketTypeId: scope.ticketType.id, unitNumber, issuanceIdempotencyKey: `direct-key-${runId}-${sequence}`, issuedAt: now };
   }
   function signedToken(payload: Record<string, unknown>) { const body = JSON.stringify(payload); return `${Buffer.from(body).toString("base64url")}.${sign(null, Buffer.from(body), pair.privateKey).toString("base64url")}`; }
@@ -64,7 +64,7 @@ else describe("primary admission PostgreSQL integration", () => {
     const a = await seed(1); const b = await seed(1); const service = new PrimaryAdmissionService(db, capability, config, () => new Date(now)); const issued = await service.issue({ internalCapability: internal, organizerId: a.organizer.id, eventId: a.event.id, orderId: a.order.id, idempotencyKey: "scope-a" });
     const source = issued[0].ticket;
     await expect(db.primaryAdmissionTicket.create({ data: { ...source, id: `bad-scope-${runId}`, organizerId: b.organizer.id, unitNumber: 2, credential: undefined } })).rejects.toBeTruthy();
-    const bLine = await db.primaryOrderLine.findUniqueOrThrow({ where: { orderId: b.order.id } });
+    const bLine = await db.primaryOrderLine.findFirstOrThrow({ where: { orderId: b.order.id } });
     await expect(db.primaryAdmissionTicket.create({ data: { organizerId: a.organizer.id, eventId: a.event.id, buyerUserId: a.buyer.id, reservationId: a.reservation.id, orderId: a.order.id, orderLineId: bLine.id, ticketTypeId: b.ticketType.id, unitNumber: 2, issuanceIdempotencyKey: "bad-line", issuedAt: now } })).rejects.toBeTruthy();
   });
 

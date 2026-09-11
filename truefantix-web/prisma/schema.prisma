@@ -391,23 +391,25 @@ model User {
   referralReceived Referral?  @relation("Referred")
 
   // Isolated primary-ticketing foundation.
-  primaryOrganizersCreated         PrimaryOrganizer[]             @relation("PrimaryOrganizerCreatedBy")
-  primaryOrganizersApproved        PrimaryOrganizer[]             @relation("PrimaryOrganizerApprovedBy")
-  primaryOrganizerMemberships      PrimaryOrganizerMembership[]   @relation("PrimaryMembershipUser")
-  primaryMembershipInvitationsSent PrimaryOrganizerMembership[]   @relation("PrimaryMembershipInvitedBy")
-  primaryOrganizerInvitationsSent  PrimaryOrganizerInvitation[]   @relation("PrimaryInvitationInvitedBy")
-  primaryEventAssignmentsMade      PrimaryEventStaffAssignment[]  @relation("PrimaryAssignmentAssignedBy")
-  primaryEventAssignmentsRevoked   PrimaryEventStaffAssignment[]  @relation("PrimaryAssignmentRevokedBy")
-  primaryEventsApproved            PrimaryEvent[]                 @relation("PrimaryEventApprovedBy")
-  primaryInventoryReservations     PrimaryInventoryReservation[]  @relation("PrimaryReservationBuyer")
-  primaryOrders                    PrimaryOrder[]                 @relation("PrimaryOrderBuyer")
-  primaryPaymentAttempts           PrimaryPaymentAttempt[]        @relation("PrimaryPaymentAttemptBuyer")
-  primaryAuditEvents               PrimaryAuditEvent[]            @relation("PrimaryAuditActor")
-  primaryAdmissionScans            PrimaryAdmissionScan[]         @relation("PrimaryAdmissionScanOperator")
-  primaryRefundsRequested          PrimaryRefund[]                @relation("PrimaryRefundRequester")
-  primaryRefundAttemptsAuthorized  PrimaryRefundProviderAttempt[] @relation("PrimaryRefundAttemptAuthorizer")
-  primaryCancellationsRequested    PrimaryEventCancellation[]     @relation("PrimaryCancellationRequester")
-  primaryRevocationsCreated        PrimaryAdmissionRevocation[]   @relation("PrimaryRevocationActor")
+  primaryOrganizersCreated         PrimaryOrganizer[]                @relation("PrimaryOrganizerCreatedBy")
+  primaryOrganizersApproved        PrimaryOrganizer[]                @relation("PrimaryOrganizerApprovedBy")
+  primaryOrganizerMemberships      PrimaryOrganizerMembership[]      @relation("PrimaryMembershipUser")
+  primaryMembershipInvitationsSent PrimaryOrganizerMembership[]      @relation("PrimaryMembershipInvitedBy")
+  primaryOrganizerInvitationsSent  PrimaryOrganizerInvitation[]      @relation("PrimaryInvitationInvitedBy")
+  primaryEventAssignmentsMade      PrimaryEventStaffAssignment[]     @relation("PrimaryAssignmentAssignedBy")
+  primaryEventAssignmentsRevoked   PrimaryEventStaffAssignment[]     @relation("PrimaryAssignmentRevokedBy")
+  primaryEventsApproved            PrimaryEvent[]                    @relation("PrimaryEventApprovedBy")
+  primaryInventoryReservations     PrimaryInventoryReservation[]     @relation("PrimaryReservationBuyer")
+  primaryOrders                    PrimaryOrder[]                    @relation("PrimaryOrderBuyer")
+  primaryPaymentAttempts           PrimaryPaymentAttempt[]           @relation("PrimaryPaymentAttemptBuyer")
+  primaryAuditEvents               PrimaryAuditEvent[]               @relation("PrimaryAuditActor")
+  primaryAdmissionScans            PrimaryAdmissionScan[]            @relation("PrimaryAdmissionScanOperator")
+  primaryRefundsRequested          PrimaryRefund[]                   @relation("PrimaryRefundRequester")
+  primaryRefundAttemptsAuthorized  PrimaryRefundProviderAttempt[]    @relation("PrimaryRefundAttemptAuthorizer")
+  primaryCancellationsRequested    PrimaryEventCancellation[]        @relation("PrimaryCancellationRequester")
+  primaryRevocationsCreated        PrimaryAdmissionRevocation[]      @relation("PrimaryRevocationActor")
+  primaryCheckedInRefundApprovals  PrimaryCheckedInRefundApproval[]  @relation("PrimaryCheckedInRefundApprover")
+  primaryObligationWaiverApprovals PrimaryObligationWaiverApproval[] @relation("PrimaryObligationWaiverApprover")
 
   @@index([role])
   @@index([createdAt])
@@ -646,7 +648,7 @@ model PrimaryOrder {
 
 model PrimaryOrderLine {
   id                     String   @id @default(cuid())
-  orderId                String   @unique
+  orderId                String
   ticketTypeId           String
   reservationId          String
   quantity               Int
@@ -664,6 +666,7 @@ model PrimaryOrderLine {
 
   @@unique([id, orderId])
   @@unique([id, orderId, reservationId, ticketTypeId])
+  @@index([orderId])
 }
 
 model PrimaryOrderPriceComponent {
@@ -768,16 +771,19 @@ model PrimaryAdmissionTicket {
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
 
-  order               PrimaryOrder                 @relation(fields: [orderId, organizerId, eventId, buyerUserId, reservationId], references: [id, organizerId, eventId, buyerUserId, reservationId], onDelete: Restrict)
-  line                PrimaryOrderLine             @relation(fields: [orderLineId, orderId, reservationId, ticketTypeId], references: [id, orderId, reservationId, ticketTypeId], onDelete: Restrict)
-  reservation         PrimaryInventoryReservation  @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  order               PrimaryOrder                     @relation(fields: [orderId, organizerId, eventId, buyerUserId, reservationId], references: [id, organizerId, eventId, buyerUserId, reservationId], onDelete: Restrict)
+  line                PrimaryOrderLine                 @relation(fields: [orderLineId, orderId, reservationId, ticketTypeId], references: [id, orderId, reservationId, ticketTypeId], onDelete: Restrict)
+  reservation         PrimaryInventoryReservation      @relation(fields: [reservationId], references: [id], onDelete: Restrict)
   credential          PrimaryAdmissionCredential?
   scans               PrimaryAdmissionScan[]
   purchaseAllocations PrimaryPurchaseAllocation[]
   refundItems         PrimaryRefundItem[]
   revocations         PrimaryAdmissionRevocation[]
+  refundClaim         PrimaryRefundTicketClaim?
+  checkedInApprovals  PrimaryCheckedInRefundApproval[]
+  cancellationClaims  PrimaryCancellationBatchTicket[]
 
-  @@unique([orderId, unitNumber])
+  @@unique([orderLineId, unitNumber])
   @@unique([id, eventId])
   @@index([organizerId, eventId, status])
   @@index([buyerUserId, createdAt])
@@ -890,16 +896,18 @@ model PrimaryRefund {
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
 
-  event                    PrimaryEvent                   @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
-  order                    PrimaryOrder                   @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  payment                  PrimaryPaymentAttempt          @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
-  requester                User                           @relation("PrimaryRefundRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict)
-  policy                   PrimaryRefundPolicyVersion     @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
+  event                    PrimaryEvent                     @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
+  order                    PrimaryOrder                     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment                  PrimaryPaymentAttempt            @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  requester                User                             @relation("PrimaryRefundRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  policy                   PrimaryRefundPolicyVersion       @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
   items                    PrimaryRefundItem[]
   attempts                 PrimaryRefundProviderAttempt[]
   obligations              PrimaryRefundObligation[]
   revocations              PrimaryAdmissionRevocation[]
   primaryRefundAllocations PrimaryRefundAllocation[]
+  ticketClaims             PrimaryRefundTicketClaim[]
+  checkedInApprovals       PrimaryCheckedInRefundApproval[]
 
   @@unique([id, organizerId, eventId, orderId, paymentAttemptId])
   @@index([organizerId, eventId, status])
@@ -913,9 +921,11 @@ model PrimaryRefundItem {
   currency          String
   createdAt         DateTime @default(now())
 
-  refund      PrimaryRefund             @relation(fields: [refundId], references: [id], onDelete: Restrict)
-  ticket      PrimaryAdmissionTicket    @relation(fields: [admissionTicketId], references: [id], onDelete: Restrict)
-  allocations PrimaryRefundAllocation[]
+  refund             PrimaryRefund                    @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  ticket             PrimaryAdmissionTicket           @relation(fields: [admissionTicketId], references: [id], onDelete: Restrict)
+  allocations        PrimaryRefundAllocation[]
+  claim              PrimaryRefundTicketClaim?
+  cancellationClaims PrimaryCancellationBatchTicket[]
 
   @@unique([refundId, admissionTicketId])
   @@unique([id, refundId, admissionTicketId])
@@ -997,12 +1007,13 @@ model PrimaryEventCancellation {
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
 
-  event       PrimaryEvent                 @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
-  policy      PrimaryRefundPolicyVersion   @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
-  requester   User                         @relation("PrimaryCancellationRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict)
-  batches     PrimaryCancellationBatch[]
-  obligations PrimaryRefundObligation[]
-  revocations PrimaryAdmissionRevocation[]
+  event        PrimaryEvent                     @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
+  policy       PrimaryRefundPolicyVersion       @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
+  requester    User                             @relation("PrimaryCancellationRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  batches      PrimaryCancellationBatch[]
+  obligations  PrimaryRefundObligation[]
+  revocations  PrimaryAdmissionRevocation[]
+  batchTickets PrimaryCancellationBatchTicket[]
 
   @@unique([eventId, generation])
   @@unique([id, organizerId, eventId])
@@ -1019,7 +1030,8 @@ model PrimaryCancellationBatch {
   processedAmountMinor Int
   createdAt            DateTime @default(now())
 
-  cancellation PrimaryEventCancellation @relation(fields: [cancellationId], references: [id], onDelete: Restrict)
+  cancellation PrimaryEventCancellation         @relation(fields: [cancellationId], references: [id], onDelete: Restrict)
+  tickets      PrimaryCancellationBatchTicket[]
 
   @@unique([cancellationId, firstTicketId, lastTicketId])
 }
@@ -1039,12 +1051,78 @@ model PrimaryRefundObligation {
   reason         String
   createdAt      DateTime                      @default(now())
 
-  event        PrimaryEvent              @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
-  order        PrimaryOrder              @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  cancellation PrimaryEventCancellation? @relation(fields: [cancellationId], references: [id], onDelete: Restrict)
-  refund       PrimaryRefund?            @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  event              PrimaryEvent                     @relation(fields: [eventId, organizerId], references: [id, organizerId], onDelete: Restrict)
+  order              PrimaryOrder                     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  cancellation       PrimaryEventCancellation?        @relation(fields: [cancellationId], references: [id], onDelete: Restrict)
+  refund             PrimaryRefund?                   @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  waiverApproval     PrimaryObligationWaiverApproval?
+  cancellationClaims PrimaryCancellationBatchTicket[]
 
   @@index([organizerId, eventId, status])
+}
+
+model PrimaryRefundTicketClaim {
+  admissionTicketId String   @id
+  refundId          String
+  refundItemId      String   @unique
+  createdAt         DateTime @default(now())
+
+  ticket PrimaryAdmissionTicket @relation(fields: [admissionTicketId], references: [id], onDelete: Restrict)
+  refund PrimaryRefund          @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  item   PrimaryRefundItem      @relation(fields: [refundItemId], references: [id], onDelete: Restrict)
+
+  @@unique([admissionTicketId, refundId])
+}
+
+model PrimaryCheckedInRefundApproval {
+  id                String                      @id @default(cuid())
+  refundId          String
+  admissionTicketId String
+  approvedByUserId  String
+  evidenceDigest    String
+  reason            String
+  fraudReview       String
+  costBearer        PrimaryPolicyLiabilityOwner
+  createdAt         DateTime                    @default(now())
+
+  refund   PrimaryRefund          @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  ticket   PrimaryAdmissionTicket @relation(fields: [admissionTicketId], references: [id], onDelete: Restrict)
+  approver User                   @relation("PrimaryCheckedInRefundApprover", fields: [approvedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([refundId, admissionTicketId])
+}
+
+model PrimaryCancellationBatchTicket {
+  id                String   @id @default(cuid())
+  cancellationId    String
+  batchId           String
+  admissionTicketId String
+  refundItemId      String?
+  obligationId      String
+  amountMinor       Int
+  currency          String
+  createdAt         DateTime @default(now())
+
+  cancellation PrimaryEventCancellation @relation(fields: [cancellationId], references: [id], onDelete: Restrict)
+  batch        PrimaryCancellationBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  ticket       PrimaryAdmissionTicket   @relation(fields: [admissionTicketId], references: [id], onDelete: Restrict)
+  refundItem   PrimaryRefundItem?       @relation(fields: [refundItemId], references: [id], onDelete: Restrict)
+  obligation   PrimaryRefundObligation  @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+
+  @@unique([cancellationId, admissionTicketId])
+  @@index([batchId])
+}
+
+model PrimaryObligationWaiverApproval {
+  id               String   @id @default(cuid())
+  obligationId     String   @unique
+  approvedByUserId String
+  evidenceDigest   String
+  reason           String
+  createdAt        DateTime @default(now())
+
+  obligation PrimaryRefundObligation @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  approver   User                    @relation("PrimaryObligationWaiverApprover", fields: [approvedByUserId], references: [id], onDelete: Restrict)
 }
 
 model PrimaryAdmissionRevocation {

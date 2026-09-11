@@ -50,7 +50,7 @@ describe("primary order PostgreSQL integration", () => {
       expect.objectContaining({ code: "SERVICE_FEE", amountMinor: 5, allocationBaseMinor: 1, allocationRemainderUnits: 2 }),
     ]));
     await db.primaryTicketType.update({ where: { id: scope.ticketType.id }, data: { name: "Changed", basePriceMinor: 9999 } });
-    expect(await db.primaryOrderLine.findUniqueOrThrow({ where: { orderId: order.id } })).toMatchObject({ ticketTypeNameSnapshot: "GA Snapshot", unitFaceValueMinor: 2500 });
+    expect(await db.primaryOrderLine.findFirstOrThrow({ where: { orderId: order.id } })).toMatchObject({ ticketTypeNameSnapshot: "GA Snapshot", unitFaceValueMinor: 2500 });
   });
 
   it("allows only one order per reservation under concurrency", async () => {

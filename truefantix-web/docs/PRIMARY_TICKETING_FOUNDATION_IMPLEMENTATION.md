@@ -207,6 +207,15 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - PostgreSQL coverage exercises exact allocation and rounding, idempotent replay, incomplete-history rollback, overlapping-refund and over-allocation rejection, concurrent single-next-attempt authorization, terminal-parent rejection, cancellation coverage, obligation finality, and direct evidence mutation rejection.
 - Excluded: Stripe refund calls, provider dispatch/reconciliation jobs, routes/UI, live data, payout/reserve execution, email, inventory resale, and deployment. Manual authenticated release QA remains a Marc/team dependency and does not alter this isolated checkpoint.
 
+### Refund Persistence Revision 1
+
+- Follow-up migration `20260911115921_harden_primary_refund_persistence` corrects the initial checkpoint without adding runtime/provider behavior.
+- Allocation materialization validates every immutable order line separately and is tested with mixed line quantities. Entitlement identity is `(orderLineId, unitNumber)`, and order-line `orderId` is indexed rather than unique.
+- A lock-backed ticket-claim row makes overlapping refunds concurrency-safe. Database completeness gates require exact parent/item/allocation totals, cumulative purchase-allocation bounds, and exact provider-attempt amount/currency before `PROVIDER_PENDING` or any attempt.
+- Checked-in selection requires immutable named supervised approval, evidence digest, reason, fraud review, and explicit cost bearer. Immutable waiver approval is mandatory before an obligation can become `WAIVED_WITH_APPROVAL`.
+- Cancellation completion is derived from immutable non-overlapping batch-ticket evidence; direct counter edits fail, batch and generation totals reconcile, obligations must be resolved, and only one active generation is permitted per event.
+- Cross-aggregate guards fail closed on mismatched organizer/event/order/refund/cancellation/policy/ticket/credential/amount/currency evidence. The PostgreSQL suite includes adversarial multi-line, concurrent-claim, completeness, provider-value, checked-in, forged-counter, overlapping-batch, cross-scope, waiver, and immutability cases.
+
 ### Refund, cancellation, and revocation design gate
 
 - Refund Design Revision 1 establishes one authoritative local-commit-before-provider sequence for both payment and refund work. Refund financial states remain separate from the implemented `ISSUED | VOIDED | CHECKED_IN` admission lifecycle; eligible unscanned tickets become terminally `VOIDED` before any refund provider call and never resurrect after failure or ambiguity.
