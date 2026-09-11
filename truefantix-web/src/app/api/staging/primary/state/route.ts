@@ -6,19 +6,35 @@ import { prisma } from "@/lib/prisma";
 import {
   PrimaryStagingConsoleUnavailableError,
   requirePrimaryStagingActor,
+  STAGING_ORGANIZER_EMAIL,
 } from "@/lib/primary/staging-console";
 
 function unavailable() {
-  return NextResponse.json({ ok: false, error: "NOT_FOUND" }, { status: 404 });
+  return noStore(NextResponse.json({ ok: false, error: "NOT_FOUND" }, { status: 404 }));
+}
+
+function noStore<T extends NextResponse>(response: T) {
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
 }
 
 export async function GET() {
   try {
     const actor = await requirePrimaryStagingActor();
-    if (!actor) return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED" }, { status: 401 });
+    if (!actor) {
+      return noStore(NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED" }, { status: 401 }));
+    }
 
     const membershipFilter = actor.role === "ADMIN"
-      ? undefined
+      ? {
+          memberships: {
+            some: {
+              status: "ACTIVE" as const,
+              role: "OWNER" as const,
+              user: { email: STAGING_ORGANIZER_EMAIL },
+            },
+          },
+        }
       : { memberships: { some: { userId: actor.id, status: "ACTIVE" as const } } };
     const organizers = await prisma.primaryOrganizer.findMany({
       where: membershipFilter,
@@ -96,7 +112,7 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json({ ok: true, actor, organizers, audit });
+    return noStore(NextResponse.json({ ok: true, actor, organizers, audit }));
   } catch (error) {
     if (error instanceof PrimaryStagingConsoleUnavailableError) return unavailable();
     throw error;

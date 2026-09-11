@@ -203,6 +203,12 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - It contains no Stripe/provider action, payment, refund, cancellation, payout, email, webhook, cron, QR/admission, public navigation, or production behavior.
 - Verification on a fresh disposable PostgreSQL 16 database deployed all 53 migrations and passed 65 suites / 439 tests, including 9 staging gate, authorization, negative-path, and browser-flow tests. Prisma validation/status, TypeScript, focused/full lint with no errors, production build, and diff checks passed.
 
+### Organizer Console Revision 1
+
+- Platform-reviewer reads are limited to organizers with an active `OWNER` membership held by the exact reserved staging organizer persona. The reviewer cannot use the console state endpoint to enumerate unrelated primary organizers that might share the isolated preview database.
+- Every console API response, including authentication failures and fail-closed `404` responses, explicitly emits `Cache-Control: private, no-store` so persona, workflow, and audit state cannot be retained by a browser or intermediary cache.
+- Four API-boundary tests cover reserved-organizer scoping, unauthenticated query suppression, session/failure cache policy, and rejected-action cache policy. The complete non-database regression passed 58 suites / 356 tests with 8 PostgreSQL suites skipped; TypeScript, focused lint, production build with primary ticketing disabled, and diff checks passed.
+
 ## Risks and open decisions
 
 ## Refund persistence foundation checkpoint

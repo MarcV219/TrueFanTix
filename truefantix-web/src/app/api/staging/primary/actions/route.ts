@@ -88,7 +88,12 @@ function invitationPepper() {
 }
 
 function jsonError(status: number, error: string) {
-  return NextResponse.json({ ok: false, error }, { status });
+  return noStore(NextResponse.json({ ok: false, error }, { status }));
+}
+
+function noStore<T extends NextResponse>(response: T) {
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
 }
 
 export async function POST(req: Request) {
@@ -211,7 +216,7 @@ export async function POST(req: Request) {
         return jsonError(400, "UNKNOWN_ACTION");
     }
 
-    return NextResponse.json({ ok: true, result });
+    return noStore(NextResponse.json({ ok: true, result }));
   } catch (error) {
     if (error instanceof PrimaryStagingConsoleUnavailableError) return jsonError(404, "NOT_FOUND");
     if (error instanceof PrimaryStagingConsoleInputError) return jsonError(400, error.code);
