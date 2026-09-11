@@ -38,6 +38,12 @@ else describe("primary refund persistence PostgreSQL integration", () => {
     return { buyer, organizer, event, order, attempt, issued };
   }
 
+  async function supervisor(scope: Awaited<ReturnType<typeof seed>>, suffix: string, role: "OWNER" | "FINANCE" | "READ_ONLY" = "FINANCE") {
+    const user = await db.user.create({ data: { email: `refund-supervisor-${runId}-${suffix}@example.test`, passwordHash: "synthetic", emailVerifiedAt: now, firstName: "Supervisor", lastName: suffix, phone: `+4${String(Date.now() + ++sequence).slice(-10)}`, phoneVerifiedAt: now, streetAddress1: "1 Test", city: "Toronto", region: "ON", postalCode: "A1A1A1", country: "CA" } });
+    await db.primaryOrganizerMembership.create({ data: { organizerId: scope.organizer.id, userId: user.id, role, status: "ACTIVE", acceptedAt: now, invitedByUserId: scope.buyer.id } });
+    return user;
+  }
+
   function refundData(scope: Awaited<ReturnType<typeof seed>>, suffix: string) {
     return { organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, paymentAttemptId: scope.attempt.id, requestedByUserId: scope.buyer.id, policyVersionId: "primary-refund-policy-v1", requestKey: `refund-request-${runId}-${suffix}`, commandDigest: "a".repeat(64), reason: "Synthetic reviewed refund", requestedAmountMinor: scope.order.grossTotalMinor, currency: "CAD" };
   }
@@ -108,6 +114,28 @@ else describe("primary refund persistence PostgreSQL integration", () => {
     await expect(db.primaryRefundProviderAttempt.create({ data: { refundId: refund.id, ordinal: 1, providerKey: `wrong-currency-${runId}`, expectedAmountMinor: requestedMinor, currency: "USD", authorizationKey: `wrong-currency-auth-${runId}`, authorizationDigest: "6".repeat(64), authorizedByUserId: scope.buyer.id, authorizationReason: "Wrong currency negative" } })).rejects.toBeTruthy();
   });
 
+  it("freezes refund children at provider authorization and serializes a concurrent append", async () => {
+    const scope = await seed(2); const refund = await completeRefund(scope, "freeze", [0]);
+    const client1 = await pool.connect(); const client2 = await pool.connect();
+    try {
+      await client1.query("BEGIN");
+      await client1.query('UPDATE "PrimaryRefund" SET status=\'PROVIDER_PENDING\' WHERE id=$1', [refund.id]);
+      const secondAllocations = await db.primaryPurchaseAllocation.findMany({ where: { admissionTicketId: scope.issued[1].ticket.id } });
+      const amount = secondAllocations.reduce((sum,row)=>sum+row.amountMinor,0);
+      const blocked = client2.query('INSERT INTO "PrimaryRefundItem" (id,"refundId","admissionTicketId","requestedMinor",currency) VALUES ($1,$2,$3,$4,\'CAD\')', [`late-${runId}`,refund.id,scope.issued[1].ticket.id,amount]);
+      await new Promise((resolve)=>setTimeout(resolve,50)); await client1.query("COMMIT");
+      await expect(blocked).rejects.toBeTruthy();
+      const existing = await db.primaryRefundItem.findFirstOrThrow({ where:{ refundId:refund.id } });
+      await expect(db.primaryRefundAllocation.create({ data:{ refundId:refund.id,refundItemId:existing.id,admissionTicketId:existing.admissionTicketId,purchaseAllocationId:secondAllocations[0].id,amountMinor:secondAllocations[0].amountMinor,currency:"CAD" } })).rejects.toBeTruthy();
+
+      const allocationScope=await seed(1); await db.$queryRaw`SELECT materialize_primary_purchase_allocations(${allocationScope.order.id})`; const allocations=await db.primaryPurchaseAllocation.findMany({where:{admissionTicketId:allocationScope.issued[0].ticket.id},orderBy:{orderComponentId:"asc"}});
+      const allocationRefund=await db.primaryRefund.create({data:{...refundData(allocationScope,"concurrent-allocation"),requestedAmountMinor:allocations[0].amountMinor}}); const allocationItem=await db.primaryRefundItem.create({data:{refundId:allocationRefund.id,admissionTicketId:allocationScope.issued[0].ticket.id,requestedMinor:allocations[0].amountMinor,currency:"CAD"}}); await db.primaryRefundAllocation.create({data:{refundId:allocationRefund.id,refundItemId:allocationItem.id,admissionTicketId:allocationItem.admissionTicketId,purchaseAllocationId:allocations[0].id,amountMinor:allocations[0].amountMinor,currency:"CAD"}});
+      await client1.query("BEGIN"); await client1.query('UPDATE "PrimaryRefund" SET status=\'PROVIDER_PENDING\' WHERE id=$1',[allocationRefund.id]);
+      const blockedAllocation=client2.query('INSERT INTO "PrimaryRefundAllocation" (id,"refundId","refundItemId","admissionTicketId","purchaseAllocationId","amountMinor",currency) VALUES ($1,$2,$3,$4,$5,$6,\'CAD\')',[`late-allocation-${runId}`,allocationRefund.id,allocationItem.id,allocationItem.admissionTicketId,allocations[1].id,allocations[1].amountMinor]);
+      await new Promise((resolve)=>setTimeout(resolve,50)); await client1.query("COMMIT"); await expect(blockedAllocation).rejects.toBeTruthy();
+    } finally { await client1.query("ROLLBACK").catch(()=>undefined); client1.release(); client2.release(); }
+  });
+
   it("allows exactly one concurrent refund claim for a ticket", async () => {
     const scope = await seed(1); await db.$queryRaw`SELECT materialize_primary_purchase_allocations(${scope.order.id})`; const allocations = await db.primaryPurchaseAllocation.findMany({ where: { admissionTicketId: scope.issued[0].ticket.id } }); const requestedMinor=allocations.reduce((sum,row)=>sum+row.amountMinor,0);
     const [a,b] = await Promise.all(["a","b"].map((suffix)=>db.primaryRefund.create({ data: { ...refundData(scope, `concurrent-${suffix}`), requestedAmountMinor: requestedMinor } })));
@@ -120,7 +148,10 @@ else describe("primary refund persistence PostgreSQL integration", () => {
     const allocations=await db.primaryPurchaseAllocation.findMany({ where: { admissionTicketId: scope.issued[0].ticket.id } }); const requestedMinor=allocations.reduce((sum,row)=>sum+row.amountMinor,0); const refund=await db.primaryRefund.create({ data: { ...refundData(scope,"checked-in"), requestedAmountMinor: requestedMinor } });
     const itemData={ refundId:refund.id,admissionTicketId:scope.issued[0].ticket.id,requestedMinor,currency:"CAD" };
     await expect(db.primaryRefundItem.create({ data:itemData })).rejects.toBeTruthy();
-    const approval=await db.primaryCheckedInRefundApproval.create({ data:{ refundId:refund.id,admissionTicketId:scope.issued[0].ticket.id,approvedByUserId:scope.buyer.id,evidenceDigest:"7".repeat(64),reason:"Supervised post-entry exception",fraudReview:"Reviewed; no fraud indicators",costBearer:"ORGANIZER" } });
+    await expect(db.primaryCheckedInRefundApproval.create({ data:{ refundId:refund.id,admissionTicketId:scope.issued[0].ticket.id,approvedByUserId:scope.buyer.id,evidenceDigest:"7".repeat(64),reason:"Buyer cannot approve",fraudReview:"Self review",costBearer:"ORGANIZER" } })).rejects.toBeTruthy();
+    const unprivileged=await supervisor(scope,"unprivileged","READ_ONLY"); await expect(db.primaryCheckedInRefundApproval.create({ data:{ refundId:refund.id,admissionTicketId:scope.issued[0].ticket.id,approvedByUserId:unprivileged.id,evidenceDigest:"7".repeat(64),reason:"Unprivileged",fraudReview:"Reviewed",costBearer:"ORGANIZER" } })).rejects.toBeTruthy();
+    const other=await seed(1); const cross=await supervisor(other,"cross-org"); await expect(db.primaryCheckedInRefundApproval.create({ data:{ refundId:refund.id,admissionTicketId:scope.issued[0].ticket.id,approvedByUserId:cross.id,evidenceDigest:"7".repeat(64),reason:"Cross organizer",fraudReview:"Reviewed",costBearer:"ORGANIZER" } })).rejects.toBeTruthy();
+    const authorized=await supervisor(scope,"authorized"); const approval=await db.primaryCheckedInRefundApproval.create({ data:{ refundId:refund.id,admissionTicketId:scope.issued[0].ticket.id,approvedByUserId:authorized.id,evidenceDigest:"7".repeat(64),reason:"Supervised post-entry exception",fraudReview:"Reviewed; no fraud indicators",costBearer:"ORGANIZER" } });
     await expect(db.primaryCheckedInRefundApproval.update({ where:{ id:approval.id },data:{ reason:"changed" } })).rejects.toBeTruthy(); await expect(db.primaryRefundItem.create({ data:itemData })).resolves.toBeTruthy();
   });
 
@@ -136,21 +167,22 @@ else describe("primary refund persistence PostgreSQL integration", () => {
   });
 
   it("requires exact cancellation coverage and resolved obligations", async () => {
-    const scope = await seed(1); const cancellation = await db.primaryEventCancellation.create({ data: { organizerId: scope.organizer.id, eventId: scope.event.id, generation: 1, policyVersionId: "primary-refund-policy-v1", requestedByUserId: scope.buyer.id, requestKey: `cancel-${runId}`, commandDigest: "f".repeat(64), reason: "Synthetic cancellation", snapshotMaxTicketId: scope.issued[0].ticket.id, expectedTicketCount: 1, expectedAmountMinor: scope.order.grossTotalMinor } });
-    await db.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "ACTIVE", activatedAt: now } }); await db.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "REFUNDING" } });
+    const scope = await seed(1); await db.$queryRaw`SELECT materialize_primary_purchase_allocations(${scope.order.id})`; const cancellation = await db.primaryEventCancellation.create({ data: { organizerId: scope.organizer.id, eventId: scope.event.id, generation: 1, policyVersionId: "primary-refund-policy-v1", requestedByUserId: scope.buyer.id, requestKey: `cancel-${runId}`, commandDigest: "f".repeat(64), reason: "Synthetic cancellation", snapshotMaxTicketId: "forged", expectedTicketCount: 0, expectedAmountMinor: 0 } });
+    const activated=await db.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "ACTIVE", activatedAt: now } }); expect(activated).toMatchObject({ expectedTicketCount:1,expectedAmountMinor:scope.order.grossTotalMinor,snapshotMaxTicketId:scope.issued[0].ticket.id }); await db.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "REFUNDING" } });
     const obligation = await db.primaryRefundObligation.create({ data: { organizerId: scope.organizer.id, eventId: scope.event.id, orderId: scope.order.id, cancellationId: cancellation.id, cause: "EVENT_CANCELLATION", amountMinor: scope.order.grossTotalMinor, currency: "CAD", idempotencyKey: `obligation-${runId}`, reason: "Organizer cancellation liability" } });
     await expect(db.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "RESOLVED" } })).rejects.toBeTruthy();
     await expect(db.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { processedTicketCount: 1, processedAmountMinor: scope.order.grossTotalMinor } })).rejects.toBeTruthy();
     const batch = await db.primaryCancellationBatch.create({ data: { cancellationId: cancellation.id, batchKey: `batch-${runId}`, commandDigest: "3".repeat(64), firstTicketId: scope.issued[0].ticket.id, lastTicketId: scope.issued[0].ticket.id, processedTicketCount: 1, processedAmountMinor: scope.order.grossTotalMinor } });
     await db.primaryCancellationBatchTicket.create({ data: { cancellationId: cancellation.id, batchId: batch.id, admissionTicketId: scope.issued[0].ticket.id, obligationId: obligation.id, amountMinor: scope.order.grossTotalMinor, currency: "CAD" } });
     await expect(db.primaryRefundObligation.update({ where: { id: obligation.id }, data: { status: "WAIVED_WITH_APPROVAL" } })).rejects.toBeTruthy();
-    await db.primaryObligationWaiverApproval.create({ data: { obligationId: obligation.id, approvedByUserId: scope.buyer.id, evidenceDigest: "4".repeat(64), reason: "Named supervised waiver" } });
+    await expect(db.primaryObligationWaiverApproval.create({ data: { obligationId: obligation.id, approvedByUserId: scope.buyer.id, evidenceDigest: "4".repeat(64), reason: "Buyer waiver" } })).rejects.toBeTruthy(); const authorized=await supervisor(scope,"waiver");
+    await db.primaryObligationWaiverApproval.create({ data: { obligationId: obligation.id, approvedByUserId: authorized.id, evidenceDigest: "4".repeat(64), reason: "Named supervised waiver" } });
     await db.primaryRefundObligation.update({ where: { id: obligation.id }, data: { status: "WAIVED_WITH_APPROVAL" } });
     await expect(db.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "RESOLVED" } })).resolves.toMatchObject({ status: "RESOLVED", processedTicketCount: 1, processedAmountMinor: scope.order.grossTotalMinor });
   });
 
   it("rejects active-generation and cross-aggregate scope forgery", async () => {
-    const a=await seed(1); const b=await seed(1); const cancellation=await db.primaryEventCancellation.create({ data:{ organizerId:a.organizer.id,eventId:a.event.id,generation:1,policyVersionId:"primary-refund-policy-v1",requestedByUserId:a.buyer.id,requestKey:`scope-cancel-a-${runId}`,commandDigest:"9".repeat(64),reason:"Scope A",snapshotMaxTicketId:a.issued[0].ticket.id,expectedTicketCount:1,expectedAmountMinor:a.order.grossTotalMinor } });
+    const a=await seed(1); const b=await seed(1); await db.$queryRaw`SELECT materialize_primary_purchase_allocations(${a.order.id})`; await db.$queryRaw`SELECT materialize_primary_purchase_allocations(${b.order.id})`; const cancellation=await db.primaryEventCancellation.create({ data:{ organizerId:a.organizer.id,eventId:a.event.id,generation:1,policyVersionId:"primary-refund-policy-v1",requestedByUserId:a.buyer.id,requestKey:`scope-cancel-a-${runId}`,commandDigest:"9".repeat(64),reason:"Scope A",snapshotMaxTicketId:a.issued[0].ticket.id,expectedTicketCount:1,expectedAmountMinor:a.order.grossTotalMinor } });
     await db.primaryEventCancellation.update({ where:{ id:cancellation.id },data:{ status:"ACTIVE",activatedAt:now } }); const second=await db.primaryEventCancellation.create({ data:{ organizerId:a.organizer.id,eventId:a.event.id,generation:2,policyVersionId:"primary-refund-policy-v1",requestedByUserId:a.buyer.id,requestKey:`scope-cancel-b-${runId}`,commandDigest:"0".repeat(64),reason:"Scope B",snapshotMaxTicketId:a.issued[0].ticket.id,expectedTicketCount:1,expectedAmountMinor:a.order.grossTotalMinor } });
     await expect(db.primaryEventCancellation.update({ where:{ id:second.id },data:{ status:"ACTIVE",activatedAt:now } })).rejects.toBeTruthy();
     await expect(db.primaryRefundObligation.create({ data:{ organizerId:a.organizer.id,eventId:a.event.id,orderId:b.order.id,cancellationId:cancellation.id,cause:"FORGED",amountMinor:1,currency:"CAD",idempotencyKey:`forged-obligation-${runId}`,reason:"Wrong order scope" } })).rejects.toBeTruthy();
@@ -160,6 +192,21 @@ else describe("primary refund persistence PostgreSQL integration", () => {
     const obligationB=await db.primaryRefundObligation.create({ data:{organizerId:b.organizer.id,eventId:b.event.id,orderId:b.order.id,cancellationId:cancellationB.id,cause:"EVENT_CANCELLATION",amountMinor:b.order.grossTotalMinor,currency:"CAD",idempotencyKey:`overlap-obligation-${runId}`,reason:"Overlap evidence"} });
     const batch1=await db.primaryCancellationBatch.create({data:{cancellationId:cancellationB.id,batchKey:`overlap-batch-1-${runId}`,commandDigest:"1".repeat(64),firstTicketId:b.issued[0].ticket.id,lastTicketId:b.issued[0].ticket.id,processedTicketCount:1,processedAmountMinor:b.order.grossTotalMinor}}); const batch2=await db.primaryCancellationBatch.create({data:{cancellationId:cancellationB.id,batchKey:`overlap-batch-2-${runId}`,commandDigest:"2".repeat(64),firstTicketId:"0",lastTicketId:"z",processedTicketCount:1,processedAmountMinor:b.order.grossTotalMinor}});
     await db.primaryCancellationBatchTicket.create({data:{cancellationId:cancellationB.id,batchId:batch1.id,admissionTicketId:b.issued[0].ticket.id,obligationId:obligationB.id,amountMinor:b.order.grossTotalMinor,currency:"CAD"}}); await expect(db.primaryCancellationBatchTicket.create({data:{cancellationId:cancellationB.id,batchId:batch2.id,admissionTicketId:b.issued[0].ticket.id,obligationId:obligationB.id,amountMinor:b.order.grossTotalMinor,currency:"CAD"}})).rejects.toBeTruthy();
+  });
+
+  it("rejects cumulative obligation overuse and unrelated voluntary refund evidence", async () => {
+    const scope=await seed(2); await db.$queryRaw`SELECT materialize_primary_purchase_allocations(${scope.order.id})`;
+    const cancellation=await db.primaryEventCancellation.create({data:{organizerId:scope.organizer.id,eventId:scope.event.id,generation:1,policyVersionId:"primary-refund-policy-v1",requestedByUserId:scope.buyer.id,requestKey:`financial-cancel-${runId}`,commandDigest:"6".repeat(64),reason:"Financial coverage",snapshotMaxTicketId:"caller-value",expectedTicketCount:1,expectedAmountMinor:1}});
+    await db.primaryEventCancellation.update({where:{id:cancellation.id},data:{status:"ACTIVE",activatedAt:now}});
+    const snapshots=await db.primaryCancellationSnapshotTicket.findMany({where:{cancellationId:cancellation.id},orderBy:{admissionTicketId:"asc"}}); expect(snapshots).toHaveLength(2);
+    const obligation=await db.primaryRefundObligation.create({data:{organizerId:scope.organizer.id,eventId:scope.event.id,orderId:scope.order.id,cancellationId:cancellation.id,cause:"EVENT_CANCELLATION",amountMinor:snapshots[0].amountMinor,currency:"CAD",idempotencyKey:`financial-obligation-${runId}`,reason:"Deliberately bounded obligation"}});
+    const batch=await db.primaryCancellationBatch.create({data:{cancellationId:cancellation.id,batchKey:`financial-batch-${runId}`,commandDigest:"7".repeat(64),firstTicketId:"0",lastTicketId:"z",processedTicketCount:2,processedAmountMinor:snapshots.reduce((sum,row)=>sum+row.amountMinor,0)}});
+    await db.primaryCancellationBatchTicket.create({data:{cancellationId:cancellation.id,batchId:batch.id,admissionTicketId:snapshots[0].admissionTicketId,obligationId:obligation.id,amountMinor:snapshots[0].amountMinor,currency:"CAD"}});
+    await expect(db.primaryCancellationBatchTicket.create({data:{cancellationId:cancellation.id,batchId:batch.id,admissionTicketId:snapshots[1].admissionTicketId,obligationId:obligation.id,amountMinor:snapshots[1].amountMinor,currency:"CAD"}})).rejects.toBeTruthy();
+
+    const refundA=await completeRefund(scope,"linked-a",[0]); const refundB=await completeRefund(scope,"linked-b",[1]); const itemB=await db.primaryRefundItem.findFirstOrThrow({where:{refundId:refundB.id}});
+    const linked=await db.primaryRefundObligation.create({data:{organizerId:scope.organizer.id,eventId:scope.event.id,orderId:scope.order.id,cancellationId:cancellation.id,refundId:refundA.id,cause:"EVENT_CANCELLATION",amountMinor:snapshots[1].amountMinor,currency:"CAD",idempotencyKey:`linked-obligation-${runId}`,reason:"Linked only to refund A"}});
+    await expect(db.primaryCancellationBatchTicket.create({data:{cancellationId:cancellation.id,batchId:batch.id,admissionTicketId:snapshots[1].admissionTicketId,refundItemId:itemB.id,obligationId:linked.id,amountMinor:snapshots[1].amountMinor,currency:"CAD"}})).rejects.toBeTruthy();
   });
 
   it("protects policy, allocation, item, event, revocation, and audit evidence", async () => {

@@ -216,6 +216,14 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Cancellation completion is derived from immutable non-overlapping batch-ticket evidence; direct counter edits fail, batch and generation totals reconcile, obligations must be resolved, and only one active generation is permitted per event.
 - Cross-aggregate guards fail closed on mismatched organizer/event/order/refund/cancellation/policy/ticket/credential/amount/currency evidence. The PostgreSQL suite includes adversarial multi-line, concurrent-claim, completeness, provider-value, checked-in, forged-counter, overlapping-batch, cross-scope, waiver, and immutability cases.
 
+### Refund Persistence Revision 2
+
+- Follow-up migration `20260911123000_enforce_refund_authorization_snapshot_integrity` remains persistence-only. Refund item and allocation inserts lock their parent and are permitted only in `REQUESTED`; the completeness transition and provider-attempt authorization use that same row lock, so provider eligibility cannot be invalidated by a late append.
+- Checked-in exceptions and obligation waivers require a current verified, non-banned platform `ADMIN`, or an active `OWNER`/`FINANCE` membership in the exact organizer. Buyers, read-only members, and privileged members of another organizer fail closed.
+- Cancellation activation derives and stores an immutable per-ticket snapshot from actual event admissions and refundable purchase allocations under the cancellation policy. Caller-supplied expected counts, amounts, and high-water identity are replaced by those authoritative values; missing allocation evidence aborts activation.
+- Batch-ticket evidence must exactly match the snapshot ticket amount/currency and serializes on its obligation. Cumulative claims cannot exceed the obligation, resolution requires exact per-obligation and per-ticket coverage, and optional refund evidence must be the exact refund linked to that cancellation obligation with matching order/event/organizer/policy/currency/amount scope.
+- The 13-case PostgreSQL suite covers post-gate and concurrent child append, buyer/unprivileged/cross-organizer approval rejection, authorized supervisors, forged activation expectations, cumulative obligation overuse, unrelated-refund evidence, and all prior persistence invariants.
+
 ### Refund, cancellation, and revocation design gate
 
 - Refund Design Revision 1 establishes one authoritative local-commit-before-provider sequence for both payment and refund work. Refund financial states remain separate from the implemented `ISSUED | VOIDED | CHECKED_IN` admission lifecycle; eligible unscanned tickets become terminally `VOIDED` before any refund provider call and never resurrect after failure or ambiguity.
