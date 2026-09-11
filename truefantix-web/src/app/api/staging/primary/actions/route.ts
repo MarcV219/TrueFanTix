@@ -100,7 +100,7 @@ export async function POST(req: Request) {
   try {
     const capability = requirePrimaryStagingConsole();
     const csrf = await enforceOriginAndCsrf(req);
-    if (!csrf.ok) return csrf.res;
+    if (!csrf.ok) return noStore(csrf.res);
     const actorUser = await requirePrimaryStagingActor();
     if (!actorUser) return jsonError(401, "NOT_AUTHENTICATED");
 

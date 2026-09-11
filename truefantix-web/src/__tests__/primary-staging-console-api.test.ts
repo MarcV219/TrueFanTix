@@ -1,5 +1,6 @@
 /** @jest-environment node */
 
+import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ensureCsrfCookie, enforceOriginAndCsrf } from "@/lib/security/csrf";
 import {
@@ -8,7 +9,7 @@ import {
   requirePrimaryStagingConsole,
   STAGING_ORGANIZER_EMAIL,
 } from "@/lib/primary/staging-console";
-import { GET as getSession } from "@/app/api/staging/primary/session/route";
+import { GET as getSession, POST as postSession } from "@/app/api/staging/primary/session/route";
 import { GET as getState } from "@/app/api/staging/primary/state/route";
 import { POST as postAction } from "@/app/api/staging/primary/actions/route";
 
@@ -124,5 +125,27 @@ describe("primary staging console API boundary", () => {
     expect(response.status).toBe(400);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toEqual({ ok: false, error: "UNKNOWN_ACTION" });
+  });
+
+  it("marks CSRF rejections from both state-changing routes as non-cacheable", async () => {
+    const csrfResponse = () => NextResponse.json(
+      { ok: false, error: "CSRF_INVALID" },
+      { status: 403 },
+    );
+    mockedCsrf
+      .mockResolvedValueOnce({ ok: false, res: csrfResponse() })
+      .mockResolvedValueOnce({ ok: false, res: csrfResponse() });
+
+    const request = () => new Request("https://preview.example/api/staging/primary/session", {
+      method: "POST",
+    });
+    const sessionResponse = await postSession(request());
+    const actionResponse = await postAction(request());
+
+    expect(sessionResponse.status).toBe(403);
+    expect(sessionResponse.headers.get("cache-control")).toBe("private, no-store");
+    expect(actionResponse.status).toBe(403);
+    expect(actionResponse.headers.get("cache-control")).toBe("private, no-store");
+    expect(mockedActor).not.toHaveBeenCalled();
   });
 });
