@@ -14,6 +14,7 @@ type Contact = {
   organization: string | null;
   subjectName: string | null;
   contactName: string | null;
+  contactLabel: string;
   role: string | null;
   email: string | null;
   category: string;
@@ -1347,7 +1348,7 @@ export default function OutreachPage() {
                       </span>
                     </td>
                     <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
-                      {c.contactName || "Departmental contact"}
+                      {c.contactLabel}
                       <br />
                       <span style={{ opacity: 0.7 }}>{c.role}</span>
                     </td>

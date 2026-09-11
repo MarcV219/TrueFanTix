@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { normalizeEmail } from "@/lib/outreach";
+import { normalizeEmail, outreachContactLabel } from "@/lib/outreach";
 
 const BASES = new Set(["UNASSESSED", "EXPRESS_CONSENT", "EXISTING_BUSINESS_RELATIONSHIP", "CONSPICUOUSLY_PUBLISHED", "NOT_REQUIRED"]);
 const STAGES = new Set(["NEW", "CONTACTED", "BOUNCED", "REPLIED", "INTERESTED", "FOLLOW_UP", "NOT_INTERESTED", "CLOSED"]);
@@ -52,8 +52,8 @@ export async function GET(req: Request) {
       // Put verified people ahead of departmental fallbacks. Import normalization
       // deliberately clears contactName for shared role-based mailboxes.
       orderBy: [
-        { lastContactedAt: { sort: "asc", nulls: "first" } },
         { contactName: { sort: "asc", nulls: "last" } },
+        { lastContactedAt: { sort: "asc", nulls: "first" } },
         { organization: "asc" },
       ],
       skip: (page - 1) * take,
@@ -95,7 +95,11 @@ export async function GET(req: Request) {
   };
   return NextResponse.json({
     ok: true,
-    items: items.map((item) => ({ ...item, suppressionReason: item.normalizedEmail ? blocked.get(item.normalizedEmail) || null : null })),
+    items: items.map((item) => ({
+      ...item,
+      contactLabel: outreachContactLabel(item),
+      suppressionReason: item.normalizedEmail ? blocked.get(item.normalizedEmail) || null : null,
+    })),
     count, totalCount, page, take,
     categories: Object.keys(categoryCounts),
     leagues: leagues.map((x) => x.league).filter(Boolean),

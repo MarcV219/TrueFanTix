@@ -24,6 +24,14 @@ export function isGenericOutreachEmail(value: string | null | undefined) {
   const firstSegment = localPart.split(".")[0];
   return GENERIC_OUTREACH_MAILBOXES.has(firstSegment);
 }
+
+export function outreachContactLabel(contact: { contactName?: string | null; email?: string | null }) {
+  const contactName = (contact.contactName || "").trim();
+  if (contactName) return contactName;
+  return contact.email && !isGenericOutreachEmail(contact.email)
+    ? "Individual contact (name not published)"
+    : "Departmental contact";
+}
 export const OUTREACH_RECENT_CONTACT_DAYS = 30;
 export const OUTREACH_DEFAULT_FOLLOW_UP_DAYS = 45;
 export function recentContactCutoff(now = new Date()) {

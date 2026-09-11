@@ -1,10 +1,15 @@
 /** @jest-environment node */
 import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
-import { contactMergeVars, defaultOutreachFollowUpAt, emailFromUnsubscribeToken, isGenericOutreachEmail, normalizeEmail, recentContactCutoff, renderMerge, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
+import { contactMergeVars, defaultOutreachFollowUpAt, emailFromUnsubscribeToken, isGenericOutreachEmail, normalizeEmail, outreachContactLabel, recentContactCutoff, renderMerge, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
 import { completeQuebecCollaborationHtml, outreachHtmlDocument, outreachHtmlToText, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
 
 describe("outreach security and personalization", () => {
+  test("labels unnamed person-form addresses separately from departmental mailboxes", () => {
+    expect(outreachContactLabel({ email: "elopez@la-sparks.com" })).toBe("Individual contact (name not published)");
+    expect(outreachContactLabel({ email: "groups@team.example" })).toBe("Departmental contact");
+    expect(outreachContactLabel({ contactName: "Emilia Lopez", email: "elopez@la-sparks.com" })).toBe("Emilia Lopez");
+  });
   test("recognizes shared role mailboxes and never addresses them as an individual", () => {
     expect(isGenericOutreachEmail("tickets@ottawasenators.com")).toBe(true);
     expect(isGenericOutreachEmail("group-sales@example.com")).toBe(true);
