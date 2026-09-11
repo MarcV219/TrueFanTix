@@ -1858,7 +1858,14 @@ export default function OutreachPage() {
                   {c.allowRecentContact ? " · 30-day safeguard overridden" : " · 30-day safeguard active"}
                 </span>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
                 <button style={button} onClick={() => openReview(c)}>
                   Preview each message
                 </button>
@@ -1871,8 +1878,9 @@ export default function OutreachPage() {
                       <button
                         style={{ ...button, color: "#b91c1c", borderColor: "#fecaca" }}
                         onClick={() => deleteCampaign(c)}
+                        title="Permanently remove this unsent draft campaign"
                       >
-                        Delete campaign
+                        Remove draft
                       </button>
                     </>
                   )}
