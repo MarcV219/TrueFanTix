@@ -224,6 +224,14 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Batch-ticket evidence must exactly match the snapshot ticket amount/currency and serializes on its obligation. Cumulative claims cannot exceed the obligation, resolution requires exact per-obligation and per-ticket coverage, and optional refund evidence must be the exact refund linked to that cancellation obligation with matching order/event/organizer/policy/currency/amount scope.
 - The 13-case PostgreSQL suite covers post-gate and concurrent child append, buyer/unprivileged/cross-organizer approval rejection, authorized supervisors, forged activation expectations, cumulative obligation overuse, unrelated-refund evidence, and all prior persistence invariants.
 
+### Refund Persistence Revision 3
+
+- Follow-up migration `20260911130000_finalize_cancellation_evidence_integrity` makes cancellation finality stable without adding runtime/provider behavior. Snapshot rows are accepted only as nested database work during `REQUESTED -> ACTIVE`; direct caller inserts fail.
+- Cancellation batches, obligations, batch-ticket claims, waiver approvals, revocations, and cancellation-refund links lock the parent cancellation and are accepted only while it is active and unresolved. They therefore serialize against `RESOLVED`, and every tested append after resolution fails closed.
+- `PrimaryCancellationRefundLink` is immutable provenance joining one exact refund to its cancellation while the refund is still empty and `REQUESTED`. Creation locks both parents, checks exact organizer/event/policy scope, and must precede refund-item materialization and provider authorization; an already materialized voluntary refund cannot be relabeled later.
+- A cancellation obligation that names a refund requires that provenance link, rechecks complete allocations, and must equal the complete parent refund amount. Batch evidence continues to require the exact linked item/ticket/amount/currency; a pre-existing same-order voluntary refund cannot be attached retroactively.
+- Focused PostgreSQL coverage includes caller snapshot contamination, concurrent resolution-versus-obligation insertion, post-resolution child inserts, and the same-order/same-event voluntary-refund bypass.
+
 ### Refund, cancellation, and revocation design gate
 
 - Refund Design Revision 1 establishes one authoritative local-commit-before-provider sequence for both payment and refund work. Refund financial states remain separate from the implemented `ISSUED | VOIDED | CHECKED_IN` admission lifecycle; eligible unscanned tickets become terminally `VOIDED` before any refund provider call and never resurrect after failure or ambiguity.

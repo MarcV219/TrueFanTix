@@ -910,6 +910,7 @@ model PrimaryRefund {
   primaryRefundAllocations PrimaryRefundAllocation[]
   ticketClaims             PrimaryRefundTicketClaim[]
   checkedInApprovals       PrimaryCheckedInRefundApproval[]
+  cancellationLink         PrimaryCancellationRefundLink?
 
   @@unique([id, organizerId, eventId, orderId, paymentAttemptId])
   @@index([organizerId, eventId, status])
@@ -1017,6 +1018,7 @@ model PrimaryEventCancellation {
   revocations     PrimaryAdmissionRevocation[]
   batchTickets    PrimaryCancellationBatchTicket[]
   snapshotTickets PrimaryCancellationSnapshotTicket[]
+  refundLinks     PrimaryCancellationRefundLink[]
 
   @@unique([eventId, generation])
   @@unique([id, organizerId, eventId])
@@ -1053,6 +1055,19 @@ model PrimaryCancellationSnapshotTicket {
   policy       PrimaryRefundPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
 
   @@unique([cancellationId, admissionTicketId])
+  @@index([cancellationId])
+}
+
+model PrimaryCancellationRefundLink {
+  id             String   @id @default(cuid())
+  cancellationId String
+  refundId       String   @unique
+  createdAt      DateTime @default(now())
+
+  cancellation PrimaryEventCancellation @relation(fields: [cancellationId], references: [id], onDelete: Restrict)
+  refund       PrimaryRefund            @relation(fields: [refundId], references: [id], onDelete: Restrict)
+
+  @@unique([cancellationId, refundId])
   @@index([cancellationId])
 }
 
