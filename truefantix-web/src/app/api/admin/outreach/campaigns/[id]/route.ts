@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { contactMergeVars, normalizeEmail, recentContactCutoff, renderMerge } from "@/lib/outreach";
+import { contactMergeVars, normalizeEmail, outreachContactLabel, recentContactCutoff, renderMerge } from "@/lib/outreach";
 import { outreachHtmlToText, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { MAX_OUTREACH_CAMPAIGN_CONTACTS as MAX_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
@@ -37,6 +37,7 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
           contact: {
             select: {
               contactName: true,
+              email: true,
               organization: true,
               subjectName: true,
               role: true,
@@ -47,7 +48,19 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
     },
   });
   if (!campaign) return NextResponse.json({ ok: false, error: "Campaign not found." }, { status: 404 });
-  return NextResponse.json({ ok: true, item: campaign });
+  return NextResponse.json({
+    ok: true,
+    item: {
+      ...campaign,
+      recipients: campaign.recipients.map((recipient) => ({
+        ...recipient,
+        contact: {
+          ...recipient.contact,
+          contactLabel: outreachContactLabel(recipient.contact),
+        },
+      })),
+    },
+  });
 }
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {

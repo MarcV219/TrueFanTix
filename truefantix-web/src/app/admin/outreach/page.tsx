@@ -60,6 +60,7 @@ type CampaignRecipient = {
   }>;
   contact: {
     contactName: string | null;
+    contactLabel: string;
     organization: string | null;
     subjectName: string | null;
     role: string | null;
@@ -1945,7 +1946,7 @@ export default function OutreachPage() {
                   </button>
                   <div style={{ textAlign: "center" }}>
                     <strong>
-                      {recipient.contact.contactName || "Departmental contact"}
+                      {recipient.contact.contactLabel}
                     </strong>{" "}
                     ·{" "}
                     {recipient.contact.subjectName ||
