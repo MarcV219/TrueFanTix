@@ -196,6 +196,17 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 
 ## Risks and open decisions
 
+## Refund persistence foundation checkpoint
+
+- Provisional policy package v1 records the organizer merchant-of-record boundary, component-owner loss allocation, supervised checked-in exceptions, indemnity/insurance requirement, post-event clearance and reserves rule, no automatic resale, organizer chargeback liability, and immutable accounting/privacy/controller-processor controls. It is versioned and prospective; historical evidence cannot be rewritten.
+- Migration `20260911112339_add_primary_refund_persistence_foundation` adds isolated policy, per-ticket purchase-allocation, refund/item/allocation/provider-attempt/provider-event, cancellation generation/batch, obligation, and admission-revocation persistence only. No provider dispatch or cash movement is present.
+- Database checks and composite guards bind financial and admission evidence to the same paid order, payment attempt, event, ticket, credential, amount, and currency. Active/successful ticket refund overlap and allocation overrun fail closed.
+- Purchase allocations use immutable order components and admission unit numbers. Exact component sums, stable remainder ranking, policy identity, owner identity, SHA-256 set digest, idempotent replay, and incomplete-history failure are enforced in PostgreSQL.
+- Mutable refund, attempt, cancellation, and obligation summaries permit only reviewed transitions. Terminal parents reject retries; a new attempt requires the parent to remain `PROVIDER_PENDING` and the immediately prior attempt to carry authenticated terminal-impossibility evidence. Unique `(refundId, ordinal)` serialization permits at most one next attempt.
+- Policy, allocations, items, provider events, cancellation batches, revocations, and existing protected audit/outbox records are append-only. Cancellation `RESOLVED` requires exact count/amount coverage and no unresolved obligation.
+- PostgreSQL coverage exercises exact allocation and rounding, idempotent replay, incomplete-history rollback, overlapping-refund and over-allocation rejection, concurrent single-next-attempt authorization, terminal-parent rejection, cancellation coverage, obligation finality, and direct evidence mutation rejection.
+- Excluded: Stripe refund calls, provider dispatch/reconciliation jobs, routes/UI, live data, payout/reserve execution, email, inventory resale, and deployment. Manual authenticated release QA remains a Marc/team dependency and does not alter this isolated checkpoint.
+
 ### Refund, cancellation, and revocation design gate
 
 - Refund Design Revision 1 establishes one authoritative local-commit-before-provider sequence for both payment and refund work. Refund financial states remain separate from the implemented `ISSUED | VOIDED | CHECKED_IN` admission lifecycle; eligible unscanned tickets become terminally `VOIDED` before any refund provider call and never resurrect after failure or ambiguity.

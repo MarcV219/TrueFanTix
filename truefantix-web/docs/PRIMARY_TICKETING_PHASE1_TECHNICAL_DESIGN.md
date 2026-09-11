@@ -341,6 +341,21 @@ Refund finance uses `REQUESTED -> PROVIDER_PENDING`; the parent remains `PROVIDE
 
 ### 4.1 Refund, event-cancellation, and admission-revocation design gate
 
+#### Provisional policy package v1 (approved 2026-09-11)
+
+These defaults are immutable, versioned inputs to new obligations. They apply prospectively; a later policy version never rewrites a purchase allocation, refund, cancellation generation, liability, revocation, accounting entry, notice, or retention decision created under an earlier version. Legal, accounting, and operations review remains required before live use.
+
+- The organizer is the merchant and contractual seller for ticket revenue and organizer-controlled components. TrueFanTix owns only a separately disclosed `TRUEFANTIX_ADMIN_FEE`; a generic service fee is not silently reclassified as a platform fee.
+- Each party bears refunds and losses for its own component. The organizer bears ticket value, organizer fees, organizer-caused cancellation exposure, processor costs, and applicable tax corrections. TrueFanTix bears its disclosed admin-fee component and documented TrueFanTix-caused errors only.
+- `CHECKED_IN` refunds require supervised exception review with preserved admission evidence, explicit authority, fraud review, reason, evidence, and loss-bearer selection. There is no automatic post-entry refund.
+- Organizer contracts require event-performance/refund indemnity and appropriate event-cancellation insurance. Cancellation obligations remain organizer liabilities until confirmed cash reversal or an authorized documented waiver.
+- Organizer net proceeds remain held through event completion and a separately configured clearance period, subject to open refunds/disputes, risk-based reserves, and negative-balance recovery. This milestone records policy and liabilities only; it does not execute payouts or reserves.
+- Refund/void never returns a unit automatically to inventory. Any later authorized resale requires a newly issued, versioned credential; the original credential remains permanently unusable.
+- TrueFanTix administers provider evidence and reconciliation. The organizer bears chargeback principal and fees except for a documented TrueFanTix-caused error; late or contradictory provider evidence is append-only and reviewed.
+- Accounting evidence is immutable. Buyer notices and tax corrections must be clear; access is least-privilege; legal holds override expiry; retention expiry deletes or de-identifies non-required data. The organizer is controller for attendee/event-commerce data and TrueFanTix is processor/service provider, except for TrueFanTix account, fraud, security, and compliance purposes.
+
+Persistence policy identifier `primary-refund-policy-v1` binds the normalized package and SHA-256 policy digest. Existing isolated synthetic components are fail-closed materialized as refundable under v1 and organizer-owned unless their immutable code is exactly `TRUEFANTIX_ADMIN_FEE`; no mutable label or current price is used to infer ownership.
+
 This section is a design contract only. It authorizes no schema, migration, provider call, route, ledger posting, or credential mutation. Implementation remains blocked until Marc, legal, accounting, and operations decide the items identified below.
 
 #### Proposed records and immutable boundaries
@@ -383,6 +398,7 @@ This section is a design contract only. It authorizes no schema, migration, prov
 - For each component, the migration applies the same quotient/remainder algorithm in stable `(orderLineId, unitNumber, componentId)` order, records the source component and algorithm/version, and stores an allocation-set digest. A database guard must prove per-component allocations sum exactly to the immutable component amount and all component totals reconcile to the order gross total.
 - Materialization is idempotent by immutable source component plus ticket unit and must produce the same digest on replay. Existing refund/provider work remains disabled until every eligible order has a complete, uniquely bound allocation set.
 - Missing admission units, unsupported component semantics, inconsistent quantities/currencies, overflow, or any reconciliation mismatch aborts the migration/transaction for that order and places it on an explicit remediation report. The process must fail closed rather than infer refundability, invent a split, or recompute from mutable prices.
+- Migration `20260911112339_add_primary_refund_persistence_foundation` realizes this only for isolated synthetic data. `materialize_primary_purchase_allocations(orderId)` verifies exact unit cardinality before writing, uses integer quotient/remainder in stable line/unit/component order, binds every row to policy v1, persists one deterministic component-set digest, reconciles every source component exactly, and is idempotent on replay. The migration invokes it for each existing paid isolated order and aborts the migration if any order is incomplete or inconsistent.
 
 #### Admission-ticket rules
 
