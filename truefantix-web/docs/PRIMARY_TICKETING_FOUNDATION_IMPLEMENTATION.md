@@ -194,6 +194,15 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Scan Revision 2 verification on a fresh disposable PostgreSQL 16 database deployed all 49 migrations cleanly with current status; all 16 admission and 58 earlier primary-domain tests passed (74/74), and the complete integration-enabled regression passed 62 suites / 416 tests. Prisma format/validation/generation, TypeScript, production build, focused/full lint, and `git diff --check` passed.
 - Merchant-of-record, permanent fees/taxes, refund execution, chargebacks, retries after terminal attempts, provider reconciliation operations, credentials, payout/reserve accounting, and settlement remain unresolved and excluded.
 
+## Staging-only Organizer Test Interface
+
+- `/staging/primary` is a non-public synthetic workflow console for the separately provisioned `isolated-preview` environment. It fails closed unless both primary-ticketing preflight and a dedicated staging-console switch succeed, `VERCEL_ENV=preview`, and a non-committed access token of at least 32 characters is configured.
+- The access-token exchange creates only two reserved `.example.invalid` personas: one ordinary organizer user and one platform reviewer. Every session is reloaded and accepted only when its exact reserved email and role match and the user remains verified and non-banned. No email is sent and no usable password is exposed.
+- All organizer/event contact fields accepted by the console are restricted to the reserved `primary-staging.example.invalid` domain and synthetic `+1555` range. The console delegates mutations to the approved organizer, event, and ticket-type services rather than bypassing their tenant authorization or lifecycle rules.
+- The browser flow supports organizer draft creation with atomic OWNER membership, organizer submission/review/approval, draft event creation/editing, GA ticket-type capacity and price configuration, event submission/review/approval, clear operation status, and a bounded redacted audit view.
+- It contains no Stripe/provider action, payment, refund, cancellation, payout, email, webhook, cron, QR/admission, public navigation, or production behavior.
+- Verification on a fresh disposable PostgreSQL 16 database deployed all 53 migrations and passed 65 suites / 439 tests, including 9 staging gate, authorization, negative-path, and browser-flow tests. Prisma validation/status, TypeScript, focused/full lint with no errors, production build, and diff checks passed.
+
 ## Risks and open decisions
 
 ## Refund persistence foundation checkpoint
@@ -260,4 +269,4 @@ The current synthetic-only foundation treats `PrimaryAuditEvent` rows as append-
 
 ## Explicit exclusions
 
-This implementation contains no organizer/event/scanner UI or route, external email delivery, event publication/discovery, QR presentation, offline scanning, transfer/reissue, refund execution, ledger, settlement, report, public navigation, real data, or deployment functionality. Payment and admission remain isolated service/test foundations; no client secret or bearer credential is delivered through a public surface.
+Outside the fail-closed isolated-preview console documented above, this implementation contains no organizer/event/scanner UI or route, external email delivery, event publication/discovery, QR presentation, offline scanning, transfer/reissue, refund execution, ledger, settlement, report, public navigation, real data, or production deployment functionality. Payment and admission remain isolated service/test foundations; no client secret or bearer credential is delivered through a public surface.
