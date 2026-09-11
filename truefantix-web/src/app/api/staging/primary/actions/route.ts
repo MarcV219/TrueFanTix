@@ -11,6 +11,7 @@ import { PrimaryEventService, type PrimaryEventDraftFields } from "@/lib/primary
 import { PrimaryDomainError, PrimaryOrganizerService } from "@/lib/primary/organizer-service";
 import { PrimaryTicketTypeService, type PrimaryTicketTypeFields } from "@/lib/primary/ticket-type-service";
 import {
+  ensurePrimaryStagingPersona,
   PrimaryStagingConsoleInputError,
   PrimaryStagingConsoleUnavailableError,
   primaryStagingSyntheticContactEmail,
@@ -18,6 +19,12 @@ import {
   requirePrimaryStagingActor,
   requirePrimaryStagingConsole,
 } from "@/lib/primary/staging-console";
+import {
+  PrimaryStagingRefundError,
+  recordPrimaryStagingRefundRejection,
+  reseedPrimaryStagingRefundScenario,
+  runPrimaryStagingRefundAction,
+} from "@/lib/primary/staging-refund-console";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -97,6 +104,8 @@ function noStore<T extends NextResponse>(response: T) {
 }
 
 export async function POST(req: Request) {
+  let refundActor: { id: string; email: string; role: "USER" | "ADMIN" } | null = null;
+  let requestedAction = "unknown";
   try {
     const capability = requirePrimaryStagingConsole();
     const csrf = await enforceOriginAndCsrf(req);
@@ -107,12 +116,24 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => null)) as JsonRecord | null;
     if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "INVALID_REQUEST");
     const action = text(body, "action");
+    requestedAction = action;
+    refundActor = { id: actorUser.id, email: actorUser.email, role: actorUser.role };
     const actor = { id: actorUser.id, role: actorUser.role };
     const requestId = `staging-console:${randomUUID()}`;
     const organizerService = new PrimaryOrganizerService(prisma, capability, invitationPepper());
     const eventService = new PrimaryEventService(prisma, capability);
     const ticketTypeService = new PrimaryTicketTypeService(prisma, capability);
     let result: unknown;
+
+    if (action === "reseedRefundScenarios") {
+      await ensurePrimaryStagingPersona("organizer");
+      result = await reseedPrimaryStagingRefundScenario(prisma, refundActor);
+      return noStore(NextResponse.json({ ok: true, result }));
+    }
+    if (["refundOrdinary", "requestCheckedRefund", "approveCheckedRefund", "completeCheckedRefund", "activateCancellation", "prepareCancellation", "approveCancellationWaiver", "completeCancellation"].includes(action)) {
+      result = await runPrimaryStagingRefundAction(prisma, refundActor, action, body);
+      return noStore(NextResponse.json({ ok: true, result }));
+    }
 
     switch (action) {
       case "createOrganizer":
@@ -222,6 +243,13 @@ export async function POST(req: Request) {
     if (error instanceof PrimaryStagingConsoleInputError) return jsonError(400, error.code);
     if (error instanceof PrimaryAccessError) return jsonError(error.status, error.code);
     if (error instanceof PrimaryDomainError) return jsonError(409, error.code);
+    if (error instanceof PrimaryStagingRefundError) {
+      if (refundActor) await recordPrimaryStagingRefundRejection(prisma, refundActor, requestedAction, error.code).catch(() => undefined);
+      return jsonError(409, error.code);
+    }
+    if (refundActor && requestedAction !== "unknown") {
+      await recordPrimaryStagingRefundRejection(prisma, refundActor, requestedAction, "PERSISTENCE_REJECTED").catch(() => undefined);
+    }
     console.error("Primary staging action failed", error);
     return jsonError(500, "STAGING_ACTION_FAILED");
   }

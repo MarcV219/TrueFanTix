@@ -22,7 +22,10 @@ type AuditEvent = {
   id: string; organizerId: string | null; eventId: string | null; actorUserId: string | null; action: string;
   targetType: string; targetId: string; reason: string | null; createdAt: string;
 };
-type ConsoleState = { actor: Actor; organizers: Organizer[]; audit: AuditEvent[] };
+type RefundTicket = { id: string; unitNumber: number; status: string; voidReason: string | null; refundItems: Array<{ refundId: string; requestedMinor: number; refund: { status: string; reason: string; attempts: Array<{ status: string; providerRefundId: string | null }>; checkedInApprovals: Array<{ reason: string; fraudReview: string; costBearer: string; evidenceDigest: string; approver: { email: string } }> } }>; revocations: Array<{ cause: string; reason: string; refundId: string | null; cancellationId: string | null }> };
+type RefundEvent = { id: string; title: string; status: string; orders: Array<{ id: string; grossTotalMinor: number; currency: string; admissionTickets: RefundTicket[] }>; cancellations: Array<{ id: string; status: string; expectedTicketCount: number; expectedAmountMinor: number; processedTicketCount: number; processedAmountMinor: number; snapshotTickets: Array<{ admissionTicketId: string; amountMinor: number; currency: string }>; refundLinks: Array<{ refundId: string }>; obligations: Array<{ id: string; status: string; cause: string; amountMinor: number; currency: string; refundId: string | null; waiverApproval: { reason: string; evidenceDigest: string; approver: { email: string } } | null; cancellationClaims: Array<{ admissionTicketId: string; amountMinor: number; refundItemId: string | null }> }>; batches: Array<{ processedTicketCount: number; processedAmountMinor: number; firstTicketId: string; lastTicketId: string }> }> };
+type RefundConsoleState = { generation: number; organizerId: string; events: RefundEvent[]; audit: AuditEvent[] };
+type ConsoleState = { actor: Actor; organizers: Organizer[]; audit: AuditEvent[]; refundConsole: RefundConsoleState | null };
 
 const initialEvent = {
   title: "Synthetic Toronto Concert",
@@ -69,6 +72,10 @@ export default function PrimaryStagingConsole() {
   const [eventDraft, setEventDraft] = useState(initialEvent);
   const [ticketEventId, setTicketEventId] = useState("");
   const [reviewReason, setReviewReason] = useState("Reviewed and approved in isolated staging.");
+  const [refundReason, setRefundReason] = useState("Supervisor approved after reviewing synthetic admission and policy evidence.");
+  const [refundEvidence, setRefundEvidence] = useState("Synthetic case file STF-REFUND-001 reviewed in isolated staging.");
+  const [fraudReview, setFraudReview] = useState("No fraud indicators in the deterministic synthetic order history.");
+  const [costBearer, setCostBearer] = useState<"ORGANIZER" | "TRUEFANTIX">("ORGANIZER");
 
   const loadState = useCallback(async () => {
     const response = await fetch("/api/staging/primary/state", { cache: "no-store" });
@@ -206,7 +213,7 @@ export default function PrimaryStagingConsole() {
       <header className="rounded-2xl bg-[#0b2e4e] p-6 text-white shadow-lg">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-300">Isolated staging only</p>
         <h1 className="mt-2 text-3xl font-bold !text-white">Primary organizer test console</h1>
-        <p className="mt-2 max-w-3xl text-sm text-slate-200">Synthetic data only. This interface has no payment, email, refund, payout, webhook, cron, QR, or public-ticketing behavior.</p>
+        <p className="mt-2 max-w-3xl text-sm text-slate-200">Synthetic data only. Refund and cancellation records are local simulations: no provider call, money movement, payout, email, webhook, cron, QR scanning, or live data.</p>
       </header>
 
       <section aria-label="Console status" className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm" role="status">
@@ -277,6 +284,53 @@ export default function PrimaryStagingConsole() {
             <button className={`${buttonClass} mt-4`} disabled={busy || !ticketEventId}>Create ticket type</button>
           </form>
         </>
+      )}
+
+      {actor && state && (
+        <section className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-700">Staging-only financial simulation</p><h2 className="mt-1 text-xl font-semibold">Synthetic refund and cancellation console</h2><p className="mt-1 text-sm text-slate-600">Every amount and provider identifier below is synthetic. Immutable prior generations are retained; reseed creates a fresh deterministic generation.</p></div>
+            {actor.role === "ADMIN" && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "reseedRefundScenarios" }, "Fresh synthetic refund scenarios seeded.")}>{state.refundConsole ? "Reset / reseed" : "Seed scenarios"}</button>}
+          </div>
+
+          {actor.role === "ADMIN" && <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">Supervisor reason<input className={`${inputClass} mt-1`} value={refundReason} onChange={(event) => setRefundReason(event.target.value)} /></label>
+            <label className="text-sm">Evidence reference<input className={`${inputClass} mt-1`} value={refundEvidence} onChange={(event) => setRefundEvidence(event.target.value)} /></label>
+            <label className="text-sm">Fraud review<input className={`${inputClass} mt-1`} value={fraudReview} onChange={(event) => setFraudReview(event.target.value)} /></label>
+            <label className="text-sm">Checked-in refund cost bearer<select className={`${inputClass} mt-1`} value={costBearer} onChange={(event) => setCostBearer(event.target.value as "ORGANIZER" | "TRUEFANTIX")}><option value="ORGANIZER">Organizer</option><option value="TRUEFANTIX">TrueFanTix</option></select></label>
+          </div>}
+
+          {!state.refundConsole ? <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm">An admin reviewer must seed the isolated scenarios first.</p> : <div className="mt-5 space-y-4">
+            <p className="text-sm font-semibold">Active generation {state.refundConsole.generation}</p>
+            {state.refundConsole.events.map((scenario) => {
+              const order = scenario.orders[0]; const tickets = order?.admissionTickets ?? []; const cancellation = scenario.cancellations[0];
+              const isOrdinary = scenario.id.includes("-ordinary-"); const isChecked = scenario.id.includes("-checked-");
+              const refund = tickets.flatMap((ticket) => ticket.refundItems).map((item) => item.refund)[0];
+              const checkedApproved = Boolean(refund?.checkedInApprovals.length);
+              const waiverApproved = cancellation?.obligations.some((item) => item.status === "WAIVED_WITH_APPROVAL");
+              return <article key={scenario.id} className="rounded-xl border border-slate-200 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{scenario.title.replace("Synthetic Refund Console / ", "")}</h3><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{cancellation?.status ?? refund?.status ?? "READY"}</span></div>
+                <p className="mt-1 text-xs text-slate-500">{order?.id} · {order ? (order.grossTotalMinor / 100).toLocaleString("en-CA", { style: "currency", currency: order.currency }) : "—"}</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {tickets.map((ticket) => <div key={ticket.id} className="rounded-lg bg-slate-50 p-3 text-xs"><strong>Ticket {ticket.unitNumber}</strong> · {ticket.status}<br /><span className="text-slate-600">refund {ticket.refundItems[0]?.refund.status ?? "none"} · revocations {ticket.revocations.length}</span></div>)}
+                </div>
+                {cancellation && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs"><strong>Authoritative snapshot:</strong> {cancellation.expectedTicketCount} ticket(s), {(cancellation.expectedAmountMinor / 100).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} · processed {cancellation.processedTicketCount}<div className="mt-1">Obligations: {cancellation.obligations.map((item) => `${item.cause}=${item.status}`).join("; ") || "not prepared"}</div><div>Provenance links: {cancellation.refundLinks.length} · batches: {cancellation.batches.length}</div></div>}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {actor.role === "USER" && isOrdinary && !refund && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "refundOrdinary" }, "Ordinary synthetic refund completed.")}>Refund unscanned ticket</button>}
+                  {actor.role === "USER" && isChecked && !refund && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "requestCheckedRefund" }, "Checked-in refund requested; supervisor evidence required.")}>Request checked-in refund</button>}
+                  {actor.role === "ADMIN" && isChecked && refund?.status === "REQUESTED" && !checkedApproved && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "approveCheckedRefund", reason: refundReason, evidence: refundEvidence, fraudReview, costBearer }, "Checked-in refund approval evidence recorded.")}>Approve checked-in refund</button>}
+                  {actor.role === "USER" && isChecked && refund?.status === "REQUESTED" && checkedApproved && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "completeCheckedRefund" }, "Approved checked-in synthetic refund completed.")}>Complete approved refund</button>}
+                  {actor.role === "USER" && !isOrdinary && !isChecked && !cancellation && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "activateCancellation" }, "Cancellation activated with authoritative snapshot.")}>Activate cancellation</button>}
+                  {actor.role === "USER" && cancellation?.status === "ACTIVE" && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "prepareCancellation" }, "Cancellation refund provenance and obligations prepared.")}>Prepare obligations</button>}
+                  {actor.role === "ADMIN" && cancellation?.status === "REFUNDING" && !waiverApproved && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "approveCancellationWaiver", reason: refundReason, evidence: refundEvidence }, "Cancellation waiver approval recorded.")}>Approve checked-in waiver</button>}
+                  {actor.role === "USER" && cancellation?.status === "REFUNDING" && waiverApproved && <button className={buttonClass} disabled={busy} onClick={() => void runAction({ action: "completeCancellation" }, "Cancellation resolved with exact synthetic evidence.")}>Complete and resolve</button>}
+                </div>
+              </article>;
+            })}
+          </div>}
+
+          {state.refundConsole && <div className="mt-5"><h3 className="font-semibold">Refund audit and rejection evidence</h3><div className="mt-2 overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs"><thead><tr className="border-b"><th className="p-2">Time</th><th className="p-2">Action</th><th className="p-2">Target</th><th className="p-2">Reason / rejection</th></tr></thead><tbody>{state.refundConsole.audit.map((entry) => <tr key={entry.id} className="border-b border-slate-100"><td className="p-2">{new Date(entry.createdAt).toLocaleString()}</td><td className="p-2 font-semibold">{entry.action}</td><td className="p-2">{entry.targetType}<br />{entry.targetId}</td><td className="p-2">{entry.reason ?? "—"}</td></tr>)}</tbody></table></div></div>}
+        </section>
       )}
 
       {actor && state && (

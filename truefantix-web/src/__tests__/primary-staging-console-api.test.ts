@@ -12,6 +12,11 @@ import {
 import { GET as getSession, POST as postSession } from "@/app/api/staging/primary/session/route";
 import { GET as getState } from "@/app/api/staging/primary/state/route";
 import { POST as postAction } from "@/app/api/staging/primary/actions/route";
+import {
+  getPrimaryStagingRefundState,
+  reseedPrimaryStagingRefundScenario,
+  runPrimaryStagingRefundAction,
+} from "@/lib/primary/staging-refund-console";
 
 jest.mock("@/lib/prisma", () => ({
   prisma: {
@@ -39,6 +44,14 @@ jest.mock("@/lib/primary/staging-console", () => ({
   verifyPrimaryStagingAccessToken: jest.fn(),
 }));
 
+jest.mock("@/lib/primary/staging-refund-console", () => ({
+  getPrimaryStagingRefundState: jest.fn(),
+  recordPrimaryStagingRefundRejection: jest.fn(),
+  reseedPrimaryStagingRefundScenario: jest.fn(),
+  runPrimaryStagingRefundAction: jest.fn(),
+  PrimaryStagingRefundError: jest.requireActual("@/lib/primary/staging-refund-console").PrimaryStagingRefundError,
+}));
+
 const mockedPrisma = prisma as unknown as {
   primaryOrganizer: { findMany: jest.Mock };
   primaryAuditEvent: { findMany: jest.Mock };
@@ -47,6 +60,9 @@ const mockedActor = requirePrimaryStagingActor as jest.MockedFunction<typeof req
 const mockedConsole = requirePrimaryStagingConsole as jest.MockedFunction<typeof requirePrimaryStagingConsole>;
 const mockedEnsureCsrfCookie = ensureCsrfCookie as jest.MockedFunction<typeof ensureCsrfCookie>;
 const mockedCsrf = enforceOriginAndCsrf as jest.MockedFunction<typeof enforceOriginAndCsrf>;
+const mockedRefundState = getPrimaryStagingRefundState as jest.MockedFunction<typeof getPrimaryStagingRefundState>;
+const mockedReseed = reseedPrimaryStagingRefundScenario as jest.MockedFunction<typeof reseedPrimaryStagingRefundScenario>;
+const mockedRefundAction = runPrimaryStagingRefundAction as jest.MockedFunction<typeof runPrimaryStagingRefundAction>;
 
 const adminActor = {
   id: "staging-admin",
@@ -67,6 +83,7 @@ describe("primary staging console API boundary", () => {
     mockedCsrf.mockResolvedValue({ ok: true } as never);
     mockedPrisma.primaryOrganizer.findMany.mockResolvedValue([]);
     mockedPrisma.primaryAuditEvent.findMany.mockResolvedValue([]);
+    mockedRefundState.mockResolvedValue(null);
     process.env.SESSION_SECRET = "staging-test-session-secret-longer-than-thirty-two-characters";
   });
 
@@ -125,6 +142,21 @@ describe("primary staging console API boundary", () => {
     expect(response.status).toBe(400);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toEqual({ ok: false, error: "UNKNOWN_ACTION" });
+  });
+
+  it("routes only authenticated synthetic refund commands to the staging engine", async () => {
+    mockedActor.mockResolvedValue(adminActor);
+    mockedReseed.mockResolvedValue({ generation: 4 });
+    mockedRefundAction.mockResolvedValue({ status: "REQUESTED" } as never);
+    const request = (action: string) => new Request("https://preview.example/api/staging/primary/actions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, reason: "Synthetic evidence" }) });
+
+    const reseed = await postAction(request("reseedRefundScenarios"));
+    const refund = await postAction(request("approveCheckedRefund"));
+
+    expect(reseed.status).toBe(200);
+    expect(refund.status).toBe(200);
+    expect(mockedReseed).toHaveBeenCalledWith(prisma, expect.objectContaining({ email: adminActor.email, role: "ADMIN" }));
+    expect(mockedRefundAction).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: adminActor.id }), "approveCheckedRefund", expect.objectContaining({ reason: "Synthetic evidence" }));
   });
 
   it("marks CSRF rejections from both state-changing routes as non-cacheable", async () => {

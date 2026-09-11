@@ -8,6 +8,7 @@ import {
   requirePrimaryStagingActor,
   STAGING_ORGANIZER_EMAIL,
 } from "@/lib/primary/staging-console";
+import { getPrimaryStagingRefundState } from "@/lib/primary/staging-refund-console";
 
 function unavailable() {
   return noStore(NextResponse.json({ ok: false, error: "NOT_FOUND" }, { status: 404 }));
@@ -112,7 +113,8 @@ export async function GET() {
       },
     });
 
-    return noStore(NextResponse.json({ ok: true, actor, organizers, audit }));
+    const refundConsole = await getPrimaryStagingRefundState(prisma);
+    return noStore(NextResponse.json({ ok: true, actor, organizers, audit, refundConsole }));
   } catch (error) {
     if (error instanceof PrimaryStagingConsoleUnavailableError) return unavailable();
     throw error;
