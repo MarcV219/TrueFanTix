@@ -198,7 +198,10 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 
 ### Refund, cancellation, and revocation design gate
 
-- The documentation-only design revision in `PRIMARY_TICKETING_PHASE1_TECHNICAL_DESIGN.md` now defines proposed refund/provider/cancellation/obligation/revocation states, exact ticket-component allocation, fail-closed credential handling, event-cancellation liabilities, inventory-return prerequisites, authorization/reason controls, privacy/database requirements, and a PostgreSQL verification matrix.
+- Refund Design Revision 1 establishes one authoritative local-commit-before-provider sequence for both payment and refund work. Refund financial states remain separate from the implemented `ISSUED | VOIDED | CHECKED_IN` admission lifecycle; eligible unscanned tickets become terminally `VOIDED` before any refund provider call and never resurrect after failure or ambiguity.
+- Provider-attempt design distinguishes proven `NOT_SENT`, `SEND_UNCERTAIN`, attached, terminal-failed, and succeeded outcomes. Uncertain/attached attempts must reconcile or retry with the identical provider identity; a new identity is forbidden until authenticated evidence proves the prior attempt incapable of later success.
+- Event cancellation uses a small atomic activation/freeze transaction followed by bounded idempotent batches keyed to an immutable cancellation generation. Admission fails closed from activation, and resolution requires exact count/amount coverage plus resolved obligations.
+- A future isolated migration must deterministically materialize existing synthetic orders' per-ticket allocations from immutable snapshots, prove exact reconciliation, and fail closed on incomplete/ambiguous history before refund commands can be enabled.
 - No refund schema, migration, service, Stripe refund call, ledger entry, route, UI, or runtime behavior is implemented by this revision.
 - Implementation remains blocked on merchant-of-record responsibility, refundable component/tax/processor-fee policy, checked-in refunds, cancellation/insurance obligations, reserves and negative balances, inventory resale, chargebacks, accounting/tax documentation, privacy retention, and operational reconciliation ownership.
 
