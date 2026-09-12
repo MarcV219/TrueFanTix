@@ -178,6 +178,15 @@ async function requireSyntheticTenantAccessProvenance(tx: Tx) {
   }
 }
 
+async function requireSyntheticNoDeliveryIntent(tx: Tx) {
+  const outboxCount = await tx.primaryOutboxMessage.count({
+    where: { organizerId: ORGANIZER_ID },
+  });
+  if (outboxCount !== 0) {
+    throw new PrimaryStagingRefundError("STAGING_REFUND_DELIVERY_INTENT_INVALID");
+  }
+}
+
 async function audit(tx: Tx, actor: Actor, eventId: string, action: string, targetType: string, targetId: string, reason: string, after?: Record<string, unknown>) {
   await tx.primaryAuditEvent.create({
     data: {
@@ -401,6 +410,7 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
       update: { role: "OWNER", status: "ACTIVE", acceptedAt: new Date(), revokedAt: null, invitedByUserId: organizerUser.id },
     });
     await requireSyntheticTenantAccessProvenance(tx);
+    await requireSyntheticNoDeliveryIntent(tx);
     const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-refund-g([0-9]+)-ordinary-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
     const generation = Number(rows[0]?.generation ?? 0) + 1;
     const ordinary = await seedOrder(tx, generation, "ordinary", buyer.id, actor.id);
@@ -523,6 +533,7 @@ async function requireScenarioTicketStates(
 
 async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids>) {
   await requireSyntheticTenantAccessProvenance(tx);
+  await requireSyntheticNoDeliveryIntent(tx);
   const expected = scenarioFinancials(scope.kind);
   const [buyer, organizerUser, admin, membership, organizer, event, ticketType, reservation, order, line, payment, components, allocations] = await Promise.all([
     tx.user.findFirst({
