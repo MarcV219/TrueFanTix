@@ -179,7 +179,7 @@ async function requireSyntheticTenantAccessProvenance(tx: Tx) {
 }
 
 async function requireSyntheticNoDeliveryIntent(tx: Tx) {
-  const [purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, cancellations, cancellationBatches, cancellationSnapshots, cancellationRefundLinks, obligations] = await Promise.all([
+  const [purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, cancellations, cancellationBatches, cancellationSnapshots, cancellationRefundLinks, obligations, checkedInApprovals] = await Promise.all([
     tx.primaryPurchaseAllocation.findMany({
       where: { order: { organizerId: ORGANIZER_ID } },
       select: { id: true },
@@ -224,6 +224,10 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
       where: { organizerId: ORGANIZER_ID },
       select: { id: true },
     }),
+    tx.primaryCheckedInRefundApproval.findMany({
+      where: { refund: { organizerId: ORGANIZER_ID } },
+      select: { id: true },
+    }),
   ]);
   const opaqueWorkflowAggregateIds = [
     ...purchaseAllocations.map((allocation) => allocation.id),
@@ -237,6 +241,7 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
     ...cancellationSnapshots.map((snapshot) => snapshot.id),
     ...cancellationRefundLinks.map((link) => link.id),
     ...obligations.map((obligation) => obligation.id),
+    ...checkedInApprovals.map((approval) => approval.id),
   ];
   const outboxCount = await tx.primaryOutboxMessage.count({
     where: {
