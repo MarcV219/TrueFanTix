@@ -14,6 +14,9 @@ import { createSessionForUser, deleteCurrentSession } from "@/lib/auth/session";
 import { GET as getSession, POST as postSession } from "@/app/api/staging/primary/session/route";
 import { GET as getState } from "@/app/api/staging/primary/state/route";
 import { POST as postAction } from "@/app/api/staging/primary/actions/route";
+import { PrimaryEventService } from "@/lib/primary/event-service";
+import { PrimaryOrganizerService } from "@/lib/primary/organizer-service";
+import { PrimaryTicketTypeService } from "@/lib/primary/ticket-type-service";
 import {
   getPrimaryStagingRefundState,
   PrimaryStagingRefundError,
@@ -57,6 +60,21 @@ jest.mock("@/lib/primary/staging-refund-console", () => ({
   PrimaryStagingRefundError: jest.requireActual("@/lib/primary/staging-refund-console").PrimaryStagingRefundError,
 }));
 
+jest.mock("@/lib/primary/organizer-service", () => ({
+  ...jest.requireActual("@/lib/primary/organizer-service"),
+  PrimaryOrganizerService: jest.fn(),
+}));
+
+jest.mock("@/lib/primary/event-service", () => ({
+  ...jest.requireActual("@/lib/primary/event-service"),
+  PrimaryEventService: jest.fn(),
+}));
+
+jest.mock("@/lib/primary/ticket-type-service", () => ({
+  ...jest.requireActual("@/lib/primary/ticket-type-service"),
+  PrimaryTicketTypeService: jest.fn(),
+}));
+
 const mockedPrisma = prisma as unknown as {
   primaryOrganizer: { findMany: jest.Mock };
   primaryAuditEvent: { findMany: jest.Mock };
@@ -72,6 +90,9 @@ const mockedRefundAction = runPrimaryStagingRefundAction as jest.MockedFunction<
 const mockedCreateSession = createSessionForUser as jest.MockedFunction<typeof createSessionForUser>;
 const mockedDeleteSession = deleteCurrentSession as jest.MockedFunction<typeof deleteCurrentSession>;
 const mockedEnsurePersona = ensurePrimaryStagingPersona as jest.MockedFunction<typeof ensurePrimaryStagingPersona>;
+const mockedOrganizerService = PrimaryOrganizerService as jest.MockedClass<typeof PrimaryOrganizerService>;
+const mockedEventService = PrimaryEventService as jest.MockedClass<typeof PrimaryEventService>;
+const mockedTicketTypeService = PrimaryTicketTypeService as jest.MockedClass<typeof PrimaryTicketTypeService>;
 
 const adminActor = {
   id: "staging-admin",
@@ -141,17 +162,22 @@ describe("primary staging console API boundary", () => {
     expect(mockedPrisma.primaryOrganizer.findMany).not.toHaveBeenCalled();
   });
 
-  it("marks rejected action requests as non-cacheable", async () => {
+  it("rejects an unknown envelope before invitation configuration or service construction", async () => {
     mockedActor.mockResolvedValue(adminActor);
+    delete process.env.PRIMARY_INVITATION_PEPPER;
+    delete process.env.SESSION_SECRET;
     const response = await postAction(new Request("https://preview.example/api/staging/primary/actions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "not-an-approved-action" }),
+      body: JSON.stringify({ action: "not-an-approved-action", providerAccountId: "acct_live_forbidden", organizerId: "caller-selected", amountMinor: 999999 }),
     }));
 
     expect(response.status).toBe(400);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toEqual({ ok: false, error: "UNKNOWN_ACTION" });
+    expect(mockedOrganizerService).not.toHaveBeenCalled();
+    expect(mockedEventService).not.toHaveBeenCalled();
+    expect(mockedTicketTypeService).not.toHaveBeenCalled();
   });
 
   it("routes only authenticated synthetic refund commands to the staging engine", async () => {
@@ -181,6 +207,30 @@ describe("primary staging console API boundary", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({ ok: false, error: "STAGING_REFUND_UNEXPECTED_INPUT" });
     expect(mockedReseed).not.toHaveBeenCalled();
+    expect(mockedEnsurePersona).not.toHaveBeenCalled();
+    expect(mockedRecordRefundRejection).not.toHaveBeenCalled();
+    expect(mockedOrganizerService).not.toHaveBeenCalled();
+    expect(mockedEventService).not.toHaveBeenCalled();
+    expect(mockedTicketTypeService).not.toHaveBeenCalled();
+  });
+
+  it("rejects unexpected refund command input before unrelated service construction", async () => {
+    mockedActor.mockResolvedValue(adminActor);
+    const response = await postAction(new Request("https://preview.example/api/staging/primary/actions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "refundOrdinary", providerAccountId: "acct_live_forbidden", amountMinor: 999999 }),
+    }));
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({ ok: false, error: "STAGING_REFUND_UNEXPECTED_INPUT" });
+    expect(mockedRefundAction).not.toHaveBeenCalled();
+    expect(mockedRecordRefundRejection).not.toHaveBeenCalled();
+    expect(mockedEnsurePersona).not.toHaveBeenCalled();
+    expect(mockedOrganizerService).not.toHaveBeenCalled();
+    expect(mockedEventService).not.toHaveBeenCalled();
+    expect(mockedTicketTypeService).not.toHaveBeenCalled();
   });
 
   it.each([

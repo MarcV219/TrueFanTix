@@ -60,6 +60,12 @@ const ACTION_INPUTS: Record<string, ReadonlySet<string>> = {
   ]),
 };
 
+const REFUND_ACTIONS = new Set([
+  "reseedRefundScenarios", "refundOrdinary", "requestCheckedRefund", "approveCheckedRefund",
+  "completeCheckedRefund", "activateCancellation", "prepareCancellation",
+  "approveCancellationWaiver", "completeCancellation",
+]);
+
 function assertActionInput(action: string, input: JsonRecord) {
   const allowed = ACTION_INPUTS[action];
   if (allowed && Object.keys(input).some((key) => !allowed.has(key))) {
@@ -156,28 +162,32 @@ export async function POST(req: Request) {
     if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "INVALID_REQUEST");
     const action = text(body, "action");
     requestedAction = action;
-    refundActor = { id: actorUser.id, email: actorUser.email, role: actorUser.role };
-    assertActionInput(action, body);
+    const isDomainAction = Object.prototype.hasOwnProperty.call(ACTION_INPUTS, action);
+    const isRefundAction = REFUND_ACTIONS.has(action);
+    if (!isDomainAction && !isRefundAction) return jsonError(400, "UNKNOWN_ACTION");
+    if (isDomainAction) assertActionInput(action, body);
+    if (isRefundAction) assertPrimaryStagingRefundActionInput(action, body);
+
+    if (isRefundAction) {
+      refundActor = { id: actorUser.id, email: actorUser.email, role: actorUser.role };
+    }
+    if (action === "reseedRefundScenarios") {
+      await ensurePrimaryStagingPersona("organizer");
+      const result = await reseedPrimaryStagingRefundScenario(prisma, refundActor!);
+      return noStore(NextResponse.json({ ok: true, result }));
+    }
+    if (isRefundAction) {
+      const result = await runPrimaryStagingRefundAction(prisma, refundActor!, action, body);
+      return noStore(NextResponse.json({ ok: true, result }));
+    }
+
     const actor = { id: actorUser.id, role: actorUser.role };
     const requestId = `staging-console:${randomUUID()}`;
-    const organizerService = new PrimaryOrganizerService(prisma, capability, invitationPepper());
-    const eventService = new PrimaryEventService(prisma, capability);
-    const ticketTypeService = new PrimaryTicketTypeService(prisma, capability);
     let result: unknown;
 
-    if (action === "reseedRefundScenarios") {
-      assertPrimaryStagingRefundActionInput(action, body);
-      await ensurePrimaryStagingPersona("organizer");
-      result = await reseedPrimaryStagingRefundScenario(prisma, refundActor);
-      return noStore(NextResponse.json({ ok: true, result }));
-    }
-    if (["refundOrdinary", "requestCheckedRefund", "approveCheckedRefund", "completeCheckedRefund", "activateCancellation", "prepareCancellation", "approveCancellationWaiver", "completeCancellation"].includes(action)) {
-      result = await runPrimaryStagingRefundAction(prisma, refundActor, action, body);
-      return noStore(NextResponse.json({ ok: true, result }));
-    }
-
     switch (action) {
-      case "createOrganizer":
+      case "createOrganizer": {
+        const organizerService = new PrimaryOrganizerService(prisma, capability, invitationPepper());
         result = await organizerService.createDraft({
           actor,
           requestId,
@@ -194,10 +204,14 @@ export async function POST(req: Request) {
           website: optionalText(body, "website"),
         });
         break;
-      case "submitOrganizer":
+      }
+      case "submitOrganizer": {
+        const organizerService = new PrimaryOrganizerService(prisma, capability, invitationPepper());
         result = await organizerService.submit({ actor, organizerId: text(body, "organizerId"), requestId });
         break;
+      }
       case "reviewOrganizer": {
+        const organizerService = new PrimaryOrganizerService(prisma, capability, invitationPepper());
         const requestedStatus = text(body, "toStatus");
         const reviewStatuses = ["UNDER_REVIEW", "APPROVED", "REJECTED", "SUSPENDED", "DRAFT"] as const;
         if (!reviewStatuses.some((status) => status === requestedStatus)) {
@@ -213,7 +227,8 @@ export async function POST(req: Request) {
         });
         break;
       }
-      case "createEvent":
+      case "createEvent": {
+        const eventService = new PrimaryEventService(prisma, capability);
         result = await eventService.createDraft({
           actor,
           organizerId: text(body, "organizerId"),
@@ -221,7 +236,9 @@ export async function POST(req: Request) {
           fields: eventFields(body),
         });
         break;
-      case "editEvent":
+      }
+      case "editEvent": {
+        const eventService = new PrimaryEventService(prisma, capability);
         result = await eventService.editDraft({
           actor,
           organizerId: text(body, "organizerId"),
@@ -230,7 +247,9 @@ export async function POST(req: Request) {
           fields: eventFields(body),
         });
         break;
-      case "submitEvent":
+      }
+      case "submitEvent": {
+        const eventService = new PrimaryEventService(prisma, capability);
         result = await eventService.submit({
           actor,
           organizerId: text(body, "organizerId"),
@@ -238,7 +257,9 @@ export async function POST(req: Request) {
           requestId,
         });
         break;
+      }
       case "reviewEvent": {
+        const eventService = new PrimaryEventService(prisma, capability);
         const requestedStatus = text(body, "toStatus");
         const reviewStatuses = ["UNDER_REVIEW", "APPROVED", "REJECTED"] as const;
         if (!reviewStatuses.some((status) => status === requestedStatus)) {
@@ -255,7 +276,8 @@ export async function POST(req: Request) {
         });
         break;
       }
-      case "createTicketType":
+      case "createTicketType": {
+        const ticketTypeService = new PrimaryTicketTypeService(prisma, capability);
         result = await ticketTypeService.create({
           actor,
           organizerId: text(body, "organizerId"),
@@ -264,7 +286,9 @@ export async function POST(req: Request) {
           fields: ticketTypeFields(body),
         });
         break;
-      case "updateTicketType":
+      }
+      case "updateTicketType": {
+        const ticketTypeService = new PrimaryTicketTypeService(prisma, capability);
         result = await ticketTypeService.update({
           actor,
           organizerId: text(body, "organizerId"),
@@ -274,6 +298,7 @@ export async function POST(req: Request) {
           fields: ticketTypeFields(body),
         });
         break;
+      }
       default:
         return jsonError(400, "UNKNOWN_ACTION");
     }
