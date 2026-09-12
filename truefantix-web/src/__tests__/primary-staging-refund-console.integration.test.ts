@@ -351,6 +351,45 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryTicketType.update({ where: { id: ticketTypeId }, data: { status: "ACTIVE" } });
   });
 
+  it("rejects appended payment reconciliation evidence outside the synthetic fixture", async () => {
+    const providerEventSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const providerEventId = `staging-refund-g${providerEventSeed.generation}-ordinary-event`;
+    const providerEventPayment = await db.primaryPaymentAttempt.findFirstOrThrow({ where: { eventId: providerEventId } });
+    await db.primaryPaymentProviderEvent.create({ data: {
+      providerEventId: `forged-payment-event-${providerEventSeed.generation}`,
+      attemptId: providerEventPayment.id,
+      orderId: providerEventPayment.orderId,
+      organizerId: providerEventPayment.organizerId,
+      eventId: providerEventPayment.eventId,
+      buyerUserId: providerEventPayment.buyerUserId,
+      reservationId: providerEventPayment.reservationId,
+      eventType: "payment_intent.succeeded",
+      payloadDigest: "e".repeat(64),
+      providerCreatedAt: now,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: providerEventSeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId: providerEventId } })).resolves.toBe(0);
+
+    const exceptionSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const exceptionEventId = `staging-refund-g${exceptionSeed.generation}-checked-event`;
+    const exceptionPayment = await db.primaryPaymentAttempt.findFirstOrThrow({ where: { eventId: exceptionEventId } });
+    await db.primaryPaymentException.create({ data: {
+      attemptId: exceptionPayment.id,
+      kind: "PROVIDER_MISMATCH",
+      providerEventId: `forged-payment-exception-${exceptionSeed.generation}`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: exceptionSeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId: exceptionEventId } })).resolves.toBe(0);
+  });
+
   it("revalidates and safely restores the reserved synthetic buyer", async () => {
     const buyerSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     const buyer = await db.user.findUniqueOrThrow({ where: { email: "refund-buyer@primary-staging.example.invalid" } });

@@ -550,7 +550,11 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         providerCreatedAt: { not: null },
         terminalAt: { not: null },
       },
-      select: { id: true, buyerUserId: true },
+      select: {
+        id: true,
+        buyerUserId: true,
+        _count: { select: { providerEvents: true, exceptions: true } },
+      },
     }),
     tx.primaryOrderPriceComponent.findMany({
       where: { orderId: scope.orderId },
@@ -647,6 +651,8 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
     || reservation.buyerUserId !== buyer.id
     || order.buyerUserId !== buyer.id
     || payment.buyerUserId !== buyer.id
+    || payment._count.providerEvents !== 0
+    || payment._count.exceptions !== 0
     || JSON.stringify(components) !== JSON.stringify(expectedComponents)
     || !allocationsAreExact
   ) {
