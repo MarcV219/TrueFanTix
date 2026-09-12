@@ -272,4 +272,29 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       where: { eventId: `staging-refund-g${seeded.generation}-ordinary-event` },
     })).resolves.toBe(0);
   });
+
+  it("fails closed when deterministic admission state drifts before a command", async () => {
+    const ordinarySeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const ordinaryTicketId = `staging-refund-g${ordinarySeed.generation}-ordinary-ticket-1`;
+    await db.primaryAdmissionTicket.update({ where: { id: ordinaryTicketId }, data: { status: "CHECKED_IN" } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "ORDINARY_REFUND_REQUIRES_UNSCANNED_TICKET",
+      generation: ordinarySeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId: `staging-refund-g${ordinarySeed.generation}-ordinary-event` } })).resolves.toBe(0);
+
+    const cancellationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationTicketId = `staging-refund-g${cancellationSeed.generation}-cancellation-ticket-1`;
+    await db.primaryAdmissionTicket.update({
+      where: { id: cancellationTicketId },
+      data: { status: "VOIDED", voidedAt: now, voidReason: "Adversarial pre-command state drift." },
+    });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {})).rejects.toMatchObject({
+      code: "CANCELLATION_SCENARIO_STATE_INVALID",
+      generation: cancellationSeed.generation,
+    });
+    await expect(db.primaryEventCancellation.count({ where: { eventId: `staging-refund-g${cancellationSeed.generation}-cancellation-event` } })).resolves.toBe(0);
+  });
 });

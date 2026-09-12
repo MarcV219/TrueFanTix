@@ -223,6 +223,27 @@ async function latestGeneration(tx: Tx) {
   return generation;
 }
 
+async function requireScenarioTicketStates(
+  tx: Tx,
+  scope: ReturnType<typeof ids>,
+  expected: Array<{ unit: number; status: "ISSUED" | "CHECKED_IN" }>,
+  code: string,
+) {
+  const tickets = await tx.primaryAdmissionTicket.findMany({
+    where: { organizerId: ORGANIZER_ID, eventId: scope.eventId, orderId: scope.orderId },
+    select: { id: true, unitNumber: true, status: true },
+  });
+  if (
+    tickets.length !== expected.length ||
+    expected.some(({ unit, status }) => {
+      const ticket = tickets.find((candidate) => candidate.unitNumber === unit);
+      return ticket?.id !== `${scope.base}-ticket-${unit}` || ticket.status !== status;
+    })
+  ) {
+    throw new PrimaryStagingRefundError(code);
+  }
+}
+
 async function refundParent(tx: Tx, actor: Actor, scope: ReturnType<typeof ids>, suffix: string, ticketIds: string[]) {
   const existing = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:${suffix}` } });
   if (existing) return existing;
@@ -283,6 +304,9 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       case "refundOrdinary": {
         await requireOrganizer(tx, actor);
         const scope = ids(generation, "ordinary"); const ticketId = `${scope.base}-ticket-1`;
+        const existing = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:ordinary` } });
+        if (existing && existing.status !== "REQUESTED") throw new PrimaryStagingRefundError("ORDINARY_REFUND_ALREADY_COMPLETED");
+        await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "ISSUED" }], "ORDINARY_REFUND_REQUIRES_UNSCANNED_TICKET");
         const refund = await refundParent(tx, actor, scope, "ordinary", [ticketId]);
         if (refund.status !== "REQUESTED") throw new PrimaryStagingRefundError("ORDINARY_REFUND_ALREADY_COMPLETED");
         await materializeRefundItems(tx, refund.id, [ticketId]); await revoke(tx, actor, scope, ticketId, "REFUND", refund.id);
@@ -294,6 +318,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         await requireOrganizer(tx, actor); const scope = ids(generation, "checked"); const ticketId = `${scope.base}-ticket-1`;
         const existing = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:checked` }, select: { id: true } });
         if (existing) throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_REQUESTED");
+        await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "CHECKED_IN" }], "CHECKED_REFUND_REQUIRES_CHECKED_IN_TICKET");
         const refund = await refundParent(tx, actor, scope, "checked", [ticketId]);
         await audit(tx, actor, scope.eventId, "STAGING_CHECKED_REFUND_REQUESTED", "PrimaryRefund", refund.id, "Checked-in refund awaits scoped supervisor evidence.", { status: refund.status });
         return refund;
@@ -313,6 +338,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         if (!refund) throw new PrimaryStagingRefundError("CHECKED_REFUND_REQUEST_REQUIRED");
         if (refund.status !== "REQUESTED") throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_COMPLETED");
         if (refund.checkedInApprovals.length) throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_APPROVED");
+        await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "CHECKED_IN" }], "CHECKED_REFUND_REQUIRES_CHECKED_IN_TICKET");
         await tx.primaryCheckedInRefundApproval.create({ data: { refundId: refund.id, admissionTicketId: ticketId, approvedByUserId: actor.id, evidenceDigest: digest(evidence), reason, fraudReview, costBearer } });
         await materializeRefundItems(tx, refund.id, [ticketId]);
         await audit(tx, actor, scope.eventId, "STAGING_CHECKED_REFUND_APPROVED", "PrimaryRefund", refund.id, reason, { status: refund.status, costBearer, fraudReview });
@@ -327,6 +353,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         if (!refund) throw new PrimaryStagingRefundError("CHECKED_REFUND_REQUEST_REQUIRED");
         if (refund.status !== "REQUESTED") throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_COMPLETED");
         if (!refund.checkedInApprovals.length) throw new PrimaryStagingRefundError("CHECKED_REFUND_APPROVAL_REQUIRED");
+        await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "CHECKED_IN" }], "CHECKED_REFUND_REQUIRES_CHECKED_IN_TICKET");
         await revoke(tx, actor, scope, ticketId, "REFUND", refund.id);
         const completed = await completeSyntheticRefund(tx, actor, refund.id, `${scope.base}:checked`);
         await audit(tx, actor, scope.eventId, "STAGING_CHECKED_REFUND_COMPLETED", "PrimaryRefund", completed.id, "Approved checked-in synthetic refund completed; admission remains checked in.", { status: completed.status });
@@ -336,6 +363,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         await requireOrganizer(tx, actor); const scope = ids(generation, "cancellation");
         const existing = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` }, select: { id: true } });
         if (existing) throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_ACTIVATED");
+        await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "ISSUED" }, { unit: 2, status: "CHECKED_IN" }], "CANCELLATION_SCENARIO_STATE_INVALID");
         const cancellation = await tx.primaryEventCancellation.create({ data: { organizerId: ORGANIZER_ID, eventId: scope.eventId, generation: 1, policyVersionId: POLICY_ID, requestedByUserId: actor.id, requestKey: `${scope.base}:cancellation`, commandDigest: digest([scope.base, "cancellation"]), reason: "Synthetic full-event cancellation.", snapshotMaxTicketId: "derived-on-activation", expectedTicketCount: 0, expectedAmountMinor: 0 } });
         const active = await tx.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "ACTIVE", activatedAt: new Date() } });
         await audit(tx, actor, scope.eventId, "STAGING_CANCELLATION_ACTIVATED", "PrimaryEventCancellation", active.id, "Authoritative ticket snapshot activated.", { status: active.status, expectedTicketCount: active.expectedTicketCount, expectedAmountMinor: active.expectedAmountMinor });
@@ -346,6 +374,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         const cancellation = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` } });
         if (!cancellation) throw new PrimaryStagingRefundError("CANCELLATION_ACTIVATION_REQUIRED");
         if (cancellation.status !== "ACTIVE") throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_PREPARED");
+        await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "ISSUED" }, { unit: 2, status: "CHECKED_IN" }], "CANCELLATION_SCENARIO_STATE_INVALID");
         const refundableTicket = `${scope.base}-ticket-1`; const waivedTicket = `${scope.base}-ticket-2`;
         const refund = await refundParent(tx, actor, scope, "cancellation", [refundableTicket]);
         await tx.primaryCancellationRefundLink.create({ data: { cancellationId: cancellation.id, refundId: refund.id } });
@@ -383,6 +412,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         if (!cancellation) throw new PrimaryStagingRefundError("CANCELLATION_ACTIVATION_REQUIRED");
         if (cancellation.status === "ACTIVE") throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
         if (cancellation.status === "RESOLVED") throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_RESOLVED");
+        await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "ISSUED" }, { unit: 2, status: "CHECKED_IN" }], "CANCELLATION_SCENARIO_STATE_INVALID");
         const refund = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:cancellation` }, include: { items: true } });
         const refundObligation = await tx.primaryRefundObligation.findUnique({ where: { idempotencyKey: `${scope.base}:obligation:refund` } });
         const waiverObligation = await tx.primaryRefundObligation.findUnique({ where: { idempotencyKey: `${scope.base}:obligation:waiver` } });

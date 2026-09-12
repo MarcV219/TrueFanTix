@@ -279,6 +279,8 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 
 - Allocation-evidence hardening exposes each ticket's immutable component allocation, refundable decision, liability owner, algorithm version, and allocation-set digest in the staging scenario cards. PostgreSQL coverage proves every deterministic seeded ticket reconciles its expected face-value and fee components to the exact per-ticket total.
 - Verification on a fresh disposable PostgreSQL 16 database deployed all 55 migrations with current status and passed 67 suites / 459 tests with integration enabled. Prisma format/validation/generation/status, TypeScript, focused and full lint with no errors, isolated-preview production build, and diff checks passed.
+- Admission-state hardening revalidates the exact deterministic ticket set and expected `ISSUED`/`CHECKED_IN` state before refund and cancellation commands. A scanned or otherwise drifted ordinary ticket cannot be relabeled as the unscanned scenario, and a voided or incomplete cancellation fixture cannot acquire an authoritative cancellation snapshot. PostgreSQL adversarial coverage proves both failures roll back without refund or cancellation parents.
+- Verification on a fresh disposable PostgreSQL 16 database deployed all 55 migrations with current status and passed 67 suites / 460 tests with integration enabled. Prisma format/validation/generation/status, TypeScript, focused and full lint with no errors, isolated-preview production build, and diff checks passed.
 
 ### Refund, cancellation, and revocation design gate
 
