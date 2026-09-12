@@ -5,9 +5,19 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
+import {
+  isPrimaryStagingSyntheticEmail,
+  isPrimaryStagingSyntheticPhone,
+} from "@/lib/primary/staging-console";
 
 function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
+}
+
+function reservedIdentityError(error: "PROFILE_LOCKED" | "PHONE_IN_USE", message: string) {
+  const response = jsonError(error === "PROFILE_LOCKED" ? 403 : 409, error, message);
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
 }
 
 function normalizePhone(phone: string) {
@@ -30,6 +40,9 @@ export async function PATCH(req: Request) {
 
     if (!user) return jsonError(401, "UNAUTHORIZED", "Please log in.");
     if (user.isBanned) return jsonError(403, "BANNED", "This account is restricted.");
+    if (isPrimaryStagingSyntheticEmail(user.email)) {
+      return reservedIdentityError("PROFILE_LOCKED", "This account profile is managed by the staging console.");
+    }
 
     const validation = await validateRequest(schemas.accountProfileUpdate)(req);
     if (!validation.success) return validation.response;
@@ -46,6 +59,9 @@ export async function PATCH(req: Request) {
       const phone = normalizePhone(body.phone);
       if (!/^\+[1-9]\d{1,14}$/.test(phone)) {
         return jsonError(400, "PHONE_INVALID", "Phone must include country code, for example +17057954131.");
+      }
+      if (isPrimaryStagingSyntheticPhone(phone)) {
+        return reservedIdentityError("PHONE_IN_USE", "That phone number is already in use.");
       }
       if (phone !== user.phone) {
         const existing = await prisma.user.findUnique({ where: { phone }, select: { id: true } });
