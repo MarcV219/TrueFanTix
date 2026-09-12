@@ -12,6 +12,7 @@ describe("primary ticketing health route", () => {
     process.env = { ...originalEnv, PRIMARY_TICKETING_ENABLED: "false" };
     const response = await GET();
     expect(response.status).toBe(404);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toEqual({ ok: false, error: "NOT_FOUND" });
   });
 
@@ -19,5 +20,29 @@ describe("primary ticketing health route", () => {
     process.env = { ...originalEnv, PRIMARY_TICKETING_ENABLED: "true", NODE_ENV: "test" };
     const response = await GET();
     expect(response.status).toBe(404);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("keeps isolated-preview health state private and non-cacheable", async () => {
+    const databaseUrl = "postgresql://synthetic:synthetic@127.0.0.1:5432/primary_ticketing_preview";
+    process.env = {
+      ...originalEnv,
+      NODE_ENV: "production",
+      VERCEL_ENV: "preview",
+      PRIMARY_TICKETING_ENABLED: "true",
+      PRIMARY_TICKETING_ENVIRONMENT_ID: "isolated-preview",
+      PRIMARY_TICKETING_DEPLOYMENT_ID: "isolated-preview",
+      PRIMARY_TICKETING_DATABASE_URL: databaseUrl,
+      DATABASE_URL: databaseUrl,
+    };
+
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      feature: "primary-ticketing",
+      environment: "isolated-preview",
+    });
   });
 });
