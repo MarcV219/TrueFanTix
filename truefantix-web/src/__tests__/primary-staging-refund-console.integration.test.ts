@@ -939,6 +939,47 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque obligation waiver approval", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationBase = `staging-refund-g${seeded.generation}-cancellation`;
+    await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
+    await runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", {
+      reason: "Synthetic waiver approval",
+      evidence: "synthetic-waiver-evidence",
+    });
+    const approval = await db.primaryObligationWaiverApproval.findFirstOrThrow({
+      where: { obligation: { idempotencyKey: `${cancellationBase}:obligation:waiver` } },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-waiver-approval-delivery",
+      aggregateType: "PrimaryObligationWaiverApproval",
+      aggregateId: approval.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${cancellationBase}:unexpected-unscoped-waiver-approval-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryRefundProviderAttempt.count({
+      where: { refund: { requestKey: `${cancellationBase}:refund:cancellation` } },
+    })).resolves.toBe(0);
+    await expect(db.primaryAdmissionRevocation.count({
+      where: { cancellation: { requestKey: `${cancellationBase}:cancellation` } },
+    })).resolves.toBe(0);
+    await expect(db.primaryEventCancellation.findUnique({
+      where: { requestKey: `${cancellationBase}:cancellation` },
+      select: { status: true },
+    })).resolves.toEqual({ status: "REFUNDING" });
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects delivery intent scoped only by an opaque synthetic refund provider attempt", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const checkedBase = `staging-refund-g${seeded.generation}-checked`;
