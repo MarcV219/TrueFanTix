@@ -290,15 +290,97 @@ async function requireScenarioTicketStates(
   expected: Array<{ unit: number; status: "ISSUED" | "CHECKED_IN" }>,
   code: string,
 ) {
+  const admin = await tx.user.findUnique({
+    where: { email: STAGING_ADMIN_EMAIL },
+    select: { id: true },
+  });
   const tickets = await tx.primaryAdmissionTicket.findMany({
     where: { organizerId: ORGANIZER_ID, eventId: scope.eventId, orderId: scope.orderId },
-    select: { id: true, unitNumber: true, status: true },
+    select: {
+      id: true,
+      organizerId: true,
+      eventId: true,
+      reservationId: true,
+      orderId: true,
+      orderLineId: true,
+      ticketTypeId: true,
+      unitNumber: true,
+      issuanceIdempotencyKey: true,
+      status: true,
+      issuedAt: true,
+      voidedAt: true,
+      voidReason: true,
+      credential: {
+        select: {
+          id: true,
+          admissionTicketId: true,
+          eventId: true,
+          payloadVersion: true,
+          keyId: true,
+          payloadDigest: true,
+          issuedAt: true,
+        },
+      },
+      scans: {
+        where: { result: { in: ["ACCEPTED", "DUPLICATE"] } },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          requestId: true,
+          commandDigest: true,
+          organizerId: true,
+          eventId: true,
+          admissionTicketId: true,
+          credentialId: true,
+          operatorUserId: true,
+          result: true,
+          deviceId: true,
+          scannedAt: true,
+        },
+      },
+    },
   });
   if (
+    !admin ||
     tickets.length !== expected.length ||
     expected.some(({ unit, status }) => {
       const ticket = tickets.find((candidate) => candidate.unitNumber === unit);
-      return ticket?.id !== `${scope.base}-ticket-${unit}` || ticket.status !== status;
+      const ticketId = `${scope.base}-ticket-${unit}`;
+      const credentialId = `${scope.base}-credential-${unit}`;
+      const scan = ticket?.scans[0];
+      const expectsAcceptedScan = status === "CHECKED_IN";
+      return ticket?.id !== ticketId
+        || ticket.organizerId !== ORGANIZER_ID
+        || ticket.eventId !== scope.eventId
+        || ticket.reservationId !== scope.reservationId
+        || ticket.orderId !== scope.orderId
+        || ticket.orderLineId !== scope.lineId
+        || ticket.ticketTypeId !== scope.ticketTypeId
+        || ticket.issuanceIdempotencyKey !== `${scope.base}:issue:${unit}`
+        || ticket.status !== status
+        || ticket.voidedAt !== null
+        || ticket.voidReason !== null
+        || ticket.credential?.id !== credentialId
+        || ticket.credential.admissionTicketId !== ticketId
+        || ticket.credential.eventId !== scope.eventId
+        || ticket.credential.payloadVersion !== 1
+        || ticket.credential.keyId !== "synthetic-staging-only"
+        || ticket.credential.payloadDigest !== digest([scope.base, unit])
+        || ticket.credential.issuedAt.getTime() !== ticket.issuedAt.getTime()
+        || ticket.scans.length !== (expectsAcceptedScan ? 1 : 0)
+        || (expectsAcceptedScan && (
+          scan?.id !== `${scope.base}-scan-${unit}`
+          || scan.requestId !== `${scope.base}:scan:${unit}`
+          || scan.commandDigest !== digest([scope.base, "scan", unit])
+          || scan.organizerId !== ORGANIZER_ID
+          || scan.eventId !== scope.eventId
+          || scan.admissionTicketId !== ticketId
+          || scan.credentialId !== credentialId
+          || scan.operatorUserId !== admin.id
+          || scan.result !== "ACCEPTED"
+          || scan.deviceId !== "synthetic-console"
+          || scan.scannedAt.getTime() !== ticket.issuedAt.getTime()
+        ));
     })
   ) {
     throw new PrimaryStagingRefundError(code);

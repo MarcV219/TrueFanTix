@@ -378,4 +378,30 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       status: "SUCCEEDED",
     });
   });
+
+  it("fails closed when deterministic accepted-scan evidence drifts", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const checkedTicketId = `staging-refund-g${seeded.generation}-checked-ticket-1`;
+    const checkedCredentialId = `staging-refund-g${seeded.generation}-checked-credential-1`;
+    await db.primaryAdmissionScan.create({ data: {
+      requestId: `staging-refund-g${seeded.generation}-checked:adversarial-duplicate`,
+      commandDigest: "a".repeat(64),
+      organizerId: "primary-staging-refund-organizer",
+      eventId: `staging-refund-g${seeded.generation}-checked-event`,
+      admissionTicketId: checkedTicketId,
+      credentialId: checkedCredentialId,
+      operatorUserId: admin.id,
+      result: "DUPLICATE",
+      deviceId: "synthetic-console",
+      scannedAt: now,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {})).rejects.toMatchObject({
+      code: "CHECKED_REFUND_REQUIRES_CHECKED_IN_TICKET",
+      generation: seeded.generation,
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `staging-refund-g${seeded.generation}-checked-event` },
+    })).resolves.toBe(0);
+  });
 });
