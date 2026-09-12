@@ -115,4 +115,28 @@ describe("primary staging organizer browser flow", () => {
       body: expect.stringContaining('"action":"approveCheckedRefund"'),
     })]);
   });
+
+  it("renders durable approval, provider, waiver, and revocation evidence", async () => {
+    const evidenceDigest = "a".repeat(64);
+    const waiverDigest = "b".repeat(64);
+    const state = { ok: true, actor: admin, organizers: [], audit: [], refundConsole: { generation: 2, organizerId: "refund-organizer", audit: [], events: [{
+      id: "staging-refund-g2-cancellation-event", title: "Synthetic Refund Console / Event cancellation and obligations", status: "APPROVED",
+      orders: [{ id: "cancellation-order", grossTotalMinor: 4200, currency: "CAD", admissionTickets: [{ id: "ticket-1", unitNumber: 1, status: "VOIDED", voidReason: "Synthetic cancellation", revocations: [{ cause: "EVENT_CANCELLATION", reason: "Synthetic cancellation evidence", refundId: "refund-1", cancellationId: "cancellation-1" }], refundItems: [{ refundId: "refund-1", requestedMinor: 2100, refund: { status: "SUCCEEDED", reason: "Synthetic", attempts: [{ status: "SUCCEEDED", providerRefundId: "synthetic-refund-1" }], checkedInApprovals: [{ reason: "Scoped supervisor approval", fraudReview: "No indicators", costBearer: "ORGANIZER", evidenceDigest, approver: { email: admin.email } }] } }] }] }],
+      cancellations: [{ id: "cancellation-1", status: "RESOLVED", expectedTicketCount: 2, expectedAmountMinor: 4200, processedTicketCount: 2, processedAmountMinor: 4200, snapshotTickets: [], refundLinks: [{ refundId: "refund-1" }], batches: [{ processedTicketCount: 2, processedAmountMinor: 4200, firstTicketId: "ticket-1", lastTicketId: "ticket-2" }], obligations: [{ id: "obligation-1", status: "WAIVED_WITH_APPROVAL", cause: "CHECKED_IN_CANCELLATION_WAIVER", amountMinor: 2100, currency: "CAD", refundId: null, cancellationClaims: [], waiverApproval: { reason: "Attendee attended event", evidenceDigest: waiverDigest, approver: { email: admin.email } } }] }],
+    }] } };
+    jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(response({ ok: true, actor: admin }))
+      .mockResolvedValueOnce(response(state));
+
+    render(<PrimaryStagingConsole />);
+
+    const scenario = (await screen.findByRole("heading", { name: "Event cancellation and obligations" })).closest("article");
+    expect(scenario).toHaveTextContent(`Supervisor: ${admin.email} · ORGANIZER`);
+    expect(scenario).toHaveTextContent("Fraud review: No indicators");
+    expect(scenario).toHaveTextContent("Synthetic provider evidence: SUCCEEDED");
+    expect(scenario).toHaveTextContent("Revocation: EVENT_CANCELLATION");
+    expect(scenario).toHaveTextContent("Waiver: admin@primary-staging.example.invalid · Attendee attended event");
+    expect(scenario).toHaveTextContent(evidenceDigest);
+    expect(scenario).toHaveTextContent(waiverDigest);
+  });
 });
