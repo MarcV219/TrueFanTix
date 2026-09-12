@@ -10,6 +10,11 @@ import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
 
 const SALT_ROUNDS = 12;
 
+function privateNoStore<T extends NextResponse>(response: T) {
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
 function getResetSecret(): string {
   const secret = process.env.PASSWORD_RESET_SECRET?.trim();
   if (!secret || secret.length < 32 || secret === "your-reset-secret") {
@@ -57,10 +62,10 @@ export async function POST(req: Request) {
 
     // Always return success to prevent email enumeration
     if (!user || isPrimaryStagingSyntheticEmail(user.email)) {
-      return NextResponse.json(
+      return privateNoStore(NextResponse.json(
         { ok: true, message: "If an account exists with this email, you will receive a password reset link." },
         { status: 200 }
-      );
+      ));
     }
 
     // Generate reset token

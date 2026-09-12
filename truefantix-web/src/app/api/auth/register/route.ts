@@ -32,6 +32,12 @@ function normalizePhone(phone: string) {
   return s;
 }
 
+function reservedIdentityConflict(error: "EMAIL_IN_USE" | "PHONE_IN_USE", message: string) {
+  const response = NextResponse.json({ ok: false, error, message }, { status: 409 });
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
 export async function POST(req: Request) {
   const rlResult = await applyRateLimit(req, "auth:register");
   if (!rlResult.ok) return rlResult.response;
@@ -61,16 +67,10 @@ export async function POST(req: Request) {
     const hasAttribution = !!(attribution.source || attribution.referrerHost || attribution.campaign);
 
     if (isPrimaryStagingSyntheticEmail(emailNorm)) {
-      return NextResponse.json(
-        { ok: false, error: "EMAIL_IN_USE", message: "That email is already in use. Log in instead." },
-        { status: 409 }
-      );
+      return reservedIdentityConflict("EMAIL_IN_USE", "That email is already in use. Log in instead.");
     }
     if (isPrimaryStagingSyntheticPhone(phoneNorm)) {
-      return NextResponse.json(
-        { ok: false, error: "PHONE_IN_USE", message: "That phone number is already in use. Log in instead." },
-        { status: 409 }
-      );
+      return reservedIdentityConflict("PHONE_IN_USE", "That phone number is already in use. Log in instead.");
     }
 
     // --- Uniqueness checks ---

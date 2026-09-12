@@ -12,10 +12,12 @@ import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
 
 function authError() {
   // Deliberately vague to avoid leaking which field was wrong
-  return NextResponse.json(
+  const response = NextResponse.json(
     { error: "INVALID_CREDENTIALS", message: "Invalid email/phone or password." },
     { status: 401 }
   );
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
 }
 
 function normalizeEmail(email: string) {
