@@ -555,7 +555,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         approvedAt: { not: null },
         approvedBy: { is: { email: STAGING_ADMIN_EMAIL } },
       },
-      select: { id: true },
+      select: { id: true, submittedAt: true, approvedAt: true },
     }),
     tx.primaryTicketType.findFirst({
       where: {
@@ -585,7 +585,15 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         createIdempotencyKey: `${scope.base}:reservation`,
         commitIdempotencyKey: `${scope.base}:commit`,
       },
-      select: { id: true, buyerUserId: true },
+      select: {
+        id: true,
+        buyerUserId: true,
+        expiresAt: true,
+        paymentCommittedAt: true,
+        reconciliationAfter: true,
+        releasedAt: true,
+        expiredAt: true,
+      },
     }),
     tx.primaryOrder.findFirst({
       where: {
@@ -602,7 +610,13 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         prepareReconciliationDelayMs: 120000,
         paidAt: { not: null },
       },
-      select: { id: true, buyerUserId: true },
+      select: {
+        id: true,
+        buyerUserId: true,
+        paymentProcessingAt: true,
+        paidAt: true,
+        paymentFailedAt: true,
+      },
     }),
     tx.primaryOrderLine.findFirst({
       where: {
@@ -636,6 +650,8 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
       select: {
         id: true,
         buyerUserId: true,
+        providerCreatedAt: true,
+        terminalAt: true,
         _count: { select: { providerEvents: true, exceptions: true } },
       },
     }),
@@ -731,6 +747,21 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         && allocation.policyVersionId === POLICY_ID
         && allocation.allocationSetDigest === allocationDigestFor(allocation.component.code);
     });
+  const anchor = order?.paidAt;
+  const timelineIsExact = Boolean(
+    anchor
+    && event?.submittedAt?.getTime() === anchor.getTime()
+    && event.approvedAt?.getTime() === anchor.getTime()
+    && reservation?.expiresAt.getTime() === new Date("2038-06-15T18:00:00Z").getTime()
+    && reservation.paymentCommittedAt?.getTime() === anchor.getTime()
+    && reservation.reconciliationAfter?.getTime() === anchor.getTime() + 120_000
+    && reservation.releasedAt === null
+    && reservation.expiredAt === null
+    && order?.paymentProcessingAt?.getTime() === anchor.getTime()
+    && order.paymentFailedAt === null
+    && payment?.providerCreatedAt?.getTime() === anchor.getTime()
+    && payment.terminalAt?.getTime() === anchor.getTime()
+  );
 
   if (
     !buyer || !organizer || !event || !ticketType || !reservation || !order || !line || !payment
@@ -741,6 +772,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
     || payment._count.exceptions !== 0
     || JSON.stringify(components) !== JSON.stringify(expectedComponents)
     || !allocationsAreExact
+    || !timelineIsExact
   ) {
     throw new PrimaryStagingRefundError("STAGING_REFUND_PURCHASE_STATE_INVALID");
   }

@@ -483,6 +483,23 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryRefund.count({ where: { eventId } })).resolves.toBe(0);
   });
 
+  it("rejects drift in the synthetic purchase timeline before refund mutation", async () => {
+    const reservationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const reservationBase = `staging-refund-g${reservationSeed.generation}-ordinary`;
+    await db.primaryInventoryReservation.update({
+      where: { id: `${reservationBase}-reservation` },
+      data: { reconciliationAfter: new Date("2039-01-01T00:00:00Z") },
+    });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: reservationSeed.generation,
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `${reservationBase}-event` },
+    })).resolves.toBe(0);
+  });
+
   it("fails closed when deterministic accepted-scan evidence drifts", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const checkedTicketId = `staging-refund-g${seeded.generation}-checked-ticket-1`;
