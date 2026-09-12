@@ -404,4 +404,61 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       where: { eventId: `staging-refund-g${seeded.generation}-checked-event` },
     })).resolves.toBe(0);
   });
+
+  it("rejects forged refund and cancellation command evidence before continuing workflows", async () => {
+    const refundSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const refundBase = `staging-refund-g${refundSeed.generation}-checked`;
+    await db.primaryRefund.create({ data: {
+      organizerId: "primary-staging-refund-organizer",
+      eventId: `${refundBase}-event`,
+      orderId: `${refundBase}-order`,
+      paymentAttemptId: `${refundBase}-payment`,
+      requestedByUserId: organizer.id,
+      policyVersionId: "primary-refund-policy-v1",
+      requestKey: `${refundBase}:refund:checked`,
+      commandDigest: "f".repeat(64),
+      reason: "Forged synthetic checked refund command.",
+      requestedAmountMinor: 3120,
+      currency: "CAD",
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", {
+      reason: "Must not approve forged workflow evidence",
+      evidence: "synthetic-forged-refund",
+      fraudReview: "No review because parent is untrusted",
+      costBearer: "ORGANIZER",
+    })).rejects.toMatchObject({
+      code: "STAGING_REFUND_COMMAND_EVIDENCE_INVALID",
+      generation: refundSeed.generation,
+    });
+    await expect(db.primaryCheckedInRefundApproval.count({ where: { refund: { eventId: `${refundBase}-event` } } })).resolves.toBe(0);
+    await expect(db.primaryRefundItem.count({ where: { refund: { eventId: `${refundBase}-event` } } })).resolves.toBe(0);
+
+    const cancellationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationBase = `staging-refund-g${cancellationSeed.generation}-cancellation`;
+    const forgedCancellation = await db.primaryEventCancellation.create({ data: {
+      organizerId: "primary-staging-refund-organizer",
+      eventId: `${cancellationBase}-event`,
+      generation: 1,
+      policyVersionId: "primary-refund-policy-v1",
+      requestedByUserId: outsider.id,
+      requestKey: `${cancellationBase}:cancellation`,
+      commandDigest: "e".repeat(64),
+      reason: "Forged synthetic cancellation command.",
+      snapshotMaxTicketId: "derived-on-activation",
+      expectedTicketCount: 0,
+      expectedAmountMinor: 0,
+    } });
+    await db.primaryEventCancellation.update({
+      where: { id: forgedCancellation.id },
+      data: { status: "ACTIVE", activatedAt: now },
+    });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {})).rejects.toMatchObject({
+      code: "STAGING_CANCELLATION_COMMAND_EVIDENCE_INVALID",
+      generation: cancellationSeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId: `${cancellationBase}-event` } })).resolves.toBe(0);
+    await expect(db.primaryRefundObligation.count({ where: { eventId: `${cancellationBase}-event` } })).resolves.toBe(0);
+  });
 });
