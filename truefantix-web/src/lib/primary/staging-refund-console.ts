@@ -93,6 +93,14 @@ function scenarioFinancials(kind: ScenarioKind) {
   };
 }
 
+function scenarioTitle(kind: ScenarioKind) {
+  return kind === "ordinary"
+    ? "Ordinary unscanned refund"
+    : kind === "checked"
+      ? "Checked-in supervised refund"
+      : "Event cancellation and obligations";
+}
+
 async function requireOrganizer(tx: Tx, actor: Actor) {
   if (actor.email !== STAGING_ORGANIZER_EMAIL || actor.role !== "USER") {
     throw new PrimaryStagingRefundError("STAGING_ORGANIZER_REQUIRED");
@@ -216,7 +224,7 @@ async function seedOrder(tx: Tx, generation: number, kind: ScenarioKind, buyerId
   const fee = kind === "ordinary" ? 100 : kind === "checked" ? 120 : 200;
   const gross = unitPrice * quantity + fee;
   const now = new Date();
-  const title = kind === "ordinary" ? "Ordinary unscanned refund" : kind === "checked" ? "Checked-in supervised refund" : "Event cancellation and obligations";
+  const title = scenarioTitle(kind);
 
   await tx.primaryEvent.create({ data: {
     id: scope.eventId, organizerId: ORGANIZER_ID, title: `Synthetic Refund Console / ${title}`,
@@ -318,7 +326,28 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
     await tx.primaryOrganizer.upsert({
       where: { id: ORGANIZER_ID },
       create: { id: ORGANIZER_ID, legalName: "Synthetic Refund Operations Inc.", displayName: "Synthetic Refund Operations", addressLine1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", supportEmail: "refunds@primary-staging.example.invalid", supportPhone: "+15550001003", status: "APPROVED", submittedAt: new Date(), approvedAt: new Date(), approvedByUserId: actor.id, createdByUserId: organizerUser.id },
-      update: {},
+      update: {
+        legalName: "Synthetic Refund Operations Inc.",
+        displayName: "Synthetic Refund Operations",
+        addressLine1: "1 Synthetic Way",
+        addressLine2: null,
+        city: "Toronto",
+        region: "ON",
+        postalCode: "M5V 0A1",
+        country: "CA",
+        supportEmail: "refunds@primary-staging.example.invalid",
+        supportPhone: "+15550001003",
+        website: null,
+        status: "APPROVED",
+        statusReason: null,
+        paymentProvider: null,
+        paymentAccountRefEncrypted: null,
+        paymentStatus: "NOT_STARTED",
+        submittedAt: new Date(),
+        approvedAt: new Date(),
+        approvedByUserId: actor.id,
+        createdByUserId: organizerUser.id,
+      },
     });
     await tx.primaryOrganizerMembership.upsert({
       where: { organizerId_userId: { organizerId: ORGANIZER_ID, userId: organizerUser.id } },
@@ -473,7 +502,29 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
       select: { id: true },
     }),
     tx.primaryOrganizer.findFirst({
-      where: { id: ORGANIZER_ID, status: "APPROVED" },
+      where: {
+        id: ORGANIZER_ID,
+        legalName: "Synthetic Refund Operations Inc.",
+        displayName: "Synthetic Refund Operations",
+        addressLine1: "1 Synthetic Way",
+        addressLine2: null,
+        city: "Toronto",
+        region: "ON",
+        postalCode: "M5V 0A1",
+        country: "CA",
+        supportEmail: "refunds@primary-staging.example.invalid",
+        supportPhone: "+15550001003",
+        website: null,
+        status: "APPROVED",
+        statusReason: null,
+        paymentProvider: null,
+        paymentAccountRefEncrypted: null,
+        paymentStatus: "NOT_STARTED",
+        submittedAt: { not: null },
+        approvedAt: { not: null },
+        createdBy: { is: { email: STAGING_ORGANIZER_EMAIL } },
+        approvedBy: { is: { email: STAGING_ADMIN_EMAIL } },
+      },
       select: { id: true },
     }),
     tx.primaryEvent.findFirst({
@@ -481,7 +532,28 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         id: scope.eventId,
         organizerId: ORGANIZER_ID,
         status: "APPROVED",
+        title: `Synthetic Refund Console / ${scenarioTitle(scope.kind)}`,
+        description: `Deterministic isolated staging scenario generation ${scope.generation}.`,
+        category: "SYNTHETIC",
+        venueName: "Synthetic Refund Hall",
+        venueAddressLine1: "1 Synthetic Way",
+        venueAddressLine2: null,
+        venueCity: "Toronto",
+        venueRegion: "ON",
+        venuePostalCode: "M5V 0A1",
+        venueCountry: "CA",
+        startsAtLocal: new Date("2038-06-15T19:00:00Z"),
+        endsAtLocal: new Date("2038-06-15T22:00:00Z"),
+        timezone: "America/Toronto",
+        accessibilityInfo: null,
+        contactEmail: "refunds@primary-staging.example.invalid",
+        contactPhone: "+15550001003",
+        draftPolicyText: "Synthetic staging-only refund policy evidence.",
         totalCapacity: expected.quantity,
+        statusReason: null,
+        submittedAt: { not: null },
+        approvedAt: { not: null },
+        approvedBy: { is: { email: STAGING_ADMIN_EMAIL } },
       },
       select: { id: true },
     }),
@@ -492,6 +564,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         eventId: scope.eventId,
         status: "ACTIVE",
         name: "Synthetic GA",
+        description: "No live inventory or money.",
         allocatedQuantity: expected.quantity,
         minimumPerOrder: 1,
         maximumPerOrder: expected.quantity,
@@ -573,6 +646,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         id: true,
         orderLineId: true,
         code: true,
+        label: true,
         kind: true,
         amountMinor: true,
         currency: true,
@@ -603,6 +677,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
       id: `${scope.base}-face`,
       orderLineId: scope.lineId,
       code: "FACE_VALUE",
+      label: "Face value",
       kind: "FACE_VALUE",
       amountMinor: expected.faceValueSubtotalMinor,
       currency: "CAD",
@@ -614,6 +689,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
       id: `${scope.base}-fee`,
       orderLineId: scope.lineId,
       code: "ORGANIZER_FEE",
+      label: "Synthetic organizer fee",
       kind: "MANDATORY_FEE",
       amountMinor: expected.feeMinor,
       currency: "CAD",

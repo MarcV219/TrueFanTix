@@ -440,6 +440,49 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     })).resolves.toBe(0);
   });
 
+  it("rejects contaminated synthetic tenant metadata and reseeds it safely", async () => {
+    const organizerSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    await db.primaryOrganizer.update({
+      where: { id: "primary-staging-refund-organizer" },
+      data: {
+        supportEmail: "external-merchant@example.com",
+        paymentProvider: "stripe",
+        paymentAccountRefEncrypted: "synthetic-forbidden-provider-account",
+        paymentStatus: "VERIFIED",
+      },
+    });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: organizerSeed.generation,
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `staging-refund-g${organizerSeed.generation}-ordinary-event` },
+    })).resolves.toBe(0);
+
+    const restored = await reseedPrimaryStagingRefundScenario(db, admin);
+    expect(restored.generation).toBe(organizerSeed.generation + 1);
+    await expect(db.primaryOrganizer.findUniqueOrThrow({
+      where: { id: "primary-staging-refund-organizer" },
+    })).resolves.toMatchObject({
+      supportEmail: "refunds@primary-staging.example.invalid",
+      paymentProvider: null,
+      paymentAccountRefEncrypted: null,
+      paymentStatus: "NOT_STARTED",
+    });
+
+    const eventId = `staging-refund-g${restored.generation}-ordinary-event`;
+    await db.primaryEvent.update({
+      where: { id: eventId },
+      data: { contactEmail: "external-attendee@example.com" },
+    });
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: restored.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId } })).resolves.toBe(0);
+  });
+
   it("fails closed when deterministic accepted-scan evidence drifts", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const checkedTicketId = `staging-refund-g${seeded.generation}-checked-ticket-1`;
