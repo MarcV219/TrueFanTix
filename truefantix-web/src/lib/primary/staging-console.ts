@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
-import type { UserRole } from "@prisma/client";
+import type { Prisma, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import { requirePrimaryPreflight } from "./config";
@@ -29,10 +29,48 @@ const STAGING_USERS = {
   },
 } as const;
 
+const STAGING_PROFILE = {
+  streetAddress1: "1 Synthetic Way",
+  streetAddress2: null,
+  city: "Toronto",
+  region: "ON",
+  postalCode: "M5V 0A1",
+  country: "CA",
+  notificationRadiusKm: null,
+  notificationRadiusUnit: "KM",
+  canBuy: false,
+  canComment: false,
+  canSell: false,
+  termsVersion: "primary-staging-only",
+  privacyVersion: "primary-staging-only",
+  isBanned: false,
+  banReason: null,
+  sellerId: null,
+  emailVerificationToken: null,
+  passwordResetTokenHash: null,
+} as const;
+
 const SYNTHETIC_EMAIL_DOMAIN = "primary-staging.example.invalid";
 const SYNTHETIC_PHONE = /^\+1555\d{7}$/;
 
 export type StagingPersona = keyof typeof STAGING_USERS;
+
+export function primaryStagingPersonaWhere(persona: StagingPersona): Prisma.UserWhereInput {
+  const definition = STAGING_USERS[persona];
+  return {
+    email: definition.email,
+    role: definition.role,
+    firstName: definition.firstName,
+    lastName: definition.lastName,
+    displayName: `${definition.firstName} ${definition.lastName}`,
+    phone: definition.phone,
+    ...STAGING_PROFILE,
+    emailVerifiedAt: { not: null },
+    phoneVerifiedAt: { not: null },
+    termsAcceptedAt: { not: null },
+    privacyAcceptedAt: { not: null },
+  };
+}
 
 export class PrimaryStagingConsoleUnavailableError extends Error {
   readonly code = "PRIMARY_STAGING_CONSOLE_UNAVAILABLE";
@@ -138,19 +176,10 @@ export async function ensurePrimaryStagingPersona(persona: StagingPersona) {
       displayName: `${definition.firstName} ${definition.lastName}`,
       phone: definition.phone,
       phoneVerifiedAt: verifiedAt,
-      streetAddress1: "1 Synthetic Way",
-      city: "Toronto",
-      region: "ON",
-      postalCode: "M5V 0A1",
-      country: "CA",
+      ...STAGING_PROFILE,
       role: definition.role,
-      canBuy: false,
-      canComment: false,
-      canSell: false,
       termsAcceptedAt: verifiedAt,
-      termsVersion: "primary-staging-only",
       privacyAcceptedAt: verifiedAt,
-      privacyVersion: "primary-staging-only",
     },
     update: {
       passwordHash,
@@ -159,23 +188,11 @@ export async function ensurePrimaryStagingPersona(persona: StagingPersona) {
       lastName: definition.lastName,
       displayName: `${definition.firstName} ${definition.lastName}`,
       phone: definition.phone,
-      streetAddress1: "1 Synthetic Way",
-      streetAddress2: null,
-      city: "Toronto",
-      region: "ON",
-      postalCode: "M5V 0A1",
-      country: "CA",
+      ...STAGING_PROFILE,
       emailVerifiedAt: verifiedAt,
       phoneVerifiedAt: verifiedAt,
-      isBanned: false,
-      canBuy: false,
-      canComment: false,
-      canSell: false,
       termsAcceptedAt: verifiedAt,
-      termsVersion: "primary-staging-only",
       privacyAcceptedAt: verifiedAt,
-      privacyVersion: "primary-staging-only",
-      emailVerificationToken: null,
     },
     select: { id: true, email: true, firstName: true, lastName: true, role: true },
   });
@@ -194,21 +211,60 @@ export async function requirePrimaryStagingActor() {
       firstName: true,
       lastName: true,
       role: true,
+      displayName: true,
+      phone: true,
       emailVerifiedAt: true,
       phoneVerifiedAt: true,
+      streetAddress1: true,
+      streetAddress2: true,
+      city: true,
+      region: true,
+      postalCode: true,
+      country: true,
+      notificationRadiusKm: true,
+      notificationRadiusUnit: true,
+      canBuy: true,
+      canComment: true,
+      canSell: true,
+      termsAcceptedAt: true,
+      termsVersion: true,
+      privacyAcceptedAt: true,
+      privacyVersion: true,
       isBanned: true,
+      banReason: true,
+      sellerId: true,
+      emailVerificationToken: true,
+      passwordResetTokenHash: true,
     },
   });
 
+  if (!user || !isExpectedStagingPersona(user.email, user.role)) return null;
+  const persona = user.email.trim().toLowerCase() === STAGING_ADMIN_EMAIL ? "admin" : "organizer";
+  const exactFields = {
+    ...STAGING_PROFILE,
+    email: STAGING_USERS[persona].email,
+    firstName: STAGING_USERS[persona].firstName,
+    lastName: STAGING_USERS[persona].lastName,
+    displayName: `${STAGING_USERS[persona].firstName} ${STAGING_USERS[persona].lastName}`,
+    phone: STAGING_USERS[persona].phone,
+  };
   if (
-    !user ||
-    user.isBanned ||
-    !user.emailVerifiedAt ||
-    !user.phoneVerifiedAt ||
-    !isExpectedStagingPersona(user.email, user.role)
-  ) {
-    return null;
-  }
+    !user.emailVerifiedAt
+    || !user.phoneVerifiedAt
+    || !user.termsAcceptedAt
+    || !user.privacyAcceptedAt
+    || Object.entries(exactFields).some(([key, value]) => user[key as keyof typeof user] !== value)
+    || user.role !== STAGING_USERS[persona].role
+  ) return null;
 
-  return user;
+  return {
+    id: user.id,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    emailVerifiedAt: user.emailVerifiedAt,
+    phoneVerifiedAt: user.phoneVerifiedAt,
+    isBanned: user.isBanned,
+  };
 }

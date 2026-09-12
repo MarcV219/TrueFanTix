@@ -5,6 +5,7 @@ import {
   STAGING_ORGANIZER_EMAIL,
   STAGING_REFUND_BUYER_EMAIL,
   STAGING_REFUND_BUYER_PHONE,
+  primaryStagingPersonaWhere,
 } from "./staging-console";
 
 const ORGANIZER_ID = "primary-staging-refund-organizer";
@@ -113,11 +114,7 @@ async function requireOrganizer(tx: Tx, actor: Actor) {
   const user = await tx.user.findFirst({
     where: {
       id: actor.id,
-      email: STAGING_ORGANIZER_EMAIL,
-      role: "USER",
-      isBanned: false,
-      emailVerifiedAt: { not: null },
-      phoneVerifiedAt: { not: null },
+      ...primaryStagingPersonaWhere("organizer"),
     },
     select: { id: true },
   });
@@ -136,11 +133,7 @@ async function requireAdmin(tx: Tx, actor: Actor) {
   const user = await tx.user.findFirst({
     where: {
       id: actor.id,
-      email: STAGING_ADMIN_EMAIL,
-      role: "ADMIN",
-      isBanned: false,
-      emailVerifiedAt: { not: null },
-      phoneVerifiedAt: { not: null },
+      ...primaryStagingPersonaWhere("admin"),
     },
     select: { id: true },
   });
@@ -511,11 +504,7 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
     await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836291)");
     const organizerUser = await tx.user.findFirst({
       where: {
-        email: STAGING_ORGANIZER_EMAIL,
-        role: "USER",
-        isBanned: false,
-        emailVerifiedAt: { not: null },
-        phoneVerifiedAt: { not: null },
+        ...primaryStagingPersonaWhere("organizer"),
       },
     });
     if (!organizerUser) throw new PrimaryStagingRefundError("STAGING_ORGANIZER_REQUIRED");
@@ -728,21 +717,13 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
     }),
     tx.user.findFirst({
       where: {
-        email: STAGING_ORGANIZER_EMAIL,
-        role: "USER",
-        isBanned: false,
-        emailVerifiedAt: { not: null },
-        phoneVerifiedAt: { not: null },
+        ...primaryStagingPersonaWhere("organizer"),
       },
       select: { id: true },
     }),
     tx.user.findFirst({
       where: {
-        email: STAGING_ADMIN_EMAIL,
-        role: "ADMIN",
-        isBanned: false,
-        emailVerifiedAt: { not: null },
-        phoneVerifiedAt: { not: null },
+        ...primaryStagingPersonaWhere("admin"),
       },
       select: { id: true },
     }),
@@ -754,13 +735,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         acceptedAt: { not: null },
         revokedAt: null,
         user: {
-          is: {
-            email: STAGING_ORGANIZER_EMAIL,
-            role: "USER",
-            isBanned: false,
-            emailVerifiedAt: { not: null },
-            phoneVerifiedAt: { not: null },
-          },
+          is: primaryStagingPersonaWhere("organizer"),
         },
         invitedBy: { is: { email: STAGING_ORGANIZER_EMAIL } },
       },

@@ -25,7 +25,46 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
 
   beforeAll(async () => {
     await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryAuditEvent", "PrimaryOutboxMessage", "PrimaryRefundProviderEvent", "PrimaryRefundProviderAttempt", "PrimaryRefundAllocation", "PrimaryRefundItem", "PrimaryAdmissionRevocation", "PrimaryRefundObligation", "PrimaryCancellationBatch", "PrimaryEventCancellation", "PrimaryRefund", "PrimaryPurchaseAllocation", "PrimaryAdmissionScan", "PrimaryAdmissionCredential", "PrimaryAdmissionTicket", "PrimaryPaymentException", "PrimaryPaymentProviderEvent", "PrimaryPaymentAttempt", "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder", "PrimaryInventoryReservation", "PrimaryTicketType", "PrimaryEvent", "PrimaryOrganizerMembership", "PrimaryOrganizer" CASCADE');
-    for (const [index, user] of [organizer, admin, outsider].entries()) await db.user.upsert({ where: { email: user.email }, create: { id: user.id, email: user.email, passwordHash: "synthetic", emailVerifiedAt: now, firstName: "Staging", lastName: user.role, phone: `+1555000100${index + 1}`, phoneVerifiedAt: now, streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", role: user.role }, update: { id: user.id, role: user.role, isBanned: false, emailVerifiedAt: now, phoneVerifiedAt: now } });
+    const users = [
+      { ...organizer, lastName: "Organizer", phone: "+15550001001" },
+      { ...admin, lastName: "Reviewer", phone: "+15550001002" },
+      { ...outsider, lastName: "Outsider", phone: "+15550001003" },
+    ];
+    for (const user of users) {
+      const managed = {
+        id: user.id,
+        email: user.email,
+        passwordHash: "synthetic",
+        emailVerificationToken: null,
+        passwordResetTokenHash: null,
+        emailVerifiedAt: now,
+        firstName: "Staging",
+        lastName: user.lastName,
+        displayName: `Staging ${user.lastName}`,
+        phone: user.phone,
+        phoneVerifiedAt: now,
+        streetAddress1: "1 Synthetic Way",
+        streetAddress2: null,
+        city: "Toronto",
+        region: "ON",
+        postalCode: "M5V 0A1",
+        country: "CA",
+        notificationRadiusKm: null,
+        notificationRadiusUnit: "KM",
+        role: user.role,
+        isBanned: false,
+        banReason: null,
+        canBuy: false,
+        canSell: false,
+        canComment: false,
+        termsAcceptedAt: now,
+        termsVersion: "primary-staging-only",
+        privacyAcceptedAt: now,
+        privacyVersion: "primary-staging-only",
+        sellerId: null,
+      };
+      await db.user.upsert({ where: { email: user.email }, create: managed, update: managed });
+    }
   });
 
   afterAll(async () => {
@@ -333,6 +372,16 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryRefund.count({ where: { eventId: `staging-refund-g${organizerSeed.generation}-ordinary-event` } })).resolves.toBe(0);
     await db.user.update({ where: { id: organizer.id }, data: { isBanned: false } });
 
+    const capabilitySeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    await db.user.update({ where: { id: organizer.id }, data: { canSell: true } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_ORGANIZER_REQUIRED",
+      generation: capabilitySeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId: `staging-refund-g${capabilitySeed.generation}-ordinary-event` } })).resolves.toBe(0);
+    await db.user.update({ where: { id: organizer.id }, data: { canSell: false } });
+
     const adminSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
     await db.user.update({ where: { id: admin.id }, data: { phoneVerifiedAt: null } });
@@ -347,6 +396,18 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       where: { refund: { eventId: `staging-refund-g${adminSeed.generation}-checked-event` } },
     })).resolves.toBe(0);
     await db.user.update({ where: { id: admin.id }, data: { phoneVerifiedAt: now } });
+
+    await db.user.update({ where: { id: admin.id }, data: { phone: "+15550001099" } });
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", {
+      reason: "Drifted managed profile must fail closed",
+      evidence: "synthetic-case-profile-drift",
+      fraudReview: "No indicators",
+      costBearer: "ORGANIZER",
+    })).rejects.toMatchObject({ code: "STAGING_ADMIN_REQUIRED", generation: adminSeed.generation });
+    await expect(db.primaryCheckedInRefundApproval.count({
+      where: { refund: { eventId: `staging-refund-g${adminSeed.generation}-checked-event` } },
+    })).resolves.toBe(0);
+    await db.user.update({ where: { id: admin.id }, data: { phone: "+15550001002" } });
   });
 
   it("fails closed when the deterministic purchase chain drifts before a command", async () => {

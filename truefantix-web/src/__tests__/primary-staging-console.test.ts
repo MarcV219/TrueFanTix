@@ -42,6 +42,42 @@ const previewEnv = {
   PRIMARY_STAGING_CONSOLE_ACCESS_TOKEN: accessToken,
 } as NodeJS.ProcessEnv;
 
+function managedOrganizer(overrides: Record<string, unknown> = {}) {
+  const verifiedAt = new Date();
+  return {
+    id: "organizer-1",
+    email: "organizer@primary-staging.example.invalid",
+    firstName: "Staging",
+    lastName: "Organizer",
+    displayName: "Staging Organizer",
+    phone: "+15550001001",
+    emailVerifiedAt: verifiedAt,
+    phoneVerifiedAt: verifiedAt,
+    streetAddress1: "1 Synthetic Way",
+    streetAddress2: null,
+    city: "Toronto",
+    region: "ON",
+    postalCode: "M5V 0A1",
+    country: "CA",
+    notificationRadiusKm: null,
+    notificationRadiusUnit: "KM",
+    canBuy: false,
+    canComment: false,
+    canSell: false,
+    termsAcceptedAt: verifiedAt,
+    termsVersion: "primary-staging-only",
+    privacyAcceptedAt: verifiedAt,
+    privacyVersion: "primary-staging-only",
+    isBanned: false,
+    banReason: null,
+    sellerId: null,
+    emailVerificationToken: null,
+    passwordResetTokenHash: null,
+    role: "USER",
+    ...overrides,
+  };
+}
+
 describe("primary staging console boundary", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -114,6 +150,8 @@ describe("primary staging console boundary", () => {
         termsVersion: "primary-staging-only",
         privacyVersion: "primary-staging-only",
         emailVerificationToken: null,
+        passwordResetTokenHash: null,
+        sellerId: null,
       }),
     }));
   });
@@ -134,36 +172,42 @@ describe("primary staging console boundary", () => {
     ["admin@primary-staging.example.invalid", "USER"],
   ])("rejects a session whose email/role is not an exact synthetic persona", async (email, role) => {
     mockedSessionUserId.mockResolvedValue("user-1");
-    mockedPrisma.user.findUnique.mockResolvedValue({
-      id: "user-1",
-      email,
-      firstName: "Synthetic",
-      lastName: "User",
-      role,
-      emailVerifiedAt: new Date(),
-      phoneVerifiedAt: new Date(),
-      isBanned: false,
-    });
+    mockedPrisma.user.findUnique.mockResolvedValue(managedOrganizer({ id: "user-1", email, role }));
 
     await expect(requirePrimaryStagingActor()).resolves.toBeNull();
   });
 
   it("returns the current exact synthetic persona and rejects banned actors", async () => {
     mockedSessionUserId.mockResolvedValue("organizer-1");
-    const actor = {
-      id: "organizer-1",
-      email: "organizer@primary-staging.example.invalid",
-      firstName: "Staging",
-      lastName: "Organizer",
-      role: "USER",
-      emailVerifiedAt: new Date(),
-      phoneVerifiedAt: new Date(),
-      isBanned: false,
-    };
-    mockedPrisma.user.findUnique.mockResolvedValue(actor);
-    await expect(requirePrimaryStagingActor()).resolves.toEqual(actor);
+    const record = managedOrganizer();
+    mockedPrisma.user.findUnique.mockResolvedValue(record);
+    await expect(requirePrimaryStagingActor()).resolves.toEqual({
+      id: record.id,
+      email: record.email,
+      firstName: record.firstName,
+      lastName: record.lastName,
+      role: record.role,
+      emailVerifiedAt: record.emailVerifiedAt,
+      phoneVerifiedAt: record.phoneVerifiedAt,
+      isBanned: record.isBanned,
+    });
 
-    mockedPrisma.user.findUnique.mockResolvedValue({ ...actor, isBanned: true });
+    mockedPrisma.user.findUnique.mockResolvedValue({ ...record, isBanned: true });
+    await expect(requirePrimaryStagingActor()).resolves.toBeNull();
+  });
+
+  it.each([
+    ["phone", "+15550001999"],
+    ["displayName", "Drifted Persona"],
+    ["canBuy", true],
+    ["canSell", true],
+    ["termsVersion", "ordinary-terms"],
+    ["sellerId", "seller-with-provider-state"],
+    ["passwordResetTokenHash", "unexpected-reset-token"],
+  ])("rejects a managed actor whose %s drifted", async (field, value) => {
+    mockedSessionUserId.mockResolvedValue("organizer-1");
+    mockedPrisma.user.findUnique.mockResolvedValue(managedOrganizer({ [field]: value }));
+
     await expect(requirePrimaryStagingActor()).resolves.toBeNull();
   });
 });
