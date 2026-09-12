@@ -179,9 +179,9 @@ async function requireSyntheticTenantAccessProvenance(tx: Tx) {
 }
 
 async function requireSyntheticNoDeliveryIntent(tx: Tx) {
-  const [buyerUsers, memberships, purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, revocations, cancellations, cancellationBatches, cancellationBatchTickets, cancellationSnapshots, cancellationRefundLinks, obligations, checkedInApprovals, waiverApprovals, auditEvents] = await Promise.all([
+  const [reservedPersonaUsers, memberships, purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, revocations, cancellations, cancellationBatches, cancellationBatchTickets, cancellationSnapshots, cancellationRefundLinks, obligations, checkedInApprovals, waiverApprovals, auditEvents] = await Promise.all([
     tx.user.findMany({
-      where: { email: BUYER_EMAIL },
+      where: { email: { in: [STAGING_ADMIN_EMAIL, STAGING_ORGANIZER_EMAIL, BUYER_EMAIL] } },
       select: { id: true },
     }),
     tx.primaryOrganizerMembership.findMany({
@@ -254,7 +254,7 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
     }),
   ]);
   const opaqueWorkflowAggregateIds = [
-    ...buyerUsers.map((buyer) => buyer.id),
+    ...reservedPersonaUsers.map((user) => user.id),
     ...memberships.map((membership) => membership.id),
     ...purchaseAllocations.map((allocation) => allocation.id),
     ...refunds.map((refund) => refund.id),

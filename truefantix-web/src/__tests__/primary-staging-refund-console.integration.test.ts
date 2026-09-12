@@ -711,6 +711,38 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it.each([
+    ["organizer", "organizer@primary-staging.example.invalid"],
+    ["administrator", "admin@primary-staging.example.invalid"],
+  ])("rejects delivery intent scoped only by the opaque reserved %s identity", async (persona, email) => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const ordinaryBase = `staging-refund-g${seeded.generation}-ordinary`;
+    const user = await db.user.findUniqueOrThrow({ where: { email } });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: `synthetic.unexpected.unscoped-${persona}-delivery`,
+      aggregateType: "User",
+      aggregateId: user.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${ordinaryBase}:unexpected-unscoped-${persona}-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `${ordinaryBase}-event` },
+    })).resolves.toBe(0);
+    await expect(db.primaryEvent.count({
+      where: { id: `staging-refund-g${seeded.generation + 1}-ordinary-event` },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects delivery intent scoped only by an opaque synthetic workflow aggregate", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const checkedBase = `staging-refund-g${seeded.generation}-checked`;
