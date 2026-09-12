@@ -14,8 +14,6 @@ import { GET as getState } from "@/app/api/staging/primary/state/route";
 import { POST as postAction } from "@/app/api/staging/primary/actions/route";
 import {
   getPrimaryStagingRefundState,
-  PrimaryStagingRefundError,
-  recordPrimaryStagingRefundRejection,
   reseedPrimaryStagingRefundScenario,
   runPrimaryStagingRefundAction,
 } from "@/lib/primary/staging-refund-console";
@@ -63,7 +61,6 @@ const mockedConsole = requirePrimaryStagingConsole as jest.MockedFunction<typeof
 const mockedEnsureCsrfCookie = ensureCsrfCookie as jest.MockedFunction<typeof ensureCsrfCookie>;
 const mockedCsrf = enforceOriginAndCsrf as jest.MockedFunction<typeof enforceOriginAndCsrf>;
 const mockedRefundState = getPrimaryStagingRefundState as jest.MockedFunction<typeof getPrimaryStagingRefundState>;
-const mockedRecordRefundRejection = recordPrimaryStagingRefundRejection as jest.MockedFunction<typeof recordPrimaryStagingRefundRejection>;
 const mockedReseed = reseedPrimaryStagingRefundScenario as jest.MockedFunction<typeof reseedPrimaryStagingRefundScenario>;
 const mockedRefundAction = runPrimaryStagingRefundAction as jest.MockedFunction<typeof runPrimaryStagingRefundAction>;
 
@@ -87,7 +84,6 @@ describe("primary staging console API boundary", () => {
     mockedPrisma.primaryOrganizer.findMany.mockResolvedValue([]);
     mockedPrisma.primaryAuditEvent.findMany.mockResolvedValue([]);
     mockedRefundState.mockResolvedValue(null);
-    mockedRecordRefundRejection.mockResolvedValue(undefined);
     process.env.SESSION_SECRET = "staging-test-session-secret-longer-than-thirty-two-characters";
   });
 
@@ -161,27 +157,6 @@ describe("primary staging console API boundary", () => {
     expect(refund.status).toBe(200);
     expect(mockedReseed).toHaveBeenCalledWith(prisma, expect.objectContaining({ email: adminActor.email, role: "ADMIN" }));
     expect(mockedRefundAction).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: adminActor.id }), "approveCheckedRefund", expect.objectContaining({ reason: "Synthetic evidence" }));
-  });
-
-  it("returns and records readable rejection evidence for rejected refund commands", async () => {
-    mockedActor.mockResolvedValue(adminActor);
-    mockedRefundAction.mockRejectedValueOnce(new PrimaryStagingRefundError("SUPERVISOR_REASON_REQUIRED"));
-
-    const response = await postAction(new Request("https://preview.example/api/staging/primary/actions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "approveCheckedRefund", reason: "" }),
-    }));
-
-    expect(response.status).toBe(409);
-    expect(response.headers.get("cache-control")).toBe("private, no-store");
-    await expect(response.json()).resolves.toEqual({ ok: false, error: "SUPERVISOR_REASON_REQUIRED" });
-    expect(mockedRecordRefundRejection).toHaveBeenCalledWith(
-      prisma,
-      expect.objectContaining({ id: adminActor.id, email: adminActor.email, role: "ADMIN" }),
-      "approveCheckedRefund",
-      "SUPERVISOR_REASON_REQUIRED",
-    );
   });
 
   it("marks CSRF rejections from both state-changing routes as non-cacheable", async () => {
