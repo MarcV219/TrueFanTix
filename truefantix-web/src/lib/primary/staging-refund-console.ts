@@ -179,7 +179,7 @@ async function requireSyntheticTenantAccessProvenance(tx: Tx) {
 }
 
 async function requireSyntheticNoDeliveryIntent(tx: Tx) {
-  const [purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, cancellations, obligations] = await Promise.all([
+  const [purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, cancellations, obligations] = await Promise.all([
     tx.primaryPurchaseAllocation.findMany({
       where: { order: { organizerId: ORGANIZER_ID } },
       select: { id: true },
@@ -200,6 +200,10 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
       where: { refund: { organizerId: ORGANIZER_ID } },
       select: { id: true },
     }),
+    tx.primaryRefundProviderEvent.findMany({
+      where: { attempt: { refund: { organizerId: ORGANIZER_ID } } },
+      select: { id: true },
+    }),
     tx.primaryEventCancellation.findMany({
       where: { organizerId: ORGANIZER_ID },
       select: { id: true },
@@ -215,6 +219,7 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
     ...refundItems.map((item) => item.id),
     ...refundAllocations.map((allocation) => allocation.id),
     ...refundAttempts.map((attempt) => attempt.id),
+    ...refundProviderEvents.map((event) => event.id),
     ...cancellations.map((cancellation) => cancellation.id),
     ...obligations.map((obligation) => obligation.id),
   ];
