@@ -278,6 +278,7 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
       OR: [
         { organizerId: ORGANIZER_ID },
         { aggregateId: ORGANIZER_ID },
+        { aggregateId: POLICY_ID },
         { aggregateId: { startsWith: EVENT_PREFIX } },
         { aggregateId: { in: opaqueWorkflowAggregateIds } },
       ],
