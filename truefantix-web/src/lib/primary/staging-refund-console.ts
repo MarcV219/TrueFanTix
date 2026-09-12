@@ -142,6 +142,42 @@ async function requireAdmin(tx: Tx, actor: Actor) {
   if (!user) throw new PrimaryStagingRefundError("STAGING_ADMIN_REQUIRED");
 }
 
+async function requireSyntheticTenantAccessProvenance(tx: Tx) {
+  const [memberships, invitationCount, assignmentCount] = await Promise.all([
+    tx.primaryOrganizerMembership.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: {
+        userId: true,
+        role: true,
+        status: true,
+        acceptedAt: true,
+        revokedAt: true,
+        invitedByUserId: true,
+        user: { select: { email: true } },
+        invitedBy: { select: { email: true } },
+      },
+    }),
+    tx.primaryOrganizerInvitation.count({ where: { organizerId: ORGANIZER_ID } }),
+    tx.primaryEventStaffAssignment.count({ where: { organizerId: ORGANIZER_ID } }),
+  ]);
+  const membership = memberships[0];
+  if (
+    memberships.length !== 1
+    || !membership
+    || membership.role !== "OWNER"
+    || membership.status !== "ACTIVE"
+    || membership.acceptedAt === null
+    || membership.revokedAt !== null
+    || membership.userId !== membership.invitedByUserId
+    || membership.user.email !== STAGING_ORGANIZER_EMAIL
+    || membership.invitedBy.email !== STAGING_ORGANIZER_EMAIL
+    || invitationCount !== 0
+    || assignmentCount !== 0
+  ) {
+    throw new PrimaryStagingRefundError("STAGING_REFUND_ACCESS_PROVENANCE_INVALID");
+  }
+}
+
 async function audit(tx: Tx, actor: Actor, eventId: string, action: string, targetType: string, targetId: string, reason: string, after?: Record<string, unknown>) {
   await tx.primaryAuditEvent.create({
     data: {
@@ -364,6 +400,7 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
       create: { organizerId: ORGANIZER_ID, userId: organizerUser.id, role: "OWNER", status: "ACTIVE", acceptedAt: new Date(), invitedByUserId: organizerUser.id },
       update: { role: "OWNER", status: "ACTIVE", acceptedAt: new Date(), revokedAt: null, invitedByUserId: organizerUser.id },
     });
+    await requireSyntheticTenantAccessProvenance(tx);
     const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-refund-g([0-9]+)-ordinary-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
     const generation = Number(rows[0]?.generation ?? 0) + 1;
     const ordinary = await seedOrder(tx, generation, "ordinary", buyer.id, actor.id);
@@ -485,6 +522,7 @@ async function requireScenarioTicketStates(
 }
 
 async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids>) {
+  await requireSyntheticTenantAccessProvenance(tx);
   const expected = scenarioFinancials(scope.kind);
   const [buyer, organizerUser, admin, membership, organizer, event, ticketType, reservation, order, line, payment, components, allocations] = await Promise.all([
     tx.user.findFirst({

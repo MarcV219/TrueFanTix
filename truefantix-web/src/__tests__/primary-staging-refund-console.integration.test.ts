@@ -517,7 +517,7 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     });
 
     await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
-      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      code: "STAGING_REFUND_ACCESS_PROVENANCE_INVALID",
       generation: seeded.generation,
     });
     await expect(db.primaryRefund.count({
@@ -534,6 +534,59 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       userId: organizer.id,
       invitedByUserId: organizer.id,
       revokedAt: null,
+    });
+  });
+
+  it("rejects unexpected synthetic tenant access grants before refund mutation", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const eventId = `staging-refund-g${seeded.generation}-ordinary-event`;
+    const ownerMembership = await db.primaryOrganizerMembership.findUniqueOrThrow({
+      where: { organizerId_userId: { organizerId: "primary-staging-refund-organizer", userId: organizer.id } },
+    });
+    const unexpectedMembership = await db.primaryOrganizerMembership.create({ data: {
+      organizerId: "primary-staging-refund-organizer",
+      userId: outsider.id,
+      role: "READ_ONLY",
+      status: "ACTIVE",
+      acceptedAt: now,
+      invitedByUserId: organizer.id,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_ACCESS_PROVENANCE_INVALID",
+      generation: seeded.generation,
+    });
+    await db.primaryOrganizerMembership.delete({ where: { id: unexpectedMembership.id } });
+
+    const unexpectedInvitation = await db.primaryOrganizerInvitation.create({ data: {
+      organizerId: "primary-staging-refund-organizer",
+      emailNormalized: outsider.email,
+      role: "READ_ONLY",
+      tokenHash: "f".repeat(64),
+      expiresAt: new Date("2038-01-01T00:00:00Z"),
+      invitedByUserId: organizer.id,
+    } });
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_ACCESS_PROVENANCE_INVALID",
+      generation: seeded.generation,
+    });
+    await db.primaryOrganizerInvitation.delete({ where: { id: unexpectedInvitation.id } });
+
+    const unexpectedAssignment = await db.primaryEventStaffAssignment.create({ data: {
+      eventId,
+      organizerId: "primary-staging-refund-organizer",
+      membershipId: ownerMembership.id,
+      assignedByUserId: organizer.id,
+    } });
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_ACCESS_PROVENANCE_INVALID",
+      generation: seeded.generation,
+    });
+    await db.primaryEventStaffAssignment.delete({ where: { id: unexpectedAssignment.id } });
+
+    await expect(db.primaryRefund.count({ where: { eventId } })).resolves.toBe(0);
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).resolves.toMatchObject({
+      status: "SUCCEEDED",
     });
   });
 
