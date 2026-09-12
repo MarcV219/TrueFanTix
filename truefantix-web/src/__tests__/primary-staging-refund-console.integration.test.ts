@@ -48,6 +48,12 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     const state = await getPrimaryStagingRefundState(db);
     const ordinary = state?.events.find((event) => event.id.includes("-ordinary-"));
     expect(ordinary?.orders[0].admissionTickets[0]).toMatchObject({ status: "VOIDED", refundItems: [{ refund: { status: "SUCCEEDED", attempts: [{ status: "SUCCEEDED" }] } }] });
+    expect(ordinary?.orders[0].admissionTickets[0].refundItems[0].refund.attempts[0]).toMatchObject({
+      ordinal: 1,
+      expectedAmountMinor: 2600,
+      currency: "CAD",
+      providerEvents: [{ eventType: "synthetic.refund.succeeded", payloadDigest: expect.stringMatching(/^[0-9a-f]{64}$/) }],
+    });
   });
 
   it("requires complete scoped supervisor evidence for a checked-in refund", async () => {
@@ -128,9 +134,11 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryAuditEvent.findFirstOrThrow({
       where: { action: "STAGING_REFUND_ACTION_REJECTED", targetId: "approveCheckedRefund", reason: "CHECKED_REFUND_ALREADY_APPROVED" },
       orderBy: { createdAt: "desc" },
+      include: { actor: { select: { email: true } } },
     })).resolves.toMatchObject({
       eventId: `staging-refund-g${seeded.generation}-checked-event`,
-      afterJson: { status: "REJECTED", code: "CHECKED_REFUND_ALREADY_APPROVED", scenario: "checked" },
+      afterJson: { status: "REJECTED", code: "CHECKED_REFUND_ALREADY_APPROVED", scenario: "checked", generation: seeded.generation },
+      actor: { email: admin.email },
     });
   });
 
@@ -182,6 +190,27 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     ]);
     expect(outcomes.map((item) => item.generation).sort()).toEqual([before!.generation + 1, before!.generation + 2]);
     await expect(getPrimaryStagingRefundState(db)).resolves.toMatchObject({ generation: before!.generation + 2 });
+  });
+
+  it("derives reseed generations only from the reserved synthetic organizer", async () => {
+    const before = await getPrimaryStagingRefundState(db);
+    await db.primaryOrganizer.create({ data: {
+      id: "unrelated-staging-refund-organizer", legalName: "Unrelated Synthetic Tenant Inc.", displayName: "Unrelated Synthetic Tenant",
+      addressLine1: "2 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A2", country: "CA",
+      supportEmail: "unrelated@primary-staging.example.invalid", status: "APPROVED", submittedAt: now, approvedAt: now,
+      approvedByUserId: admin.id, createdByUserId: outsider.id,
+    } });
+    await db.primaryEvent.create({ data: {
+      id: "staging-refund-g999999-ordinary-event", organizerId: "unrelated-staging-refund-organizer", title: "Unrelated matching identifier",
+      description: "Adversarial tenant-scope fixture.", category: "SYNTHETIC", venueName: "Unrelated Hall",
+      venueAddressLine1: "2 Synthetic Way", venueCity: "Toronto", venueRegion: "ON", venuePostalCode: "M5V 0A2", venueCountry: "CA",
+      startsAtLocal: new Date("2038-06-15T19:00:00Z"), endsAtLocal: new Date("2038-06-15T22:00:00Z"), timezone: "America/Toronto",
+      contactEmail: "unrelated@primary-staging.example.invalid", draftPolicyText: "Unrelated synthetic policy.", totalCapacity: 1,
+      status: "APPROVED", submittedAt: now, approvedAt: now, approvedByUserId: admin.id,
+    } });
+
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).resolves.toEqual({ generation: before!.generation + 1 });
+    await expect(getPrimaryStagingRefundState(db)).resolves.toMatchObject({ generation: before!.generation + 1 });
   });
 
   it("keeps delayed rejection evidence attached to the attempted generation", async () => {

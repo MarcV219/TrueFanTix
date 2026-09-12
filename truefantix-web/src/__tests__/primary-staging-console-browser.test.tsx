@@ -119,11 +119,11 @@ describe("primary staging organizer browser flow", () => {
   it("renders durable approval, provider, waiver, and revocation evidence", async () => {
     const evidenceDigest = "a".repeat(64);
     const waiverDigest = "b".repeat(64);
-    const state = { ok: true, actor: admin, organizers: [], audit: [], refundConsole: { generation: 2, organizerId: "refund-organizer", audit: [], events: [{
+    const state = { ok: true, actor: admin, organizers: [], audit: [], refundConsole: { generation: 2, organizerId: "refund-organizer", events: [{
       id: "staging-refund-g2-cancellation-event", title: "Synthetic Refund Console / Event cancellation and obligations", status: "APPROVED",
-      orders: [{ id: "cancellation-order", grossTotalMinor: 4200, currency: "CAD", admissionTickets: [{ id: "ticket-1", unitNumber: 1, status: "VOIDED", voidReason: "Synthetic cancellation", revocations: [{ cause: "EVENT_CANCELLATION", reason: "Synthetic cancellation evidence", refundId: "refund-1", cancellationId: "cancellation-1" }], refundItems: [{ refundId: "refund-1", requestedMinor: 2100, refund: { status: "SUCCEEDED", reason: "Synthetic", attempts: [{ status: "SUCCEEDED", providerRefundId: "synthetic-refund-1" }], checkedInApprovals: [{ reason: "Scoped supervisor approval", fraudReview: "No indicators", costBearer: "ORGANIZER", evidenceDigest, approver: { email: admin.email } }] } }] }] }],
-      cancellations: [{ id: "cancellation-1", status: "RESOLVED", activatedAt: "2026-09-12T01:30:00.000Z", expectedTicketCount: 2, expectedAmountMinor: 4200, processedTicketCount: 2, processedAmountMinor: 4200, snapshotTickets: [], refundLinks: [{ refundId: "refund-1" }], batches: [{ processedTicketCount: 2, processedAmountMinor: 4200, firstTicketId: "ticket-1", lastTicketId: "ticket-2" }], obligations: [{ id: "obligation-1", status: "WAIVED_WITH_APPROVAL", cause: "CHECKED_IN_CANCELLATION_WAIVER", amountMinor: 2100, currency: "CAD", refundId: null, cancellationClaims: [], waiverApproval: { reason: "Attendee attended event", evidenceDigest: waiverDigest, approver: { email: admin.email } } }] }],
-    }] } };
+      orders: [{ id: "cancellation-order", grossTotalMinor: 4200, currency: "CAD", admissionTickets: [{ id: "ticket-1", unitNumber: 1, status: "VOIDED", voidReason: "Synthetic cancellation", revocations: [{ cause: "EVENT_CANCELLATION", reason: "Synthetic cancellation evidence", refundId: "refund-1", cancellationId: "cancellation-1" }], refundItems: [{ refundId: "refund-1", requestedMinor: 2100, refund: { status: "SUCCEEDED", reason: "Synthetic", attempts: [{ ordinal: 1, status: "SUCCEEDED", expectedAmountMinor: 2100, currency: "CAD", providerRefundId: "synthetic-refund-1", authorizationReason: "Authorized isolated synthetic completion", providerEvents: [{ providerEventId: "synthetic-success-event-1", eventType: "synthetic.refund.succeeded", payloadDigest: "c".repeat(64), providerCreatedAt: "2026-09-12T01:31:00.000Z" }] }], checkedInApprovals: [{ reason: "Scoped supervisor approval", fraudReview: "No indicators", costBearer: "ORGANIZER", evidenceDigest, approver: { email: admin.email } }] } }] }] }],
+      cancellations: [{ id: "cancellation-1", status: "RESOLVED", activatedAt: "2026-09-12T01:30:00.000Z", expectedTicketCount: 2, expectedAmountMinor: 4200, processedTicketCount: 2, processedAmountMinor: 4200, snapshotTickets: [{ admissionTicketId: "ticket-1", amountMinor: 2100, currency: "CAD" }], refundLinks: [{ refundId: "refund-1" }], batches: [{ processedTicketCount: 2, processedAmountMinor: 4200, firstTicketId: "ticket-1", lastTicketId: "ticket-2" }], obligations: [{ id: "obligation-1", status: "WAIVED_WITH_APPROVAL", cause: "CHECKED_IN_CANCELLATION_WAIVER", amountMinor: 2100, currency: "CAD", refundId: null, cancellationClaims: [{ admissionTicketId: "ticket-1", amountMinor: 2100, refundItemId: null }], waiverApproval: { reason: "Attendee attended event", evidenceDigest: waiverDigest, approver: { email: admin.email } } }] }],
+    }], audit: [{ id: "audit-1", organizerId: "refund-organizer", eventId: "staging-refund-g2-cancellation-event", actorUserId: admin.id, actor: { email: admin.email }, action: "STAGING_REFUND_ACTION_REJECTED", targetType: "StagingRefundCommand", targetId: "completeCancellation", reason: "CANCELLATION_WAIVER_REQUIRED", afterJson: { status: "REJECTED", code: "CANCELLATION_WAIVER_REQUIRED", scenario: "cancellation", generation: 2 }, createdAt: "2026-09-12T01:32:00.000Z" }] } };
     jest.spyOn(global, "fetch")
       .mockResolvedValueOnce(response({ ok: true, actor: admin }))
       .mockResolvedValueOnce(response(state));
@@ -133,11 +133,19 @@ describe("primary staging organizer browser flow", () => {
     const scenario = (await screen.findByRole("heading", { name: "Event cancellation and obligations" })).closest("article");
     expect(scenario).toHaveTextContent(`Supervisor: ${admin.email} · ORGANIZER`);
     expect(scenario).toHaveTextContent("Fraud review: No indicators");
-    expect(scenario).toHaveTextContent("Synthetic provider evidence: SUCCEEDED");
+    expect(scenario).toHaveTextContent("Synthetic provider evidence: attempt 1 · SUCCEEDED · $21.00");
+    expect(scenario).toHaveTextContent("Completion event: synthetic.refund.succeeded · synthetic-success-event-1");
     expect(scenario).toHaveTextContent("Revocation: EVENT_CANCELLATION");
     expect(scenario).toHaveTextContent("Admission gate: blocked from cancellation activation");
+    expect(scenario).toHaveTextContent("Snapshot: ticket-1 · $21.00");
+    expect(scenario).toHaveTextContent("Disposition: ticket-1 · $21.00 · waiver");
+    expect(scenario).toHaveTextContent("Cancellation refund link: refund-1");
+    expect(scenario).toHaveTextContent("Batch: ticket-1 through ticket-2 · 2 ticket(s) · $42.00");
     expect(scenario).toHaveTextContent("Waiver: admin@primary-staging.example.invalid · Attendee attended event");
     expect(scenario).toHaveTextContent(evidenceDigest);
     expect(scenario).toHaveTextContent(waiverDigest);
+    expect(screen.getAllByRole("columnheader", { name: "Actor" })).not.toHaveLength(0);
+    expect(screen.getAllByText("CANCELLATION_WAIVER_REQUIRED")).not.toHaveLength(0);
+    expect(screen.getByText(/\"generation\":2/)).toBeInTheDocument();
   });
 });

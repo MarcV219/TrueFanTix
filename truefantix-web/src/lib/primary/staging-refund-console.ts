@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient, UserRole } from "@prisma/client";
 import { STAGING_ADMIN_EMAIL, STAGING_ORGANIZER_EMAIL } from "./staging-console";
 
@@ -186,7 +186,7 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
       create: { organizerId: ORGANIZER_ID, userId: organizerUser.id, role: "OWNER", status: "ACTIVE", acceptedAt: new Date(), invitedByUserId: organizerUser.id },
       update: { role: "OWNER", status: "ACTIVE", acceptedAt: new Date(), revokedAt: null },
     });
-    const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-refund-g([0-9]+)-ordinary-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent"`);
+    const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-refund-g([0-9]+)-ordinary-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
     const generation = Number(rows[0]?.generation ?? 0) + 1;
     const ordinary = await seedOrder(tx, generation, "ordinary", buyer.id, actor.id);
     await seedOrder(tx, generation, "checked", buyer.id, actor.id);
@@ -413,7 +413,13 @@ export async function getPrimaryStagingRefundState(db: Db) {
           refundId: true, requestedMinor: true,
           refund: { select: {
             status: true, reason: true,
-            attempts: { select: { status: true, providerRefundId: true } },
+            attempts: { orderBy: { ordinal: "asc" }, select: {
+              ordinal: true, status: true, expectedAmountMinor: true, currency: true,
+              providerRefundId: true, authorizationReason: true,
+              providerEvents: { orderBy: { providerCreatedAt: "asc" }, select: {
+                providerEventId: true, eventType: true, payloadDigest: true, providerCreatedAt: true,
+              } },
+            } },
             checkedInApprovals: { select: { reason: true, fraudReview: true, costBearer: true, evidenceDigest: true, approver: { select: { email: true } } } },
           } },
         } },
@@ -422,7 +428,7 @@ export async function getPrimaryStagingRefundState(db: Db) {
     } },
     cancellations: { select: { id: true, status: true, activatedAt: true, expectedTicketCount: true, expectedAmountMinor: true, processedTicketCount: true, processedAmountMinor: true, snapshotTickets: { orderBy: { admissionTicketId: "asc" }, select: { admissionTicketId: true, amountMinor: true, currency: true } }, refundLinks: { select: { refundId: true } }, obligations: { orderBy: { createdAt: "asc" }, select: { id: true, status: true, cause: true, amountMinor: true, currency: true, refundId: true, waiverApproval: { select: { reason: true, evidenceDigest: true, approver: { select: { email: true } } } }, cancellationClaims: { select: { admissionTicketId: true, amountMinor: true, refundItemId: true } } } }, batches: { select: { processedTicketCount: true, processedAmountMinor: true, firstTicketId: true, lastTicketId: true } } } },
   } });
-  const audit = await db.primaryAuditEvent.findMany({ where: { organizerId: ORGANIZER_ID, eventId: { in: eventIds }, action: { startsWith: "STAGING_" } }, orderBy: { createdAt: "desc" }, take: 80, select: { id: true, eventId: true, actorUserId: true, action: true, targetType: true, targetId: true, reason: true, afterJson: true, createdAt: true } });
+  const audit = await db.primaryAuditEvent.findMany({ where: { organizerId: ORGANIZER_ID, eventId: { in: eventIds }, action: { startsWith: "STAGING_" } }, orderBy: { createdAt: "desc" }, take: 80, select: { id: true, eventId: true, actorUserId: true, actor: { select: { email: true } }, action: true, targetType: true, targetId: true, reason: true, afterJson: true, createdAt: true } });
   return { generation, organizerId: ORGANIZER_ID, events, audit };
 }
 
@@ -436,5 +442,5 @@ export async function recordPrimaryStagingRefundRejection(db: Db, actor: Actor, 
   if (!eventId) return;
   const event = await db.primaryEvent.findFirst({ where: { id: eventId, organizerId: ORGANIZER_ID }, select: { id: true } });
   if (!event) return;
-  await db.primaryAuditEvent.create({ data: { organizerId: ORGANIZER_ID, eventId, actorUserId: actor.id, actorType: "USER", action: "STAGING_REFUND_ACTION_REJECTED", targetType: "StagingRefundCommand", targetId: targetAction, reason: code, requestId: `staging-refund-rejection:${digest([targetAction, code, Date.now()]).slice(0, 24)}`, afterJson: { status: "REJECTED", code, scenario: scenario ?? "unknown" } } });
+  await db.primaryAuditEvent.create({ data: { organizerId: ORGANIZER_ID, eventId, actorUserId: actor.id, actorType: "USER", action: "STAGING_REFUND_ACTION_REJECTED", targetType: "StagingRefundCommand", targetId: targetAction, reason: code, requestId: `staging-refund-rejection:${randomUUID()}`, afterJson: { status: "REJECTED", code, scenario: scenario ?? "unknown", generation } } });
 }
