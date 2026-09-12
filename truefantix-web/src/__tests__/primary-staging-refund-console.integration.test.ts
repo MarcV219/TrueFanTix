@@ -297,4 +297,31 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     });
     await expect(db.primaryEventCancellation.count({ where: { eventId: `staging-refund-g${cancellationSeed.generation}-cancellation-event` } })).resolves.toBe(0);
   });
+
+  it("revalidates reserved personas inside every synthetic command transaction", async () => {
+    const organizerSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    await db.user.update({ where: { id: organizer.id }, data: { isBanned: true } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_ORGANIZER_REQUIRED",
+      generation: organizerSeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId: `staging-refund-g${organizerSeed.generation}-ordinary-event` } })).resolves.toBe(0);
+    await db.user.update({ where: { id: organizer.id }, data: { isBanned: false } });
+
+    const adminSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
+    await db.user.update({ where: { id: admin.id }, data: { phoneVerifiedAt: null } });
+
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", {
+      reason: "Stale authenticated actor must fail closed",
+      evidence: "synthetic-case-stale-admin",
+      fraudReview: "No indicators",
+      costBearer: "ORGANIZER",
+    })).rejects.toMatchObject({ code: "STAGING_ADMIN_REQUIRED", generation: adminSeed.generation });
+    await expect(db.primaryCheckedInRefundApproval.count({
+      where: { refund: { eventId: `staging-refund-g${adminSeed.generation}-checked-event` } },
+    })).resolves.toBe(0);
+    await db.user.update({ where: { id: admin.id }, data: { phoneVerifiedAt: now } });
+  });
 });

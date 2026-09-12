@@ -79,6 +79,18 @@ async function requireOrganizer(tx: Tx, actor: Actor) {
   if (actor.email !== STAGING_ORGANIZER_EMAIL || actor.role !== "USER") {
     throw new PrimaryStagingRefundError("STAGING_ORGANIZER_REQUIRED");
   }
+  const user = await tx.user.findFirst({
+    where: {
+      id: actor.id,
+      email: STAGING_ORGANIZER_EMAIL,
+      role: "USER",
+      isBanned: false,
+      emailVerifiedAt: { not: null },
+      phoneVerifiedAt: { not: null },
+    },
+    select: { id: true },
+  });
+  if (!user) throw new PrimaryStagingRefundError("STAGING_ORGANIZER_REQUIRED");
   const membership = await tx.primaryOrganizerMembership.findFirst({
     where: { organizerId: ORGANIZER_ID, userId: actor.id, role: "OWNER", status: "ACTIVE" },
     select: { id: true },
@@ -86,10 +98,22 @@ async function requireOrganizer(tx: Tx, actor: Actor) {
   if (!membership) throw new PrimaryStagingRefundError("STAGING_REFUND_SCOPE_REQUIRED");
 }
 
-function requireAdmin(actor: Actor) {
+async function requireAdmin(tx: Tx, actor: Actor) {
   if (actor.email !== STAGING_ADMIN_EMAIL || actor.role !== "ADMIN") {
     throw new PrimaryStagingRefundError("STAGING_ADMIN_REQUIRED");
   }
+  const user = await tx.user.findFirst({
+    where: {
+      id: actor.id,
+      email: STAGING_ADMIN_EMAIL,
+      role: "ADMIN",
+      isBanned: false,
+      emailVerifiedAt: { not: null },
+      phoneVerifiedAt: { not: null },
+    },
+    select: { id: true },
+  });
+  if (!user) throw new PrimaryStagingRefundError("STAGING_ADMIN_REQUIRED");
 }
 
 async function audit(tx: Tx, actor: Actor, eventId: string, action: string, targetType: string, targetId: string, reason: string, after?: Record<string, unknown>) {
@@ -188,7 +212,7 @@ async function seedOrder(tx: Tx, generation: number, kind: ScenarioKind, buyerId
 
 export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
   return db.$transaction(async (tx) => {
-    requireAdmin(actor);
+    await requireAdmin(tx, actor);
     await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836291)");
     const organizerUser = await tx.user.findUniqueOrThrow({ where: { email: STAGING_ORGANIZER_EMAIL } });
     const buyer = await tx.user.upsert({
@@ -324,7 +348,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         return refund;
       }
       case "approveCheckedRefund": {
-        requireAdmin(actor);
+        await requireAdmin(tx, actor);
         const reason = requiredText(input, "reason", "SUPERVISOR_REASON_REQUIRED");
         const fraudReview = requiredText(input, "fraudReview", "SUPERVISOR_EVIDENCE_REQUIRED");
         const evidence = requiredText(input, "evidence", "SUPERVISOR_EVIDENCE_REQUIRED", 1000);
@@ -388,7 +412,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         return prepared;
       }
       case "approveCancellationWaiver": {
-        requireAdmin(actor);
+        await requireAdmin(tx, actor);
         const reason = requiredText(input, "reason", "SUPERVISOR_REASON_REQUIRED");
         const evidence = requiredText(input, "evidence", "SUPERVISOR_EVIDENCE_REQUIRED", 1000);
         const scope = ids(generation, "cancellation");
