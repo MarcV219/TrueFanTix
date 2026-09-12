@@ -18,10 +18,11 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
   const now = new Date("2037-02-01T12:00:00Z");
   const organizer = { id: "staging-refund-organizer-user", email: "organizer@primary-staging.example.invalid", role: "USER" as const };
   const admin = { id: "staging-refund-admin-user", email: "admin@primary-staging.example.invalid", role: "ADMIN" as const };
+  const outsider = { id: "staging-refund-outsider-user", email: "outsider@primary-staging.example.invalid", role: "USER" as const };
 
   beforeAll(async () => {
     await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryAuditEvent", "PrimaryOutboxMessage", "PrimaryRefundProviderEvent", "PrimaryRefundProviderAttempt", "PrimaryRefundAllocation", "PrimaryRefundItem", "PrimaryAdmissionRevocation", "PrimaryRefundObligation", "PrimaryCancellationBatch", "PrimaryEventCancellation", "PrimaryRefund", "PrimaryPurchaseAllocation", "PrimaryAdmissionScan", "PrimaryAdmissionCredential", "PrimaryAdmissionTicket", "PrimaryPaymentException", "PrimaryPaymentProviderEvent", "PrimaryPaymentAttempt", "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder", "PrimaryInventoryReservation", "PrimaryTicketType", "PrimaryEvent", "PrimaryOrganizerMembership", "PrimaryOrganizer" CASCADE');
-    for (const user of [organizer, admin]) await db.user.upsert({ where: { email: user.email }, create: { id: user.id, email: user.email, passwordHash: "synthetic", emailVerifiedAt: now, firstName: "Staging", lastName: user.role, phone: user.role === "ADMIN" ? "+15550001002" : "+15550001001", phoneVerifiedAt: now, streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", role: user.role }, update: { id: user.id, role: user.role, isBanned: false, emailVerifiedAt: now, phoneVerifiedAt: now } });
+    for (const [index, user] of [organizer, admin, outsider].entries()) await db.user.upsert({ where: { email: user.email }, create: { id: user.id, email: user.email, passwordHash: "synthetic", emailVerifiedAt: now, firstName: "Staging", lastName: user.role, phone: `+1555000100${index + 1}`, phoneVerifiedAt: now, streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", role: user.role }, update: { id: user.id, role: user.role, isBanned: false, emailVerifiedAt: now, phoneVerifiedAt: now } });
   });
 
   afterAll(async () => {
@@ -48,6 +49,11 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
 
   it("requires complete scoped supervisor evidence for a checked-in refund", async () => {
     await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
+    const requestedState = await getPrimaryStagingRefundState(db);
+    const checkedTicket = requestedState?.events.find((event) => event.id.includes("-checked-"))?.orders[0].admissionTickets[0];
+    const checkedRefund = await db.primaryRefund.findFirstOrThrow({ where: { eventId: { contains: "-checked-" } } });
+    await expect(db.primaryCheckedInRefundApproval.create({ data: { refundId: checkedRefund.id, admissionTicketId: checkedTicket!.id, approvedByUserId: outsider.id, evidenceDigest: "f".repeat(64), reason: "Forged approval", fraudReview: "Skipped", costBearer: "ORGANIZER" } })).rejects.toThrow("Checked-in approval requires an authorized scoped supervisor");
+    await expect(db.primaryRefundItem.create({ data: { refundId: checkedRefund.id, admissionTicketId: checkedTicket!.id, requestedMinor: checkedRefund.requestedAmountMinor, currency: "CAD" } })).rejects.toThrow("Checked-in refund requires immutable supervised approval");
     await expect(runPrimaryStagingRefundAction(db, organizer, "approveCheckedRefund", { reason: "invalid", evidence: "invalid", fraudReview: "invalid" })).rejects.toEqual(expect.objectContaining({ code: "STAGING_ADMIN_REQUIRED" }));
     await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", { reason: "", evidence: "case", fraudReview: "clear" })).rejects.toEqual(expect.objectContaining({ code: "SUPERVISOR_REASON_REQUIRED" }));
     await runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", { reason: "Scoped approval", evidence: "case-001", fraudReview: "No indicators", costBearer: "ORGANIZER" });
@@ -59,8 +65,10 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
   it("derives the cancellation snapshot and requires waiver evidence before exact resolution", async () => {
     const active = await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
     expect(active).toMatchObject({ status: "ACTIVE", expectedTicketCount: 2, expectedAmountMinor: 4200 });
+    await expect(db.primaryEventCancellation.update({ where: { id: active.id }, data: { expectedAmountMinor: 1 } })).rejects.toThrow("Cancellation snapshot is immutable");
     await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
     await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toEqual(expect.objectContaining({ code: "CANCELLATION_WAIVER_REQUIRED" }));
+    await expect(db.primaryEventCancellation.update({ where: { id: active.id }, data: { status: "RESOLVED" } })).rejects.toThrow("Cancellation");
     await runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", { reason: "Checked-in attendee waiver", evidence: "waiver-case-001" });
     const resolved = await runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {});
     expect(resolved).toMatchObject({ status: "RESOLVED", processedTicketCount: 2, processedAmountMinor: 4200 });
@@ -68,6 +76,7 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     expect(cancellation).toMatchObject({ status: "RESOLVED", refundLinks: [{ refundId: expect.any(String) }], batches: [{ processedTicketCount: 2, processedAmountMinor: 4200 }] });
     expect(cancellation?.obligations.map((item) => item.status).sort()).toEqual(["SATISFIED", "WAIVED_WITH_APPROVAL"]);
     expect(cancellation?.snapshotTickets).toHaveLength(2);
+    await expect(db.primaryCancellationSnapshotTicket.update({ where: { cancellationId_admissionTicketId: { cancellationId: active.id, admissionTicketId: cancellation!.snapshotTickets[0].admissionTicketId } }, data: { amountMinor: 1 } })).rejects.toThrow("Cancellation snapshot evidence is immutable");
   });
 
   it("serializes concurrent repeatable reseeds into distinct immutable generations", async () => {
