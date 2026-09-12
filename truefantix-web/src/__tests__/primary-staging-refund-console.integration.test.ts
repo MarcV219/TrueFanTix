@@ -49,6 +49,8 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
 
   it("requires complete scoped supervisor evidence for a checked-in refund", async () => {
     await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
+    await expect(runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {})).rejects.toEqual(expect.objectContaining({ code: "CHECKED_REFUND_ALREADY_REQUESTED" }));
+    await expect(db.primaryAuditEvent.count({ where: { action: "STAGING_CHECKED_REFUND_REQUESTED" } })).resolves.toBe(1);
     const requestedState = await getPrimaryStagingRefundState(db);
     const checkedTicket = requestedState?.events.find((event) => event.id.includes("-checked-"))?.orders[0].admissionTickets[0];
     const checkedRefund = await db.primaryRefund.findFirstOrThrow({ where: { eventId: { contains: "-checked-" } } });
