@@ -12,6 +12,17 @@ type Tx = Prisma.TransactionClient;
 type Actor = { id: string; email: string; role: UserRole };
 type ScenarioKind = "ordinary" | "checked" | "cancellation";
 
+const ACTION_SCENARIOS: Partial<Record<string, ScenarioKind>> = {
+  refundOrdinary: "ordinary",
+  requestCheckedRefund: "checked",
+  approveCheckedRefund: "checked",
+  completeCheckedRefund: "checked",
+  activateCancellation: "cancellation",
+  prepareCancellation: "cancellation",
+  approveCancellationWaiver: "cancellation",
+  completeCancellation: "cancellation",
+};
+
 export class PrimaryStagingRefundError extends Error {
   constructor(readonly code: string, message = code) {
     super(message);
@@ -241,9 +252,11 @@ async function revoke(tx: Tx, actor: Actor, scope: ReturnType<typeof ids>, ticke
 }
 
 export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action: string, input: Record<string, unknown>) {
-  return db.$transaction(async (tx) => {
-    const generation = await latestGeneration(tx);
-    switch (action) {
+  try {
+    return await db.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836291)");
+      const generation = await latestGeneration(tx);
+      switch (action) {
       case "refundOrdinary": {
         await requireOrganizer(tx, actor);
         const scope = ids(generation, "ordinary"); const ticketId = `${scope.base}-ticket-1`;
@@ -270,7 +283,13 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         if (input.costBearer !== "ORGANIZER" && input.costBearer !== "TRUEFANTIX") throw new PrimaryStagingRefundError("COST_BEARER_REQUIRED");
         const costBearer = input.costBearer;
         const scope = ids(generation, "checked"); const ticketId = `${scope.base}-ticket-1`;
-        const refund = await tx.primaryRefund.findUniqueOrThrow({ where: { requestKey: `${scope.base}:refund:checked` } });
+        const refund = await tx.primaryRefund.findUnique({
+          where: { requestKey: `${scope.base}:refund:checked` },
+          include: { checkedInApprovals: { select: { id: true } } },
+        });
+        if (!refund) throw new PrimaryStagingRefundError("CHECKED_REFUND_REQUEST_REQUIRED");
+        if (refund.status !== "REQUESTED") throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_COMPLETED");
+        if (refund.checkedInApprovals.length) throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_APPROVED");
         await tx.primaryCheckedInRefundApproval.create({ data: { refundId: refund.id, admissionTicketId: ticketId, approvedByUserId: actor.id, evidenceDigest: digest(evidence), reason, fraudReview, costBearer } });
         await materializeRefundItems(tx, refund.id, [ticketId]);
         await audit(tx, actor, scope.eventId, "STAGING_CHECKED_REFUND_APPROVED", "PrimaryRefund", refund.id, reason, { status: refund.status, costBearer, fraudReview });
@@ -278,7 +297,13 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "completeCheckedRefund": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "checked"); const ticketId = `${scope.base}-ticket-1`;
-        const refund = await tx.primaryRefund.findUniqueOrThrow({ where: { requestKey: `${scope.base}:refund:checked` } });
+        const refund = await tx.primaryRefund.findUnique({
+          where: { requestKey: `${scope.base}:refund:checked` },
+          include: { checkedInApprovals: { select: { id: true } } },
+        });
+        if (!refund) throw new PrimaryStagingRefundError("CHECKED_REFUND_REQUEST_REQUIRED");
+        if (refund.status !== "REQUESTED") throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_COMPLETED");
+        if (!refund.checkedInApprovals.length) throw new PrimaryStagingRefundError("CHECKED_REFUND_APPROVAL_REQUIRED");
         await revoke(tx, actor, scope, ticketId, "REFUND", refund.id);
         const completed = await completeSyntheticRefund(tx, actor, refund.id, `${scope.base}:checked`);
         await audit(tx, actor, scope.eventId, "STAGING_CHECKED_REFUND_COMPLETED", "PrimaryRefund", completed.id, "Approved checked-in synthetic refund completed; admission remains checked in.", { status: completed.status });
@@ -286,6 +311,8 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "activateCancellation": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "cancellation");
+        const existing = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` }, select: { id: true } });
+        if (existing) throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_ACTIVATED");
         const cancellation = await tx.primaryEventCancellation.create({ data: { organizerId: ORGANIZER_ID, eventId: scope.eventId, generation: 1, policyVersionId: POLICY_ID, requestedByUserId: actor.id, requestKey: `${scope.base}:cancellation`, commandDigest: digest([scope.base, "cancellation"]), reason: "Synthetic full-event cancellation.", snapshotMaxTicketId: "derived-on-activation", expectedTicketCount: 0, expectedAmountMinor: 0 } });
         const active = await tx.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "ACTIVE", activatedAt: new Date() } });
         await audit(tx, actor, scope.eventId, "STAGING_CANCELLATION_ACTIVATED", "PrimaryEventCancellation", active.id, "Authoritative ticket snapshot activated.", { status: active.status, expectedTicketCount: active.expectedTicketCount, expectedAmountMinor: active.expectedAmountMinor });
@@ -293,7 +320,9 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "prepareCancellation": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "cancellation");
-        const cancellation = await tx.primaryEventCancellation.findUniqueOrThrow({ where: { requestKey: `${scope.base}:cancellation` } });
+        const cancellation = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` } });
+        if (!cancellation) throw new PrimaryStagingRefundError("CANCELLATION_ACTIVATION_REQUIRED");
+        if (cancellation.status !== "ACTIVE") throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_PREPARED");
         const refundableTicket = `${scope.base}-ticket-1`; const waivedTicket = `${scope.base}-ticket-2`;
         const refund = await refundParent(tx, actor, scope, "cancellation", [refundableTicket]);
         await tx.primaryCancellationRefundLink.create({ data: { cancellationId: cancellation.id, refundId: refund.id } });
@@ -311,7 +340,15 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         const reason = requiredText(input, "reason", "SUPERVISOR_REASON_REQUIRED");
         const evidence = requiredText(input, "evidence", "SUPERVISOR_EVIDENCE_REQUIRED", 1000);
         const scope = ids(generation, "cancellation");
-        const obligation = await tx.primaryRefundObligation.findUniqueOrThrow({ where: { idempotencyKey: `${scope.base}:obligation:waiver` } });
+        const cancellation = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` }, select: { status: true } });
+        if (!cancellation || cancellation.status === "ACTIVE") throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
+        if (cancellation.status === "RESOLVED") throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_RESOLVED");
+        const obligation = await tx.primaryRefundObligation.findUnique({
+          where: { idempotencyKey: `${scope.base}:obligation:waiver` },
+          include: { waiverApproval: { select: { id: true } } },
+        });
+        if (!obligation) throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
+        if (obligation.waiverApproval) throw new PrimaryStagingRefundError("CANCELLATION_WAIVER_ALREADY_APPROVED");
         await tx.primaryObligationWaiverApproval.create({ data: { obligationId: obligation.id, approvedByUserId: actor.id, evidenceDigest: digest(evidence), reason } });
         const waived = await tx.primaryRefundObligation.update({ where: { id: obligation.id }, data: { status: "WAIVED_WITH_APPROVAL" } });
         await audit(tx, actor, scope.eventId, "STAGING_CANCELLATION_WAIVER_APPROVED", "PrimaryRefundObligation", waived.id, reason, { status: waived.status });
@@ -319,10 +356,14 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "completeCancellation": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "cancellation");
-        const cancellation = await tx.primaryEventCancellation.findUniqueOrThrow({ where: { requestKey: `${scope.base}:cancellation` } });
-        const refund = await tx.primaryRefund.findUniqueOrThrow({ where: { requestKey: `${scope.base}:refund:cancellation` }, include: { items: true } });
-        const refundObligation = await tx.primaryRefundObligation.findUniqueOrThrow({ where: { idempotencyKey: `${scope.base}:obligation:refund` } });
-        const waiverObligation = await tx.primaryRefundObligation.findUniqueOrThrow({ where: { idempotencyKey: `${scope.base}:obligation:waiver` } });
+        const cancellation = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` } });
+        if (!cancellation) throw new PrimaryStagingRefundError("CANCELLATION_ACTIVATION_REQUIRED");
+        if (cancellation.status === "ACTIVE") throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
+        if (cancellation.status === "RESOLVED") throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_RESOLVED");
+        const refund = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:cancellation` }, include: { items: true } });
+        const refundObligation = await tx.primaryRefundObligation.findUnique({ where: { idempotencyKey: `${scope.base}:obligation:refund` } });
+        const waiverObligation = await tx.primaryRefundObligation.findUnique({ where: { idempotencyKey: `${scope.base}:obligation:waiver` } });
+        if (!refund || !refundObligation || !waiverObligation) throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
         if (waiverObligation.status !== "WAIVED_WITH_APPROVAL") throw new PrimaryStagingRefundError("CANCELLATION_WAIVER_REQUIRED");
         const refundableTicket = `${scope.base}-ticket-1`; const waivedTicket = `${scope.base}-ticket-2`;
         await revoke(tx, actor, scope, refundableTicket, "EVENT_CANCELLATION", refund.id, cancellation.id);
@@ -340,9 +381,17 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         await audit(tx, actor, scope.eventId, "STAGING_CANCELLATION_RESOLVED", "PrimaryEventCancellation", resolved.id, "Exact snapshot, refund, waiver, batch, revocation, and obligation evidence reconciled.", { status: resolved.status, processedTicketCount: resolved.processedTicketCount, processedAmountMinor: resolved.processedAmountMinor });
         return resolved;
       }
-      default: throw new PrimaryStagingRefundError("UNKNOWN_REFUND_ACTION");
+        default: throw new PrimaryStagingRefundError("UNKNOWN_REFUND_ACTION");
+      }
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error instanceof PrimaryStagingRefundError) throw error;
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    if (["P2002", "P2034", "23505", "40001", "40P01"].includes(code)) {
+      throw new PrimaryStagingRefundError("STAGING_REFUND_CONCURRENT_CONFLICT");
     }
-  }, { isolationLevel: "Serializable" });
+    throw error;
+  }
 }
 
 export async function getPrimaryStagingRefundState(db: Db) {
@@ -374,6 +423,9 @@ export async function getPrimaryStagingRefundState(db: Db) {
 
 export async function recordPrimaryStagingRefundRejection(db: Db, actor: Actor, action: string, code: string) {
   const state = await getPrimaryStagingRefundState(db); if (!state) return;
-  const eventId = state.events[0]?.id; if (!eventId) return;
-  await db.primaryAuditEvent.create({ data: { organizerId: ORGANIZER_ID, eventId, actorUserId: actor.id, actorType: "USER", action: "STAGING_REFUND_ACTION_REJECTED", targetType: "StagingRefundCommand", targetId: action || "unknown", reason: code, requestId: `staging-refund-rejection:${digest([action, code, Date.now()]).slice(0, 24)}`, afterJson: { status: "REJECTED", code } } });
+  const scenario = ACTION_SCENARIOS[action];
+  const targetAction = scenario ? action : "unknown";
+  const eventId = scenario ? ids(state.generation, scenario).eventId : state.events[0]?.id;
+  if (!eventId || !state.events.some((event) => event.id === eventId)) return;
+  await db.primaryAuditEvent.create({ data: { organizerId: ORGANIZER_ID, eventId, actorUserId: actor.id, actorType: "USER", action: "STAGING_REFUND_ACTION_REJECTED", targetType: "StagingRefundCommand", targetId: targetAction, reason: code, requestId: `staging-refund-rejection:${digest([targetAction, code, Date.now()]).slice(0, 24)}`, afterJson: { status: "REJECTED", code, scenario: scenario ?? "unknown" } } });
 }

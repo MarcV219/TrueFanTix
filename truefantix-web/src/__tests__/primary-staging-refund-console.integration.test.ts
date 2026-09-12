@@ -4,6 +4,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import {
   getPrimaryStagingRefundState,
+  recordPrimaryStagingRefundRejection,
   reseedPrimaryStagingRefundScenario,
   runPrimaryStagingRefundAction,
 } from "@/lib/primary/staging-refund-console";
@@ -42,6 +43,7 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     ]);
     expect(outcomes.filter((item) => item.status === "fulfilled")).toHaveLength(1);
     expect(outcomes.filter((item) => item.status === "rejected")).toHaveLength(1);
+    expect(outcomes.find((item) => item.status === "rejected")).toMatchObject({ reason: { code: "STAGING_REFUND_CONCURRENT_CONFLICT" } });
     const state = await getPrimaryStagingRefundState(db);
     const ordinary = state?.events.find((event) => event.id.includes("-ordinary-"));
     expect(ordinary?.orders[0].admissionTickets[0]).toMatchObject({ status: "VOIDED", refundItems: [{ refund: { status: "SUCCEEDED", attempts: [{ status: "SUCCEEDED" }] } }] });
@@ -86,6 +88,43 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     expect(cancellation?.obligations.map((item) => item.status).sort()).toEqual(["SATISFIED", "WAIVED_WITH_APPROVAL"]);
     expect(cancellation?.snapshotTickets).toHaveLength(2);
     await expect(db.primaryCancellationSnapshotTicket.update({ where: { cancellationId_admissionTicketId: { cancellationId: active.id, admissionTicketId: cancellation!.snapshotTickets[0].admissionTicketId } }, data: { amountMinor: 1 } })).rejects.toThrow("Cancellation snapshot evidence is immutable");
+  });
+
+  it("returns stable workflow-order and replay rejections with scenario-scoped audit evidence", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const approval = { reason: "Scoped approval", evidence: "case-002", fraudReview: "No indicators", costBearer: "ORGANIZER" };
+
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", approval)).rejects.toMatchObject({ code: "CHECKED_REFUND_REQUEST_REQUIRED" });
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {})).rejects.toMatchObject({ code: "CHECKED_REFUND_REQUEST_REQUIRED" });
+    await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {})).rejects.toMatchObject({ code: "CHECKED_REFUND_APPROVAL_REQUIRED" });
+    await runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", approval);
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", approval)).rejects.toMatchObject({ code: "CHECKED_REFUND_ALREADY_APPROVED" });
+    await runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {});
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {})).rejects.toMatchObject({ code: "CHECKED_REFUND_ALREADY_COMPLETED" });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ACTIVATION_REQUIRED" });
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ACTIVATION_REQUIRED" });
+    await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    await expect(runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ALREADY_ACTIVATED" });
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", approval)).rejects.toMatchObject({ code: "CANCELLATION_PREPARATION_REQUIRED" });
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_PREPARATION_REQUIRED" });
+    await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
+    await expect(runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ALREADY_PREPARED" });
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_WAIVER_REQUIRED" });
+    await runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", approval);
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", approval)).rejects.toMatchObject({ code: "CANCELLATION_WAIVER_ALREADY_APPROVED" });
+    await runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {});
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ALREADY_RESOLVED" });
+
+    await recordPrimaryStagingRefundRejection(db, admin, "approveCheckedRefund", "CHECKED_REFUND_ALREADY_APPROVED");
+    await expect(db.primaryAuditEvent.findFirstOrThrow({
+      where: { action: "STAGING_REFUND_ACTION_REJECTED", targetId: "approveCheckedRefund", reason: "CHECKED_REFUND_ALREADY_APPROVED" },
+      orderBy: { createdAt: "desc" },
+    })).resolves.toMatchObject({
+      eventId: `staging-refund-g${seeded.generation}-checked-event`,
+      afterJson: { status: "REJECTED", code: "CHECKED_REFUND_ALREADY_APPROVED", scenario: "checked" },
+    });
   });
 
   it("serializes cancellation activation ahead of a concurrent admission transition", async () => {
