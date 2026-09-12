@@ -461,4 +461,63 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryRefund.count({ where: { eventId: `${cancellationBase}-event` } })).resolves.toBe(0);
     await expect(db.primaryRefundObligation.count({ where: { eventId: `${cancellationBase}-event` } })).resolves.toBe(0);
   });
+
+  it("rejects non-console approval and extra cancellation preparation evidence", async () => {
+    const checkedSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const checkedBase = `staging-refund-g${checkedSeed.generation}-checked`;
+    await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
+    const checkedRefund = await db.primaryRefund.findUniqueOrThrow({
+      where: { requestKey: `${checkedBase}:refund:checked` },
+    });
+    await db.primaryCheckedInRefundApproval.create({ data: {
+      refundId: checkedRefund.id,
+      admissionTicketId: `${checkedBase}-ticket-1`,
+      approvedByUserId: organizer.id,
+      evidenceDigest: "a".repeat(64),
+      reason: "Database-valid organizer approval outside the reserved console flow.",
+      fraudReview: "Not reviewed by the reserved staging supervisor.",
+      costBearer: "ORGANIZER",
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", {
+      reason: "Reserved supervisor review",
+      evidence: "synthetic-reserved-supervisor-review",
+      fraudReview: "No indicators",
+      costBearer: "ORGANIZER",
+    })).rejects.toMatchObject({
+      code: "STAGING_REFUND_APPROVAL_EVIDENCE_INVALID",
+      generation: checkedSeed.generation,
+    });
+    await expect(db.primaryRefundItem.count({ where: { refundId: checkedRefund.id } })).resolves.toBe(0);
+
+    const cancellationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationBase = `staging-refund-g${cancellationSeed.generation}-cancellation`;
+    await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
+    const cancellation = await db.primaryEventCancellation.findUniqueOrThrow({
+      where: { requestKey: `${cancellationBase}:cancellation` },
+    });
+    await db.primaryRefundObligation.create({ data: {
+      organizerId: "primary-staging-refund-organizer",
+      eventId: `${cancellationBase}-event`,
+      orderId: `${cancellationBase}-order`,
+      cancellationId: cancellation.id,
+      cause: "ADVERSARIAL_EXTRA_OBLIGATION",
+      amountMinor: 1,
+      currency: "CAD",
+      idempotencyKey: `${cancellationBase}:obligation:extra`,
+      reason: "Database-valid but non-deterministic preparation evidence.",
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", {
+      reason: "Reserved waiver review",
+      evidence: "synthetic-reserved-waiver-review",
+    })).rejects.toMatchObject({
+      code: "STAGING_CANCELLATION_PREPARATION_EVIDENCE_INVALID",
+      generation: cancellationSeed.generation,
+    });
+    await expect(db.primaryObligationWaiverApproval.count({
+      where: { obligation: { cancellationId: cancellation.id } },
+    })).resolves.toBe(0);
+  });
 });

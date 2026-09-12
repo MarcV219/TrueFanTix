@@ -607,16 +607,64 @@ async function requireRefundCommandEvidence(
     tx.primaryRefund.findUnique({
       where: { requestKey: `${scope.base}:refund:${suffix}` },
       include: {
-        checkedInApprovals: { select: { id: true } },
-        items: { orderBy: { admissionTicketId: "asc" }, select: { id: true, admissionTicketId: true } },
+        checkedInApprovals: {
+          select: {
+            id: true,
+            admissionTicketId: true,
+            approvedByUserId: true,
+            evidenceDigest: true,
+            reason: true,
+            fraudReview: true,
+            costBearer: true,
+          },
+        },
+        items: {
+          orderBy: { admissionTicketId: "asc" },
+          select: {
+            id: true,
+            admissionTicketId: true,
+            requestedMinor: true,
+            currency: true,
+            allocations: {
+              orderBy: { purchaseAllocationId: "asc" },
+              select: {
+                refundId: true,
+                admissionTicketId: true,
+                purchaseAllocationId: true,
+                amountMinor: true,
+                currency: true,
+              },
+            },
+          },
+        },
+        attempts: { select: { id: true } },
       },
     }),
     tx.primaryPurchaseAllocation.findMany({
       where: { admissionTicketId: { in: ticketIds }, refundable: true },
-      select: { amountMinor: true },
+      orderBy: [{ admissionTicketId: "asc" }, { id: "asc" }],
+      select: { id: true, admissionTicketId: true, amountMinor: true, currency: true },
     }),
   ]);
   const requestedAmountMinor = allocations.reduce((sum, item) => sum + item.amountMinor, 0);
+  const refundItemsAreExact = refund?.items.length === 0 || (
+    refund?.items.length === ticketIds.length
+    && refund.items.every((item) => {
+      const expectedAllocations = allocations.filter((allocation) => allocation.admissionTicketId === item.admissionTicketId);
+      return ticketIds.includes(item.admissionTicketId)
+        && item.requestedMinor === expectedAllocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0)
+        && item.currency === "CAD"
+        && item.allocations.length === expectedAllocations.length
+        && item.allocations.every((allocation, index) => {
+          const expected = expectedAllocations[index];
+          return allocation.refundId === refund.id
+            && allocation.admissionTicketId === item.admissionTicketId
+            && allocation.purchaseAllocationId === expected?.id
+            && allocation.amountMinor === expected?.amountMinor
+            && allocation.currency === expected?.currency;
+        });
+    })
+  );
   if (
     !organizerUser
     || !refund
@@ -631,10 +679,33 @@ async function requireRefundCommandEvidence(
     || refund.requestedAmountMinor !== requestedAmountMinor
     || refund.currency !== "CAD"
     || refund.finalityReason !== null
+    || !refundItemsAreExact
   ) {
     throw new PrimaryStagingRefundError("STAGING_REFUND_COMMAND_EVIDENCE_INVALID");
   }
   return refund;
+}
+
+async function requireCheckedRefundApprovalEvidence(
+  tx: Tx,
+  scope: ReturnType<typeof ids>,
+  refund: Awaited<ReturnType<typeof requireRefundCommandEvidence>>,
+) {
+  const admin = await tx.user.findUnique({ where: { email: STAGING_ADMIN_EMAIL }, select: { id: true } });
+  const approval = refund.checkedInApprovals[0];
+  if (
+    !admin
+    || refund.checkedInApprovals.length !== 1
+    || approval.admissionTicketId !== `${scope.base}-ticket-1`
+    || approval.approvedByUserId !== admin.id
+    || !/^[0-9a-f]{64}$/.test(approval.evidenceDigest)
+    || !approval.reason.trim()
+    || !approval.fraudReview.trim()
+    || !["ORGANIZER", "TRUEFANTIX"].includes(approval.costBearer)
+    || refund.items.length !== 1
+  ) {
+    throw new PrimaryStagingRefundError("STAGING_REFUND_APPROVAL_EVIDENCE_INVALID");
+  }
 }
 
 async function requireCancellationCommandEvidence(tx: Tx, scope: ReturnType<typeof ids>) {
@@ -681,6 +752,73 @@ async function requireCancellationCommandEvidence(tx: Tx, scope: ReturnType<type
     throw new PrimaryStagingRefundError("STAGING_CANCELLATION_COMMAND_EVIDENCE_INVALID");
   }
   return cancellation;
+}
+
+async function requireCancellationPreparationEvidence(
+  tx: Tx,
+  scope: ReturnType<typeof ids>,
+  cancellation: Awaited<ReturnType<typeof requireCancellationCommandEvidence>>,
+) {
+  const refundableTicket = `${scope.base}-ticket-1`;
+  const expectedAmount = scenarioFinancials("cancellation").grossTotalMinor / 2;
+  const refund = await requireRefundCommandEvidence(tx, scope, "cancellation", [refundableTicket]);
+  const [admin, links, obligations] = await Promise.all([
+    tx.user.findUnique({ where: { email: STAGING_ADMIN_EMAIL }, select: { id: true } }),
+    tx.primaryCancellationRefundLink.findMany({
+      where: { cancellationId: cancellation.id },
+      select: { cancellationId: true, refundId: true },
+    }),
+    tx.primaryRefundObligation.findMany({
+      where: { cancellationId: cancellation.id },
+      orderBy: { idempotencyKey: "asc" },
+      include: { waiverApproval: true },
+    }),
+  ]);
+  const refundObligation = obligations.find((item) => item.idempotencyKey === `${scope.base}:obligation:refund`);
+  const waiverObligation = obligations.find((item) => item.idempotencyKey === `${scope.base}:obligation:waiver`);
+  const waiverApproval = waiverObligation?.waiverApproval;
+  const waiverApprovalIsExact = waiverObligation?.status === "OPEN"
+    ? waiverApproval === null
+    : waiverObligation?.status === "WAIVED_WITH_APPROVAL"
+      && admin
+      && waiverApproval?.approvedByUserId === admin.id
+      && /^[0-9a-f]{64}$/.test(waiverApproval.evidenceDigest)
+      && Boolean(waiverApproval.reason.trim());
+  if (
+    !["REQUESTED", "PROVIDER_PENDING"].includes(refund.status)
+    || refund.attempts.length !== 0
+    || refund.items.length !== 1
+    || links.length !== 1
+    || links[0].cancellationId !== cancellation.id
+    || links[0].refundId !== refund.id
+    || obligations.length !== 2
+    || !refundObligation
+    || refundObligation.organizerId !== ORGANIZER_ID
+    || refundObligation.eventId !== scope.eventId
+    || refundObligation.orderId !== scope.orderId
+    || refundObligation.cancellationId !== cancellation.id
+    || refundObligation.refundId !== refund.id
+    || refundObligation.cause !== "EVENT_CANCELLATION"
+    || refundObligation.amountMinor !== expectedAmount
+    || refundObligation.currency !== "CAD"
+    || refundObligation.reason !== "Synthetic cancellation refund obligation."
+    || !["OPEN", "REFUND_LINKED"].includes(refundObligation.status)
+    || refundObligation.waiverApproval !== null
+    || !waiverObligation
+    || waiverObligation.organizerId !== ORGANIZER_ID
+    || waiverObligation.eventId !== scope.eventId
+    || waiverObligation.orderId !== scope.orderId
+    || waiverObligation.cancellationId !== cancellation.id
+    || waiverObligation.refundId !== null
+    || waiverObligation.cause !== "CHECKED_IN_CANCELLATION_WAIVER"
+    || waiverObligation.amountMinor !== expectedAmount
+    || waiverObligation.currency !== "CAD"
+    || waiverObligation.reason !== "Synthetic checked-in cancellation waiver candidate."
+    || !waiverApprovalIsExact
+  ) {
+    throw new PrimaryStagingRefundError("STAGING_CANCELLATION_PREPARATION_EVIDENCE_INVALID");
+  }
+  return { refund, refundObligation, waiverObligation };
 }
 
 async function refundParent(tx: Tx, actor: Actor, scope: ReturnType<typeof ids>, suffix: string, ticketIds: string[]) {
@@ -781,7 +919,10 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         if (!existing) throw new PrimaryStagingRefundError("CHECKED_REFUND_REQUEST_REQUIRED");
         const refund = await requireRefundCommandEvidence(tx, scope, "checked", [ticketId]);
         if (refund.status !== "REQUESTED") throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_COMPLETED");
-        if (refund.checkedInApprovals.length) throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_APPROVED");
+        if (refund.checkedInApprovals.length) {
+          await requireCheckedRefundApprovalEvidence(tx, scope, refund);
+          throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_APPROVED");
+        }
         await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "CHECKED_IN" }], "CHECKED_REFUND_REQUIRES_CHECKED_IN_TICKET");
         await tx.primaryCheckedInRefundApproval.create({ data: { refundId: refund.id, admissionTicketId: ticketId, approvedByUserId: actor.id, evidenceDigest: digest(evidence), reason, fraudReview, costBearer } });
         await materializeRefundItems(tx, refund.id, [ticketId]);
@@ -796,6 +937,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         const refund = await requireRefundCommandEvidence(tx, scope, "checked", [ticketId]);
         if (refund.status !== "REQUESTED") throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_COMPLETED");
         if (!refund.checkedInApprovals.length) throw new PrimaryStagingRefundError("CHECKED_REFUND_APPROVAL_REQUIRED");
+        await requireCheckedRefundApprovalEvidence(tx, scope, refund);
         await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "CHECKED_IN" }], "CHECKED_REFUND_REQUIRES_CHECKED_IN_TICKET");
         await revoke(tx, actor, scope, ticketId, "REFUND", refund.id);
         const completed = await completeSyntheticRefund(tx, actor, refund.id, `${scope.base}:checked`);
@@ -852,6 +994,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
           include: { waiverApproval: { select: { id: true } } },
         });
         if (!obligation) throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
+        await requireCancellationPreparationEvidence(tx, scope, cancellation);
         if (obligation.waiverApproval) throw new PrimaryStagingRefundError("CANCELLATION_WAIVER_ALREADY_APPROVED");
         await tx.primaryObligationWaiverApproval.create({ data: { obligationId: obligation.id, approvedByUserId: actor.id, evidenceDigest: digest(evidence), reason } });
         const waived = await tx.primaryRefundObligation.update({ where: { id: obligation.id }, data: { status: "WAIVED_WITH_APPROVAL" } });
@@ -868,12 +1011,8 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         if (cancellation.status === "RESOLVED") throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_RESOLVED");
         await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "ISSUED" }, { unit: 2, status: "CHECKED_IN" }], "CANCELLATION_SCENARIO_STATE_INVALID");
         const existingRefund = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:cancellation` }, select: { id: true } });
-        const refund = existingRefund
-          ? await requireRefundCommandEvidence(tx, scope, "cancellation", [`${scope.base}-ticket-1`])
-          : null;
-        const refundObligation = await tx.primaryRefundObligation.findUnique({ where: { idempotencyKey: `${scope.base}:obligation:refund` } });
-        const waiverObligation = await tx.primaryRefundObligation.findUnique({ where: { idempotencyKey: `${scope.base}:obligation:waiver` } });
-        if (!refund || !refundObligation || !waiverObligation) throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
+        if (!existingRefund) throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
+        const { refund, refundObligation, waiverObligation } = await requireCancellationPreparationEvidence(tx, scope, cancellation);
         if (waiverObligation.status !== "WAIVED_WITH_APPROVAL") throw new PrimaryStagingRefundError("CANCELLATION_WAIVER_REQUIRED");
         const refundableTicket = `${scope.base}-ticket-1`; const waivedTicket = `${scope.base}-ticket-2`;
         await revoke(tx, actor, scope, refundableTicket, "EVENT_CANCELLATION", refund.id, cancellation.id);
