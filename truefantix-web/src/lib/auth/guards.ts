@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import { enforceOriginAndCsrf } from "@/lib/security/csrf";
-import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
+import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
 
 function jsonError(status: number, error: string, message?: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
@@ -43,7 +43,7 @@ export async function requireVerifiedUser(req: Request) {
     return { ok: false as const, res: jsonError(403, "BANNED", "This account is restricted.") };
   }
 
-  if (isPrimaryStagingSyntheticEmail(user.email)) {
+  if (isPrimaryStagingManagedUser(user)) {
     return { ok: false as const, res: stagingConsoleOnlyError() };
   }
 
@@ -111,7 +111,7 @@ export async function requireUser(req?: Request) {
     return { ok: false as const, res: jsonError(403, "BANNED", "This account is restricted.") };
   }
 
-  if (isPrimaryStagingSyntheticEmail(user.email)) {
+  if (isPrimaryStagingManagedUser(user)) {
     return { ok: false as const, res: stagingConsoleOnlyError() };
   }
 

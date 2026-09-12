@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie, clearSessionCookie } from "@/lib/auth/session";
-import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
+import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
 
 function toIsoOrNull(d: Date | null | undefined) {
   return d ? d.toISOString() : null;
@@ -83,6 +83,8 @@ export async function GET() {
           canBuy: true,
           canComment: true,
           canSell: true,
+          termsVersion: true,
+          privacyVersion: true,
           role: true,
           isBanned: true,
           seller: { select: { status: true } },
@@ -111,7 +113,7 @@ export async function GET() {
       );
     }
 
-    if (isPrimaryStagingSyntheticEmail(user.email)) {
+    if (isPrimaryStagingManagedUser(user)) {
       return noStoreJson(
         {
           ok: false,

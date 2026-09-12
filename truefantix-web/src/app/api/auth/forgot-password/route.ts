@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import { schemas, validateRequest } from "@/lib/validation";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { applyRateLimit } from "@/lib/rate-limit";
-import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
+import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
 
 const SALT_ROUNDS = 12;
 
@@ -56,12 +56,15 @@ export async function POST(req: Request) {
       select: {
         id: true,
         email: true,
+        phone: true,
+        termsVersion: true,
+        privacyVersion: true,
         firstName: true,
       },
     });
 
     // Always return success to prevent email enumeration
-    if (!user || isPrimaryStagingSyntheticEmail(user.email)) {
+    if (!user || isPrimaryStagingManagedUser(user)) {
       return privateNoStore(NextResponse.json(
         { ok: true, message: "If an account exists with this email, you will receive a password reset link." },
         { status: 200 }
@@ -177,13 +180,16 @@ export async function GET(req: Request) {
           select: {
             id: true,
             email: true,
+            phone: true,
+            termsVersion: true,
+            privacyVersion: true,
             firstName: true,
           },
         },
       },
     });
 
-    if (!resetToken || isPrimaryStagingSyntheticEmail(resetToken.user.email)) {
+    if (!resetToken || isPrimaryStagingManagedUser(resetToken.user)) {
       return NextResponse.json(
         { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
         { status: 400 }
@@ -244,9 +250,9 @@ export async function PATCH(req: Request) {
 
     const resetUser = await prisma.user.findUnique({
       where: { id: data.userId },
-      select: { email: true },
+      select: { email: true, phone: true, termsVersion: true, privacyVersion: true },
     });
-    if (!resetUser || isPrimaryStagingSyntheticEmail(resetUser.email)) {
+    if (!resetUser || isPrimaryStagingManagedUser(resetUser)) {
       return NextResponse.json(
         { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
         { status: 400 }

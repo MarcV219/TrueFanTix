@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
 import {
-  isPrimaryStagingSyntheticEmail,
+  isPrimaryStagingManagedUser,
   isPrimaryStagingSyntheticPhone,
 } from "@/lib/primary/staging-console";
 
@@ -35,12 +35,19 @@ export async function PATCH(req: Request) {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, phone: true, isBanned: true },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        termsVersion: true,
+        privacyVersion: true,
+        isBanned: true,
+      },
     });
 
     if (!user) return jsonError(401, "UNAUTHORIZED", "Please log in.");
     if (user.isBanned) return jsonError(403, "BANNED", "This account is restricted.");
-    if (isPrimaryStagingSyntheticEmail(user.email)) {
+    if (isPrimaryStagingManagedUser(user)) {
       return reservedIdentityError("PROFILE_LOCKED", "This account profile is managed by the staging console.");
     }
 

@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "crypto";
 import { sendEmail } from "@/lib/email";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
-import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
+import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
 
 function privateNoStore<T extends NextResponse>(response: T) {
   response.headers.set("Cache-Control", "private, no-store");
@@ -64,13 +64,16 @@ export async function POST(req: Request) {
       select: {
         id: true,
         email: true,
+        phone: true,
+        termsVersion: true,
+        privacyVersion: true,
         firstName: true,
         emailVerifiedAt: true,
         emailVerificationToken: true,
       },
     });
 
-    if (!user || isPrimaryStagingSyntheticEmail(user.email)) return userNotFound();
+    if (!user || isPrimaryStagingManagedUser(user)) return userNotFound();
 
     // Check if already verified
     if (user.emailVerifiedAt) {
@@ -195,11 +198,14 @@ export async function GET(req: Request) {
       select: {
         id: true,
         email: true,
+        phone: true,
+        termsVersion: true,
+        privacyVersion: true,
         emailVerifiedAt: true,
       },
     });
 
-    if (!user || isPrimaryStagingSyntheticEmail(user.email)) return invalidToken();
+    if (!user || isPrimaryStagingManagedUser(user)) return invalidToken();
 
     // Check if already verified
     if (user.emailVerifiedAt) {

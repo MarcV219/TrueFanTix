@@ -5,6 +5,7 @@ import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import {
   ensurePrimaryStagingPersona,
   getPrimaryStagingConsoleGate,
+  isPrimaryStagingManagedUser,
   isPrimaryStagingSyntheticEmail,
   isPrimaryStagingSyntheticPhone,
   primaryStagingSyntheticContactEmail,
@@ -128,6 +129,21 @@ describe("primary staging console boundary", () => {
   it("does not reserve unrelated synthetic contacts", () => {
     expect(isPrimaryStagingSyntheticEmail("support@primary-staging.example.invalid")).toBe(false);
     expect(isPrimaryStagingSyntheticPhone("+15550001003")).toBe(false);
+  });
+
+  it("keeps a managed persona out of ordinary auth after one identity field drifts", () => {
+    expect(isPrimaryStagingManagedUser({
+      email: "drifted-reviewer@example.test",
+      phone: "+15550001002",
+      termsVersion: "primary-staging-only",
+      privacyVersion: "primary-staging-only",
+    })).toBe(true);
+    expect(isPrimaryStagingManagedUser({
+      email: "ordinary@example.test",
+      phone: "+14165550123",
+      termsVersion: "v1",
+      privacyVersion: "v1",
+    })).toBe(false);
   });
 
   it("rotates ordinary credentials when the access-token flow restores a persona", async () => {

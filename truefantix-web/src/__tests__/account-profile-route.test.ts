@@ -57,6 +57,25 @@ describe("account profile reserved staging identities", () => {
     expect(mockedPrisma.user.update).not.toHaveBeenCalled();
   });
 
+  it("keeps a managed profile locked after its email drifts", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      id: "staging-organizer",
+      email: "drifted-organizer@example.test",
+      phone: "+15550001001",
+      termsVersion: "primary-staging-only",
+      privacyVersion: "primary-staging-only",
+      isBanned: false,
+    });
+
+    const response = await PATCH(request());
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: "PROFILE_LOCKED" });
+    expect(mockedValidateRequest).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+  });
+
   it("does not let an ordinary account claim a reserved console phone", async () => {
     mockedPrisma.user.findUnique.mockResolvedValue({
       id: "ordinary-user",

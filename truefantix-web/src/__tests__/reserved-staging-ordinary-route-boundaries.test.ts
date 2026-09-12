@@ -111,6 +111,30 @@ describe("reserved staging personas cannot enter direct ordinary session routes"
     await expectConsoleOnly(await getMe());
   });
 
+  it("does not expose a managed persona whose email drifted", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      id: "staging-admin",
+      email: "drifted-reviewer@example.test",
+      phone: "+15550001002",
+      termsVersion: "primary-staging-only",
+      privacyVersion: "primary-staging-only",
+      firstName: "Staging",
+      lastName: "Reviewer",
+      displayName: "Staging Reviewer",
+      sellerId: null,
+      emailVerifiedAt: new Date(),
+      phoneVerifiedAt: new Date(),
+      role: "ADMIN",
+      isBanned: false,
+      canBuy: false,
+      canComment: false,
+      canSell: false,
+      seller: null,
+    });
+
+    await expectConsoleOnly(await getMe());
+  });
+
   it("blocks ordinary password verification and mutation", async () => {
     mockedPrisma.user.findUnique.mockResolvedValue({
       id: "staging-admin",
@@ -124,6 +148,23 @@ describe("reserved staging personas cannot enter direct ordinary session routes"
     );
 
     expect(mockedPrisma.user.findUnique).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks password mutation after a managed persona email drift", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      id: "staging-admin",
+      email: "drifted-reviewer@example.test",
+      phone: "+15550001002",
+      termsVersion: "primary-staging-only",
+      privacyVersion: "primary-staging-only",
+      passwordHash: "synthetic-no-login",
+      isBanned: false,
+    });
+
+    await expectConsoleOnly(
+      await changePassword(request("/api/account/security/password")),
+    );
     expect(mockedPrisma.user.update).not.toHaveBeenCalled();
   });
 
@@ -141,6 +182,24 @@ describe("reserved staging personas cannot enter direct ordinary session routes"
     await expectConsoleOnly(await getSellerOnboardingStatus());
 
     expect(mockedPrisma.user.findUnique).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks provider access after a managed persona email drift", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      id: "staging-admin",
+      email: "drifted-reviewer@example.test",
+      phone: "+15550001002",
+      termsVersion: "primary-staging-only",
+      privacyVersion: "primary-staging-only",
+      isBanned: false,
+      seller: {
+        id: "contaminated-seller",
+        stripeAccountId: "acct_must_not_be_retrieved",
+      },
+    });
+
+    await expectConsoleOnly(await getSellerOnboardingStatus());
     expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
   });
 

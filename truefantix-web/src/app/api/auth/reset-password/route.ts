@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
-import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
+import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
 
 function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
@@ -68,12 +68,12 @@ export async function POST(req: Request) {
     // Find user
     const user = await prisma.user.findUnique({
       where: { id: resetCode.userId },
-      select: { id: true, email: true },
+      select: { id: true, email: true, phone: true, termsVersion: true, privacyVersion: true },
     });
 
     if (
       !user
-      || isPrimaryStagingSyntheticEmail(user.email)
+      || isPrimaryStagingManagedUser(user)
       || user.email.toLowerCase() !== email.toLowerCase()
     ) {
       return jsonError(400, "INVALID_TOKEN", "Reset link is invalid.");

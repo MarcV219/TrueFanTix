@@ -29,6 +29,8 @@ const STAGING_USERS = {
   },
 } as const;
 
+const STAGING_LEGAL_VERSION = "primary-staging-only";
+
 const STAGING_PROFILE = {
   streetAddress1: "1 Synthetic Way",
   streetAddress2: null,
@@ -41,8 +43,8 @@ const STAGING_PROFILE = {
   canBuy: false,
   canComment: false,
   canSell: false,
-  termsVersion: "primary-staging-only",
-  privacyVersion: "primary-staging-only",
+  termsVersion: STAGING_LEGAL_VERSION,
+  privacyVersion: STAGING_LEGAL_VERSION,
   isBanned: false,
   banReason: null,
   sellerId: null,
@@ -134,6 +136,18 @@ export function isPrimaryStagingSyntheticEmail(email: string) {
 export function isPrimaryStagingSyntheticPhone(phone: string) {
   const normalized = phone.trim().replace(/[^\d+]/g, "");
   return [STAGING_ORGANIZER_PHONE, STAGING_ADMIN_PHONE, STAGING_REFUND_BUYER_PHONE].includes(normalized);
+}
+
+export function isPrimaryStagingManagedUser(user: {
+  email?: string | null;
+  phone?: string | null;
+  termsVersion?: string | null;
+  privacyVersion?: string | null;
+}) {
+  return (!!user.email && isPrimaryStagingSyntheticEmail(user.email))
+    || (!!user.phone && isPrimaryStagingSyntheticPhone(user.phone))
+    || user.termsVersion === STAGING_LEGAL_VERSION
+    || user.privacyVersion === STAGING_LEGAL_VERSION;
 }
 
 export function primaryStagingSyntheticContactEmail(email: string) {

@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import { instantPayoutDestination, instantPayoutStatusLabel } from "@/lib/payouts/instantPayout";
-import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
+import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
 
 function noStoreJson(body: any, init?: ResponseInit) {
   const res = NextResponse.json(body, init);
@@ -43,7 +43,7 @@ export async function GET() {
       return noStoreJson({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
     }
 
-    if (isPrimaryStagingSyntheticEmail(user.email)) {
+    if (isPrimaryStagingManagedUser(user)) {
       return noStoreJson(
         {
           ok: false,

@@ -31,6 +31,9 @@ function stagingUser(email: string, role: "USER" | "ADMIN") {
   return {
     id: `staging-${role.toLowerCase()}`,
     email,
+    phone: "+14165550123",
+    termsVersion: "v1",
+    privacyVersion: "v1",
     role,
     isBanned: false,
     emailVerifiedAt: new Date(),
@@ -79,6 +82,17 @@ describe("ordinary auth guards reject reserved staging personas", () => {
     mockedPrisma.user.findUnique.mockResolvedValue(
       stagingUser("admin@primary-staging.example.invalid", "ADMIN"),
     );
+
+    await expectConsoleOnly(await requireAdmin(request()));
+  });
+
+  it("blocks a managed administrator whose email drifted away from the reserved address", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      ...stagingUser("drifted-reviewer@example.test", "ADMIN"),
+      phone: "+15550001002",
+      termsVersion: "primary-staging-only",
+      privacyVersion: "primary-staging-only",
+    });
 
     await expectConsoleOnly(await requireAdmin(request()));
   });

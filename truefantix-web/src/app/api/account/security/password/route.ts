@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSessionTokenHash, getUserIdFromSessionCookie } from "@/lib/auth/session";
-import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
+import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { enforceOriginAndCsrf } from "@/lib/security/csrf";
@@ -38,12 +38,20 @@ export async function POST(req: Request) {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, passwordHash: true, isBanned: true },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        termsVersion: true,
+        privacyVersion: true,
+        passwordHash: true,
+        isBanned: true,
+      },
     });
 
     if (!user) return jsonError(401, "UNAUTHORIZED", "Please log in.");
     if (user.isBanned) return jsonError(403, "BANNED", "This account is restricted.");
-    if (isPrimaryStagingSyntheticEmail(user.email)) return stagingConsoleOnlyError();
+    if (isPrimaryStagingManagedUser(user)) return stagingConsoleOnlyError();
 
     // Validate request body with Zod
     const validation = await validateRequest(schemas.passwordChange)(req);
