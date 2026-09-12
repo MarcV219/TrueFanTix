@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { requireUser } from "@/lib/auth/guards";
 import { requireDebugAccess } from "@/lib/security/debug-access";
 
 export async function POST(req: Request) {
@@ -15,13 +15,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const userId = await getUserIdFromSessionCookie();
-  if (!userId) {
-    return NextResponse.json(
-      { ok: false, error: "NOT_AUTHENTICATED", message: "Please log in." },
-      { status: 401 }
-    );
-  }
+  const gate = await requireUser(req);
+  if (!gate.ok) return gate.res;
+  const userId = gate.user.id;
 
   const now = new Date();
 

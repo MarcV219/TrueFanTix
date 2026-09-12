@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie, clearSessionCookie } from "@/lib/auth/session";
+import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
 
 function toIsoOrNull(d: Date | null | undefined) {
   return d ? d.toISOString() : null;
@@ -11,7 +12,7 @@ function toIsoOrNull(d: Date | null | undefined) {
 function noStoreJson(body: any, init?: ResponseInit) {
   const res = NextResponse.json(body, init);
   // Bank-grade: never cache session introspection responses
-  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.headers.set("Cache-Control", "private, no-store, no-cache, must-revalidate, proxy-revalidate");
   res.headers.set("Pragma", "no-cache");
   res.headers.set("Expires", "0");
   return res;
@@ -107,6 +108,17 @@ export async function GET() {
       return noStoreJson(
         { ok: false, error: "BANNED", message: "This account is restricted." },
         { status: 403 }
+      );
+    }
+
+    if (isPrimaryStagingSyntheticEmail(user.email)) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403 },
       );
     }
 

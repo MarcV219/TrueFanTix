@@ -4,10 +4,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import { instantPayoutDestination, instantPayoutStatusLabel } from "@/lib/payouts/instantPayout";
+import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
 
 function noStoreJson(body: any, init?: ResponseInit) {
   const res = NextResponse.json(body, init);
-  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.headers.set("Cache-Control", "private, no-store, no-cache, must-revalidate, proxy-revalidate");
   res.headers.set("Pragma", "no-cache");
   res.headers.set("Expires", "0");
   return res;
@@ -40,6 +41,17 @@ export async function GET() {
 
     if (!user || user.isBanned) {
       return noStoreJson({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
+
+    if (isPrimaryStagingSyntheticEmail(user.email)) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403 },
+      );
     }
 
     const seller = user.seller;
