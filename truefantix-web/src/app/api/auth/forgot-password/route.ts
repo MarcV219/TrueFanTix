@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { schemas, validateRequest } from "@/lib/validation";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { applyRateLimit } from "@/lib/rate-limit";
+import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
 
 const SALT_ROUNDS = 12;
 
@@ -55,7 +56,7 @@ export async function POST(req: Request) {
     });
 
     // Always return success to prevent email enumeration
-    if (!user) {
+    if (!user || isPrimaryStagingSyntheticEmail(user.email)) {
       return NextResponse.json(
         { ok: true, message: "If an account exists with this email, you will receive a password reset link." },
         { status: 200 }
@@ -177,7 +178,7 @@ export async function GET(req: Request) {
       },
     });
 
-    if (!resetToken) {
+    if (!resetToken || isPrimaryStagingSyntheticEmail(resetToken.user.email)) {
       return NextResponse.json(
         { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
         { status: 400 }
@@ -230,6 +231,17 @@ export async function PATCH(req: Request) {
     });
 
     if (!resetToken) {
+      return NextResponse.json(
+        { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
+        { status: 400 }
+      );
+    }
+
+    const resetUser = await prisma.user.findUnique({
+      where: { id: data.userId },
+      select: { email: true },
+    });
+    if (!resetUser || isPrimaryStagingSyntheticEmail(resetUser.email)) {
       return NextResponse.json(
         { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
         { status: 400 }

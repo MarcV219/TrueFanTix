@@ -3,7 +3,10 @@
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import {
+  ensurePrimaryStagingPersona,
   getPrimaryStagingConsoleGate,
+  isPrimaryStagingSyntheticEmail,
+  isPrimaryStagingSyntheticPhone,
   primaryStagingSyntheticContactEmail,
   primaryStagingSyntheticContactPhone,
   requirePrimaryStagingActor,
@@ -69,6 +72,50 @@ describe("primary staging console boundary", () => {
     expect(verifyPrimaryStagingAccessToken(accessToken, previewEnv)).toBe(true);
     expect(verifyPrimaryStagingAccessToken(`${accessToken}-wrong`, previewEnv)).toBe(false);
     expect(verifyPrimaryStagingAccessToken(null, previewEnv)).toBe(false);
+  });
+
+  it.each([
+    "organizer@primary-staging.example.invalid",
+    " ADMIN@PRIMARY-STAGING.EXAMPLE.INVALID ",
+    "refund-buyer@primary-staging.example.invalid",
+  ])("reserves the synthetic persona email from ordinary authentication: %s", (email) => {
+    expect(isPrimaryStagingSyntheticEmail(email)).toBe(true);
+  });
+
+  it.each(["+15550001001", "+1 (555) 000-1002", "+15550001004"])(
+    "reserves the synthetic persona phone from ordinary registration: %s",
+    (phone) => {
+      expect(isPrimaryStagingSyntheticPhone(phone)).toBe(true);
+    },
+  );
+
+  it("does not reserve unrelated synthetic contacts", () => {
+    expect(isPrimaryStagingSyntheticEmail("support@primary-staging.example.invalid")).toBe(false);
+    expect(isPrimaryStagingSyntheticPhone("+15550001003")).toBe(false);
+  });
+
+  it("rotates ordinary credentials when the access-token flow restores a persona", async () => {
+    mockedPrisma.user.upsert.mockResolvedValue({
+      id: "organizer-1",
+      email: "organizer@primary-staging.example.invalid",
+      firstName: "Staging",
+      lastName: "Organizer",
+      role: "USER",
+    });
+
+    await ensurePrimaryStagingPersona("organizer");
+
+    expect(mockedPrisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({
+        passwordHash: expect.stringMatching(/^\$2[aby]\$/),
+        canBuy: false,
+        canComment: false,
+        canSell: false,
+        termsVersion: "primary-staging-only",
+        privacyVersion: "primary-staging-only",
+        emailVerificationToken: null,
+      }),
+    }));
   });
 
   it("accepts only reserved synthetic contact coordinates", () => {

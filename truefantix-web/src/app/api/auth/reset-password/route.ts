@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
+import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
 
 function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
@@ -70,7 +71,11 @@ export async function POST(req: Request) {
       select: { id: true, email: true },
     });
 
-    if (!user || user.email.toLowerCase() !== email.toLowerCase()) {
+    if (
+      !user
+      || isPrimaryStagingSyntheticEmail(user.email)
+      || user.email.toLowerCase() !== email.toLowerCase()
+    ) {
       return jsonError(400, "INVALID_TOKEN", "Reset link is invalid.");
     }
 

@@ -7,6 +7,10 @@ import { requirePrimaryPreflight } from "./config";
 
 export const STAGING_ORGANIZER_EMAIL = "organizer@primary-staging.example.invalid";
 export const STAGING_ADMIN_EMAIL = "admin@primary-staging.example.invalid";
+export const STAGING_REFUND_BUYER_EMAIL = "refund-buyer@primary-staging.example.invalid";
+export const STAGING_ORGANIZER_PHONE = "+15550001001";
+export const STAGING_ADMIN_PHONE = "+15550001002";
+export const STAGING_REFUND_BUYER_PHONE = "+15550001004";
 
 const STAGING_USERS = {
   organizer: {
@@ -14,14 +18,14 @@ const STAGING_USERS = {
     role: "USER" as UserRole,
     firstName: "Staging",
     lastName: "Organizer",
-    phone: "+15550001001",
+    phone: STAGING_ORGANIZER_PHONE,
   },
   admin: {
     email: STAGING_ADMIN_EMAIL,
     role: "ADMIN" as UserRole,
     firstName: "Staging",
     lastName: "Reviewer",
-    phone: "+15550001002",
+    phone: STAGING_ADMIN_PHONE,
   },
 } as const;
 
@@ -86,7 +90,12 @@ export function requirePrimaryStagingConsole(env: NodeJS.ProcessEnv = process.en
 
 export function isPrimaryStagingSyntheticEmail(email: string) {
   const normalized = email.trim().toLowerCase();
-  return normalized === STAGING_ORGANIZER_EMAIL || normalized === STAGING_ADMIN_EMAIL;
+  return [STAGING_ORGANIZER_EMAIL, STAGING_ADMIN_EMAIL, STAGING_REFUND_BUYER_EMAIL].includes(normalized);
+}
+
+export function isPrimaryStagingSyntheticPhone(phone: string) {
+  const normalized = phone.trim().replace(/[^\d+]/g, "");
+  return [STAGING_ORGANIZER_PHONE, STAGING_ADMIN_PHONE, STAGING_REFUND_BUYER_PHONE].includes(normalized);
 }
 
 export function primaryStagingSyntheticContactEmail(email: string) {
@@ -144,6 +153,7 @@ export async function ensurePrimaryStagingPersona(persona: StagingPersona) {
       privacyVersion: "primary-staging-only",
     },
     update: {
+      passwordHash,
       role: definition.role,
       firstName: definition.firstName,
       lastName: definition.lastName,
@@ -161,6 +171,11 @@ export async function ensurePrimaryStagingPersona(persona: StagingPersona) {
       canBuy: false,
       canComment: false,
       canSell: false,
+      termsAcceptedAt: verifiedAt,
+      termsVersion: "primary-staging-only",
+      privacyAcceptedAt: verifiedAt,
+      privacyVersion: "primary-staging-only",
+      emailVerificationToken: null,
     },
     select: { id: true, email: true, firstName: true, lastName: true, role: true },
   });

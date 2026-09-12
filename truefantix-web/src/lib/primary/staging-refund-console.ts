@@ -1,12 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient, UserRole } from "@prisma/client";
-import { STAGING_ADMIN_EMAIL, STAGING_ORGANIZER_EMAIL } from "./staging-console";
+import {
+  STAGING_ADMIN_EMAIL,
+  STAGING_ORGANIZER_EMAIL,
+  STAGING_REFUND_BUYER_EMAIL,
+  STAGING_REFUND_BUYER_PHONE,
+} from "./staging-console";
 
 const ORGANIZER_ID = "primary-staging-refund-organizer";
 const POLICY_ID = "primary-refund-policy-v1";
 const EVENT_PREFIX = "staging-refund-g";
-const BUYER_EMAIL = "refund-buyer@primary-staging.example.invalid";
-const BUYER_PHONE = "+15550001004";
+const BUYER_EMAIL = STAGING_REFUND_BUYER_EMAIL;
+const BUYER_PHONE = STAGING_REFUND_BUYER_PHONE;
 
 type Db = PrismaClient;
 type Tx = Prisma.TransactionClient;

@@ -9,6 +9,10 @@ import { applyRateLimit } from "@/lib/rate-limit";
 import { grantEarlyAccessReward } from "@/lib/earlyAccessReward";
 import { awardLaunchSignup } from "@/lib/launchPromotion";
 import { attributionSource, sanitizeAttribution } from "@/lib/analytics/campaign-attribution";
+import {
+  isPrimaryStagingSyntheticEmail,
+  isPrimaryStagingSyntheticPhone,
+} from "@/lib/primary/staging-console";
 
 function badRequest(message: string, details?: string[]) {
   return NextResponse.json(
@@ -55,6 +59,19 @@ export async function POST(req: Request) {
     const phoneNorm = normalizePhone(body.phone);
     const attribution = sanitizeAttribution(body.attribution);
     const hasAttribution = !!(attribution.source || attribution.referrerHost || attribution.campaign);
+
+    if (isPrimaryStagingSyntheticEmail(emailNorm)) {
+      return NextResponse.json(
+        { ok: false, error: "EMAIL_IN_USE", message: "That email is already in use. Log in instead." },
+        { status: 409 }
+      );
+    }
+    if (isPrimaryStagingSyntheticPhone(phoneNorm)) {
+      return NextResponse.json(
+        { ok: false, error: "PHONE_IN_USE", message: "That phone number is already in use. Log in instead." },
+        { status: 409 }
+      );
+    }
 
     // --- Uniqueness checks ---
     const [existingByEmail, existingByPhone] = await Promise.all([

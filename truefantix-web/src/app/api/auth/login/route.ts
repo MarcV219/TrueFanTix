@@ -8,6 +8,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { ensureCsrfCookie, csrfCookieName } from "@/lib/security/csrf";
+import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
 
 function authError() {
   // Deliberately vague to avoid leaking which field was wrong
@@ -73,6 +74,7 @@ export async function POST(req: Request) {
     },
     select: {
       id: true,
+      email: true,
       passwordHash: true,
       isBanned: true,
       emailVerifiedAt: true,
@@ -82,7 +84,7 @@ export async function POST(req: Request) {
     },
   });
 
-  if (!user) return authError();
+  if (!user || isPrimaryStagingSyntheticEmail(user.email)) return authError();
 
   if (user.isBanned) {
     return NextResponse.json(
