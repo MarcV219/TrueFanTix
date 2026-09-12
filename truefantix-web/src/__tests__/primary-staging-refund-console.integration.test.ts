@@ -673,6 +673,9 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryRefund.count({
       where: { eventId: `${ordinaryBase}-event` },
     })).resolves.toBe(0);
+    await expect(db.primaryEvent.count({
+      where: { id: `staging-refund-g${seeded.generation + 1}-ordinary-event` },
+    })).resolves.toBe(0);
 
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
