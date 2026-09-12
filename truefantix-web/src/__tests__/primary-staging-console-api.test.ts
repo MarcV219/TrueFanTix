@@ -47,6 +47,7 @@ jest.mock("@/lib/primary/staging-console", () => ({
 }));
 
 jest.mock("@/lib/primary/staging-refund-console", () => ({
+  assertPrimaryStagingRefundActionInput: jest.requireActual("@/lib/primary/staging-refund-console").assertPrimaryStagingRefundActionInput,
   getPrimaryStagingRefundState: jest.fn(),
   recordPrimaryStagingRefundRejection: jest.fn(),
   reseedPrimaryStagingRefundScenario: jest.fn(),
@@ -152,15 +153,29 @@ describe("primary staging console API boundary", () => {
     mockedActor.mockResolvedValue(adminActor);
     mockedReseed.mockResolvedValue({ generation: 4 });
     mockedRefundAction.mockResolvedValue({ status: "REQUESTED" } as never);
-    const request = (action: string) => new Request("https://preview.example/api/staging/primary/actions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, reason: "Synthetic evidence" }) });
+    const request = (body: Record<string, unknown>) => new Request("https://preview.example/api/staging/primary/actions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-    const reseed = await postAction(request("reseedRefundScenarios"));
-    const refund = await postAction(request("approveCheckedRefund"));
+    const reseed = await postAction(request({ action: "reseedRefundScenarios" }));
+    const refund = await postAction(request({ action: "approveCheckedRefund", reason: "Synthetic evidence" }));
 
     expect(reseed.status).toBe(200);
     expect(refund.status).toBe(200);
     expect(mockedReseed).toHaveBeenCalledWith(prisma, expect.objectContaining({ email: adminActor.email, role: "ADMIN" }));
     expect(mockedRefundAction).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: adminActor.id }), "approveCheckedRefund", expect.objectContaining({ reason: "Synthetic evidence" }));
+  });
+
+  it("rejects unexpected reseed input before creating or mutating synthetic state", async () => {
+    mockedActor.mockResolvedValue(adminActor);
+
+    const response = await postAction(new Request("https://preview.example/api/staging/primary/actions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "reseedRefundScenarios", eventId: "caller-selected" }),
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ ok: false, error: "STAGING_REFUND_UNEXPECTED_INPUT" });
+    expect(mockedReseed).not.toHaveBeenCalled();
   });
 
   it("returns and records readable rejection evidence for rejected refund commands", async () => {

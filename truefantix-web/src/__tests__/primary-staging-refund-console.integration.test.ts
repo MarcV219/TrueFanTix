@@ -111,6 +111,7 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
   it("returns stable workflow-order and replay rejections with scenario-scoped audit evidence", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const approval = { reason: "Scoped approval", evidence: "case-002", fraudReview: "No indicators", costBearer: "ORGANIZER" };
+    const waiverApproval = { reason: approval.reason, evidence: approval.evidence };
 
     await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", approval)).rejects.toMatchObject({ code: "CHECKED_REFUND_REQUEST_REQUIRED" });
     await expect(runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {})).rejects.toMatchObject({ code: "CHECKED_REFUND_REQUEST_REQUIRED" });
@@ -125,13 +126,13 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ACTIVATION_REQUIRED" });
     await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
     await expect(runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ALREADY_ACTIVATED" });
-    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", approval)).rejects.toMatchObject({ code: "CANCELLATION_PREPARATION_REQUIRED" });
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", waiverApproval)).rejects.toMatchObject({ code: "CANCELLATION_PREPARATION_REQUIRED" });
     await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_PREPARATION_REQUIRED" });
     await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
     await expect(runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ALREADY_PREPARED" });
     await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_WAIVER_REQUIRED" });
-    await runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", approval);
-    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", approval)).rejects.toMatchObject({ code: "CANCELLATION_WAIVER_ALREADY_APPROVED" });
+    await runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", waiverApproval);
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", waiverApproval)).rejects.toMatchObject({ code: "CANCELLATION_WAIVER_ALREADY_APPROVED" });
     await runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {});
     await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toMatchObject({ code: "CANCELLATION_ALREADY_RESOLVED" });
 
@@ -234,7 +235,7 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     })).resolves.toMatchObject({ eventId: `staging-refund-g${attempted.generation}-checked-event` });
   });
 
-  it("rejects caller-selected refund targets and financial or provider values", async () => {
+  it("rejects every unexpected command field before synthetic state can change", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const forbiddenInputs: Array<Record<string, unknown>> = [
       { organizerId: "another-organizer" },
@@ -242,12 +243,15 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       { requestedAmountMinor: 1, currency: "USD" },
       { status: "SUCCEEDED" },
       { providerRefundId: "re_live_forbidden" },
+      { providerChargeId: "ch_live_forbidden" },
+      { buyerUserId: outsider.id, credentialId: "another-credential", reservationId: "another-reservation" },
+      { nested: { eventId: "another-event" } },
       { generation: seeded.generation - 1 },
     ];
 
     for (const input of forbiddenInputs) {
       await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", input)).rejects.toMatchObject({
-        code: "STAGING_REFUND_TARGET_INPUT_FORBIDDEN",
+        code: "STAGING_REFUND_UNEXPECTED_INPUT",
         generation: seeded.generation,
       });
     }

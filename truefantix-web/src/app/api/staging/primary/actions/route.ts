@@ -20,6 +20,7 @@ import {
   requirePrimaryStagingConsole,
 } from "@/lib/primary/staging-console";
 import {
+  assertPrimaryStagingRefundActionInput,
   PrimaryStagingRefundError,
   recordPrimaryStagingRefundRejection,
   reseedPrimaryStagingRefundScenario,
@@ -126,6 +127,7 @@ export async function POST(req: Request) {
     let result: unknown;
 
     if (action === "reseedRefundScenarios") {
+      assertPrimaryStagingRefundActionInput(action, body);
       await ensurePrimaryStagingPersona("organizer");
       result = await reseedPrimaryStagingRefundScenario(prisma, refundActor);
       return noStore(NextResponse.json({ ok: true, result }));

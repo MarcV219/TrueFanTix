@@ -23,32 +23,17 @@ const ACTION_SCENARIOS: Partial<Record<string, ScenarioKind>> = {
   completeCancellation: "cancellation",
 };
 
-const FORBIDDEN_TARGET_INPUTS = [
-  "generation",
-  "organizerId",
-  "eventId",
-  "orderId",
-  "paymentAttemptId",
-  "admissionTicketId",
-  "ticketId",
-  "ticketIds",
-  "refundId",
-  "cancellationId",
-  "obligationId",
-  "batchId",
-  "policyVersionId",
-  "requestKey",
-  "commandDigest",
-  "amount",
-  "amountMinor",
-  "requestedAmountMinor",
-  "expectedAmountMinor",
-  "currency",
-  "status",
-  "providerIntentId",
-  "providerRefundId",
-  "providerEventId",
-] as const;
+const REFUND_ACTION_INPUTS: Record<string, ReadonlySet<string>> = {
+  reseedRefundScenarios: new Set(["action"]),
+  refundOrdinary: new Set(["action"]),
+  requestCheckedRefund: new Set(["action"]),
+  approveCheckedRefund: new Set(["action", "reason", "evidence", "fraudReview", "costBearer"]),
+  completeCheckedRefund: new Set(["action"]),
+  activateCancellation: new Set(["action"]),
+  prepareCancellation: new Set(["action"]),
+  approveCancellationWaiver: new Set(["action", "reason", "evidence"]),
+  completeCancellation: new Set(["action"]),
+};
 
 export class PrimaryStagingRefundError extends Error {
   constructor(readonly code: string, message = code, readonly generation?: number) {
@@ -67,9 +52,11 @@ function requiredText(input: Record<string, unknown>, key: string, code: string,
   return value;
 }
 
-function rejectCallerSelectedTargets(input: Record<string, unknown>) {
-  if (FORBIDDEN_TARGET_INPUTS.some((key) => Object.prototype.hasOwnProperty.call(input, key))) {
-    throw new PrimaryStagingRefundError("STAGING_REFUND_TARGET_INPUT_FORBIDDEN");
+export function assertPrimaryStagingRefundActionInput(action: string, input: Record<string, unknown>) {
+  const allowed = REFUND_ACTION_INPUTS[action];
+  if (!allowed) throw new PrimaryStagingRefundError("UNKNOWN_REFUND_ACTION");
+  if (Object.keys(input).some((key) => !allowed.has(key))) {
+    throw new PrimaryStagingRefundError("STAGING_REFUND_UNEXPECTED_INPUT");
   }
 }
 
@@ -291,7 +278,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836291)");
       const generation = await latestGeneration(tx);
       attemptedGeneration = generation;
-      rejectCallerSelectedTargets(input);
+      assertPrimaryStagingRefundActionInput(action, input);
       switch (action) {
       case "refundOrdinary": {
         await requireOrganizer(tx, actor);
