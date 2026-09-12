@@ -545,4 +545,41 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       where: { eventId: `${ordinaryBase}-event`, action: "STAGING_ORDINARY_REFUND_COMPLETED" },
     })).resolves.toBe(1);
   });
+
+  it("requires exact console audit provenance before advancing or replaying a workflow", async () => {
+    const ordinarySeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const ordinaryBase = `staging-refund-g${ordinarySeed.generation}-ordinary`;
+    const completed = await runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {});
+    await db.primaryAuditEvent.create({ data: {
+      organizerId: "primary-staging-refund-organizer",
+      eventId: `${ordinaryBase}-event`,
+      actorUserId: organizer.id,
+      actorType: "USER",
+      action: "STAGING_ORDINARY_REFUND_COMPLETED",
+      targetType: "PrimaryRefund",
+      targetId: completed.id,
+      reason: "Forged duplicate completion evidence.",
+      requestId: `staging-refund:${"f".repeat(24)}`,
+      afterJson: { status: "SUCCEEDED", requestedAmountMinor: 2600, currency: "CAD" },
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_AUDIT_EVIDENCE_INVALID",
+      generation: ordinarySeed.generation,
+    });
+
+    const cancellationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationEventId = `staging-refund-g${cancellationSeed.generation}-cancellation-event`;
+    await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    await db.primaryAuditEvent.deleteMany({
+      where: { eventId: cancellationEventId, action: "STAGING_CANCELLATION_ACTIVATED" },
+    });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_AUDIT_EVIDENCE_INVALID",
+      generation: cancellationSeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId: cancellationEventId } })).resolves.toBe(0);
+    await expect(db.primaryRefundObligation.count({ where: { eventId: cancellationEventId } })).resolves.toBe(0);
+  });
 });
