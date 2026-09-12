@@ -768,6 +768,39 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque synthetic cancellation refund link", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationBase = `staging-refund-g${seeded.generation}-cancellation`;
+    await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
+    const link = await db.primaryCancellationRefundLink.findFirstOrThrow({
+      where: { cancellation: { requestKey: `${cancellationBase}:cancellation` } },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-cancellation-refund-link-delivery",
+      aggregateType: "PrimaryCancellationRefundLink",
+      aggregateId: link.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${cancellationBase}:unexpected-unscoped-cancellation-refund-link-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", {
+      reason: "Must not approve after foreign cancellation-refund-link delivery intent",
+      evidence: "synthetic-unscoped-cancellation-refund-link-delivery",
+    })).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryObligationWaiverApproval.count({
+      where: { obligation: { cancellation: { requestKey: `${cancellationBase}:cancellation` } } },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects delivery intent scoped only by an opaque synthetic purchase allocation", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const ordinaryBase = `staging-refund-g${seeded.generation}-ordinary`;
