@@ -79,6 +79,12 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryAdmissionScan.create({ data: { requestId: "cancelled-admission-rejection", commandDigest: "b".repeat(64), organizerId: active.organizerId, eventId: active.eventId, admissionTicketId: cancellationTicket.id, credentialId: cancellationCredential.id, operatorUserId: organizer.id, result: "VOIDED", scannedAt: now } })).resolves.toMatchObject({ result: "VOIDED", admissionTicketId: cancellationTicket.id });
     await expect(db.primaryEventCancellation.update({ where: { id: active.id }, data: { expectedAmountMinor: 1 } })).rejects.toThrow("Cancellation snapshot is immutable");
     await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
+    const preparedRefund = await db.primaryRefund.findFirstOrThrow({ where: { eventId: active.eventId } });
+    const preparedObligation = await db.primaryRefundObligation.findFirstOrThrow({ where: { cancellationId: active.id, refundId: preparedRefund.id } });
+    await expect(db.primaryRefund.update({ where: { id: preparedRefund.id }, data: { status: "PROVIDER_PENDING" } })).resolves.toMatchObject({ status: "PROVIDER_PENDING" });
+    await expect(db.primaryRefund.update({ where: { id: preparedRefund.id }, data: { status: "SUCCEEDED" } })).rejects.toThrow("Successful refund requires exact successful attempt evidence");
+    await expect(db.primaryRefundObligation.update({ where: { id: preparedObligation.id }, data: { status: "REFUND_LINKED" } })).resolves.toMatchObject({ status: "REFUND_LINKED" });
+    await expect(db.primaryRefundObligation.update({ where: { id: preparedObligation.id }, data: { status: "SATISFIED" } })).rejects.toThrow("Satisfied obligation requires exact successful refund evidence");
     await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toEqual(expect.objectContaining({ code: "CANCELLATION_WAIVER_REQUIRED" }));
     await expect(db.primaryEventCancellation.update({ where: { id: active.id }, data: { status: "RESOLVED" } })).rejects.toThrow("Cancellation");
     await runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", { reason: "Checked-in attendee waiver", evidence: "waiver-case-001" });

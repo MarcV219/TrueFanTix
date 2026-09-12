@@ -166,6 +166,18 @@ else describe("primary refund persistence PostgreSQL integration", () => {
     await expect(db.primaryRefund.update({ where: { id: refund.id }, data: { status: "SUCCEEDED" } })).rejects.toBeTruthy();
   });
 
+  it("requires immutable provider evidence before refund financial finality", async () => {
+    const scope = await seed(1); const refund = await completeRefund(scope, "success-evidence");
+    await db.primaryRefund.update({ where: { id: refund.id }, data: { status: "PROVIDER_PENDING" } });
+    await expect(db.primaryRefund.update({ where: { id: refund.id }, data: { status: "SUCCEEDED" } })).rejects.toThrow("Successful refund requires exact successful attempt evidence");
+    const attempt = await db.primaryRefundProviderAttempt.create({ data: { refundId: refund.id, ordinal: 1, providerKey: `success-provider-${runId}`, expectedAmountMinor: refund.requestedAmountMinor, currency: refund.currency, authorizationKey: `success-auth-${runId}`, authorizationDigest: "e".repeat(64), authorizedByUserId: scope.buyer.id, authorizationReason: "Synthetic success evidence" } });
+    await db.primaryRefundProviderAttempt.update({ where: { id: attempt.id }, data: { status: "PROVIDER_ATTACHED", providerRefundId: `success-refund-${runId}` } });
+    await expect(db.primaryRefundProviderAttempt.update({ where: { id: attempt.id }, data: { status: "SUCCEEDED" } })).rejects.toThrow("Successful refund attempt requires immutable provider event evidence");
+    await db.primaryRefundProviderEvent.create({ data: { attemptId: attempt.id, providerEventId: `success-event-${runId}`, payloadDigest: "f".repeat(64), eventType: "synthetic.refund.succeeded", providerCreatedAt: now } });
+    await db.primaryRefundProviderAttempt.update({ where: { id: attempt.id }, data: { status: "SUCCEEDED" } });
+    await expect(db.primaryRefund.update({ where: { id: refund.id }, data: { status: "SUCCEEDED" } })).resolves.toMatchObject({ status: "SUCCEEDED" });
+  });
+
   it("requires exact cancellation coverage and resolved obligations", async () => {
     const scope = await seed(1); await db.$queryRaw`SELECT materialize_primary_purchase_allocations(${scope.order.id})`; const cancellation = await db.primaryEventCancellation.create({ data: { organizerId: scope.organizer.id, eventId: scope.event.id, generation: 1, policyVersionId: "primary-refund-policy-v1", requestedByUserId: scope.buyer.id, requestKey: `cancel-${runId}`, commandDigest: "f".repeat(64), reason: "Synthetic cancellation", snapshotMaxTicketId: "forged", expectedTicketCount: 0, expectedAmountMinor: 0 } });
     await expect(db.primaryCancellationSnapshotTicket.create({data:{cancellationId:cancellation.id,admissionTicketId:scope.issued[0].ticket.id,policyVersionId:"primary-refund-policy-v1",amountMinor:scope.order.grossTotalMinor,currency:"CAD"}})).rejects.toBeTruthy();
@@ -179,6 +191,8 @@ else describe("primary refund persistence PostgreSQL integration", () => {
     await expect(db.primaryObligationWaiverApproval.create({ data: { obligationId: obligation.id, approvedByUserId: scope.buyer.id, evidenceDigest: "4".repeat(64), reason: "Buyer waiver" } })).rejects.toBeTruthy(); const authorized=await supervisor(scope,"waiver");
     await db.primaryObligationWaiverApproval.create({ data: { obligationId: obligation.id, approvedByUserId: authorized.id, evidenceDigest: "4".repeat(64), reason: "Named supervised waiver" } });
     await db.primaryRefundObligation.update({ where: { id: obligation.id }, data: { status: "WAIVED_WITH_APPROVAL" } });
+    await expect(db.primaryEventCancellation.update({ where: { id: cancellation.id }, data: { status: "RESOLVED" } })).rejects.toThrow("Cancellation revocation evidence is incomplete");
+    await db.primaryAdmissionRevocation.create({ data: { organizerId: scope.organizer.id, eventId: scope.event.id, admissionTicketId: scope.issued[0].ticket.id, credentialId: scope.issued[0].ticket.credential!.id, cancellationId: cancellation.id, policyVersionId: "primary-refund-policy-v1", actorUserId: authorized.id, cause: "EVENT_CANCELLATION", reason: "Synthetic cancellation revocation", idempotencyKey: `cancel-revocation-${runId}`, effectiveAt: now } });
     const resolver=await pool.connect(); const writer=await pool.connect(); try {
       await resolver.query("BEGIN"); await resolver.query('UPDATE "PrimaryEventCancellation" SET status=\'RESOLVED\' WHERE id=$1',[cancellation.id]);
       const blocked=writer.query('INSERT INTO "PrimaryRefundObligation" (id,"organizerId","eventId","orderId","cancellationId",status,cause,"amountMinor",currency,"idempotencyKey",reason) VALUES ($1,$2,$3,$4,$5,\'OPEN\',\'LATE\',1,\'CAD\',$6,\'Late evidence\')',[`late-obligation-${runId}`,scope.organizer.id,scope.event.id,scope.order.id,cancellation.id,`late-obligation-key-${runId}`]);
