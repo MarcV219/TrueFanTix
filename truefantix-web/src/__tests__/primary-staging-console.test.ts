@@ -1,7 +1,11 @@
 /** @jest-environment node */
 
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie, setSessionCookie } from "@/lib/auth/session";
+import {
+  getCurrentSessionTokenHash,
+  getUserIdFromSessionCookie,
+  setSessionCookie,
+} from "@/lib/auth/session";
 import {
   establishPrimaryStagingPersonaSession,
   ensurePrimaryStagingPersona,
@@ -31,6 +35,7 @@ jest.mock("@/lib/prisma", () => ({
 jest.mock("@/lib/auth/session", () => ({
   createSessionExpiry: jest.fn(() => new Date("2037-01-01T00:00:00Z")),
   createSessionToken: jest.fn(() => ({ token: "new-staging-session-token", tokenHash: "new-staging-session-hash" })),
+  getCurrentSessionTokenHash: jest.fn(),
   getUserIdFromSessionCookie: jest.fn(),
   setSessionCookie: jest.fn(),
 }));
@@ -40,6 +45,7 @@ const mockedPrisma = prisma as unknown as {
   $transaction: jest.Mock;
 };
 const mockedSessionUserId = getUserIdFromSessionCookie as jest.MockedFunction<typeof getUserIdFromSessionCookie>;
+const mockedCurrentSessionHash = getCurrentSessionTokenHash as jest.MockedFunction<typeof getCurrentSessionTokenHash>;
 const mockedSetSessionCookie = setSessionCookie as jest.MockedFunction<typeof setSessionCookie>;
 const originalEnv = process.env;
 const accessToken = "staging-access-token-that-is-longer-than-thirty-two-characters";
@@ -98,6 +104,7 @@ describe("primary staging console boundary", () => {
     mockedPrisma.$transaction.mockImplementation(
       (callback: (tx: typeof mockedTx) => unknown) => callback(mockedTx),
     );
+    mockedCurrentSessionHash.mockResolvedValue(null);
     process.env = { ...previewEnv };
   });
 
@@ -252,6 +259,30 @@ describe("primary staging console boundary", () => {
     expect(mockedTx.session.create.mock.invocationCallOrder[0]).toBeLessThan(
       mockedSetSessionCookie.mock.invocationCallOrder[0],
     );
+  });
+
+  it("revokes the current bearer atomically when switching personas", async () => {
+    mockedCurrentSessionHash.mockResolvedValue("current-admin-session-hash");
+    mockedTx.user.findMany.mockResolvedValue([{
+      id: "organizer-1",
+      email: "organizer@primary-staging.example.invalid",
+      phone: "+15550001001",
+    }]);
+    mockedTx.user.update.mockResolvedValue({
+      id: "organizer-1", email: "organizer@primary-staging.example.invalid",
+      firstName: "Staging", lastName: "Organizer", role: "USER",
+    });
+
+    await establishPrimaryStagingPersonaSession("organizer");
+
+    expect(mockedTx.session.deleteMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { userId: "organizer-1" },
+          { tokenHash: "current-admin-session-hash" },
+        ],
+      },
+    });
   });
 
   it("fails closed when reserved coordinates resolve to different rows", async () => {

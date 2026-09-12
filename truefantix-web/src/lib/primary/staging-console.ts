@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import {
   createSessionExpiry,
   createSessionToken,
+  getCurrentSessionTokenHash,
   getUserIdFromSessionCookie,
   setSessionCookie,
 } from "@/lib/auth/session";
@@ -271,14 +272,20 @@ export async function establishPrimaryStagingPersonaSession(
   const passwordHash = await bcrypt.hash(randomBytes(32).toString("hex"), 12);
   const { token, tokenHash } = createSessionToken();
   const expiresAt = createSessionExpiry();
+  const currentTokenHash = await getCurrentSessionTokenHash();
 
   const actor = await db.$transaction(async (tx) => {
     const restored = await restorePrimaryStagingPersona(tx, persona, passwordHash);
 
     // A pre-existing session may have been issued before a managed identity was
     // restored. Revoke every such bearer in the same transaction that restores
-    // the exact persona, then install one access-token-authorized replacement.
-    await tx.session.deleteMany({ where: { userId: restored.id } });
+    // the exact persona. Also revoke the caller's current bearer when switching
+    // personas so overwriting the browser cookie cannot leave that bearer valid.
+    await tx.session.deleteMany({
+      where: currentTokenHash
+        ? { OR: [{ userId: restored.id }, { tokenHash: currentTokenHash }] }
+        : { userId: restored.id },
+    });
     await tx.session.create({ data: { userId: restored.id, tokenHash, expiresAt } });
     return restored;
   }, { isolationLevel: "Serializable" });

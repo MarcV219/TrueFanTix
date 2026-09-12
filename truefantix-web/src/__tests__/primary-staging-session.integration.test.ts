@@ -8,11 +8,14 @@ import {
   establishPrimaryStagingPersonaSession,
 } from "@/lib/primary/staging-console";
 
-const mockedCookieSet = jest.fn();
+const mockCookieState = { token: undefined as string | undefined };
+const mockedCookieSet = jest.fn((name: string, value: string) => {
+  if (name === "tft_session") mockCookieState.token = value || undefined;
+});
 
 jest.mock("next/headers", () => ({
   cookies: jest.fn(async () => ({
-    get: jest.fn(() => undefined),
+    get: jest.fn(() => mockCookieState.token ? { value: mockCookieState.token } : undefined),
     set: mockedCookieSet,
   })),
 }));
@@ -41,12 +44,19 @@ if (!databaseUrl) describe.skip("primary staging session PostgreSQL integration"
     });
   });
 
-  afterAll(async () => {
-    const admin = await db.user.findUnique({
-      where: { email: "admin@primary-staging.example.invalid" },
+  beforeEach(async () => {
+    mockCookieState.token = undefined;
+    const personas = await db.user.findMany({
+      where: { email: { in: [
+        "admin@primary-staging.example.invalid",
+        "organizer@primary-staging.example.invalid",
+      ] } },
       select: { id: true },
     });
-    if (admin) await db.session.deleteMany({ where: { userId: admin.id } });
+    await db.session.deleteMany({ where: { userId: { in: personas.map(({ id }) => id) } } });
+  });
+
+  afterAll(async () => {
     await db.$disconnect();
     await pool.end();
     process.env = originalEnv;
@@ -76,5 +86,19 @@ if (!databaseUrl) describe.skip("primary staging session PostgreSQL integration"
       expect.stringMatching(/^[0-9a-f]{64}$/),
       expect.objectContaining({ httpOnly: true, sameSite: "lax", path: "/" }),
     );
+  });
+
+  it("revokes the caller's prior persona bearer when switching personas", async () => {
+    const admin = await establishPrimaryStagingPersonaSession("admin", db);
+    const adminToken = mockCookieState.token;
+    expect(adminToken).toMatch(/^[0-9a-f]{64}$/);
+    await expect(db.session.count({ where: { userId: admin.id } })).resolves.toBe(1);
+
+    const organizer = await establishPrimaryStagingPersonaSession("organizer", db);
+
+    await expect(db.session.count({ where: { userId: admin.id } })).resolves.toBe(0);
+    await expect(db.session.count({ where: { userId: organizer.id } })).resolves.toBe(1);
+    expect(mockCookieState.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(mockCookieState.token).not.toBe(adminToken);
   });
 });
