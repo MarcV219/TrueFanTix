@@ -41,7 +41,11 @@ export async function POST(req: Request) {
     const csrf = await enforceOriginAndCsrf(req);
     if (!csrf.ok) return noStore(csrf.res);
     const body = (await req.json().catch(() => null)) as { persona?: StagingPersona | "none" } | null;
-    if (!body || !["organizer", "admin", "none"].includes(body.persona ?? "")) {
+    if (
+      !body
+      || Object.keys(body).some((key) => key !== "persona")
+      || !["organizer", "admin", "none"].includes(body.persona ?? "")
+    ) {
       return noStore(NextResponse.json({ ok: false, error: "INVALID_PERSONA" }, { status: 400 }));
     }
 

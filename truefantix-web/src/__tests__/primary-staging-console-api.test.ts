@@ -4,11 +4,13 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ensureCsrfCookie, enforceOriginAndCsrf } from "@/lib/security/csrf";
 import {
+  ensurePrimaryStagingPersona,
   PrimaryStagingConsoleUnavailableError,
   requirePrimaryStagingActor,
   requirePrimaryStagingConsole,
   STAGING_ORGANIZER_EMAIL,
 } from "@/lib/primary/staging-console";
+import { createSessionForUser, deleteCurrentSession } from "@/lib/auth/session";
 import { GET as getSession, POST as postSession } from "@/app/api/staging/primary/session/route";
 import { GET as getState } from "@/app/api/staging/primary/state/route";
 import { POST as postAction } from "@/app/api/staging/primary/actions/route";
@@ -67,6 +69,9 @@ const mockedRefundState = getPrimaryStagingRefundState as jest.MockedFunction<ty
 const mockedRecordRefundRejection = recordPrimaryStagingRefundRejection as jest.MockedFunction<typeof recordPrimaryStagingRefundRejection>;
 const mockedReseed = reseedPrimaryStagingRefundScenario as jest.MockedFunction<typeof reseedPrimaryStagingRefundScenario>;
 const mockedRefundAction = runPrimaryStagingRefundAction as jest.MockedFunction<typeof runPrimaryStagingRefundAction>;
+const mockedCreateSession = createSessionForUser as jest.MockedFunction<typeof createSessionForUser>;
+const mockedDeleteSession = deleteCurrentSession as jest.MockedFunction<typeof deleteCurrentSession>;
+const mockedEnsurePersona = ensurePrimaryStagingPersona as jest.MockedFunction<typeof ensurePrimaryStagingPersona>;
 
 const adminActor = {
   id: "staging-admin",
@@ -176,6 +181,47 @@ describe("primary staging console API boundary", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({ ok: false, error: "STAGING_REFUND_UNEXPECTED_INPUT" });
     expect(mockedReseed).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "createOrganizer",
+    "submitOrganizer",
+    "reviewOrganizer",
+    "createEvent",
+    "editEvent",
+    "submitEvent",
+    "reviewEvent",
+    "createTicketType",
+    "updateTicketType",
+  ])("rejects unexpected %s command input before domain mutation", async (action) => {
+    mockedActor.mockResolvedValue(adminActor);
+
+    const response = await postAction(new Request("https://preview.example/api/staging/primary/actions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action, providerAccountId: "acct_live_forbidden", nested: { eventId: "caller-selected" } }),
+    }));
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({ ok: false, error: "STAGING_ACTION_UNEXPECTED_INPUT" });
+    expect(mockedReseed).not.toHaveBeenCalled();
+    expect(mockedRefundAction).not.toHaveBeenCalled();
+  });
+
+  it("rejects unexpected session command input before session or persona mutation", async () => {
+    const response = await postSession(new Request("https://preview.example/api/staging/primary/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ persona: "admin", userId: "caller-selected" }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({ ok: false, error: "INVALID_PERSONA" });
+    expect(mockedEnsurePersona).not.toHaveBeenCalled();
+    expect(mockedCreateSession).not.toHaveBeenCalled();
+    expect(mockedDeleteSession).not.toHaveBeenCalled();
   });
 
   it("returns and records readable rejection evidence for rejected refund commands", async () => {

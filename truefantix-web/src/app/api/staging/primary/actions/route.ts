@@ -29,6 +29,44 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
+const ACTION_INPUTS: Record<string, ReadonlySet<string>> = {
+  createOrganizer: new Set([
+    "action", "legalName", "displayName", "addressLine1", "addressLine2", "city", "region",
+    "postalCode", "country", "supportEmail", "supportPhone", "website",
+  ]),
+  submitOrganizer: new Set(["action", "organizerId"]),
+  reviewOrganizer: new Set(["action", "organizerId", "toStatus", "reason"]),
+  createEvent: new Set([
+    "action", "organizerId", "title", "description", "category", "venueName", "venueAddressLine1",
+    "venueAddressLine2", "venueCity", "venueRegion", "venuePostalCode", "venueCountry", "startsAtLocal",
+    "endsAtLocal", "timezone", "accessibilityInfo", "contactEmail", "contactPhone", "draftPolicyText",
+    "totalCapacity",
+  ]),
+  editEvent: new Set([
+    "action", "organizerId", "eventId", "title", "description", "category", "venueName",
+    "venueAddressLine1", "venueAddressLine2", "venueCity", "venueRegion", "venuePostalCode",
+    "venueCountry", "startsAtLocal", "endsAtLocal", "timezone", "accessibilityInfo", "contactEmail",
+    "contactPhone", "draftPolicyText", "totalCapacity",
+  ]),
+  submitEvent: new Set(["action", "organizerId", "eventId"]),
+  reviewEvent: new Set(["action", "organizerId", "eventId", "toStatus", "reason"]),
+  createTicketType: new Set([
+    "action", "organizerId", "eventId", "name", "description", "allocatedQuantity", "status",
+    "minimumPerOrder", "maximumPerOrder", "currency", "basePriceMinor",
+  ]),
+  updateTicketType: new Set([
+    "action", "organizerId", "eventId", "ticketTypeId", "name", "description", "allocatedQuantity",
+    "status", "minimumPerOrder", "maximumPerOrder", "currency", "basePriceMinor",
+  ]),
+};
+
+function assertActionInput(action: string, input: JsonRecord) {
+  const allowed = ACTION_INPUTS[action];
+  if (allowed && Object.keys(input).some((key) => !allowed.has(key))) {
+    throw new PrimaryDomainError("STAGING_ACTION_UNEXPECTED_INPUT");
+  }
+}
+
 function text(body: JsonRecord, key: string) {
   const value = body[key];
   return typeof value === "string" ? value : "";
@@ -119,6 +157,7 @@ export async function POST(req: Request) {
     const action = text(body, "action");
     requestedAction = action;
     refundActor = { id: actorUser.id, email: actorUser.email, role: actorUser.role };
+    assertActionInput(action, body);
     const actor = { id: actorUser.id, role: actorUser.role };
     const requestId = `staging-console:${randomUUID()}`;
     const organizerService = new PrimaryOrganizerService(prisma, capability, invitationPepper());
