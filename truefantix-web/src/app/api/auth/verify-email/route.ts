@@ -4,6 +4,26 @@ import { createHash, randomBytes } from "crypto";
 import { sendEmail } from "@/lib/email";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
+import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
+
+function privateNoStore<T extends NextResponse>(response: T) {
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
+function userNotFound() {
+  return privateNoStore(NextResponse.json(
+    { ok: false, error: "USER_NOT_FOUND", message: "User not found." },
+    { status: 404 },
+  ));
+}
+
+function invalidToken() {
+  return privateNoStore(NextResponse.json(
+    { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired verification link." },
+    { status: 400 },
+  ));
+}
 
 function getVerificationSecret(): string | null {
   const secret = process.env.VERIFICATION_SECRET || process.env.SESSION_SECRET;
@@ -50,12 +70,7 @@ export async function POST(req: Request) {
       },
     });
 
-    if (!user) {
-      return NextResponse.json(
-        { ok: false, error: "USER_NOT_FOUND", message: "User not found." },
-        { status: 404 }
-      );
-    }
+    if (!user || isPrimaryStagingSyntheticEmail(user.email)) return userNotFound();
 
     // Check if already verified
     if (user.emailVerifiedAt) {
@@ -179,16 +194,12 @@ export async function GET(req: Request) {
       },
       select: {
         id: true,
+        email: true,
         emailVerifiedAt: true,
       },
     });
 
-    if (!user) {
-      return NextResponse.json(
-        { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired verification link." },
-        { status: 400 }
-      );
-    }
+    if (!user || isPrimaryStagingSyntheticEmail(user.email)) return invalidToken();
 
     // Check if already verified
     if (user.emailVerifiedAt) {
