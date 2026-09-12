@@ -6,6 +6,7 @@ const ORGANIZER_ID = "primary-staging-refund-organizer";
 const POLICY_ID = "primary-refund-policy-v1";
 const EVENT_PREFIX = "staging-refund-g";
 const BUYER_EMAIL = "refund-buyer@primary-staging.example.invalid";
+const BUYER_PHONE = "+15550001004";
 
 type Db = PrismaClient;
 type Tx = Prisma.TransactionClient;
@@ -234,8 +235,27 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
     const organizerUser = await tx.user.findUniqueOrThrow({ where: { email: STAGING_ORGANIZER_EMAIL } });
     const buyer = await tx.user.upsert({
       where: { email: BUYER_EMAIL },
-      create: { email: BUYER_EMAIL, passwordHash: "synthetic-staging-no-login", emailVerifiedAt: new Date(), firstName: "Synthetic", lastName: "Refund Buyer", phone: "+15550001004", phoneVerifiedAt: new Date(), streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", canBuy: false, canSell: false, canComment: false },
-      update: { emailVerifiedAt: new Date(), phoneVerifiedAt: new Date(), isBanned: false },
+      create: { email: BUYER_EMAIL, passwordHash: "synthetic-staging-no-login", emailVerifiedAt: new Date(), firstName: "Synthetic", lastName: "Refund Buyer", phone: BUYER_PHONE, phoneVerifiedAt: new Date(), streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", canBuy: false, canSell: false, canComment: false },
+      update: {
+        passwordHash: "synthetic-staging-no-login",
+        emailVerifiedAt: new Date(),
+        firstName: "Synthetic",
+        lastName: "Refund Buyer",
+        phone: BUYER_PHONE,
+        phoneVerifiedAt: new Date(),
+        streetAddress1: "1 Synthetic Way",
+        streetAddress2: null,
+        city: "Toronto",
+        region: "ON",
+        postalCode: "M5V 0A1",
+        country: "CA",
+        role: "USER",
+        isBanned: false,
+        banReason: null,
+        canBuy: false,
+        canSell: false,
+        canComment: false,
+      },
     });
     await tx.primaryOrganizer.upsert({
       where: { id: ORGANIZER_ID },
@@ -287,7 +307,21 @@ async function requireScenarioTicketStates(
 
 async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids>) {
   const expected = scenarioFinancials(scope.kind);
-  const [organizer, event, ticketType, reservation, order, line, payment, components, allocations] = await Promise.all([
+  const [buyer, organizer, event, ticketType, reservation, order, line, payment, components, allocations] = await Promise.all([
+    tx.user.findFirst({
+      where: {
+        email: BUYER_EMAIL,
+        phone: BUYER_PHONE,
+        role: "USER",
+        isBanned: false,
+        emailVerifiedAt: { not: null },
+        phoneVerifiedAt: { not: null },
+        canBuy: false,
+        canSell: false,
+        canComment: false,
+      },
+      select: { id: true },
+    }),
     tx.primaryOrganizer.findFirst({
       where: { id: ORGANIZER_ID, status: "APPROVED" },
       select: { id: true },
@@ -328,7 +362,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         createIdempotencyKey: `${scope.base}:reservation`,
         commitIdempotencyKey: `${scope.base}:commit`,
       },
-      select: { id: true },
+      select: { id: true, buyerUserId: true },
     }),
     tx.primaryOrder.findFirst({
       where: {
@@ -345,7 +379,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         prepareReconciliationDelayMs: 120000,
         paidAt: { not: null },
       },
-      select: { id: true },
+      select: { id: true, buyerUserId: true },
     }),
     tx.primaryOrderLine.findFirst({
       where: {
@@ -376,7 +410,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         providerCreatedAt: { not: null },
         terminalAt: { not: null },
       },
-      select: { id: true },
+      select: { id: true, buyerUserId: true },
     }),
     tx.primaryOrderPriceComponent.findMany({
       where: { orderId: scope.orderId },
@@ -469,7 +503,10 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
     });
 
   if (
-    !organizer || !event || !ticketType || !reservation || !order || !line || !payment
+    !buyer || !organizer || !event || !ticketType || !reservation || !order || !line || !payment
+    || reservation.buyerUserId !== buyer.id
+    || order.buyerUserId !== buyer.id
+    || payment.buyerUserId !== buyer.id
     || JSON.stringify(components) !== JSON.stringify(expectedComponents)
     || !allocationsAreExact
   ) {

@@ -349,4 +349,33 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryRefund.count({ where: { eventId: checkedEventId } })).resolves.toBe(0);
     await db.primaryTicketType.update({ where: { id: ticketTypeId }, data: { status: "ACTIVE" } });
   });
+
+  it("revalidates and safely restores the reserved synthetic buyer", async () => {
+    const buyerSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const buyer = await db.user.findUniqueOrThrow({ where: { email: "refund-buyer@primary-staging.example.invalid" } });
+    await db.user.update({ where: { id: buyer.id }, data: { canBuy: true } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: buyerSeed.generation,
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `staging-refund-g${buyerSeed.generation}-ordinary-event` },
+    })).resolves.toBe(0);
+
+    const restoredSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    expect(restoredSeed.generation).toBe(buyerSeed.generation + 1);
+    await expect(db.user.findUniqueOrThrow({ where: { id: buyer.id } })).resolves.toMatchObject({
+      email: "refund-buyer@primary-staging.example.invalid",
+      phone: "+15550001004",
+      role: "USER",
+      isBanned: false,
+      canBuy: false,
+      canSell: false,
+      canComment: false,
+    });
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).resolves.toMatchObject({
+      status: "SUCCEEDED",
+    });
+  });
 });
