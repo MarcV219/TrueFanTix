@@ -619,6 +619,31 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     });
   });
 
+  it("rejects delivery intent whose synthetic aggregate omits organizer routing", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const ordinaryBase = `staging-refund-g${seeded.generation}-ordinary`;
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-delivery",
+      aggregateType: "PrimaryEvent",
+      aggregateId: `${ordinaryBase}-event`,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${ordinaryBase}:unexpected-unscoped-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `${ordinaryBase}-event` },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects drift in the synthetic purchase timeline before refund mutation", async () => {
     const reservationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     const reservationBase = `staging-refund-g${reservationSeed.generation}-ordinary`;

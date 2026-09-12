@@ -180,7 +180,13 @@ async function requireSyntheticTenantAccessProvenance(tx: Tx) {
 
 async function requireSyntheticNoDeliveryIntent(tx: Tx) {
   const outboxCount = await tx.primaryOutboxMessage.count({
-    where: { organizerId: ORGANIZER_ID },
+    where: {
+      OR: [
+        { organizerId: ORGANIZER_ID },
+        { aggregateId: ORGANIZER_ID },
+        { aggregateId: { startsWith: EVENT_PREFIX } },
+      ],
+    },
   });
   if (outboxCount !== 0) {
     throw new PrimaryStagingRefundError("STAGING_REFUND_DELIVERY_INTENT_INVALID");
