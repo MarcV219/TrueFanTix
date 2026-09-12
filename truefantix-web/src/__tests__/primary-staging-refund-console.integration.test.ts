@@ -907,6 +907,37 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque synthetic cancellation batch", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationBase = `staging-refund-g${seeded.generation}-cancellation`;
+    await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
+    await runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", {
+      reason: "Synthetic waiver approval",
+      evidence: "synthetic-waiver-evidence",
+    });
+    await runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {});
+    const batch = await db.primaryCancellationBatch.findFirstOrThrow({
+      where: { cancellation: { requestKey: `${cancellationBase}:cancellation` } },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-cancellation-batch-delivery",
+      aggregateType: "PrimaryCancellationBatch",
+      aggregateId: batch.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${cancellationBase}:unexpected-unscoped-cancellation-batch-delivery-intent`,
+    } });
+
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryEvent.count({
+      where: { id: `staging-refund-g${seeded.generation + 1}-ordinary-event` },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects drift in the synthetic purchase timeline before refund mutation", async () => {
     const reservationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     const reservationBase = `staging-refund-g${reservationSeed.generation}-ordinary`;
