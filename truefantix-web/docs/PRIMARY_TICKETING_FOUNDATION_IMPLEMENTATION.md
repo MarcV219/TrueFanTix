@@ -272,6 +272,8 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Verification on a fresh disposable PostgreSQL 16 database deployed all 55 migrations with current status and passed 67 suites / 457 tests with integration enabled, including 8 staging refund-console PostgreSQL cases. Prisma format/validation/generation, TypeScript, focused and full lint with no errors, production build, and diff checks passed.
 - Pending-refund visibility hardening returns the checked-in refund parent before ticket items may legally exist, so the browser exposes the supervisor approval control from the actual PostgreSQL workflow state rather than an impossible pre-approved item fixture.
 - Verification on a fresh disposable PostgreSQL 16 database deployed all 55 migrations with current status and passed 67 suites / 457 tests with integration enabled; Prisma format/validation/generation, TypeScript, full lint with no errors, production build, and diff checks passed.
+- Command-target hardening rejects any caller-selected generation, organizer, event, order, payment, ticket, refund, cancellation, obligation, policy, amount, currency, status, or provider identity before a synthetic scenario command can mutate data. PostgreSQL adversarial coverage proves every rejected input leaves the authoritative ordinary scenario without a refund.
+- Verification on a fresh disposable PostgreSQL 16 database deployed all 55 migrations with current status and passed 67 suites / 458 tests with integration enabled; Prisma format/validation/generation, TypeScript, full lint with no errors, isolated-preview production build, and diff checks passed.
 
 ### Refund, cancellation, and revocation design gate
 

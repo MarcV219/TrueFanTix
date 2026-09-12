@@ -233,4 +233,27 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       orderBy: { createdAt: "desc" },
     })).resolves.toMatchObject({ eventId: `staging-refund-g${attempted.generation}-checked-event` });
   });
+
+  it("rejects caller-selected refund targets and financial or provider values", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const forbiddenInputs: Array<Record<string, unknown>> = [
+      { organizerId: "another-organizer" },
+      { eventId: "another-event", orderId: "another-order", admissionTicketId: "another-ticket" },
+      { requestedAmountMinor: 1, currency: "USD" },
+      { status: "SUCCEEDED" },
+      { providerRefundId: "re_live_forbidden" },
+      { generation: seeded.generation - 1 },
+    ];
+
+    for (const input of forbiddenInputs) {
+      await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", input)).rejects.toMatchObject({
+        code: "STAGING_REFUND_TARGET_INPUT_FORBIDDEN",
+        generation: seeded.generation,
+      });
+    }
+
+    await expect(db.primaryRefund.count({
+      where: { eventId: `staging-refund-g${seeded.generation}-ordinary-event` },
+    })).resolves.toBe(0);
+  });
 });

@@ -23,6 +23,33 @@ const ACTION_SCENARIOS: Partial<Record<string, ScenarioKind>> = {
   completeCancellation: "cancellation",
 };
 
+const FORBIDDEN_TARGET_INPUTS = [
+  "generation",
+  "organizerId",
+  "eventId",
+  "orderId",
+  "paymentAttemptId",
+  "admissionTicketId",
+  "ticketId",
+  "ticketIds",
+  "refundId",
+  "cancellationId",
+  "obligationId",
+  "batchId",
+  "policyVersionId",
+  "requestKey",
+  "commandDigest",
+  "amount",
+  "amountMinor",
+  "requestedAmountMinor",
+  "expectedAmountMinor",
+  "currency",
+  "status",
+  "providerIntentId",
+  "providerRefundId",
+  "providerEventId",
+] as const;
+
 export class PrimaryStagingRefundError extends Error {
   constructor(readonly code: string, message = code, readonly generation?: number) {
     super(message);
@@ -38,6 +65,12 @@ function requiredText(input: Record<string, unknown>, key: string, code: string,
   const value = typeof input[key] === "string" ? input[key].trim() : "";
   if (!value || value.length > maximum) throw new PrimaryStagingRefundError(code);
   return value;
+}
+
+function rejectCallerSelectedTargets(input: Record<string, unknown>) {
+  if (FORBIDDEN_TARGET_INPUTS.some((key) => Object.prototype.hasOwnProperty.call(input, key))) {
+    throw new PrimaryStagingRefundError("STAGING_REFUND_TARGET_INPUT_FORBIDDEN");
+  }
 }
 
 function ids(generation: number, kind: ScenarioKind) {
@@ -258,6 +291,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836291)");
       const generation = await latestGeneration(tx);
       attemptedGeneration = generation;
+      rejectCallerSelectedTargets(input);
       switch (action) {
       case "refundOrdinary": {
         await requireOrganizer(tx, actor);
