@@ -256,8 +256,6 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "requestCheckedRefund": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "checked"); const ticketId = `${scope.base}-ticket-1`;
-        const existing = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:checked` }, select: { id: true } });
-        if (existing) throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_REQUESTED");
         const refund = await refundParent(tx, actor, scope, "checked", [ticketId]);
         await audit(tx, actor, scope.eventId, "STAGING_CHECKED_REFUND_REQUESTED", "PrimaryRefund", refund.id, "Checked-in refund awaits scoped supervisor evidence.", { status: refund.status });
         return refund;
