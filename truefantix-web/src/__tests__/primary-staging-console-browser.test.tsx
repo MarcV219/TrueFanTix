@@ -91,7 +91,8 @@ describe("primary staging organizer browser flow", () => {
   it("shows checked-in supervisor evidence controls and sends the scoped approval command", async () => {
     const checkedEvent = {
       id: "staging-refund-g1-checked-event", title: "Synthetic Refund Console / Checked-in supervised refund", status: "APPROVED",
-      orders: [{ id: "checked-order", grossTotalMinor: 3120, currency: "CAD", admissionTickets: [{ id: "checked-ticket", unitNumber: 1, status: "CHECKED_IN", voidReason: null, revocations: [], refundItems: [{ refundId: "refund-1", requestedMinor: 3120, refund: { status: "REQUESTED", reason: "Synthetic", attempts: [], checkedInApprovals: [] } }] }] }],
+      refunds: [{ id: "refund-1", status: "REQUESTED", reason: "Synthetic", requestedAmountMinor: 3120, currency: "CAD", checkedInApprovals: [] }],
+      orders: [{ id: "checked-order", grossTotalMinor: 3120, currency: "CAD", admissionTickets: [{ id: "checked-ticket", unitNumber: 1, status: "CHECKED_IN", voidReason: null, revocations: [], refundItems: [] }] }],
       cancellations: [],
     };
     const state = { ok: true, actor: admin, organizers: [], audit: [], refundConsole: { generation: 1, organizerId: "refund-organizer", events: [checkedEvent], audit: [] } };
@@ -104,6 +105,8 @@ describe("primary staging organizer browser flow", () => {
 
     render(<PrimaryStagingConsole />);
     const approve = await screen.findByRole("button", { name: "Approve checked-in refund" });
+    expect(screen.getByText("refund REQUESTED · revocations 0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request checked-in refund" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Supervisor reason")).toBeInTheDocument();
     expect(screen.getByLabelText("Fraud review")).toBeInTheDocument();
     expect(screen.getByLabelText("Checked-in refund cost bearer")).toHaveValue("ORGANIZER");
@@ -121,6 +124,7 @@ describe("primary staging organizer browser flow", () => {
     const waiverDigest = "b".repeat(64);
     const state = { ok: true, actor: admin, organizers: [], audit: [], refundConsole: { generation: 2, organizerId: "refund-organizer", events: [{
       id: "staging-refund-g2-cancellation-event", title: "Synthetic Refund Console / Event cancellation and obligations", status: "APPROVED",
+      refunds: [{ id: "refund-1", status: "SUCCEEDED", reason: "Synthetic", requestedAmountMinor: 2100, currency: "CAD", checkedInApprovals: [] }],
       orders: [{ id: "cancellation-order", grossTotalMinor: 4200, currency: "CAD", admissionTickets: [{ id: "ticket-1", unitNumber: 1, status: "VOIDED", voidReason: "Synthetic cancellation", revocations: [{ cause: "EVENT_CANCELLATION", reason: "Synthetic cancellation evidence", refundId: "refund-1", cancellationId: "cancellation-1" }], refundItems: [{ refundId: "refund-1", requestedMinor: 2100, refund: { status: "SUCCEEDED", reason: "Synthetic", attempts: [{ ordinal: 1, status: "SUCCEEDED", expectedAmountMinor: 2100, currency: "CAD", providerRefundId: "synthetic-refund-1", authorizationReason: "Authorized isolated synthetic completion", providerEvents: [{ providerEventId: "synthetic-success-event-1", eventType: "synthetic.refund.succeeded", payloadDigest: "c".repeat(64), providerCreatedAt: "2026-09-12T01:31:00.000Z" }] }], checkedInApprovals: [{ reason: "Scoped supervisor approval", fraudReview: "No indicators", costBearer: "ORGANIZER", evidenceDigest, approver: { email: admin.email } }] } }] }] }],
       cancellations: [{ id: "cancellation-1", status: "RESOLVED", activatedAt: "2026-09-12T01:30:00.000Z", expectedTicketCount: 2, expectedAmountMinor: 4200, processedTicketCount: 2, processedAmountMinor: 4200, snapshotTickets: [{ admissionTicketId: "ticket-1", amountMinor: 2100, currency: "CAD" }], refundLinks: [{ refundId: "refund-1" }], batches: [{ processedTicketCount: 2, processedAmountMinor: 4200, firstTicketId: "ticket-1", lastTicketId: "ticket-2" }], obligations: [{ id: "obligation-1", status: "WAIVED_WITH_APPROVAL", cause: "CHECKED_IN_CANCELLATION_WAIVER", amountMinor: 2100, currency: "CAD", refundId: null, cancellationClaims: [{ admissionTicketId: "ticket-1", amountMinor: 2100, refundItemId: null }], waiverApproval: { reason: "Attendee attended event", evidenceDigest: waiverDigest, approver: { email: admin.email } } }] }],
     }], audit: [{ id: "audit-1", organizerId: "refund-organizer", eventId: "staging-refund-g2-cancellation-event", actorUserId: admin.id, actor: { email: admin.email }, action: "STAGING_REFUND_ACTION_REJECTED", targetType: "StagingRefundCommand", targetId: "completeCancellation", reason: "CANCELLATION_WAIVER_REQUIRED", afterJson: { status: "REJECTED", code: "CANCELLATION_WAIVER_REQUIRED", scenario: "cancellation", generation: 2 }, createdAt: "2026-09-12T01:32:00.000Z" }] } };

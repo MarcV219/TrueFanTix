@@ -405,6 +405,10 @@ export async function getPrimaryStagingRefundState(db: Db) {
   const eventIds = (["ordinary", "checked", "cancellation"] as const).map((kind) => ids(generation, kind).eventId);
   const events = await db.primaryEvent.findMany({ where: { id: { in: eventIds }, organizerId: ORGANIZER_ID }, orderBy: { id: "asc" }, select: {
     id: true, title: true, status: true,
+    refunds: { orderBy: { createdAt: "asc" }, select: {
+      id: true, status: true, reason: true, requestedAmountMinor: true, currency: true,
+      checkedInApprovals: { select: { reason: true, fraudReview: true, costBearer: true, evidenceDigest: true, approver: { select: { email: true } } } },
+    } },
     orders: { select: {
       id: true, grossTotalMinor: true, currency: true,
       admissionTickets: { orderBy: { unitNumber: "asc" }, select: {

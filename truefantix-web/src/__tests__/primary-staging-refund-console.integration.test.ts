@@ -61,7 +61,12 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {})).rejects.toEqual(expect.objectContaining({ code: "CHECKED_REFUND_ALREADY_REQUESTED" }));
     await expect(db.primaryAuditEvent.count({ where: { action: "STAGING_CHECKED_REFUND_REQUESTED" } })).resolves.toBe(1);
     const requestedState = await getPrimaryStagingRefundState(db);
-    const checkedTicket = requestedState?.events.find((event) => event.id.includes("-checked-"))?.orders[0].admissionTickets[0];
+    const checkedScenario = requestedState?.events.find((event) => event.id.includes("-checked-"));
+    const checkedTicket = checkedScenario?.orders[0].admissionTickets[0];
+    expect(checkedScenario).toMatchObject({
+      refunds: [{ status: "REQUESTED", requestedAmountMinor: 3120, currency: "CAD", checkedInApprovals: [] }],
+      orders: [{ admissionTickets: [{ refundItems: [] }] }],
+    });
     const checkedRefund = await db.primaryRefund.findFirstOrThrow({ where: { eventId: { contains: "-checked-" } } });
     await expect(db.primaryCheckedInRefundApproval.create({ data: { refundId: checkedRefund.id, admissionTicketId: checkedTicket!.id, approvedByUserId: outsider.id, evidenceDigest: "f".repeat(64), reason: "Forged approval", fraudReview: "Skipped", costBearer: "ORGANIZER" } })).rejects.toThrow("Checked-in approval requires an authorized scoped supervisor");
     await expect(db.primaryRefundItem.create({ data: { refundId: checkedRefund.id, admissionTicketId: checkedTicket!.id, requestedMinor: checkedRefund.requestedAmountMinor, currency: "CAD" } })).rejects.toThrow("Checked-in refund requires immutable supervised approval");
