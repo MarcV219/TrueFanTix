@@ -25,6 +25,7 @@ import {
   reseedPrimaryStagingRefundScenario,
   runPrimaryStagingRefundAction,
 } from "@/lib/primary/staging-refund-console";
+import { advancePrimaryStagingBuyerJourney, PrimaryStagingBuyerError, reseedPrimaryStagingBuyerJourney } from "@/lib/primary/staging-buyer-journey";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -130,6 +131,8 @@ export async function POST(req: Request) {
       result = await reseedPrimaryStagingRefundScenario(prisma, refundActor);
       return noStore(NextResponse.json({ ok: true, result }));
     }
+    if (action === "reseedBuyerJourney") return noStore(NextResponse.json({ ok: true, result: await reseedPrimaryStagingBuyerJourney(prisma, refundActor) }));
+    if (action === "advanceBuyerJourney") return noStore(NextResponse.json({ ok: true, result: await advancePrimaryStagingBuyerJourney(prisma, refundActor) }));
     if (["refundOrdinary", "requestCheckedRefund", "approveCheckedRefund", "completeCheckedRefund", "activateCancellation", "prepareCancellation", "approveCancellationWaiver", "completeCancellation"].includes(action)) {
       result = await runPrimaryStagingRefundAction(prisma, refundActor, action, body);
       return noStore(NextResponse.json({ ok: true, result }));
@@ -247,6 +250,7 @@ export async function POST(req: Request) {
       if (refundActor) await recordPrimaryStagingRefundRejection(prisma, refundActor, requestedAction, error.code).catch(() => undefined);
       return jsonError(409, error.code);
     }
+    if (error instanceof PrimaryStagingBuyerError) return jsonError(409, error.code);
     if (refundActor && requestedAction !== "unknown") {
       await recordPrimaryStagingRefundRejection(prisma, refundActor, requestedAction, "PERSISTENCE_REJECTED").catch(() => undefined);
     }

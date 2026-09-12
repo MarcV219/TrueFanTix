@@ -249,6 +249,12 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 
 ### Staging-only synthetic refund and cancellation console
 
+### Staging-only synthetic buyer purchase and admission journey
+
+- The isolated `/staging/primary` console can seed and advance a fresh synthetic generation through inventory hold, immutable order pricing, local payment preparation, synthetic provider attachment/success, admission credential evidence, and accepted admission.
+- Each click performs one durable PostgreSQL transition and exposes the resulting state. All identities are reserved synthetic values; the provider and credential identifiers are explicitly synthetic and never usable outside the isolated preview.
+- The journey performs no Stripe SDK call, email, webhook, payout, refund, cron, public sale, or live-data access. Prior generations remain intact for auditability.
+
 - The existing `/staging/primary` isolated-preview console now exposes three deterministic, synthetic scenarios: an ordinary unscanned refund, a checked-in refund requiring a scoped supervisor, and an event cancellation with one refunded ticket and one approved checked-in waiver. It remains behind the dedicated preview gate, reserved personas, session authentication, origin/CSRF checks, and private no-store responses.
 - Admin-only reset/reseed takes a PostgreSQL advisory transaction lock and creates a fresh numbered generation while retaining prior immutable evidence. Stable IDs, amounts, ticket allocation, paid-order snapshots, credential/admission state, and accepted synthetic scan evidence make each generation repeatable without deleting or rewriting protected rows.
 - Ordinary refund completion voids only the issued admission, writes revocation evidence before a local synthetic attempt, and reaches `SUCCEEDED` without a provider call. Checked-in selection cannot materialize until a current reserved admin records a reason, evidence digest, fraud review, and explicit `ORGANIZER | TRUEFANTIX` cost bearer; completion preserves the historical `CHECKED_IN` state and adds a revocation.

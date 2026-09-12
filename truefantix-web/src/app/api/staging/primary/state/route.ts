@@ -9,6 +9,7 @@ import {
   STAGING_ORGANIZER_EMAIL,
 } from "@/lib/primary/staging-console";
 import { getPrimaryStagingRefundState } from "@/lib/primary/staging-refund-console";
+import { getPrimaryStagingBuyerJourney } from "@/lib/primary/staging-buyer-journey";
 
 function unavailable() {
   return noStore(NextResponse.json({ ok: false, error: "NOT_FOUND" }, { status: 404 }));
@@ -114,7 +115,8 @@ export async function GET() {
     });
 
     const refundConsole = await getPrimaryStagingRefundState(prisma);
-    return noStore(NextResponse.json({ ok: true, actor, organizers, audit, refundConsole }));
+    const buyerJourney = await getPrimaryStagingBuyerJourney(prisma);
+    return noStore(NextResponse.json({ ok: true, actor, organizers, audit, refundConsole, buyerJourney }));
   } catch (error) {
     if (error instanceof PrimaryStagingConsoleUnavailableError) return unavailable();
     throw error;
