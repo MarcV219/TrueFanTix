@@ -483,6 +483,60 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryRefund.count({ where: { eventId } })).resolves.toBe(0);
   });
 
+  it("rejects and clears contaminated synthetic business identity", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    await db.primaryOrganizer.update({
+      where: { id: "primary-staging-refund-organizer" },
+      data: { businessNumberEncrypted: "encrypted-external-business-identity" },
+    });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `staging-refund-g${seeded.generation}-ordinary-event` },
+    })).resolves.toBe(0);
+
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).resolves.toEqual({
+      generation: seeded.generation + 1,
+    });
+    await expect(db.primaryOrganizer.findUniqueOrThrow({
+      where: { id: "primary-staging-refund-organizer" },
+    })).resolves.toMatchObject({ businessNumberEncrypted: null });
+  });
+
+  it("rejects contaminated synthetic ownership provenance and reseeds it safely", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const syntheticMembership = await db.primaryOrganizerMembership.findUniqueOrThrow({
+      where: { organizerId_userId: { organizerId: "primary-staging-refund-organizer", userId: organizer.id } },
+    });
+    await db.primaryOrganizerMembership.update({
+      where: { id: syntheticMembership.id },
+      data: { invitedByUserId: outsider.id },
+    });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `staging-refund-g${seeded.generation}-ordinary-event` },
+    })).resolves.toBe(0);
+
+    const restored = await reseedPrimaryStagingRefundScenario(db, admin);
+    expect(restored.generation).toBe(seeded.generation + 1);
+    await expect(db.primaryOrganizerMembership.findUniqueOrThrow({
+      where: { id: syntheticMembership.id },
+    })).resolves.toMatchObject({
+      role: "OWNER",
+      status: "ACTIVE",
+      userId: organizer.id,
+      invitedByUserId: organizer.id,
+      revokedAt: null,
+    });
+  });
+
   it("rejects drift in the synthetic purchase timeline before refund mutation", async () => {
     const reservationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     const reservationBase = `staging-refund-g${reservationSeed.generation}-ordinary`;

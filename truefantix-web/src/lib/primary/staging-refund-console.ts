@@ -298,7 +298,16 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
   return db.$transaction(async (tx) => {
     await requireAdmin(tx, actor);
     await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836291)");
-    const organizerUser = await tx.user.findUniqueOrThrow({ where: { email: STAGING_ORGANIZER_EMAIL } });
+    const organizerUser = await tx.user.findFirst({
+      where: {
+        email: STAGING_ORGANIZER_EMAIL,
+        role: "USER",
+        isBanned: false,
+        emailVerifiedAt: { not: null },
+        phoneVerifiedAt: { not: null },
+      },
+    });
+    if (!organizerUser) throw new PrimaryStagingRefundError("STAGING_ORGANIZER_REQUIRED");
     const buyer = await tx.user.upsert({
       where: { email: BUYER_EMAIL },
       create: { email: BUYER_EMAIL, passwordHash: "synthetic-staging-no-login", emailVerifiedAt: new Date(), firstName: "Synthetic", lastName: "Refund Buyer", phone: BUYER_PHONE, phoneVerifiedAt: new Date(), streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", canBuy: false, canSell: false, canComment: false },
@@ -329,6 +338,7 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
       update: {
         legalName: "Synthetic Refund Operations Inc.",
         displayName: "Synthetic Refund Operations",
+        businessNumberEncrypted: null,
         addressLine1: "1 Synthetic Way",
         addressLine2: null,
         city: "Toronto",
@@ -352,7 +362,7 @@ export async function reseedPrimaryStagingRefundScenario(db: Db, actor: Actor) {
     await tx.primaryOrganizerMembership.upsert({
       where: { organizerId_userId: { organizerId: ORGANIZER_ID, userId: organizerUser.id } },
       create: { organizerId: ORGANIZER_ID, userId: organizerUser.id, role: "OWNER", status: "ACTIVE", acceptedAt: new Date(), invitedByUserId: organizerUser.id },
-      update: { role: "OWNER", status: "ACTIVE", acceptedAt: new Date(), revokedAt: null },
+      update: { role: "OWNER", status: "ACTIVE", acceptedAt: new Date(), revokedAt: null, invitedByUserId: organizerUser.id },
     });
     const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-refund-g([0-9]+)-ordinary-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
     const generation = Number(rows[0]?.generation ?? 0) + 1;
@@ -476,7 +486,7 @@ async function requireScenarioTicketStates(
 
 async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids>) {
   const expected = scenarioFinancials(scope.kind);
-  const [buyer, organizer, event, ticketType, reservation, order, line, payment, components, allocations] = await Promise.all([
+  const [buyer, organizerUser, admin, membership, organizer, event, ticketType, reservation, order, line, payment, components, allocations] = await Promise.all([
     tx.user.findFirst({
       where: {
         email: BUYER_EMAIL,
@@ -501,11 +511,52 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
       },
       select: { id: true },
     }),
+    tx.user.findFirst({
+      where: {
+        email: STAGING_ORGANIZER_EMAIL,
+        role: "USER",
+        isBanned: false,
+        emailVerifiedAt: { not: null },
+        phoneVerifiedAt: { not: null },
+      },
+      select: { id: true },
+    }),
+    tx.user.findFirst({
+      where: {
+        email: STAGING_ADMIN_EMAIL,
+        role: "ADMIN",
+        isBanned: false,
+        emailVerifiedAt: { not: null },
+        phoneVerifiedAt: { not: null },
+      },
+      select: { id: true },
+    }),
+    tx.primaryOrganizerMembership.findFirst({
+      where: {
+        organizerId: ORGANIZER_ID,
+        role: "OWNER",
+        status: "ACTIVE",
+        acceptedAt: { not: null },
+        revokedAt: null,
+        user: {
+          is: {
+            email: STAGING_ORGANIZER_EMAIL,
+            role: "USER",
+            isBanned: false,
+            emailVerifiedAt: { not: null },
+            phoneVerifiedAt: { not: null },
+          },
+        },
+        invitedBy: { is: { email: STAGING_ORGANIZER_EMAIL } },
+      },
+      select: { userId: true, invitedByUserId: true },
+    }),
     tx.primaryOrganizer.findFirst({
       where: {
         id: ORGANIZER_ID,
         legalName: "Synthetic Refund Operations Inc.",
         displayName: "Synthetic Refund Operations",
+        businessNumberEncrypted: null,
         addressLine1: "1 Synthetic Way",
         addressLine2: null,
         city: "Toronto",
@@ -525,7 +576,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         createdBy: { is: { email: STAGING_ORGANIZER_EMAIL } },
         approvedBy: { is: { email: STAGING_ADMIN_EMAIL } },
       },
-      select: { id: true },
+      select: { id: true, createdByUserId: true, approvedByUserId: true },
     }),
     tx.primaryEvent.findFirst({
       where: {
@@ -555,7 +606,7 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
         approvedAt: { not: null },
         approvedBy: { is: { email: STAGING_ADMIN_EMAIL } },
       },
-      select: { id: true, submittedAt: true, approvedAt: true },
+      select: { id: true, submittedAt: true, approvedAt: true, approvedByUserId: true },
     }),
     tx.primaryTicketType.findFirst({
       where: {
@@ -764,7 +815,12 @@ async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids
   );
 
   if (
-    !buyer || !organizer || !event || !ticketType || !reservation || !order || !line || !payment
+    !buyer || !organizerUser || !admin || !membership || !organizer || !event || !ticketType || !reservation || !order || !line || !payment
+    || membership.userId !== organizerUser.id
+    || membership.invitedByUserId !== organizerUser.id
+    || organizer.createdByUserId !== organizerUser.id
+    || organizer.approvedByUserId !== admin.id
+    || event.approvedByUserId !== admin.id
     || reservation.buyerUserId !== buyer.id
     || order.buyerUserId !== buyer.id
     || payment.buyerUserId !== buyer.id
