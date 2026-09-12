@@ -179,7 +179,7 @@ async function requireSyntheticTenantAccessProvenance(tx: Tx) {
 }
 
 async function requireSyntheticNoDeliveryIntent(tx: Tx) {
-  const [purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, cancellations, cancellationBatches, cancellationSnapshots, cancellationRefundLinks, obligations, checkedInApprovals, waiverApprovals] = await Promise.all([
+  const [purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, revocations, cancellations, cancellationBatches, cancellationSnapshots, cancellationRefundLinks, obligations, checkedInApprovals, waiverApprovals] = await Promise.all([
     tx.primaryPurchaseAllocation.findMany({
       where: { order: { organizerId: ORGANIZER_ID } },
       select: { id: true },
@@ -202,6 +202,10 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
     }),
     tx.primaryRefundProviderEvent.findMany({
       where: { attempt: { refund: { organizerId: ORGANIZER_ID } } },
+      select: { id: true },
+    }),
+    tx.primaryAdmissionRevocation.findMany({
+      where: { organizerId: ORGANIZER_ID },
       select: { id: true },
     }),
     tx.primaryEventCancellation.findMany({
@@ -240,6 +244,7 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
     ...refundAllocations.map((allocation) => allocation.id),
     ...refundAttempts.map((attempt) => attempt.id),
     ...refundProviderEvents.map((event) => event.id),
+    ...revocations.map((revocation) => revocation.id),
     ...cancellations.map((cancellation) => cancellation.id),
     ...cancellationBatches.map((batch) => batch.id),
     ...cancellationSnapshots.map((snapshot) => snapshot.id),

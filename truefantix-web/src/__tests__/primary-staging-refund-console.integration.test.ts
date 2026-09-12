@@ -1052,6 +1052,42 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque synthetic admission revocation", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const checkedBase = `staging-refund-g${seeded.generation}-checked`;
+    await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
+    await runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", {
+      reason: "Synthetic supervisor approval",
+      evidence: "synthetic-reviewed-evidence",
+      fraudReview: "CLEAR",
+      costBearer: "ORGANIZER",
+    });
+    await runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {});
+    const revocation = await db.primaryAdmissionRevocation.findFirstOrThrow({
+      where: { refund: { requestKey: `${checkedBase}:refund:checked` } },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-admission-revocation-delivery",
+      aggregateType: "PrimaryAdmissionRevocation",
+      aggregateId: revocation.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${checkedBase}:unexpected-unscoped-admission-revocation-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryEventCancellation.count({
+      where: { eventId: `staging-refund-g${seeded.generation}-cancellation-event` },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects delivery intent scoped only by an opaque synthetic cancellation batch", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const cancellationBase = `staging-refund-g${seeded.generation}-cancellation`;
