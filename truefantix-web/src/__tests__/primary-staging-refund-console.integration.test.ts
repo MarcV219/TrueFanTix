@@ -764,6 +764,39 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque synthetic refund item", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationBase = `staging-refund-g${seeded.generation}-cancellation`;
+    await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
+    const item = await db.primaryRefundItem.findFirstOrThrow({
+      where: { refund: { requestKey: `${cancellationBase}:refund:cancellation` } },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-refund-item-delivery",
+      aggregateType: "PrimaryRefundItem",
+      aggregateId: item.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${cancellationBase}:unexpected-unscoped-refund-item-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCancellationWaiver", {
+      reason: "Must not approve after foreign refund-item delivery intent",
+      evidence: "synthetic-unscoped-refund-item-delivery",
+    })).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryObligationWaiverApproval.count({
+      where: { obligation: { cancellation: { requestKey: `${cancellationBase}:cancellation` } } },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects drift in the synthetic purchase timeline before refund mutation", async () => {
     const reservationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     const reservationBase = `staging-refund-g${reservationSeed.generation}-ordinary`;
