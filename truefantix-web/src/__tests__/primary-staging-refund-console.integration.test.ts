@@ -735,6 +735,39 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque synthetic cancellation snapshot", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationBase = `staging-refund-g${seeded.generation}-cancellation`;
+    await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    const snapshot = await db.primaryCancellationSnapshotTicket.findFirstOrThrow({
+      where: { cancellation: { requestKey: `${cancellationBase}:cancellation` } },
+      orderBy: { admissionTicketId: "asc" },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-cancellation-snapshot-delivery",
+      aggregateType: "PrimaryCancellationSnapshotTicket",
+      aggregateId: snapshot.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${cancellationBase}:unexpected-unscoped-cancellation-snapshot-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `${cancellationBase}-event` },
+    })).resolves.toBe(0);
+    await expect(db.primaryRefundObligation.count({
+      where: { eventId: `${cancellationBase}-event` },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects delivery intent scoped only by an opaque synthetic purchase allocation", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const ordinaryBase = `staging-refund-g${seeded.generation}-ordinary`;
