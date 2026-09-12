@@ -24,7 +24,7 @@ const ACTION_SCENARIOS: Partial<Record<string, ScenarioKind>> = {
 };
 
 export class PrimaryStagingRefundError extends Error {
-  constructor(readonly code: string, message = code) {
+  constructor(readonly code: string, message = code, readonly generation?: number) {
     super(message);
     this.name = "PrimaryStagingRefundError";
   }
@@ -252,10 +252,12 @@ async function revoke(tx: Tx, actor: Actor, scope: ReturnType<typeof ids>, ticke
 }
 
 export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action: string, input: Record<string, unknown>) {
+  let attemptedGeneration: number | undefined;
   try {
     return await db.$transaction(async (tx) => {
       await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836291)");
       const generation = await latestGeneration(tx);
+      attemptedGeneration = generation;
       switch (action) {
       case "refundOrdinary": {
         await requireOrganizer(tx, actor);
@@ -385,10 +387,13 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
     }, { isolationLevel: "Serializable" });
   } catch (error) {
-    if (error instanceof PrimaryStagingRefundError) throw error;
+    if (error instanceof PrimaryStagingRefundError) {
+      if (error.generation !== undefined || attemptedGeneration === undefined) throw error;
+      throw new PrimaryStagingRefundError(error.code, error.message, attemptedGeneration);
+    }
     const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
     if (["P2002", "P2034", "23505", "40001", "40P01"].includes(code)) {
-      throw new PrimaryStagingRefundError("STAGING_REFUND_CONCURRENT_CONFLICT");
+      throw new PrimaryStagingRefundError("STAGING_REFUND_CONCURRENT_CONFLICT", undefined, attemptedGeneration);
     }
     throw error;
   }
@@ -421,11 +426,15 @@ export async function getPrimaryStagingRefundState(db: Db) {
   return { generation, organizerId: ORGANIZER_ID, events, audit };
 }
 
-export async function recordPrimaryStagingRefundRejection(db: Db, actor: Actor, action: string, code: string) {
-  const state = await getPrimaryStagingRefundState(db); if (!state) return;
+export async function recordPrimaryStagingRefundRejection(db: Db, actor: Actor, action: string, code: string, attemptedGeneration?: number) {
+  const state = attemptedGeneration === undefined ? await getPrimaryStagingRefundState(db) : null;
+  const generation = attemptedGeneration ?? state?.generation;
+  if (!generation) return;
   const scenario = ACTION_SCENARIOS[action];
   const targetAction = scenario ? action : "unknown";
-  const eventId = scenario ? ids(state.generation, scenario).eventId : state.events[0]?.id;
-  if (!eventId || !state.events.some((event) => event.id === eventId)) return;
+  const eventId = scenario ? ids(generation, scenario).eventId : state?.events[0]?.id;
+  if (!eventId) return;
+  const event = await db.primaryEvent.findFirst({ where: { id: eventId, organizerId: ORGANIZER_ID }, select: { id: true } });
+  if (!event) return;
   await db.primaryAuditEvent.create({ data: { organizerId: ORGANIZER_ID, eventId, actorUserId: actor.id, actorType: "USER", action: "STAGING_REFUND_ACTION_REJECTED", targetType: "StagingRefundCommand", targetId: targetAction, reason: code, requestId: `staging-refund-rejection:${digest([targetAction, code, Date.now()]).slice(0, 24)}`, afterJson: { status: "REJECTED", code, scenario: scenario ?? "unknown" } } });
 }

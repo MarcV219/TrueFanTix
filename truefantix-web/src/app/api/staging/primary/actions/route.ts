@@ -244,7 +244,7 @@ export async function POST(req: Request) {
     if (error instanceof PrimaryAccessError) return jsonError(error.status, error.code);
     if (error instanceof PrimaryDomainError) return jsonError(409, error.code);
     if (error instanceof PrimaryStagingRefundError) {
-      if (refundActor) await recordPrimaryStagingRefundRejection(prisma, refundActor, requestedAction, error.code).catch(() => undefined);
+      if (refundActor) await recordPrimaryStagingRefundRejection(prisma, refundActor, requestedAction, error.code, error.generation).catch(() => undefined);
       return jsonError(409, error.code);
     }
     if (refundActor && requestedAction !== "unknown") {

@@ -4,6 +4,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import {
   getPrimaryStagingRefundState,
+  PrimaryStagingRefundError,
   recordPrimaryStagingRefundRejection,
   reseedPrimaryStagingRefundScenario,
   runPrimaryStagingRefundAction,
@@ -175,5 +176,21 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     ]);
     expect(outcomes.map((item) => item.generation).sort()).toEqual([before!.generation + 1, before!.generation + 2]);
     await expect(getPrimaryStagingRefundState(db)).resolves.toMatchObject({ generation: before!.generation + 2 });
+  });
+
+  it("keeps delayed rejection evidence attached to the attempted generation", async () => {
+    const attempted = await reseedPrimaryStagingRefundScenario(db, admin);
+    const rejection = await runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {}).catch((error: unknown) => error);
+    expect(rejection).toMatchObject({ code: "CHECKED_REFUND_REQUEST_REQUIRED", generation: attempted.generation });
+
+    const latest = await reseedPrimaryStagingRefundScenario(db, admin);
+    expect(latest.generation).toBe(attempted.generation + 1);
+    const typedRejection = rejection as PrimaryStagingRefundError;
+    await recordPrimaryStagingRefundRejection(db, organizer, "completeCheckedRefund", typedRejection.code, typedRejection.generation);
+
+    await expect(db.primaryAuditEvent.findFirstOrThrow({
+      where: { action: "STAGING_REFUND_ACTION_REJECTED", targetId: "completeCheckedRefund", reason: typedRejection.code },
+      orderBy: { createdAt: "desc" },
+    })).resolves.toMatchObject({ eventId: `staging-refund-g${attempted.generation}-checked-event` });
   });
 });

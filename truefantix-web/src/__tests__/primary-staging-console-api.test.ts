@@ -165,7 +165,7 @@ describe("primary staging console API boundary", () => {
 
   it("returns and records readable rejection evidence for rejected refund commands", async () => {
     mockedActor.mockResolvedValue(adminActor);
-    mockedRefundAction.mockRejectedValueOnce(new PrimaryStagingRefundError("SUPERVISOR_REASON_REQUIRED"));
+    mockedRefundAction.mockRejectedValueOnce(new PrimaryStagingRefundError("SUPERVISOR_REASON_REQUIRED", undefined, 7));
 
     const response = await postAction(new Request("https://preview.example/api/staging/primary/actions", {
       method: "POST",
@@ -181,6 +181,7 @@ describe("primary staging console API boundary", () => {
       expect.objectContaining({ id: adminActor.id, email: adminActor.email, role: "ADMIN" }),
       "approveCheckedRefund",
       "SUPERVISOR_REASON_REQUIRED",
+      7,
     );
   });
 
