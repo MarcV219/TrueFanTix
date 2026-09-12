@@ -37,6 +37,18 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     const initial = await getPrimaryStagingRefundState(db);
     expect(initial?.events).toHaveLength(3);
     expect(initial?.events.flatMap((event) => event.orders.flatMap((order) => order.admissionTickets.map((ticket) => ticket.status))).sort()).toEqual(["CHECKED_IN", "CHECKED_IN", "ISSUED", "ISSUED"]);
+    const allocations = initial?.events.flatMap((event) => event.orders.flatMap((order) => order.admissionTickets.map((ticket) => ({
+      amounts: ticket.purchaseAllocations.map((allocation) => allocation.amountMinor),
+      total: ticket.purchaseAllocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0),
+      digests: new Set(ticket.purchaseAllocations.map((allocation) => allocation.allocationSetDigest)).size,
+      validDigests: ticket.purchaseAllocations.every((allocation) => /^[0-9a-f]{64}$/.test(allocation.allocationSetDigest)),
+    }))));
+    expect(allocations).toEqual([
+      { amounts: [2000, 100], total: 2100, digests: 2, validDigests: true },
+      { amounts: [2000, 100], total: 2100, digests: 2, validDigests: true },
+      { amounts: [3000, 120], total: 3120, digests: 2, validDigests: true },
+      { amounts: [2500, 100], total: 2600, digests: 2, validDigests: true },
+    ]);
 
     const outcomes = await Promise.allSettled([
       runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {}),

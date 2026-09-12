@@ -434,6 +434,11 @@ export async function getPrimaryStagingRefundState(db: Db) {
       id: true, grossTotalMinor: true, currency: true,
       admissionTickets: { orderBy: { unitNumber: "asc" }, select: {
         id: true, unitNumber: true, status: true, voidReason: true,
+        purchaseAllocations: { orderBy: [{ remainderRank: "asc" }, { orderComponentId: "asc" }], select: {
+          amountMinor: true, currency: true, refundable: true, liabilityOwner: true,
+          remainderRank: true, algorithmVersion: true, allocationSetDigest: true,
+          component: { select: { code: true, label: true, kind: true } },
+        } },
         refundItems: { select: {
           refundId: true, requestedMinor: true,
           refund: { select: {
