@@ -179,12 +179,60 @@ async function requireSyntheticTenantAccessProvenance(tx: Tx) {
 }
 
 async function requireSyntheticNoDeliveryIntent(tx: Tx) {
-  const [reservedPersonaUsers, memberships, purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, revocations, cancellations, cancellationBatches, cancellationBatchTickets, cancellationSnapshots, cancellationRefundLinks, obligations, checkedInApprovals, waiverApprovals, auditEvents] = await Promise.all([
+  const [reservedPersonaUsers, memberships, events, ticketTypes, reservations, orders, orderLines, orderComponents, paymentAttempts, paymentProviderEvents, paymentExceptions, admissionTickets, admissionCredentials, admissionScans, purchaseAllocations, refunds, refundItems, refundAllocations, refundAttempts, refundProviderEvents, revocations, cancellations, cancellationBatches, cancellationBatchTickets, cancellationSnapshots, cancellationRefundLinks, obligations, checkedInApprovals, waiverApprovals, auditEvents] = await Promise.all([
     tx.user.findMany({
       where: { email: { in: [STAGING_ADMIN_EMAIL, STAGING_ORGANIZER_EMAIL, BUYER_EMAIL] } },
       select: { id: true },
     }),
     tx.primaryOrganizerMembership.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
+    tx.primaryEvent.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
+    tx.primaryTicketType.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
+    tx.primaryInventoryReservation.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
+    tx.primaryOrder.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
+    tx.primaryOrderLine.findMany({
+      where: { order: { organizerId: ORGANIZER_ID } },
+      select: { id: true },
+    }),
+    tx.primaryOrderPriceComponent.findMany({
+      where: { order: { organizerId: ORGANIZER_ID } },
+      select: { id: true },
+    }),
+    tx.primaryPaymentAttempt.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
+    tx.primaryPaymentProviderEvent.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
+    tx.primaryPaymentException.findMany({
+      where: { attempt: { organizerId: ORGANIZER_ID } },
+      select: { id: true },
+    }),
+    tx.primaryAdmissionTicket.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
+    tx.primaryAdmissionCredential.findMany({
+      where: { ticket: { organizerId: ORGANIZER_ID } },
+      select: { id: true },
+    }),
+    tx.primaryAdmissionScan.findMany({
       where: { organizerId: ORGANIZER_ID },
       select: { id: true },
     }),
@@ -253,9 +301,21 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
       select: { id: true },
     }),
   ]);
-  const opaqueWorkflowAggregateIds = [
+  const reservedAggregateIds = [
     ...reservedPersonaUsers.map((user) => user.id),
     ...memberships.map((membership) => membership.id),
+    ...events.map((event) => event.id),
+    ...ticketTypes.map((ticketType) => ticketType.id),
+    ...reservations.map((reservation) => reservation.id),
+    ...orders.map((order) => order.id),
+    ...orderLines.map((line) => line.id),
+    ...orderComponents.map((component) => component.id),
+    ...paymentAttempts.map((attempt) => attempt.id),
+    ...paymentProviderEvents.map((event) => event.id),
+    ...paymentExceptions.map((exception) => exception.id),
+    ...admissionTickets.map((ticket) => ticket.id),
+    ...admissionCredentials.map((credential) => credential.id),
+    ...admissionScans.map((scan) => scan.id),
     ...purchaseAllocations.map((allocation) => allocation.id),
     ...refunds.map((refund) => refund.id),
     ...refundItems.map((item) => item.id),
@@ -279,8 +339,7 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
         { organizerId: ORGANIZER_ID },
         { aggregateId: ORGANIZER_ID },
         { aggregateId: POLICY_ID },
-        { aggregateId: { startsWith: EVENT_PREFIX } },
-        { aggregateId: { in: opaqueWorkflowAggregateIds } },
+        { aggregateId: { in: reservedAggregateIds } },
       ],
     },
   });

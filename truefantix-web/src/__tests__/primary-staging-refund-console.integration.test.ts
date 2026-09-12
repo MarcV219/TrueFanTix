@@ -232,6 +232,29 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(getPrimaryStagingRefundState(db)).resolves.toMatchObject({ generation: before!.generation + 1 });
   });
 
+  it("ignores delivery intent for a foreign tenant with a lookalike aggregate identifier", async () => {
+    const before = await getPrimaryStagingRefundState(db);
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unrelated.delivery",
+      aggregateType: "PrimaryEvent",
+      aggregateId: "staging-refund-g999999-ordinary-event",
+      payloadJson: { synthetic: true, unrelatedTenant: true },
+      idempotencyKey: `unrelated-staging-refund-delivery:${before!.generation}`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).resolves.toMatchObject({
+      status: "SUCCEEDED",
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).resolves.toEqual({
+      generation: before!.generation + 1,
+    });
+    await expect(db.primaryOutboxMessage.findUnique({ where: { id: outbox.id } })).resolves.toMatchObject({
+      aggregateId: "staging-refund-g999999-ordinary-event",
+    });
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("keeps delayed rejection evidence attached to the attempted generation", async () => {
     const attempted = await reseedPrimaryStagingRefundScenario(db, admin);
     const rejection = await runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {}).catch((error: unknown) => error);
