@@ -5,9 +5,20 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import { enforceOriginAndCsrf } from "@/lib/security/csrf";
+import { isPrimaryStagingSyntheticEmail } from "@/lib/primary/staging-console";
 
 function jsonError(status: number, error: string, message?: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
+}
+
+function stagingConsoleOnlyError() {
+  const response = jsonError(
+    403,
+    "STAGING_CONSOLE_ONLY",
+    "This managed account is restricted to the staging console.",
+  );
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
 }
 
 export async function requireVerifiedUser(req: Request) {
@@ -30,6 +41,10 @@ export async function requireVerifiedUser(req: Request) {
 
   if (user.isBanned) {
     return { ok: false as const, res: jsonError(403, "BANNED", "This account is restricted.") };
+  }
+
+  if (isPrimaryStagingSyntheticEmail(user.email)) {
+    return { ok: false as const, res: stagingConsoleOnlyError() };
   }
 
   const isVerified = !!user.emailVerifiedAt && !!user.phoneVerifiedAt;
@@ -94,6 +109,10 @@ export async function requireUser(req?: Request) {
 
   if (user.isBanned) {
     return { ok: false as const, res: jsonError(403, "BANNED", "This account is restricted.") };
+  }
+
+  if (isPrimaryStagingSyntheticEmail(user.email)) {
+    return { ok: false as const, res: stagingConsoleOnlyError() };
   }
 
   return { ok: true as const, user };
