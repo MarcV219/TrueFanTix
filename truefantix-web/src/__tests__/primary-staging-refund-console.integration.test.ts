@@ -65,8 +65,15 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
   });
 
   it("derives the cancellation snapshot and requires waiver evidence before exact resolution", async () => {
+    const cancellationEvent = await db.primaryEvent.findFirstOrThrow({ where: { id: { contains: "-cancellation-event" } } });
+    await expect(db.primaryEventCancellation.create({ data: { organizerId: cancellationEvent.organizerId, eventId: cancellationEvent.id, generation: 1, status: "ACTIVE", policyVersionId: "primary-refund-policy-v1", requestedByUserId: organizer.id, requestKey: "forged-active-cancellation", commandDigest: "d".repeat(64), reason: "Forged active cancellation.", snapshotMaxTicketId: "forged", expectedTicketCount: 0, expectedAmountMinor: 0, activatedAt: now } })).rejects.toThrow("Event cancellation must begin in REQUESTED");
     const active = await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
     expect(active).toMatchObject({ status: "ACTIVE", expectedTicketCount: 2, expectedAmountMinor: 4200 });
+    const cancellationTicket = await db.primaryAdmissionTicket.findFirstOrThrow({ where: { eventId: { contains: "-cancellation-" }, status: "ISSUED" } });
+    await expect(db.primaryAdmissionTicket.update({ where: { id: cancellationTicket.id }, data: { status: "CHECKED_IN" } })).rejects.toThrow("Admission is blocked by event cancellation");
+    const cancellationCredential = await db.primaryAdmissionCredential.findUniqueOrThrow({ where: { admissionTicketId: cancellationTicket.id } });
+    await expect(db.primaryAdmissionScan.create({ data: { requestId: "forged-cancelled-accept", commandDigest: "a".repeat(64), organizerId: active.organizerId, eventId: active.eventId, admissionTicketId: cancellationTicket.id, credentialId: cancellationCredential.id, operatorUserId: organizer.id, result: "ACCEPTED", scannedAt: now } })).rejects.toThrow("Admission is blocked by event cancellation");
+    await expect(db.primaryAdmissionScan.create({ data: { requestId: "cancelled-admission-rejection", commandDigest: "b".repeat(64), organizerId: active.organizerId, eventId: active.eventId, admissionTicketId: cancellationTicket.id, credentialId: cancellationCredential.id, operatorUserId: organizer.id, result: "VOIDED", scannedAt: now } })).resolves.toMatchObject({ result: "VOIDED", admissionTicketId: cancellationTicket.id });
     await expect(db.primaryEventCancellation.update({ where: { id: active.id }, data: { expectedAmountMinor: 1 } })).rejects.toThrow("Cancellation snapshot is immutable");
     await runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {});
     await expect(runPrimaryStagingRefundAction(db, organizer, "completeCancellation", {})).rejects.toEqual(expect.objectContaining({ code: "CANCELLATION_WAIVER_REQUIRED" }));
@@ -81,12 +88,53 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await expect(db.primaryCancellationSnapshotTicket.update({ where: { cancellationId_admissionTicketId: { cancellationId: active.id, admissionTicketId: cancellation!.snapshotTickets[0].admissionTicketId } }, data: { amountMinor: 1 } })).rejects.toThrow("Cancellation snapshot evidence is immutable");
   });
 
+  it("serializes cancellation activation ahead of a concurrent admission transition", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const event = await db.primaryEvent.findUniqueOrThrow({ where: { id: `staging-refund-g${seeded.generation}-cancellation-event` } });
+    const ticket = await db.primaryAdmissionTicket.findFirstOrThrow({ where: { eventId: event.id, status: "ISSUED" } });
+    const cancellation = await db.primaryEventCancellation.create({ data: {
+      organizerId: event.organizerId,
+      eventId: event.id,
+      generation: 1,
+      policyVersionId: "primary-refund-policy-v1",
+      requestedByUserId: organizer.id,
+      requestKey: `concurrent-cancellation:${seeded.generation}`,
+      commandDigest: "c".repeat(64),
+      reason: "Synthetic cancellation concurrency proof.",
+      snapshotMaxTicketId: "derived-on-activation",
+      expectedTicketCount: 0,
+      expectedAmountMinor: 0,
+    } });
+    const activationClient = await pool.connect();
+    const admissionClient = await pool.connect();
+    let activationCommitted = false;
+    try {
+      await activationClient.query("BEGIN");
+      await activationClient.query('UPDATE "PrimaryEventCancellation" SET status=\'ACTIVE\', "activatedAt"=now(), "updatedAt"=now() WHERE id=$1', [cancellation.id]);
+      const admissionAttempt = admissionClient.query('UPDATE "PrimaryAdmissionTicket" SET status=\'CHECKED_IN\', "updatedAt"=now() WHERE id=$1', [ticket.id]);
+      const stateBeforeCommit = await Promise.race([
+        admissionAttempt.then(() => "completed"),
+        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 100)),
+      ]);
+      expect(stateBeforeCommit).toBe("blocked");
+      await activationClient.query("COMMIT");
+      activationCommitted = true;
+      await expect(admissionAttempt).rejects.toThrow("Admission is blocked by event cancellation");
+    } finally {
+      if (!activationCommitted) await activationClient.query("ROLLBACK").catch(() => undefined);
+      activationClient.release();
+      admissionClient.release();
+    }
+    await expect(db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: ticket.id } })).resolves.toMatchObject({ status: "ISSUED" });
+  });
+
   it("serializes concurrent repeatable reseeds into distinct immutable generations", async () => {
+    const before = await getPrimaryStagingRefundState(db);
     const outcomes = await Promise.all([
       reseedPrimaryStagingRefundScenario(db, admin),
       reseedPrimaryStagingRefundScenario(db, admin),
     ]);
-    expect(outcomes.map((item) => item.generation).sort()).toEqual([2, 3]);
-    await expect(getPrimaryStagingRefundState(db)).resolves.toMatchObject({ generation: 3 });
+    expect(outcomes.map((item) => item.generation).sort()).toEqual([before!.generation + 1, before!.generation + 2]);
+    await expect(getPrimaryStagingRefundState(db)).resolves.toMatchObject({ generation: before!.generation + 2 });
   });
 });

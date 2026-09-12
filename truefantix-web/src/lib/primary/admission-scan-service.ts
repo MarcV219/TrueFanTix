@@ -55,8 +55,14 @@ export class PrimaryAdmissionScanService {
           if (!credential || credential.payloadVersion !== payload.v || credential.keyId !== payload.kid || credential.payloadDigest !== payloadDigest || credential.issuedAt.toISOString() !== payload.iat) {
             return this.evidence(tx, input, "UNKNOWN_CREDENTIAL", requestId, commandDigest, deviceId);
           }
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${input.eventId}, 746836292))`;
           await tx.$queryRaw`SELECT id FROM "PrimaryAdmissionTicket" WHERE id = ${credential.admissionTicketId} FOR UPDATE`;
           const ticket = await tx.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: credential.admissionTicketId } });
+          const cancellation = await tx.primaryEventCancellation.findFirst({
+            where: { organizerId: input.organizerId, eventId: input.eventId, status: { not: "REQUESTED" } },
+            select: { id: true },
+          });
+          if (cancellation) return this.evidence(tx, input, "VOIDED", requestId, commandDigest, deviceId, ticket.id, credential.id);
           if (ticket.status === "VOIDED") return this.evidence(tx, input, "VOIDED", requestId, commandDigest, deviceId, ticket.id, credential.id);
           if (ticket.status === "CHECKED_IN") return this.evidence(tx, input, "DUPLICATE", requestId, commandDigest, deviceId, ticket.id, credential.id);
 
