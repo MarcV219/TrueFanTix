@@ -520,4 +520,29 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
       where: { obligation: { cancellationId: cancellation.id } },
     })).resolves.toBe(0);
   });
+
+  it("rejects replay when terminal synthetic provider evidence is contaminated", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const ordinaryBase = `staging-refund-g${seeded.generation}-ordinary`;
+    await runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {});
+    const refund = await db.primaryRefund.findUniqueOrThrow({
+      where: { requestKey: `${ordinaryBase}:refund:ordinary` },
+      include: { attempts: true },
+    });
+    await db.primaryRefundProviderEvent.create({ data: {
+      attemptId: refund.attempts[0].id,
+      providerEventId: `${ordinaryBase}:adversarial-extra-event`,
+      payloadDigest: "f".repeat(64),
+      eventType: "synthetic.refund.unexpected",
+      providerCreatedAt: now,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_COMPLETION_EVIDENCE_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(db.primaryAuditEvent.count({
+      where: { eventId: `${ordinaryBase}-event`, action: "STAGING_ORDINARY_REFUND_COMPLETED" },
+    })).resolves.toBe(1);
+  });
 });
