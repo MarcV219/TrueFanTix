@@ -7,6 +7,8 @@ const EVENT_PREFIX = "staging-buyer-g";
 const BUYER_EMAIL = "buyer@primary-staging.example.invalid";
 const BUYER_PHONE = "+15550001005";
 const BUYER_PASSWORD_HASH = "synthetic-staging-no-login";
+const ORGANIZER_USER_PHONE = "+15550001001";
+const ORGANIZER_USER_PASSWORD_HASH = "synthetic-staging-no-login";
 const ORGANIZER_SUPPORT_EMAIL = "buyer-journey@primary-staging.example.invalid";
 type Actor = { id: string; email: string; role: UserRole };
 type Tx = Prisma.TransactionClient;
@@ -24,6 +26,10 @@ function requireAdmin(actor: Actor) {
   if (actor.email !== STAGING_ADMIN_EMAIL || actor.role !== "ADMIN") throw new PrimaryStagingBuyerError("STAGING_ADMIN_REQUIRED");
 }
 
+function organizerPersonaData(verifiedAt: Date) {
+  return { passwordHash: ORGANIZER_USER_PASSWORD_HASH, emailVerifiedAt: verifiedAt, firstName: "Staging", lastName: "Organizer", displayName: "Staging Organizer", phone: ORGANIZER_USER_PHONE, phoneVerifiedAt: verifiedAt, streetAddress1: "1 Synthetic Way", streetAddress2: null, city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", canBuy: false, canSell: false, canComment: false, isBanned: false, banReason: null, role: "USER" as const, sellerId: null, termsAcceptedAt: verifiedAt, termsVersion: "primary-staging-only", privacyAcceptedAt: verifiedAt, privacyVersion: "primary-staging-only" };
+}
+
 async function requireSyntheticFixture(tx: Tx, actor: Actor) {
   const [buyer, organizer, organizerUser] = await Promise.all([
     tx.user.findUnique({ where: { email: BUYER_EMAIL } }),
@@ -38,6 +44,14 @@ async function requireSyntheticFixture(tx: Tx, actor: Actor) {
     || buyer.streetAddress1 !== "1 Synthetic Way" || buyer.streetAddress2 !== null
     || buyer.city !== "Toronto" || buyer.region !== "ON" || buyer.postalCode !== "M5V 0A1" || buyer.country !== "CA"
     || buyer.canBuy || buyer.canSell || buyer.canComment || buyer.isBanned || buyer.role !== "USER" || buyer.sellerId !== null
+    || organizerUser.passwordHash !== ORGANIZER_USER_PASSWORD_HASH
+    || organizerUser.firstName !== "Staging" || organizerUser.lastName !== "Organizer" || organizerUser.displayName !== "Staging Organizer"
+    || organizerUser.phone !== ORGANIZER_USER_PHONE || organizerUser.phoneVerifiedAt === null || organizerUser.emailVerifiedAt === null
+    || organizerUser.streetAddress1 !== "1 Synthetic Way" || organizerUser.streetAddress2 !== null
+    || organizerUser.city !== "Toronto" || organizerUser.region !== "ON" || organizerUser.postalCode !== "M5V 0A1" || organizerUser.country !== "CA"
+    || organizerUser.canBuy || organizerUser.canSell || organizerUser.canComment || organizerUser.isBanned || organizerUser.role !== "USER" || organizerUser.sellerId !== null
+    || organizerUser.termsAcceptedAt === null || organizerUser.termsVersion !== "primary-staging-only"
+    || organizerUser.privacyAcceptedAt === null || organizerUser.privacyVersion !== "primary-staging-only"
     || organizer.legalName !== "Synthetic Buyer Journey Inc." || organizer.displayName !== "Synthetic Buyer Journey"
     || organizer.addressLine1 !== "1 Synthetic Way" || organizer.addressLine2 !== null
     || organizer.city !== "Toronto" || organizer.region !== "ON" || organizer.postalCode !== "M5V 0A1" || organizer.country !== "CA"
@@ -58,7 +72,7 @@ export async function reseedPrimaryStagingBuyerJourney(db: PrismaClient, actor: 
     requireAdmin(actor);
     await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836292)");
     const next = (await generation(tx)) + 1; const scope = ids(next); const now = new Date();
-    const organizerUser = await tx.user.findUniqueOrThrow({ where: { email: STAGING_ORGANIZER_EMAIL } });
+    const organizerUser = await tx.user.upsert({ where: { email: STAGING_ORGANIZER_EMAIL }, create: { email: STAGING_ORGANIZER_EMAIL, ...organizerPersonaData(now) }, update: organizerPersonaData(now) });
     const buyerData = { passwordHash: BUYER_PASSWORD_HASH, emailVerifiedAt: now, firstName: "Synthetic", lastName: "Buyer", displayName: null, phone: BUYER_PHONE, phoneVerifiedAt: now, streetAddress1: "1 Synthetic Way", streetAddress2: null, city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", canBuy: false, canSell: false, canComment: false, isBanned: false, banReason: null, role: "USER" as const, sellerId: null };
     await tx.user.upsert({ where: { email: BUYER_EMAIL }, create: { email: BUYER_EMAIL, ...buyerData }, update: buyerData });
     const organizerData = { legalName: "Synthetic Buyer Journey Inc.", displayName: "Synthetic Buyer Journey", businessNumberEncrypted: null, addressLine1: "1 Synthetic Way", addressLine2: null, city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", supportEmail: ORGANIZER_SUPPORT_EMAIL, supportPhone: BUYER_PHONE, website: null, status: "APPROVED" as const, statusReason: null, paymentProvider: null, paymentAccountRefEncrypted: null, paymentStatus: "NOT_STARTED" as const, submittedAt: now, approvedAt: now, approvedByUserId: actor.id, createdByUserId: organizerUser.id };

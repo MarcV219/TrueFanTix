@@ -12,13 +12,14 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
   const organizer = { id: "staging-buyer-organizer", email: "organizer@primary-staging.example.invalid", role: "USER" as const };
   beforeAll(async () => {
     const now = new Date();
-    for (const user of [admin, organizer]) await db.user.upsert({ where: { email: user.email }, create: { ...user, passwordHash: "synthetic", emailVerifiedAt: now, firstName: "Staging", lastName: user.role, phone: user.role === "ADMIN" ? "+15550001002" : "+15550001001", phoneVerifiedAt: now, streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA" }, update: { id: user.id, role: user.role, isBanned: false, emailVerifiedAt: now } });
+    await db.user.upsert({ where: { email: admin.email }, create: { ...admin, passwordHash: "synthetic", emailVerifiedAt: now, firstName: "Staging", lastName: admin.role, phone: "+15550001002", phoneVerifiedAt: now, streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA" }, update: { id: admin.id, role: admin.role, isBanned: false, emailVerifiedAt: now } });
   });
   afterAll(async () => { await db.$disconnect(); await pool.end(); });
 
   it("advances only the reserved admin through a provider-free purchase and accepted admission", async () => {
     await expect(reseedPrimaryStagingBuyerJourney(db, organizer)).rejects.toMatchObject({ code: "STAGING_ADMIN_REQUIRED" });
     const seeded = await reseedPrimaryStagingBuyerJourney(db, admin); expect(seeded.generation).toBeGreaterThan(0);
+    await expect(db.user.findUniqueOrThrow({ where: { email: organizer.email } })).resolves.toMatchObject({ firstName: "Staging", lastName: "Organizer", role: "USER", canBuy: false, canSell: false, canComment: false });
     for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING", "PROCESSING", "PAID", "ISSUED", "CHECKED_IN"]) {
       await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
     }
@@ -43,6 +44,15 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
 
     await reseedPrimaryStagingBuyerJourney(db, admin);
     await expect(db.primaryOrganizer.findUniqueOrThrow({ where: { id: "primary-staging-buyer-organizer" } })).resolves.toMatchObject({ supportEmail: "buyer-journey@primary-staging.example.invalid", paymentStatus: "NOT_STARTED", paymentProvider: null });
+    const organizerUser = await db.user.findUniqueOrThrow({ where: { email: "organizer@primary-staging.example.invalid" } });
+    await db.user.update({ where: { id: organizerUser.id }, data: { firstName: "Drifted", canSell: true, passwordHash: "externally-mutated", phoneVerifiedAt: null, sellerId: null } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_FIXTURE_INVALID" });
+    await expect(getPrimaryStagingBuyerJourney(db)).resolves.toMatchObject({ reservation: null });
+
+    const beforeRestore = await getPrimaryStagingBuyerJourney(db);
+    const restored = await reseedPrimaryStagingBuyerJourney(db, admin);
+    expect(restored.generation).toBe((beforeRestore?.generation ?? 0) + 1);
+    await expect(db.user.findUniqueOrThrow({ where: { id: organizerUser.id } })).resolves.toMatchObject({ firstName: "Staging", lastName: "Organizer", displayName: "Staging Organizer", passwordHash: "synthetic-staging-no-login", phoneVerifiedAt: expect.any(Date), canBuy: false, canSell: false, canComment: false, role: "USER", isBanned: false, sellerId: null });
     await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: "HELD" });
   });
 });
