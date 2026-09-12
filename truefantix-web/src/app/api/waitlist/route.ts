@@ -9,12 +9,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 export async function GET(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
-        { status: 401 }
-      );
-    }
+    if (!gate.ok) return gate.res;
 
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status") || "ACTIVE";
@@ -57,12 +52,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
-        { status: 401 }
-      );
-    }
+    if (!gate.ok) return gate.res;
 
     const validation = await validateRequest(schemas.waitlistCreateApi)(req);
     if (!validation.success) return validation.response;
@@ -157,12 +147,7 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." },
-        { status: 401 }
-      );
-    }
+    if (!gate.ok) return gate.res;
 
     const { searchParams } = new URL(req.url);
     const parsed = schemas.waitlistDeleteQuery.safeParse({

@@ -33,12 +33,7 @@ export function generateReferralCode(userId: string): string {
 export async function GET(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_AUTHENTICATED" },
-        { status: 401 }
-      );
-    }
+    if (!gate.ok) return gate.res;
 
     // Get or generate referral code
     let user = await prisma.user.findUnique({

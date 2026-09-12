@@ -10,9 +10,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 export async function GET(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
-    }
+    if (!gate.ok) return gate.res;
 
     const preferences = await prisma.notificationPreference.findMany({
       where: { userId: gate.user.id },
@@ -67,9 +65,7 @@ export async function GET(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
-    }
+    if (!gate.ok) return gate.res;
     const validation = await validateRequest(schemas.notificationPreferencesSettingsApi)(req);
     if (!validation.success) return validation.response;
 
@@ -106,9 +102,7 @@ export async function PATCH(req: Request) {
 export async function POST(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
-    }
+    if (!gate.ok) return gate.res;
     const validation = await validateRequest(schemas.notificationPreferenceCreateApi)(req);
     if (!validation.success) return validation.response;
 
@@ -158,9 +152,7 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
-    }
+    if (!gate.ok) return gate.res;
     const validation = await validateRequest(schemas.notificationPreferenceDeleteApi)(req);
     if (!validation.success) return validation.response;
 

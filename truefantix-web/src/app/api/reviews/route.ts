@@ -115,12 +115,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_AUTHENTICATED" },
-        { status: 401 }
-      );
-    }
+    if (!gate.ok) return gate.res;
 
     const validation = await validateRequest(schemas.reviewCreateApi)(req);
     if (!validation.success) return validation.response;
@@ -239,12 +234,7 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_AUTHENTICATED" },
-        { status: 401 }
-      );
-    }
+    if (!gate.ok) return gate.res;
 
     const validation = await validateRequest(schemas.reviewUpdateApi)(req);
     if (!validation.success) return validation.response;
@@ -315,12 +305,7 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const gate = await requireUser(req);
-    if (!gate.user) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_AUTHENTICATED" },
-        { status: 401 }
-      );
-    }
+    if (!gate.ok) return gate.res;
 
     const { searchParams } = new URL(req.url);
     const parsed = schemas.reviewDeleteQuery.safeParse({ id: searchParams.get("id") });

@@ -8,6 +8,38 @@ import { POST as changePassword } from "@/app/api/account/security/password/rout
 import { GET as getSellerOnboardingStatus } from "@/app/api/sellers/onboarding/status/route";
 import { POST as debugVerifyMe } from "@/app/api/debug/verify-me/route";
 import { POST as debugApproveSeller } from "@/app/api/debug/approve-me-as-seller/route";
+import { GET as getReferrals } from "@/app/api/referrals/route";
+import {
+  GET as getMessages,
+  POST as postMessage,
+  DELETE as deleteMessage,
+} from "@/app/api/messages/route";
+import {
+  POST as postReview,
+  PATCH as patchReview,
+  DELETE as deleteReview,
+} from "@/app/api/reviews/route";
+import {
+  GET as getNotifications,
+  PATCH as patchNotifications,
+  DELETE as deleteNotifications,
+} from "@/app/api/notifications/route";
+import {
+  GET as getNotificationPreferences,
+  PATCH as patchNotificationPreferences,
+  POST as postNotificationPreference,
+  DELETE as deleteNotificationPreference,
+} from "@/app/api/notifications/preferences/route";
+import {
+  GET as getPriceAlerts,
+  POST as postPriceAlert,
+  DELETE as deletePriceAlert,
+} from "@/app/api/price-alerts/route";
+import {
+  GET as getWaitlist,
+  POST as postWaitlist,
+  DELETE as deleteWaitlist,
+} from "@/app/api/waitlist/route";
 
 jest.mock("@/lib/prisma", () => ({
   prisma: {
@@ -44,6 +76,12 @@ jest.mock("@/lib/validation", () => ({
 jest.mock("@/lib/security/debug-access", () => ({
   requireDebugAccess: jest.fn().mockReturnValue({ ok: true }),
 }));
+
+jest.mock("@/lib/websocket", () => ({ sendNotificationToUser: jest.fn() }));
+
+jest.mock("@/lib/notifications/service", () => ({ createNotification: jest.fn() }));
+
+jest.mock("@/lib/reputation", () => ({ updateSellerBadges: jest.fn() }));
 
 const mockedPrisma = prisma as unknown as {
   user: { findUnique: jest.Mock; update: jest.Mock };
@@ -209,6 +247,37 @@ describe("reserved staging personas cannot enter direct ordinary session routes"
   ] as const)("blocks debug %s before mutation", async (_label, handler, path) => {
     await expectConsoleOnly(await handler(request(path)));
 
+    expect(mockedPrisma.user.findUnique).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["referral reads", getReferrals, "/api/referrals", "GET"],
+    ["message reads", getMessages, "/api/messages", "GET"],
+    ["message writes", postMessage, "/api/messages", "POST"],
+    ["message deletion", deleteMessage, "/api/messages?id=message-1", "DELETE"],
+    ["review creation", postReview, "/api/reviews", "POST"],
+    ["review updates", patchReview, "/api/reviews", "PATCH"],
+    ["review deletion", deleteReview, "/api/reviews?id=review-1", "DELETE"],
+    ["notification reads", getNotifications, "/api/notifications", "GET"],
+    ["notification updates", patchNotifications, "/api/notifications", "PATCH"],
+    ["notification deletion", deleteNotifications, "/api/notifications", "DELETE"],
+    ["notification-preference reads", getNotificationPreferences, "/api/notifications/preferences", "GET"],
+    ["notification-preference settings", patchNotificationPreferences, "/api/notifications/preferences", "PATCH"],
+    ["notification-preference creation", postNotificationPreference, "/api/notifications/preferences", "POST"],
+    ["notification-preference deletion", deleteNotificationPreference, "/api/notifications/preferences", "DELETE"],
+    ["price-alert reads", getPriceAlerts, "/api/price-alerts", "GET"],
+    ["price-alert creation", postPriceAlert, "/api/price-alerts", "POST"],
+    ["price-alert deletion", deletePriceAlert, "/api/price-alerts?id=alert-1", "DELETE"],
+    ["waitlist reads", getWaitlist, "/api/waitlist", "GET"],
+    ["waitlist creation", postWaitlist, "/api/waitlist", "POST"],
+    ["waitlist deletion", deleteWaitlist, "/api/waitlist?id=entry-1", "DELETE"],
+  ] as const)("preserves the console-only response for %s", async (_label, handler, path, method) => {
+    const response = await handler(new Request(`https://preview.example${path}`, { method }));
+    if (!response) throw new Error("Expected the authorization boundary to return a response.");
+
+    await expectConsoleOnly(response);
     expect(mockedPrisma.user.findUnique).not.toHaveBeenCalled();
     expect(mockedPrisma.user.update).not.toHaveBeenCalled();
     expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
