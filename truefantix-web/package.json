@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "DATABASE_URL=file:./prisma/dev.db prisma generate && next build",
+    "vercel-build": "node scripts/vercel-build.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "jest",
