@@ -419,6 +419,27 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     });
   });
 
+  it("rejects synthetic buyer identity drift before refund mutation", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const buyer = await db.user.findUniqueOrThrow({ where: { email: "refund-buyer@primary-staging.example.invalid" } });
+    await db.user.update({
+      where: { id: buyer.id },
+      data: {
+        passwordHash: "$2b$12$externallyChangedSyntheticBuyerIdentity",
+        firstName: "Changed",
+        streetAddress1: "99 Untrusted Way",
+      },
+    });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `staging-refund-g${seeded.generation}-ordinary-event` },
+    })).resolves.toBe(0);
+  });
+
   it("fails closed when deterministic accepted-scan evidence drifts", async () => {
     const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
     const checkedTicketId = `staging-refund-g${seeded.generation}-checked-ticket-1`;
