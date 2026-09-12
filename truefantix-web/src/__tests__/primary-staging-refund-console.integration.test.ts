@@ -1150,6 +1150,42 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque synthetic audit event", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const ordinaryBase = `staging-refund-g${seeded.generation}-ordinary`;
+    await runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {});
+    const auditEvent = await db.primaryAuditEvent.findFirstOrThrow({
+      where: {
+        organizerId: "primary-staging-refund-organizer",
+        eventId: `${ordinaryBase}-event`,
+        action: "STAGING_ORDINARY_REFUND_COMPLETED",
+      },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-audit-event-delivery",
+      aggregateType: "PrimaryAuditEvent",
+      aggregateId: auditEvent.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${ordinaryBase}:unexpected-unscoped-audit-event-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryEventCancellation.count({
+      where: { eventId: `staging-refund-g${seeded.generation}-cancellation-event` },
+    })).resolves.toBe(0);
+    await expect(db.primaryEvent.count({
+      where: { id: `staging-refund-g${seeded.generation + 1}-ordinary-event` },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects drift in the synthetic purchase timeline before refund mutation", async () => {
     const reservationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     const reservationBase = `staging-refund-g${reservationSeed.generation}-ordinary`;
