@@ -179,7 +179,7 @@ async function requireSyntheticTenantAccessProvenance(tx: Tx) {
 }
 
 async function requireSyntheticNoDeliveryIntent(tx: Tx) {
-  const [refunds, cancellations] = await Promise.all([
+  const [refunds, cancellations, obligations] = await Promise.all([
     tx.primaryRefund.findMany({
       where: { organizerId: ORGANIZER_ID },
       select: { id: true },
@@ -188,10 +188,15 @@ async function requireSyntheticNoDeliveryIntent(tx: Tx) {
       where: { organizerId: ORGANIZER_ID },
       select: { id: true },
     }),
+    tx.primaryRefundObligation.findMany({
+      where: { organizerId: ORGANIZER_ID },
+      select: { id: true },
+    }),
   ]);
   const opaqueWorkflowAggregateIds = [
     ...refunds.map((refund) => refund.id),
     ...cancellations.map((cancellation) => cancellation.id),
+    ...obligations.map((obligation) => obligation.id),
   ];
   const outboxCount = await tx.primaryOutboxMessage.count({
     where: {
