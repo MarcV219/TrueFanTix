@@ -644,6 +644,64 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque synthetic workflow aggregate", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const checkedBase = `staging-refund-g${seeded.generation}-checked`;
+    await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
+    const refund = await db.primaryRefund.findUniqueOrThrow({
+      where: { requestKey: `${checkedBase}:refund:checked` },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-refund-delivery",
+      aggregateType: "PrimaryRefund",
+      aggregateId: refund.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${checkedBase}:unexpected-unscoped-refund-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", {
+      reason: "Must not approve after foreign delivery intent",
+      evidence: "synthetic-unscoped-refund-delivery",
+      fraudReview: "No review because delivery scope is contaminated",
+      costBearer: "ORGANIZER",
+    })).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryCheckedInRefundApproval.count({
+      where: { refundId: refund.id },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+
+    const cancellationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const cancellationBase = `staging-refund-g${cancellationSeed.generation}-cancellation`;
+    const cancellation = await runPrimaryStagingRefundAction(db, organizer, "activateCancellation", {});
+    const cancellationOutbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-cancellation-delivery",
+      aggregateType: "PrimaryEventCancellation",
+      aggregateId: cancellation.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${cancellationBase}:unexpected-unscoped-cancellation-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "prepareCancellation", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: cancellationSeed.generation,
+    });
+    await expect(db.primaryRefund.count({
+      where: { eventId: `${cancellationBase}-event` },
+    })).resolves.toBe(0);
+    await expect(db.primaryRefundObligation.count({
+      where: { eventId: `${cancellationBase}-event` },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: cancellationOutbox.id } });
+  });
+
   it("rejects drift in the synthetic purchase timeline before refund mutation", async () => {
     const reservationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     const reservationBase = `staging-refund-g${reservationSeed.generation}-ordinary`;
