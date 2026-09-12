@@ -1254,9 +1254,11 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
           if (evidence.status === "SUCCEEDED") {
             await requireSyntheticRefundCompletionEvidence(tx, scope, evidence, "ordinary", ticketId);
             await requireOrdinaryRefundAuditEvidence(tx, scope, evidence);
+          } else {
+            throw new PrimaryStagingRefundError("ORDINARY_REFUND_INCOMPLETE_EVIDENCE");
           }
+          throw new PrimaryStagingRefundError("ORDINARY_REFUND_ALREADY_COMPLETED");
         }
-        if (existing && existing.status !== "REQUESTED") throw new PrimaryStagingRefundError("ORDINARY_REFUND_ALREADY_COMPLETED");
         await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "ISSUED" }], "ORDINARY_REFUND_REQUIRES_UNSCANNED_TICKET");
         const refund = await refundParent(tx, actor, scope, "ordinary", [ticketId]);
         if (refund.status !== "REQUESTED") throw new PrimaryStagingRefundError("ORDINARY_REFUND_ALREADY_COMPLETED");

@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { createHash } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -581,5 +582,35 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     });
     await expect(db.primaryRefund.count({ where: { eventId: cancellationEventId } })).resolves.toBe(0);
     await expect(db.primaryRefundObligation.count({ where: { eventId: cancellationEventId } })).resolves.toBe(0);
+  });
+
+  it("never adopts an externally materialized ordinary refund parent", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const ordinaryBase = `staging-refund-g${seeded.generation}-ordinary`;
+    await db.primaryRefund.create({ data: {
+      organizerId: "primary-staging-refund-organizer",
+      eventId: `${ordinaryBase}-event`,
+      orderId: `${ordinaryBase}-order`,
+      paymentAttemptId: `${ordinaryBase}-payment`,
+      requestedByUserId: organizer.id,
+      policyVersionId: "primary-refund-policy-v1",
+      requestKey: `${ordinaryBase}:refund:ordinary`,
+      commandDigest: createHash("sha256").update(JSON.stringify([ordinaryBase, "ordinary", [`${ordinaryBase}-ticket-1`]])).digest("hex"),
+      reason: "Synthetic ordinary refund; no provider or money movement.",
+      requestedAmountMinor: 2600,
+      currency: "CAD",
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "ORDINARY_REFUND_INCOMPLETE_EVIDENCE",
+      generation: seeded.generation,
+    });
+    await expect(db.primaryRefund.findUniqueOrThrow({
+      where: { requestKey: `${ordinaryBase}:refund:ordinary` },
+      include: { items: true, attempts: true, revocations: true },
+    })).resolves.toMatchObject({ status: "REQUESTED", items: [], attempts: [], revocations: [] });
+    await expect(db.primaryAuditEvent.count({
+      where: { eventId: `${ordinaryBase}-event`, action: "STAGING_ORDINARY_REFUND_COMPLETED" },
+    })).resolves.toBe(0);
   });
 });
