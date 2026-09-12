@@ -10,6 +10,7 @@ import {
   reseedPrimaryStagingRefundScenario,
   runPrimaryStagingRefundAction,
 } from "@/lib/primary/staging-refund-console";
+import { ensurePrimaryStagingPersona } from "@/lib/primary/staging-console";
 
 const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
 
@@ -70,6 +71,59 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
   afterAll(async () => {
     await db.$executeRawUnsafe('TRUNCATE TABLE "PrimaryAuditEvent", "PrimaryOutboxMessage", "PrimaryRefundProviderEvent", "PrimaryRefundProviderAttempt", "PrimaryRefundAllocation", "PrimaryRefundItem", "PrimaryAdmissionRevocation", "PrimaryRefundObligation", "PrimaryCancellationBatch", "PrimaryEventCancellation", "PrimaryRefund", "PrimaryPurchaseAllocation", "PrimaryAdmissionScan", "PrimaryAdmissionCredential", "PrimaryAdmissionTicket", "PrimaryPaymentException", "PrimaryPaymentProviderEvent", "PrimaryPaymentAttempt", "PrimaryOrderPriceComponent", "PrimaryOrderLine", "PrimaryOrder", "PrimaryInventoryReservation", "PrimaryTicketType", "PrimaryEvent", "PrimaryOrganizerMembership", "PrimaryOrganizer" CASCADE');
     await db.$disconnect(); await pool.end();
+  });
+
+  it("restores an access-token persona by reserved phone after its email drifts", async () => {
+    const originalBoundary = {
+      VERCEL_ENV: process.env.VERCEL_ENV,
+      PRIMARY_TICKETING_ENABLED: process.env.PRIMARY_TICKETING_ENABLED,
+      PRIMARY_TICKETING_ENVIRONMENT_ID: process.env.PRIMARY_TICKETING_ENVIRONMENT_ID,
+      PRIMARY_TICKETING_DEPLOYMENT_ID: process.env.PRIMARY_TICKETING_DEPLOYMENT_ID,
+      DATABASE_URL: process.env.DATABASE_URL,
+      PRIMARY_TICKETING_DATABASE_URL: process.env.PRIMARY_TICKETING_DATABASE_URL,
+      PRIMARY_STAGING_CONSOLE_ENABLED: process.env.PRIMARY_STAGING_CONSOLE_ENABLED,
+      PRIMARY_STAGING_CONSOLE_ACCESS_TOKEN: process.env.PRIMARY_STAGING_CONSOLE_ACCESS_TOKEN,
+    };
+    const driftedEmail = "drifted-organizer@example.test";
+
+    Object.assign(process.env, {
+      VERCEL_ENV: "preview",
+      PRIMARY_TICKETING_ENABLED: "true",
+      PRIMARY_TICKETING_ENVIRONMENT_ID: "isolated-preview",
+      PRIMARY_TICKETING_DEPLOYMENT_ID: "isolated-preview",
+      DATABASE_URL: databaseUrl,
+      PRIMARY_TICKETING_DATABASE_URL: databaseUrl,
+      PRIMARY_STAGING_CONSOLE_ENABLED: "true",
+      PRIMARY_STAGING_CONSOLE_ACCESS_TOKEN: "disposable-integration-access-token-1234567890",
+    });
+
+    try {
+      await db.user.update({ where: { id: organizer.id }, data: { email: driftedEmail } });
+      await expect(ensurePrimaryStagingPersona("organizer", db)).resolves.toMatchObject({
+        id: organizer.id,
+        email: organizer.email,
+      });
+      await expect(db.user.findUniqueOrThrow({ where: { id: organizer.id } })).resolves.toMatchObject({
+        email: organizer.email,
+        phone: "+15550001001",
+        role: "USER",
+        canBuy: false,
+        canComment: false,
+        canSell: false,
+        termsVersion: "primary-staging-only",
+        privacyVersion: "primary-staging-only",
+      });
+      await expect(db.user.findUnique({ where: { email: driftedEmail } })).resolves.toBeNull();
+    } finally {
+      await db.user.updateMany({
+        where: { id: organizer.id, email: driftedEmail },
+        data: { email: organizer.email },
+      });
+      for (const [key, value] of Object.entries(originalBoundary)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it("seeds deterministic isolated orders and permits only one concurrent ordinary refund", async () => {

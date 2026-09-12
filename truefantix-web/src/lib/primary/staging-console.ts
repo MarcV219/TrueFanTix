@@ -173,43 +173,72 @@ function isExpectedStagingPersona(email: string, role: UserRole) {
   );
 }
 
-export async function ensurePrimaryStagingPersona(persona: StagingPersona) {
+export async function ensurePrimaryStagingPersona(persona: StagingPersona, db: typeof prisma = prisma) {
   requirePrimaryStagingConsole();
   const definition = STAGING_USERS[persona];
   const verifiedAt = new Date();
   const passwordHash = await bcrypt.hash(randomBytes(32).toString("hex"), 12);
+  const restored = {
+    email: definition.email,
+    passwordHash,
+    role: definition.role,
+    firstName: definition.firstName,
+    lastName: definition.lastName,
+    displayName: `${definition.firstName} ${definition.lastName}`,
+    phone: definition.phone,
+    ...STAGING_PROFILE,
+    emailVerifiedAt: verifiedAt,
+    phoneVerifiedAt: verifiedAt,
+    termsAcceptedAt: verifiedAt,
+    privacyAcceptedAt: verifiedAt,
+  };
+  const select = { id: true, email: true, firstName: true, lastName: true, role: true } as const;
 
-  return prisma.user.upsert({
-    where: { email: definition.email },
-    create: {
-      email: definition.email,
-      passwordHash,
-      emailVerifiedAt: verifiedAt,
-      firstName: definition.firstName,
-      lastName: definition.lastName,
-      displayName: `${definition.firstName} ${definition.lastName}`,
-      phone: definition.phone,
-      phoneVerifiedAt: verifiedAt,
-      ...STAGING_PROFILE,
-      role: definition.role,
-      termsAcceptedAt: verifiedAt,
-      privacyAcceptedAt: verifiedAt,
-    },
-    update: {
-      passwordHash,
-      role: definition.role,
-      firstName: definition.firstName,
-      lastName: definition.lastName,
-      displayName: `${definition.firstName} ${definition.lastName}`,
-      phone: definition.phone,
-      ...STAGING_PROFILE,
-      emailVerifiedAt: verifiedAt,
-      phoneVerifiedAt: verifiedAt,
-      termsAcceptedAt: verifiedAt,
-      privacyAcceptedAt: verifiedAt,
-    },
-    select: { id: true, email: true, firstName: true, lastName: true, role: true },
-  });
+  return db.$transaction(async (tx) => {
+    // Resolve by both reserved coordinates. An email-only upsert cannot recover a
+    // drifted email because the existing row still owns the reserved phone.
+    const candidates = await tx.user.findMany({
+      where: {
+        OR: [
+          { email: definition.email },
+          { phone: definition.phone },
+        ],
+      },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+      },
+      take: 2,
+    });
+
+    if (candidates.length > 1) {
+      throw new PrimaryStagingConsoleUnavailableError("PERSONA_IDENTITY_CONFLICT");
+    }
+
+    const candidate = candidates[0];
+    if (candidate) {
+      const ownsAnotherPersonaCoordinate = Object.entries(STAGING_USERS).some(
+        ([candidatePersona, candidateDefinition]) => candidatePersona !== persona
+          && (candidate.email.trim().toLowerCase() === candidateDefinition.email
+            || candidate.phone === candidateDefinition.phone),
+      );
+      if (ownsAnotherPersonaCoordinate) {
+        throw new PrimaryStagingConsoleUnavailableError("PERSONA_IDENTITY_CONFLICT");
+      }
+
+      return tx.user.update({
+        where: { id: candidate.id },
+        data: restored,
+        select,
+      });
+    }
+
+    return tx.user.create({
+      data: restored,
+      select,
+    });
+  }, { isolationLevel: "Serializable" });
 }
 
 export async function requirePrimaryStagingActor() {

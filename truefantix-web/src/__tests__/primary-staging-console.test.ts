@@ -10,13 +10,19 @@ import {
   isPrimaryStagingSyntheticPhone,
   primaryStagingSyntheticContactEmail,
   primaryStagingSyntheticContactPhone,
+  PrimaryStagingConsoleUnavailableError,
   requirePrimaryStagingActor,
   verifyPrimaryStagingAccessToken,
 } from "@/lib/primary/staging-console";
 
+const mockedTx = {
+  user: { findMany: jest.fn(), create: jest.fn(), update: jest.fn() },
+};
+
 jest.mock("@/lib/prisma", () => ({
   prisma: {
-    user: { findUnique: jest.fn(), upsert: jest.fn() },
+    user: { findUnique: jest.fn() },
+    $transaction: jest.fn(),
   },
 }));
 
@@ -25,7 +31,8 @@ jest.mock("@/lib/auth/session", () => ({
 }));
 
 const mockedPrisma = prisma as unknown as {
-  user: { findUnique: jest.Mock; upsert: jest.Mock };
+  user: { findUnique: jest.Mock };
+  $transaction: jest.Mock;
 };
 const mockedSessionUserId = getUserIdFromSessionCookie as jest.MockedFunction<typeof getUserIdFromSessionCookie>;
 const originalEnv = process.env;
@@ -82,6 +89,9 @@ function managedOrganizer(overrides: Record<string, unknown> = {}) {
 describe("primary staging console boundary", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedPrisma.$transaction.mockImplementation(
+      (callback: (tx: typeof mockedTx) => unknown) => callback(mockedTx),
+    );
     process.env = { ...previewEnv };
   });
 
@@ -147,18 +157,23 @@ describe("primary staging console boundary", () => {
   });
 
   it("rotates ordinary credentials when the access-token flow restores a persona", async () => {
-    mockedPrisma.user.upsert.mockResolvedValue({
+    mockedTx.user.findMany.mockResolvedValue([{
       id: "organizer-1",
       email: "organizer@primary-staging.example.invalid",
-      firstName: "Staging",
-      lastName: "Organizer",
-      role: "USER",
+      phone: "+15550001001",
+    }]);
+    mockedTx.user.update.mockResolvedValue({
+      id: "organizer-1", email: "organizer@primary-staging.example.invalid",
+      firstName: "Staging", lastName: "Organizer", role: "USER",
     });
 
     await ensurePrimaryStagingPersona("organizer");
 
-    expect(mockedPrisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      update: expect.objectContaining({
+    expect(mockedTx.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "organizer-1" },
+      data: expect.objectContaining({
+        email: "organizer@primary-staging.example.invalid",
+        phone: "+15550001001",
         passwordHash: expect.stringMatching(/^\$2[aby]\$/),
         canBuy: false,
         canComment: false,
@@ -170,6 +185,62 @@ describe("primary staging console boundary", () => {
         sellerId: null,
       }),
     }));
+    expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: "Serializable",
+    });
+  });
+
+  it("restores the same persona row when its email drifted", async () => {
+    mockedTx.user.findMany.mockResolvedValue([{
+      id: "organizer-1",
+      email: "drifted-organizer@example.test",
+      phone: "+15550001001",
+    }]);
+    mockedTx.user.update.mockResolvedValue({
+      id: "organizer-1", email: "organizer@primary-staging.example.invalid",
+      firstName: "Staging", lastName: "Organizer", role: "USER",
+    });
+
+    await expect(ensurePrimaryStagingPersona("organizer")).resolves.toMatchObject({
+      id: "organizer-1",
+      email: "organizer@primary-staging.example.invalid",
+    });
+    expect(mockedTx.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "organizer-1" },
+      data: expect.objectContaining({
+        email: "organizer@primary-staging.example.invalid",
+        phone: "+15550001001",
+      }),
+    }));
+    expect(mockedTx.user.create).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when reserved coordinates resolve to different rows", async () => {
+    mockedTx.user.findMany.mockResolvedValue([
+      { id: "email-owner", email: "organizer@primary-staging.example.invalid", phone: "+15550001991" },
+      { id: "phone-owner", email: "drifted-organizer@example.test", phone: "+15550001001" },
+    ]);
+
+    await expect(ensurePrimaryStagingPersona("organizer")).rejects.toMatchObject({
+      code: "PRIMARY_STAGING_CONSOLE_UNAVAILABLE",
+      reason: "PERSONA_IDENTITY_CONFLICT",
+    } satisfies Partial<PrimaryStagingConsoleUnavailableError>);
+    expect(mockedTx.user.update).not.toHaveBeenCalled();
+    expect(mockedTx.user.create).not.toHaveBeenCalled();
+  });
+
+  it("does not repurpose another reserved persona", async () => {
+    mockedTx.user.findMany.mockResolvedValue([{
+      id: "admin-1",
+      email: "admin@primary-staging.example.invalid",
+      phone: "+15550001001",
+    }]);
+
+    await expect(ensurePrimaryStagingPersona("organizer")).rejects.toMatchObject({
+      reason: "PERSONA_IDENTITY_CONFLICT",
+    });
+    expect(mockedTx.user.update).not.toHaveBeenCalled();
+    expect(mockedTx.user.create).not.toHaveBeenCalled();
   });
 
   it("accepts only reserved synthetic contact coordinates", () => {
