@@ -46,6 +46,10 @@ function digest(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function textDigest(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 function requiredText(input: Record<string, unknown>, key: string, code: string, maximum = 500) {
   const value = typeof input[key] === "string" ? input[key].trim() : "";
   if (!value || value.length > maximum) throw new PrimaryStagingRefundError(code);
@@ -72,6 +76,19 @@ function ids(generation: number, kind: ScenarioKind) {
     lineId: `${base}-line`,
     paymentId: `${base}-payment`,
     base,
+  };
+}
+
+function scenarioFinancials(kind: ScenarioKind) {
+  const quantity = kind === "cancellation" ? 2 : 1;
+  const unitFaceValueMinor = kind === "ordinary" ? 2500 : kind === "checked" ? 3000 : 2000;
+  const feeMinor = kind === "ordinary" ? 100 : kind === "checked" ? 120 : 200;
+  return {
+    quantity,
+    unitFaceValueMinor,
+    feeMinor,
+    faceValueSubtotalMinor: quantity * unitFaceValueMinor,
+    grossTotalMinor: quantity * unitFaceValueMinor + feeMinor,
   };
 }
 
@@ -268,6 +285,198 @@ async function requireScenarioTicketStates(
   }
 }
 
+async function requireScenarioPurchaseState(tx: Tx, scope: ReturnType<typeof ids>) {
+  const expected = scenarioFinancials(scope.kind);
+  const [organizer, event, ticketType, reservation, order, line, payment, components, allocations] = await Promise.all([
+    tx.primaryOrganizer.findFirst({
+      where: { id: ORGANIZER_ID, status: "APPROVED" },
+      select: { id: true },
+    }),
+    tx.primaryEvent.findFirst({
+      where: {
+        id: scope.eventId,
+        organizerId: ORGANIZER_ID,
+        status: "APPROVED",
+        totalCapacity: expected.quantity,
+      },
+      select: { id: true },
+    }),
+    tx.primaryTicketType.findFirst({
+      where: {
+        id: scope.ticketTypeId,
+        organizerId: ORGANIZER_ID,
+        eventId: scope.eventId,
+        status: "ACTIVE",
+        name: "Synthetic GA",
+        allocatedQuantity: expected.quantity,
+        minimumPerOrder: 1,
+        maximumPerOrder: expected.quantity,
+        currency: "CAD",
+        basePriceMinor: expected.unitFaceValueMinor,
+      },
+      select: { id: true },
+    }),
+    tx.primaryInventoryReservation.findFirst({
+      where: {
+        id: scope.reservationId,
+        organizerId: ORGANIZER_ID,
+        eventId: scope.eventId,
+        ticketTypeId: scope.ticketTypeId,
+        quantity: expected.quantity,
+        status: "PAYMENT_COMMITTED",
+        paymentCommittedAt: { not: null },
+        createIdempotencyKey: `${scope.base}:reservation`,
+        commitIdempotencyKey: `${scope.base}:commit`,
+      },
+      select: { id: true },
+    }),
+    tx.primaryOrder.findFirst({
+      where: {
+        id: scope.orderId,
+        organizerId: ORGANIZER_ID,
+        eventId: scope.eventId,
+        reservationId: scope.reservationId,
+        status: "PAID",
+        currency: "CAD",
+        faceValueSubtotalMinor: expected.faceValueSubtotalMinor,
+        grossTotalMinor: expected.grossTotalMinor,
+        createIdempotencyKey: `${scope.base}:order`,
+        prepareIdempotencyKey: `${scope.base}:prepare`,
+        prepareReconciliationDelayMs: 120000,
+        paidAt: { not: null },
+      },
+      select: { id: true },
+    }),
+    tx.primaryOrderLine.findFirst({
+      where: {
+        id: scope.lineId,
+        orderId: scope.orderId,
+        ticketTypeId: scope.ticketTypeId,
+        reservationId: scope.reservationId,
+        quantity: expected.quantity,
+        ticketTypeNameSnapshot: "Synthetic GA",
+        unitFaceValueMinor: expected.unitFaceValueMinor,
+        faceValueSubtotalMinor: expected.faceValueSubtotalMinor,
+        currency: "CAD",
+      },
+      select: { id: true },
+    }),
+    tx.primaryPaymentAttempt.findFirst({
+      where: {
+        id: scope.paymentId,
+        organizerId: ORGANIZER_ID,
+        eventId: scope.eventId,
+        reservationId: scope.reservationId,
+        orderId: scope.orderId,
+        status: "SUCCEEDED",
+        expectedAmountMinor: expected.grossTotalMinor,
+        currency: "CAD",
+        createIdempotencyKey: `${scope.base}:payment`,
+        providerIntentId: `synthetic_${scope.base}`,
+        providerCreatedAt: { not: null },
+        terminalAt: { not: null },
+      },
+      select: { id: true },
+    }),
+    tx.primaryOrderPriceComponent.findMany({
+      where: { orderId: scope.orderId },
+      orderBy: { position: "asc" },
+      select: {
+        id: true,
+        orderLineId: true,
+        code: true,
+        kind: true,
+        amountMinor: true,
+        currency: true,
+        allocationBaseMinor: true,
+        allocationRemainderUnits: true,
+        position: true,
+      },
+    }),
+    tx.primaryPurchaseAllocation.findMany({
+      where: { orderId: scope.orderId },
+      select: {
+        admissionTicketId: true,
+        amountMinor: true,
+        currency: true,
+        refundable: true,
+        liabilityOwner: true,
+        remainderRank: true,
+        algorithmVersion: true,
+        policyVersionId: true,
+        allocationSetDigest: true,
+        component: { select: { id: true, code: true } },
+      },
+    }),
+  ]);
+
+  const expectedComponents = [
+    {
+      id: `${scope.base}-face`,
+      orderLineId: scope.lineId,
+      code: "FACE_VALUE",
+      kind: "FACE_VALUE",
+      amountMinor: expected.faceValueSubtotalMinor,
+      currency: "CAD",
+      allocationBaseMinor: expected.unitFaceValueMinor,
+      allocationRemainderUnits: 0,
+      position: 0,
+    },
+    {
+      id: `${scope.base}-fee`,
+      orderLineId: scope.lineId,
+      code: "ORGANIZER_FEE",
+      kind: "MANDATORY_FEE",
+      amountMinor: expected.feeMinor,
+      currency: "CAD",
+      allocationBaseMinor: Math.floor(expected.feeMinor / expected.quantity),
+      allocationRemainderUnits: expected.feeMinor % expected.quantity,
+      position: 1,
+    },
+  ];
+  const allocationDigestFor = (code: string) => textDigest(Array.from(
+    { length: expected.quantity },
+    (_, index) => {
+      const unit = index + 1;
+      const amount = code === "FACE_VALUE"
+        ? expected.unitFaceValueMinor
+        : Math.floor(expected.feeMinor / expected.quantity) + (unit <= expected.feeMinor % expected.quantity ? 1 : 0);
+      return `${scope.base}-ticket-${unit}:${amount}`;
+    },
+  ).join(","));
+  const allocationsAreExact = allocations.length === expected.quantity * expectedComponents.length
+    && allocations.every((allocation) => {
+      const unit = Number(allocation.admissionTicketId.slice(`${scope.base}-ticket-`.length));
+      const component = expectedComponents.find((candidate) => candidate.code === allocation.component.code);
+      const expectedAmount = component?.code === "FACE_VALUE"
+        ? expected.unitFaceValueMinor
+        : component?.code === "ORGANIZER_FEE"
+          ? Math.floor(expected.feeMinor / expected.quantity) + (unit <= expected.feeMinor % expected.quantity ? 1 : 0)
+          : undefined;
+      return Number.isInteger(unit)
+        && unit >= 1
+        && unit <= expected.quantity
+        && allocation.admissionTicketId === `${scope.base}-ticket-${unit}`
+        && allocation.component.id === component?.id
+        && allocation.amountMinor === expectedAmount
+        && allocation.currency === "CAD"
+        && allocation.refundable
+        && allocation.liabilityOwner === "ORGANIZER"
+        && allocation.remainderRank === unit
+        && allocation.algorithmVersion === 1
+        && allocation.policyVersionId === POLICY_ID
+        && allocation.allocationSetDigest === allocationDigestFor(allocation.component.code);
+    });
+
+  if (
+    !organizer || !event || !ticketType || !reservation || !order || !line || !payment
+    || JSON.stringify(components) !== JSON.stringify(expectedComponents)
+    || !allocationsAreExact
+  ) {
+    throw new PrimaryStagingRefundError("STAGING_REFUND_PURCHASE_STATE_INVALID");
+  }
+}
+
 async function refundParent(tx: Tx, actor: Actor, scope: ReturnType<typeof ids>, suffix: string, ticketIds: string[]) {
   const existing = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:${suffix}` } });
   if (existing) return existing;
@@ -328,6 +537,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       case "refundOrdinary": {
         await requireOrganizer(tx, actor);
         const scope = ids(generation, "ordinary"); const ticketId = `${scope.base}-ticket-1`;
+        await requireScenarioPurchaseState(tx, scope);
         const existing = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:ordinary` } });
         if (existing && existing.status !== "REQUESTED") throw new PrimaryStagingRefundError("ORDINARY_REFUND_ALREADY_COMPLETED");
         await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "ISSUED" }], "ORDINARY_REFUND_REQUIRES_UNSCANNED_TICKET");
@@ -340,6 +550,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "requestCheckedRefund": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "checked"); const ticketId = `${scope.base}-ticket-1`;
+        await requireScenarioPurchaseState(tx, scope);
         const existing = await tx.primaryRefund.findUnique({ where: { requestKey: `${scope.base}:refund:checked` }, select: { id: true } });
         if (existing) throw new PrimaryStagingRefundError("CHECKED_REFUND_ALREADY_REQUESTED");
         await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "CHECKED_IN" }], "CHECKED_REFUND_REQUIRES_CHECKED_IN_TICKET");
@@ -355,6 +566,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         if (input.costBearer !== "ORGANIZER" && input.costBearer !== "TRUEFANTIX") throw new PrimaryStagingRefundError("COST_BEARER_REQUIRED");
         const costBearer = input.costBearer;
         const scope = ids(generation, "checked"); const ticketId = `${scope.base}-ticket-1`;
+        await requireScenarioPurchaseState(tx, scope);
         const refund = await tx.primaryRefund.findUnique({
           where: { requestKey: `${scope.base}:refund:checked` },
           include: { checkedInApprovals: { select: { id: true } } },
@@ -370,6 +582,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "completeCheckedRefund": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "checked"); const ticketId = `${scope.base}-ticket-1`;
+        await requireScenarioPurchaseState(tx, scope);
         const refund = await tx.primaryRefund.findUnique({
           where: { requestKey: `${scope.base}:refund:checked` },
           include: { checkedInApprovals: { select: { id: true } } },
@@ -385,6 +598,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "activateCancellation": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "cancellation");
+        await requireScenarioPurchaseState(tx, scope);
         const existing = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` }, select: { id: true } });
         if (existing) throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_ACTIVATED");
         await requireScenarioTicketStates(tx, scope, [{ unit: 1, status: "ISSUED" }, { unit: 2, status: "CHECKED_IN" }], "CANCELLATION_SCENARIO_STATE_INVALID");
@@ -395,6 +609,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "prepareCancellation": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "cancellation");
+        await requireScenarioPurchaseState(tx, scope);
         const cancellation = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` } });
         if (!cancellation) throw new PrimaryStagingRefundError("CANCELLATION_ACTIVATION_REQUIRED");
         if (cancellation.status !== "ACTIVE") throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_PREPARED");
@@ -416,6 +631,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
         const reason = requiredText(input, "reason", "SUPERVISOR_REASON_REQUIRED");
         const evidence = requiredText(input, "evidence", "SUPERVISOR_EVIDENCE_REQUIRED", 1000);
         const scope = ids(generation, "cancellation");
+        await requireScenarioPurchaseState(tx, scope);
         const cancellation = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` }, select: { status: true } });
         if (!cancellation || cancellation.status === "ACTIVE") throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");
         if (cancellation.status === "RESOLVED") throw new PrimaryStagingRefundError("CANCELLATION_ALREADY_RESOLVED");
@@ -432,6 +648,7 @@ export async function runPrimaryStagingRefundAction(db: Db, actor: Actor, action
       }
       case "completeCancellation": {
         await requireOrganizer(tx, actor); const scope = ids(generation, "cancellation");
+        await requireScenarioPurchaseState(tx, scope);
         const cancellation = await tx.primaryEventCancellation.findUnique({ where: { requestKey: `${scope.base}:cancellation` } });
         if (!cancellation) throw new PrimaryStagingRefundError("CANCELLATION_ACTIVATION_REQUIRED");
         if (cancellation.status === "ACTIVE") throw new PrimaryStagingRefundError("CANCELLATION_PREPARATION_REQUIRED");

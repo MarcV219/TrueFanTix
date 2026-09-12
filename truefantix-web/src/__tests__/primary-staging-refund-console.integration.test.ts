@@ -324,4 +324,29 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     })).resolves.toBe(0);
     await db.user.update({ where: { id: admin.id }, data: { phoneVerifiedAt: now } });
   });
+
+  it("fails closed when the deterministic purchase chain drifts before a command", async () => {
+    const eventSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const eventId = `staging-refund-g${eventSeed.generation}-ordinary-event`;
+    await db.primaryEvent.update({ where: { id: eventId }, data: { status: "DRAFT" } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "refundOrdinary", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: eventSeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId } })).resolves.toBe(0);
+    await db.primaryEvent.update({ where: { id: eventId }, data: { status: "APPROVED" } });
+
+    const ticketTypeSeed = await reseedPrimaryStagingRefundScenario(db, admin);
+    const ticketTypeId = `staging-refund-g${ticketTypeSeed.generation}-checked-ticket-type`;
+    const checkedEventId = `staging-refund-g${ticketTypeSeed.generation}-checked-event`;
+    await db.primaryTicketType.update({ where: { id: ticketTypeId }, data: { status: "INACTIVE" } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_PURCHASE_STATE_INVALID",
+      generation: ticketTypeSeed.generation,
+    });
+    await expect(db.primaryRefund.count({ where: { eventId: checkedEventId } })).resolves.toBe(0);
+    await db.primaryTicketType.update({ where: { id: ticketTypeId }, data: { status: "ACTIVE" } });
+  });
 });
