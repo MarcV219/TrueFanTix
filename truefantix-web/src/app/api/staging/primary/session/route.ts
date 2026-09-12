@@ -2,10 +2,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { createSessionForUser, deleteCurrentSession } from "@/lib/auth/session";
+import { deleteCurrentSession } from "@/lib/auth/session";
 import { ensureCsrfCookie, enforceOriginAndCsrf } from "@/lib/security/csrf";
 import {
-  ensurePrimaryStagingPersona,
+  establishPrimaryStagingPersonaSession,
   PrimaryStagingConsoleUnavailableError,
   requirePrimaryStagingActor,
   requirePrimaryStagingConsole,
@@ -58,9 +58,7 @@ export async function POST(req: Request) {
       return noStore(NextResponse.json({ ok: false, error: "INVALID_ACCESS_TOKEN" }, { status: 401 }));
     }
 
-    await deleteCurrentSession();
-    const actor = await ensurePrimaryStagingPersona(body.persona as StagingPersona);
-    await createSessionForUser(actor.id);
+    const actor = await establishPrimaryStagingPersonaSession(body.persona as StagingPersona);
     return noStore(NextResponse.json({ ok: true, actor }));
   } catch (error) {
     if (error instanceof PrimaryStagingConsoleUnavailableError) return unavailable();

@@ -2,7 +2,12 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type { Prisma, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import {
+  createSessionExpiry,
+  createSessionToken,
+  getUserIdFromSessionCookie,
+  setSessionCookie,
+} from "@/lib/auth/session";
 import { requirePrimaryPreflight } from "./config";
 
 export const STAGING_ORGANIZER_EMAIL = "organizer@primary-staging.example.invalid";
@@ -173,11 +178,21 @@ function isExpectedStagingPersona(email: string, role: UserRole) {
   );
 }
 
-export async function ensurePrimaryStagingPersona(persona: StagingPersona, db: typeof prisma = prisma) {
-  requirePrimaryStagingConsole();
+const stagingPersonaSelect = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  role: true,
+} as const;
+
+async function restorePrimaryStagingPersona(
+  tx: Prisma.TransactionClient,
+  persona: StagingPersona,
+  passwordHash: string,
+) {
   const definition = STAGING_USERS[persona];
   const verifiedAt = new Date();
-  const passwordHash = await bcrypt.hash(randomBytes(32).toString("hex"), 12);
   const restored = {
     email: definition.email,
     passwordHash,
@@ -192,53 +207,84 @@ export async function ensurePrimaryStagingPersona(persona: StagingPersona, db: t
     termsAcceptedAt: verifiedAt,
     privacyAcceptedAt: verifiedAt,
   };
-  const select = { id: true, email: true, firstName: true, lastName: true, role: true } as const;
 
-  return db.$transaction(async (tx) => {
-    // Resolve by both reserved coordinates. An email-only upsert cannot recover a
-    // drifted email because the existing row still owns the reserved phone.
-    const candidates = await tx.user.findMany({
-      where: {
-        OR: [
-          { email: definition.email },
-          { phone: definition.phone },
-        ],
-      },
-      select: {
-        id: true,
-        email: true,
-        phone: true,
-      },
-      take: 2,
-    });
+  // Resolve by both reserved coordinates. An email-only upsert cannot recover a
+  // drifted email because the existing row still owns the reserved phone.
+  const candidates = await tx.user.findMany({
+    where: {
+      OR: [
+        { email: definition.email },
+        { phone: definition.phone },
+      ],
+    },
+    select: {
+      id: true,
+      email: true,
+      phone: true,
+    },
+    take: 2,
+  });
 
-    if (candidates.length > 1) {
+  if (candidates.length > 1) {
+    throw new PrimaryStagingConsoleUnavailableError("PERSONA_IDENTITY_CONFLICT");
+  }
+
+  const candidate = candidates[0];
+  if (candidate) {
+    const ownsAnotherPersonaCoordinate = Object.entries(STAGING_USERS).some(
+      ([candidatePersona, candidateDefinition]) => candidatePersona !== persona
+        && (candidate.email.trim().toLowerCase() === candidateDefinition.email
+          || candidate.phone === candidateDefinition.phone),
+    );
+    if (ownsAnotherPersonaCoordinate) {
       throw new PrimaryStagingConsoleUnavailableError("PERSONA_IDENTITY_CONFLICT");
     }
 
-    const candidate = candidates[0];
-    if (candidate) {
-      const ownsAnotherPersonaCoordinate = Object.entries(STAGING_USERS).some(
-        ([candidatePersona, candidateDefinition]) => candidatePersona !== persona
-          && (candidate.email.trim().toLowerCase() === candidateDefinition.email
-            || candidate.phone === candidateDefinition.phone),
-      );
-      if (ownsAnotherPersonaCoordinate) {
-        throw new PrimaryStagingConsoleUnavailableError("PERSONA_IDENTITY_CONFLICT");
-      }
-
-      return tx.user.update({
-        where: { id: candidate.id },
-        data: restored,
-        select,
-      });
-    }
-
-    return tx.user.create({
+    return tx.user.update({
+      where: { id: candidate.id },
       data: restored,
-      select,
+      select: stagingPersonaSelect,
     });
+  }
+
+  return tx.user.create({
+    data: restored,
+    select: stagingPersonaSelect,
+  });
+}
+
+export async function ensurePrimaryStagingPersona(persona: StagingPersona, db: typeof prisma = prisma) {
+  requirePrimaryStagingConsole();
+  const passwordHash = await bcrypt.hash(randomBytes(32).toString("hex"), 12);
+
+  return db.$transaction(
+    (tx) => restorePrimaryStagingPersona(tx, persona, passwordHash),
+    { isolationLevel: "Serializable" },
+  );
+}
+
+export async function establishPrimaryStagingPersonaSession(
+  persona: StagingPersona,
+  db: typeof prisma = prisma,
+) {
+  requirePrimaryStagingConsole();
+  const passwordHash = await bcrypt.hash(randomBytes(32).toString("hex"), 12);
+  const { token, tokenHash } = createSessionToken();
+  const expiresAt = createSessionExpiry();
+
+  const actor = await db.$transaction(async (tx) => {
+    const restored = await restorePrimaryStagingPersona(tx, persona, passwordHash);
+
+    // A pre-existing session may have been issued before a managed identity was
+    // restored. Revoke every such bearer in the same transaction that restores
+    // the exact persona, then install one access-token-authorized replacement.
+    await tx.session.deleteMany({ where: { userId: restored.id } });
+    await tx.session.create({ data: { userId: restored.id, tokenHash, expiresAt } });
+    return restored;
   }, { isolationLevel: "Serializable" });
+
+  await setSessionCookie(token);
+  return actor;
 }
 
 export async function requirePrimaryStagingActor() {

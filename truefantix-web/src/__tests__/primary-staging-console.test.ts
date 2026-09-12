@@ -1,8 +1,9 @@
 /** @jest-environment node */
 
 import { prisma } from "@/lib/prisma";
-import { getUserIdFromSessionCookie } from "@/lib/auth/session";
+import { getUserIdFromSessionCookie, setSessionCookie } from "@/lib/auth/session";
 import {
+  establishPrimaryStagingPersonaSession,
   ensurePrimaryStagingPersona,
   getPrimaryStagingConsoleGate,
   isPrimaryStagingManagedUser,
@@ -17,6 +18,7 @@ import {
 
 const mockedTx = {
   user: { findMany: jest.fn(), create: jest.fn(), update: jest.fn() },
+  session: { deleteMany: jest.fn(), create: jest.fn() },
 };
 
 jest.mock("@/lib/prisma", () => ({
@@ -27,7 +29,10 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 jest.mock("@/lib/auth/session", () => ({
+  createSessionExpiry: jest.fn(() => new Date("2037-01-01T00:00:00Z")),
+  createSessionToken: jest.fn(() => ({ token: "new-staging-session-token", tokenHash: "new-staging-session-hash" })),
   getUserIdFromSessionCookie: jest.fn(),
+  setSessionCookie: jest.fn(),
 }));
 
 const mockedPrisma = prisma as unknown as {
@@ -35,6 +40,7 @@ const mockedPrisma = prisma as unknown as {
   $transaction: jest.Mock;
 };
 const mockedSessionUserId = getUserIdFromSessionCookie as jest.MockedFunction<typeof getUserIdFromSessionCookie>;
+const mockedSetSessionCookie = setSessionCookie as jest.MockedFunction<typeof setSessionCookie>;
 const originalEnv = process.env;
 const accessToken = "staging-access-token-that-is-longer-than-thirty-two-characters";
 const previewEnv = {
@@ -213,6 +219,39 @@ describe("primary staging console boundary", () => {
       }),
     }));
     expect(mockedTx.user.create).not.toHaveBeenCalled();
+  });
+
+  it("revokes every prior persona session before installing the access-token session", async () => {
+    mockedTx.user.findMany.mockResolvedValue([{
+      id: "organizer-1",
+      email: "drifted-organizer@example.test",
+      phone: "+15550001001",
+    }]);
+    mockedTx.user.update.mockResolvedValue({
+      id: "organizer-1", email: "organizer@primary-staging.example.invalid",
+      firstName: "Staging", lastName: "Organizer", role: "USER",
+    });
+
+    await expect(establishPrimaryStagingPersonaSession("organizer")).resolves.toMatchObject({
+      id: "organizer-1",
+      email: "organizer@primary-staging.example.invalid",
+    });
+
+    expect(mockedTx.session.deleteMany).toHaveBeenCalledWith({ where: { userId: "organizer-1" } });
+    expect(mockedTx.session.create).toHaveBeenCalledWith({
+      data: {
+        userId: "organizer-1",
+        tokenHash: "new-staging-session-hash",
+        expiresAt: new Date("2037-01-01T00:00:00Z"),
+      },
+    });
+    expect(mockedSetSessionCookie).toHaveBeenCalledWith("new-staging-session-token");
+    expect(mockedTx.session.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedTx.session.create.mock.invocationCallOrder[0],
+    );
+    expect(mockedTx.session.create.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedSetSessionCookie.mock.invocationCallOrder[0],
+    );
   });
 
   it("fails closed when reserved coordinates resolve to different rows", async () => {

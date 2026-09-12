@@ -32,6 +32,10 @@ export function createSessionToken() {
   return { token, tokenHash };
 }
 
+export function createSessionExpiry(now = Date.now()) {
+  return new Date(now + SESSION_DAYS * 24 * 60 * 60 * 1000);
+}
+
 export async function setSessionCookie(token: string) {
   const jar = await cookies();
   jar.set(COOKIE_NAME, token, {
@@ -56,7 +60,7 @@ export async function clearSessionCookie() {
 
 export async function createSessionForUser(userId: string) {
   const { token, tokenHash } = createSessionToken();
-  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+  const expiresAt = createSessionExpiry();
 
   await prisma.session.create({
     data: {

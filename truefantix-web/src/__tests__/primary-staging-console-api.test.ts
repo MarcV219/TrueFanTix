@@ -4,13 +4,15 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ensureCsrfCookie, enforceOriginAndCsrf } from "@/lib/security/csrf";
 import {
+  establishPrimaryStagingPersonaSession,
   ensurePrimaryStagingPersona,
   PrimaryStagingConsoleUnavailableError,
   requirePrimaryStagingActor,
   requirePrimaryStagingConsole,
   STAGING_ORGANIZER_EMAIL,
+  verifyPrimaryStagingAccessToken,
 } from "@/lib/primary/staging-console";
-import { createSessionForUser, deleteCurrentSession } from "@/lib/auth/session";
+import { deleteCurrentSession } from "@/lib/auth/session";
 import { GET as getSession, POST as postSession } from "@/app/api/staging/primary/session/route";
 import { GET as getState } from "@/app/api/staging/primary/state/route";
 import { POST as postAction } from "@/app/api/staging/primary/actions/route";
@@ -33,7 +35,6 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 jest.mock("@/lib/auth/session", () => ({
-  createSessionForUser: jest.fn(),
   deleteCurrentSession: jest.fn(),
   getUserIdFromSessionCookie: jest.fn(),
 }));
@@ -45,6 +46,7 @@ jest.mock("@/lib/security/csrf", () => ({
 
 jest.mock("@/lib/primary/staging-console", () => ({
   ...jest.requireActual("@/lib/primary/staging-console"),
+  establishPrimaryStagingPersonaSession: jest.fn(),
   ensurePrimaryStagingPersona: jest.fn(),
   requirePrimaryStagingActor: jest.fn(),
   requirePrimaryStagingConsole: jest.fn(),
@@ -87,9 +89,10 @@ const mockedRefundState = getPrimaryStagingRefundState as jest.MockedFunction<ty
 const mockedRecordRefundRejection = recordPrimaryStagingRefundRejection as jest.MockedFunction<typeof recordPrimaryStagingRefundRejection>;
 const mockedReseed = reseedPrimaryStagingRefundScenario as jest.MockedFunction<typeof reseedPrimaryStagingRefundScenario>;
 const mockedRefundAction = runPrimaryStagingRefundAction as jest.MockedFunction<typeof runPrimaryStagingRefundAction>;
-const mockedCreateSession = createSessionForUser as jest.MockedFunction<typeof createSessionForUser>;
 const mockedDeleteSession = deleteCurrentSession as jest.MockedFunction<typeof deleteCurrentSession>;
+const mockedEstablishPersonaSession = establishPrimaryStagingPersonaSession as jest.MockedFunction<typeof establishPrimaryStagingPersonaSession>;
 const mockedEnsurePersona = ensurePrimaryStagingPersona as jest.MockedFunction<typeof ensurePrimaryStagingPersona>;
+const mockedVerifyAccessToken = verifyPrimaryStagingAccessToken as jest.MockedFunction<typeof verifyPrimaryStagingAccessToken>;
 const mockedOrganizerService = PrimaryOrganizerService as jest.MockedClass<typeof PrimaryOrganizerService>;
 const mockedEventService = PrimaryEventService as jest.MockedClass<typeof PrimaryEventService>;
 const mockedTicketTypeService = PrimaryTicketTypeService as jest.MockedClass<typeof PrimaryTicketTypeService>;
@@ -111,6 +114,7 @@ describe("primary staging console API boundary", () => {
     mockedConsole.mockReturnValue({ environmentId: "isolated-preview" } as never);
     mockedEnsureCsrfCookie.mockResolvedValue("test-csrf-token");
     mockedCsrf.mockResolvedValue({ ok: true } as never);
+    mockedVerifyAccessToken.mockReturnValue(true);
     mockedPrisma.primaryOrganizer.findMany.mockResolvedValue([]);
     mockedPrisma.primaryAuditEvent.findMany.mockResolvedValue([]);
     mockedRefundState.mockResolvedValue(null);
@@ -270,7 +274,24 @@ describe("primary staging console API boundary", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toEqual({ ok: false, error: "INVALID_PERSONA" });
     expect(mockedEnsurePersona).not.toHaveBeenCalled();
-    expect(mockedCreateSession).not.toHaveBeenCalled();
+    expect(mockedEstablishPersonaSession).not.toHaveBeenCalled();
+    expect(mockedDeleteSession).not.toHaveBeenCalled();
+  });
+
+  it("establishes a persona session without deleting the current session first", async () => {
+    mockedEstablishPersonaSession.mockResolvedValue(adminActor);
+
+    const response = await postSession(new Request("https://preview.example/api/staging/primary/session", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-primary-staging-access-token": "valid-staging-token",
+      },
+      body: JSON.stringify({ persona: "admin" }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockedEstablishPersonaSession).toHaveBeenCalledWith("admin");
     expect(mockedDeleteSession).not.toHaveBeenCalled();
   });
 
