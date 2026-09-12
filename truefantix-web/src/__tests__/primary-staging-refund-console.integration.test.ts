@@ -797,6 +797,44 @@ if (!databaseUrl) describe.skip("primary staging refund console PostgreSQL integ
     await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
   });
 
+  it("rejects delivery intent scoped only by an opaque synthetic refund allocation", async () => {
+    const seeded = await reseedPrimaryStagingRefundScenario(db, admin);
+    const checkedBase = `staging-refund-g${seeded.generation}-checked`;
+    await runPrimaryStagingRefundAction(db, organizer, "requestCheckedRefund", {});
+    await runPrimaryStagingRefundAction(db, admin, "approveCheckedRefund", {
+      reason: "Synthetic supervisor approval",
+      evidence: "synthetic-reviewed-evidence",
+      fraudReview: "CLEAR",
+      costBearer: "ORGANIZER",
+    });
+    const allocation = await db.primaryRefundAllocation.findFirstOrThrow({
+      where: { refund: { requestKey: `${checkedBase}:refund:checked` } },
+    });
+    const outbox = await db.primaryOutboxMessage.create({ data: {
+      topic: "synthetic.unexpected.unscoped-refund-allocation-delivery",
+      aggregateType: "PrimaryRefundAllocation",
+      aggregateId: allocation.id,
+      payloadJson: { synthetic: true },
+      idempotencyKey: `${checkedBase}:unexpected-unscoped-refund-allocation-delivery-intent`,
+    } });
+
+    await expect(runPrimaryStagingRefundAction(db, organizer, "completeCheckedRefund", {})).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+      generation: seeded.generation,
+    });
+    await expect(reseedPrimaryStagingRefundScenario(db, admin)).rejects.toMatchObject({
+      code: "STAGING_REFUND_DELIVERY_INTENT_INVALID",
+    });
+    await expect(db.primaryRefundProviderAttempt.count({
+      where: { refund: { requestKey: `${checkedBase}:refund:checked` } },
+    })).resolves.toBe(0);
+    await expect(db.primaryAdmissionRevocation.count({
+      where: { refund: { requestKey: `${checkedBase}:refund:checked` } },
+    })).resolves.toBe(0);
+
+    await db.primaryOutboxMessage.delete({ where: { id: outbox.id } });
+  });
+
   it("rejects drift in the synthetic purchase timeline before refund mutation", async () => {
     const reservationSeed = await reseedPrimaryStagingRefundScenario(db, admin);
     const reservationBase = `staging-refund-g${reservationSeed.generation}-ordinary`;
