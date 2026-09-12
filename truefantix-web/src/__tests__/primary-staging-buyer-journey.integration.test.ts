@@ -26,4 +26,23 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     expect(state).toMatchObject({ reservation: { status: "PAYMENT_COMMITTED" }, order: { status: "PAID", grossTotalMinor: 3800 }, payment: { status: "SUCCEEDED" }, admission: { status: "CHECKED_IN", scans: [{ result: "ACCEPTED" }] } });
     await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_JOURNEY_COMPLETE" });
   });
+
+  it("fails closed on reserved fixture drift and lets an admin reseed restore it", async () => {
+    await reseedPrimaryStagingBuyerJourney(db, admin);
+    const buyer = await db.user.findUniqueOrThrow({ where: { email: "buyer@primary-staging.example.invalid" } });
+    await db.user.update({ where: { id: buyer.id }, data: { canBuy: true } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_FIXTURE_INVALID" });
+    const current = await getPrimaryStagingBuyerJourney(db);
+    expect(current?.reservation).toBeNull();
+
+    await reseedPrimaryStagingBuyerJourney(db, admin);
+    await expect(db.user.findUniqueOrThrow({ where: { id: buyer.id } })).resolves.toMatchObject({ canBuy: false, canSell: false, canComment: false, role: "USER", isBanned: false });
+    await db.primaryOrganizer.update({ where: { id: "primary-staging-buyer-organizer" }, data: { supportEmail: "drift@example.invalid" } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_FIXTURE_INVALID" });
+    await expect(getPrimaryStagingBuyerJourney(db)).resolves.toMatchObject({ reservation: null });
+
+    await reseedPrimaryStagingBuyerJourney(db, admin);
+    await expect(db.primaryOrganizer.findUniqueOrThrow({ where: { id: "primary-staging-buyer-organizer" } })).resolves.toMatchObject({ supportEmail: "buyer-journey@primary-staging.example.invalid", paymentStatus: "NOT_STARTED", paymentProvider: null });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: "HELD" });
+  });
 });

@@ -5,6 +5,9 @@ import { STAGING_ADMIN_EMAIL, STAGING_ORGANIZER_EMAIL } from "./staging-console"
 const ORGANIZER_ID = "primary-staging-buyer-organizer";
 const EVENT_PREFIX = "staging-buyer-g";
 const BUYER_EMAIL = "buyer@primary-staging.example.invalid";
+const BUYER_PHONE = "+15550001005";
+const BUYER_PASSWORD_HASH = "synthetic-staging-no-login";
+const ORGANIZER_SUPPORT_EMAIL = "buyer-journey@primary-staging.example.invalid";
 type Actor = { id: string; email: string; role: UserRole };
 type Tx = Prisma.TransactionClient;
 
@@ -21,6 +24,30 @@ function requireAdmin(actor: Actor) {
   if (actor.email !== STAGING_ADMIN_EMAIL || actor.role !== "ADMIN") throw new PrimaryStagingBuyerError("STAGING_ADMIN_REQUIRED");
 }
 
+async function requireSyntheticFixture(tx: Tx, actor: Actor) {
+  const [buyer, organizer, organizerUser] = await Promise.all([
+    tx.user.findUnique({ where: { email: BUYER_EMAIL } }),
+    tx.primaryOrganizer.findUnique({ where: { id: ORGANIZER_ID } }),
+    tx.user.findUnique({ where: { email: STAGING_ORGANIZER_EMAIL } }),
+  ]);
+  if (
+    !buyer || !organizer || !organizerUser
+    || buyer.passwordHash !== BUYER_PASSWORD_HASH
+    || buyer.firstName !== "Synthetic" || buyer.lastName !== "Buyer" || buyer.displayName !== null
+    || buyer.phone !== BUYER_PHONE || buyer.phoneVerifiedAt === null || buyer.emailVerifiedAt === null
+    || buyer.streetAddress1 !== "1 Synthetic Way" || buyer.streetAddress2 !== null
+    || buyer.city !== "Toronto" || buyer.region !== "ON" || buyer.postalCode !== "M5V 0A1" || buyer.country !== "CA"
+    || buyer.canBuy || buyer.canSell || buyer.canComment || buyer.isBanned || buyer.role !== "USER" || buyer.sellerId !== null
+    || organizer.legalName !== "Synthetic Buyer Journey Inc." || organizer.displayName !== "Synthetic Buyer Journey"
+    || organizer.addressLine1 !== "1 Synthetic Way" || organizer.addressLine2 !== null
+    || organizer.city !== "Toronto" || organizer.region !== "ON" || organizer.postalCode !== "M5V 0A1" || organizer.country !== "CA"
+    || organizer.supportEmail !== ORGANIZER_SUPPORT_EMAIL || organizer.supportPhone !== BUYER_PHONE || organizer.website !== null
+    || organizer.status !== "APPROVED" || organizer.paymentProvider !== null || organizer.paymentAccountRefEncrypted !== null
+    || organizer.paymentStatus !== "NOT_STARTED" || organizer.createdByUserId !== organizerUser.id || organizer.approvedByUserId !== actor.id
+  ) throw new PrimaryStagingBuyerError("STAGING_BUYER_FIXTURE_INVALID");
+  return buyer;
+}
+
 async function generation(tx: Tx) {
   const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-buyer-g([0-9]+)-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
   return Number(rows[0]?.generation ?? 0);
@@ -32,8 +59,10 @@ export async function reseedPrimaryStagingBuyerJourney(db: PrismaClient, actor: 
     await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836292)");
     const next = (await generation(tx)) + 1; const scope = ids(next); const now = new Date();
     const organizerUser = await tx.user.findUniqueOrThrow({ where: { email: STAGING_ORGANIZER_EMAIL } });
-    await tx.user.upsert({ where: { email: BUYER_EMAIL }, create: { email: BUYER_EMAIL, passwordHash: "synthetic-staging-no-login", emailVerifiedAt: now, firstName: "Synthetic", lastName: "Buyer", phone: "+15550001005", phoneVerifiedAt: now, streetAddress1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", canBuy: false, canSell: false, canComment: false }, update: { emailVerifiedAt: now, isBanned: false } });
-    await tx.primaryOrganizer.upsert({ where: { id: ORGANIZER_ID }, create: { id: ORGANIZER_ID, legalName: "Synthetic Buyer Journey Inc.", displayName: "Synthetic Buyer Journey", addressLine1: "1 Synthetic Way", city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", supportEmail: "buyer-journey@primary-staging.example.invalid", supportPhone: "+15550001005", status: "APPROVED", submittedAt: now, approvedAt: now, approvedByUserId: actor.id, createdByUserId: organizerUser.id }, update: {} });
+    const buyerData = { passwordHash: BUYER_PASSWORD_HASH, emailVerifiedAt: now, firstName: "Synthetic", lastName: "Buyer", displayName: null, phone: BUYER_PHONE, phoneVerifiedAt: now, streetAddress1: "1 Synthetic Way", streetAddress2: null, city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", canBuy: false, canSell: false, canComment: false, isBanned: false, banReason: null, role: "USER" as const, sellerId: null };
+    await tx.user.upsert({ where: { email: BUYER_EMAIL }, create: { email: BUYER_EMAIL, ...buyerData }, update: buyerData });
+    const organizerData = { legalName: "Synthetic Buyer Journey Inc.", displayName: "Synthetic Buyer Journey", businessNumberEncrypted: null, addressLine1: "1 Synthetic Way", addressLine2: null, city: "Toronto", region: "ON", postalCode: "M5V 0A1", country: "CA", supportEmail: ORGANIZER_SUPPORT_EMAIL, supportPhone: BUYER_PHONE, website: null, status: "APPROVED" as const, statusReason: null, paymentProvider: null, paymentAccountRefEncrypted: null, paymentStatus: "NOT_STARTED" as const, submittedAt: now, approvedAt: now, approvedByUserId: actor.id, createdByUserId: organizerUser.id };
+    await tx.primaryOrganizer.upsert({ where: { id: ORGANIZER_ID }, create: { id: ORGANIZER_ID, ...organizerData }, update: organizerData });
     await tx.primaryEvent.create({ data: { id: scope.eventId, organizerId: ORGANIZER_ID, title: `Synthetic Buyer Journey / Generation ${next}`, description: "Staging-only purchase and admission walkthrough.", category: "SYNTHETIC", venueName: "Synthetic Admission Hall", venueAddressLine1: "1 Synthetic Way", venueCity: "Toronto", venueRegion: "ON", venuePostalCode: "M5V 0A1", venueCountry: "CA", startsAtLocal: new Date("2038-07-01T19:00:00Z"), endsAtLocal: new Date("2038-07-01T22:00:00Z"), timezone: "America/Toronto", contactEmail: "buyer-journey@primary-staging.example.invalid", contactPhone: "+15550001005", draftPolicyText: "Synthetic staging-only policy.", totalCapacity: 10, status: "APPROVED", submittedAt: now, approvedAt: now, approvedByUserId: actor.id } });
     await tx.primaryTicketType.create({ data: { id: scope.ticketTypeId, organizerId: ORGANIZER_ID, eventId: scope.eventId, name: "General admission", description: "Synthetic inventory only.", allocatedQuantity: 10, minimumPerOrder: 1, maximumPerOrder: 2, currency: "CAD", basePriceMinor: 3500 } });
     return { generation: next };
@@ -42,8 +71,9 @@ export async function reseedPrimaryStagingBuyerJourney(db: PrismaClient, actor: 
 
 export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor: Actor) {
   return db.$transaction(async (tx) => {
-    requireAdmin(actor); const currentGeneration = await generation(tx); if (!currentGeneration) throw new PrimaryStagingBuyerError("STAGING_BUYER_SCENARIO_REQUIRED");
-    const scope = ids(currentGeneration); const now = new Date(); const buyer = await tx.user.findUniqueOrThrow({ where: { email: BUYER_EMAIL } });
+    requireAdmin(actor); await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836292)");
+    const currentGeneration = await generation(tx); if (!currentGeneration) throw new PrimaryStagingBuyerError("STAGING_BUYER_SCENARIO_REQUIRED");
+    const scope = ids(currentGeneration); const now = new Date(); const buyer = await requireSyntheticFixture(tx, actor);
     const reservation = await tx.primaryInventoryReservation.findUnique({ where: { id: scope.reservationId } });
     if (!reservation) {
       await tx.primaryInventoryReservation.create({ data: { id: scope.reservationId, organizerId: ORGANIZER_ID, eventId: scope.eventId, ticketTypeId: scope.ticketTypeId, buyerUserId: buyer.id, quantity: 1, expiresAt: new Date(now.getTime() + 600_000), createIdempotencyKey: `${scope.base}:hold` } });

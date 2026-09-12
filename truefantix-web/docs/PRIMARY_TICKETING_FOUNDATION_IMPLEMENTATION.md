@@ -262,6 +262,7 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - The isolated `/staging/primary` console can seed and advance a fresh synthetic generation through inventory hold, immutable order pricing, local payment preparation, synthetic provider attachment/success, admission credential evidence, and accepted admission.
 - Each click performs one durable PostgreSQL transition and exposes the resulting state. All identities are reserved synthetic values; the provider and credential identifiers are explicitly synthetic and never usable outside the isolated preview.
 - The journey performs no Stripe SDK call, email, webhook, payout, refund, cron, public sale, or live-data access. Prior generations remain intact for auditability.
+- Every advance revalidates the complete reserved buyer and organizer fixture under the journey advisory lock. Any capability, role, contact, ownership, payment-account, or business-identity drift fails closed before purchase or admission mutation; an explicit admin reseed restores only the reserved synthetic fixture and creates a new generation.
 
 ### Refund, cancellation, and revocation design gate
 
