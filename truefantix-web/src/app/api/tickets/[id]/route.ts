@@ -9,6 +9,11 @@ import { getEventType } from "@/lib/ticketsView";
 import { validateListingPriceAgainstOfficial } from "@/lib/tickets/listingValidation";
 import { analyzeReceiptProof, type ReceiptOcrReview } from "@/lib/tickets/receiptOcr";
 import { pastEventListingMessage } from "@/lib/tickets/expiry";
+import {
+  ManagedAccountListingMutationError,
+  runOrdinaryListingMutation,
+  SellerListingAccessChangedError,
+} from "@/lib/tickets/ordinary-seller";
 
 function normalizeId(value: unknown) {
   try {
@@ -178,7 +183,6 @@ export async function PATCH(req: Request) {
 
   try {
     const ticketId = parseTicketIdFromUrl(req);
-    const sellerId = gate.user.sellerId;
 
     if (!ticketId) {
       return NextResponse.json(
@@ -187,14 +191,10 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if (!sellerId) {
-      return NextResponse.json(
-        { ok: false, error: "SELLER_LINK_MISSING", message: "Seller profile is missing." },
-        { status: 409 }
-      );
-    }
+    return await runOrdinaryListingMutation(gate.user.id, async (tx, currentUser) => {
+      const sellerId = currentUser.seller.id;
 
-    const existing = await prisma.ticket.findUnique({
+    const existing = await tx.ticket.findUnique({
       where: { id: ticketId },
       select: {
         id: true,
@@ -368,23 +368,23 @@ export async function PATCH(req: Request) {
     if (typeof official.soldOut === "boolean") {
       const selloutStatus = official.soldOut ? "SOLD_OUT" : "NOT_SOLD_OUT";
       if (linkedEventId) {
-        await prisma.event.update({
+        await tx.event.update({
           where: { id: linkedEventId },
           data: { title, date, venue, selloutStatus },
         });
       } else {
-        const matchedEvent = await prisma.event.findFirst({
+        const matchedEvent = await tx.event.findFirst({
           where: { title, date },
           select: { id: true },
         });
         if (matchedEvent) {
           linkedEventId = matchedEvent.id;
-          await prisma.event.update({
+          await tx.event.update({
             where: { id: matchedEvent.id },
             data: { venue, selloutStatus },
           });
         } else {
-          const createdEvent = await prisma.event.create({
+          const createdEvent = await tx.event.create({
             data: { title, date, venue, selloutStatus },
             select: { id: true },
           });
@@ -401,7 +401,7 @@ export async function PATCH(req: Request) {
     }
 
     const image = await getTicketImage(title, getEventType(title).type);
-    const updated = await prisma.ticket.update({
+    const updated = await tx.ticket.update({
       where: { id: ticketId },
       data: {
         title,
@@ -488,7 +488,24 @@ export async function PATCH(req: Request) {
           : null,
       },
     });
+    });
   } catch (err: unknown) {
+    if (err instanceof ManagedAccountListingMutationError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    if (err instanceof SellerListingAccessChangedError) {
+      return NextResponse.json(
+        { ok: false, error: "SELLER_NOT_APPROVED", message: "Seller account is not approved." },
+        { status: 403 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
       { ok: false, error: "Ticket update failed", details: message },
@@ -516,7 +533,6 @@ export async function DELETE(req: Request) {
     const ticketId = parseTicketIdFromUrl(req);
     const url = new URL(req.url);
     const requestedSellerId = normalizeId(url.searchParams.get("sellerId"));
-    const sellerId = gate.user.sellerId;
 
     if (!ticketId) {
       return NextResponse.json(
@@ -525,12 +541,8 @@ export async function DELETE(req: Request) {
       );
     }
 
-    if (!sellerId) {
-      return NextResponse.json(
-        { ok: false, error: "SELLER_LINK_MISSING", message: "Seller profile is missing." },
-        { status: 409 }
-      );
-    }
+    return await runOrdinaryListingMutation(gate.user.id, async (tx, currentUser) => {
+      const sellerId = currentUser.seller.id;
 
     if (requestedSellerId && requestedSellerId !== sellerId) {
       return NextResponse.json(
@@ -542,7 +554,7 @@ export async function DELETE(req: Request) {
     const now = new Date();
 
     // Load ticket + reservation fields for guardrails
-    const ticket = await prisma.ticket.findUnique({
+    const ticket = await tx.ticket.findUnique({
       where: { id: ticketId },
       select: {
         id: true,
@@ -611,7 +623,7 @@ export async function DELETE(req: Request) {
     // Soft withdraw atomically, expiry-aware:
     // - If AVAILABLE: withdraw
     // - If RESERVED but expired: withdraw and clear reservation fields
-    const updated = await prisma.ticket.updateMany({
+    const updated = await tx.ticket.updateMany({
       where: {
         id: ticketId,
         sellerId,
@@ -643,7 +655,24 @@ export async function DELETE(req: Request) {
       message: "Ticket withdrawn",
       withdrawnTicketId: ticketId,
     });
+    });
   } catch (err: unknown) {
+    if (err instanceof ManagedAccountListingMutationError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    if (err instanceof SellerListingAccessChangedError) {
+      return NextResponse.json(
+        { ok: false, error: "SELLER_NOT_APPROVED", message: "Seller account is not approved." },
+        { status: 403 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
       { ok: false, error: "Withdraw failed", details: message },
