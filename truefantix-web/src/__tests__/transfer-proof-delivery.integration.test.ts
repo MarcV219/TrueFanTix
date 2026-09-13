@@ -1514,6 +1514,137 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
   });
 
+  it("preserves active processing evidence outside replay-safe Resend recovery", async () => {
+    const [sendGridId, resendId, activeId] = await seedAdminBatch("processing-evidence", 3);
+
+    async function claimAndDispatch(id: string, provider: "RESEND" | "SENDGRID", claimToken: string) {
+      const pending = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({ where: { id } });
+      const processingAt = pending.availableAt;
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", provider, processingAt,
+          leaseExpiresAt: new Date(processingAt.getTime() + 15 * 60 * 1000),
+          claimToken,
+        },
+      });
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          attemptCount: { increment: 1 }, firstAttemptAt: processingAt,
+          dispatchStartedAt: processingAt,
+        },
+      });
+      return processingAt;
+    }
+
+    const sendGridDispatch = await claimAndDispatch(sendGridId, "SENDGRID", "sendgrid-processing-owner");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: sendGridId },
+      data: {
+        leaseExpiresAt: sendGridDispatch,
+        availableAt: new Date(sendGridDispatch.getTime() + 5 * 60 * 1000),
+        lastError: "fabricated recovery",
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery recovery requires replay-safe Resend evidence",
+    );
+
+    const resendDispatch = await claimAndDispatch(resendId, "RESEND", "resend-processing-owner");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: resendId },
+      data: {
+        leaseExpiresAt: resendDispatch,
+        availableAt: new Date(resendDispatch.getTime() + 5 * 60 * 1000),
+        lastError: "accepted delivery persistence lost ownership",
+      },
+    })).resolves.toMatchObject({
+      provider: "RESEND", status: "PROCESSING", attemptCount: 1,
+      leaseExpiresAt: resendDispatch,
+    });
+
+    await claimAndDispatch(activeId, "RESEND", "active-processing-owner");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: activeId },
+      data: { lastError: "standalone rewrite" },
+    })).rejects.toThrow(
+      "Active transfer-proof delivery evidence is immutable outside recovery",
+    );
+  });
+
+  it("installs processing-evidence binding as a forward-only upgrade", async () => {
+    const processingSchema = `transfer_proof_processing_evidence_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${processingSchema}"`);
+      await client.query(`SET search_path TO "${processingSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "availableAt" TIMESTAMP(3) NOT NULL,
+          "lastError" TEXT
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "processingAt", "leaseExpiresAt",
+          "claimToken", "dispatchStartedAt", "availableAt"
+        ) VALUES
+          ('permissive-72', 'SENDGRID', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 04:00:00', TIMESTAMP '2026-12-01 04:15:00',
+            'permissive-owner', TIMESTAMP '2026-12-01 04:00:00', TIMESTAMP '2026-12-01 04:00:00'),
+          ('strict-73', 'SENDGRID', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 05:00:00', TIMESTAMP '2026-12-01 05:15:00',
+            'strict-owner', TIMESTAMP '2026-12-01 05:00:00', TIMESTAMP '2026-12-01 05:00:00'),
+          ('resend-73', 'RESEND', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 06:00:00', TIMESTAMP '2026-12-01 06:15:00',
+            'resend-owner', TIMESTAMP '2026-12-01 06:00:00', TIMESTAMP '2026-12-01 06:00:00')
+      `);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "leaseExpiresAt" = "processingAt",
+          "availableAt" = "processingAt" + INTERVAL '5 minutes',
+          "lastError" = 'permissive recovery'
+        WHERE id = 'permissive-72'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const processingEvidenceMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914013000_bind_transfer_proof_processing_evidence/migration.sql",
+      ), "utf8");
+      await client.query(processingEvidenceMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "leaseExpiresAt" = "processingAt",
+          "availableAt" = "processingAt" + INTERVAL '5 minutes',
+          "lastError" = 'forged SendGrid recovery'
+        WHERE id = 'strict-73'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery recovery requires replay-safe Resend evidence",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "leaseExpiresAt" = "processingAt",
+          "availableAt" = "processingAt" + INTERVAL '5 minutes',
+          "lastError" = 'valid Resend recovery'
+        WHERE id = 'resend-73'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${processingSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("installs immutable pending availability as a forward-only upgrade", async () => {
     const pendingSchema = `transfer_proof_pending_freeze_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
