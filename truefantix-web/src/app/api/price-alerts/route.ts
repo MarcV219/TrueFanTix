@@ -2,7 +2,22 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { createNotification } from "@/lib/notifications/service";
+import {
+  ManagedAccountPriceAlertWriteError,
+  runOrdinaryPriceAlertWrite,
+} from "@/lib/price-alerts/ordinary-user";
 import { schemas, validateRequest } from "@/lib/validation";
+
+function stagingConsoleOnlyResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403, headers: { "Cache-Control": "private, no-store" } },
+  );
+}
 
 // GET /api/price-alerts
 // List user's price alerts
@@ -17,7 +32,7 @@ export async function GET(req: Request) {
     const alerts = await prisma.priceAlert.findMany({
       where: {
         userId: gate.user.id,
-        status: status as any,
+        status,
       },
       orderBy: { createdAt: "desc" },
       include: {
@@ -63,78 +78,96 @@ export async function POST(req: Request) {
 
     const body = validation.data;
 
-    if (body.ticketId) {
-      // Alert for specific ticket
-      const ticket = await prisma.ticket.findUnique({
-        where: { id: body.ticketId },
-        select: { id: true, title: true, priceCents: true, status: true },
-      });
+    const result = await runOrdinaryPriceAlertWrite(gate.user.id, async (tx) => {
+      if (body.ticketId) {
+        // Alert for specific ticket.
+        const ticket = await tx.ticket.findUnique({
+          where: { id: body.ticketId },
+          select: { id: true, title: true, priceCents: true, status: true },
+        });
 
-      if (!ticket || ticket.status !== "AVAILABLE") {
+        if (!ticket || ticket.status !== "AVAILABLE") {
+          return { error: "TICKET_NOT_FOUND" as const };
+        }
+
+        // The user lock also serializes duplicate checks for this account.
+        const existingAlert = await tx.priceAlert.findFirst({
+          where: {
+            userId: gate.user.id,
+            ticketId: body.ticketId,
+            status: "ACTIVE",
+          },
+        });
+
+        if (existingAlert) {
+          return { error: "ALERT_EXISTS" as const };
+        }
+
+        const alert = await tx.priceAlert.create({
+          data: {
+            userId: gate.user.id,
+            ticketId: body.ticketId,
+            targetPriceCents: body.targetPrice ? Math.round(body.targetPrice * 100) : null,
+            originalPriceCents: ticket.priceCents,
+            status: "ACTIVE",
+          },
+        });
+
+        return { alert, ticketTitle: ticket.title };
+      }
+
+      if (body.eventQuery) {
+        const alert = await tx.priceAlert.create({
+          data: {
+            userId: gate.user.id,
+            eventQuery: body.eventQuery,
+            targetPriceCents: body.targetPrice ? Math.round(body.targetPrice * 100) : null,
+            status: "ACTIVE",
+          },
+        });
+
+        return { alert, eventQuery: body.eventQuery };
+      }
+
+      return { error: "INVALID_ALERT" as const };
+    });
+
+    if ("error" in result) {
+      if (result.error === "TICKET_NOT_FOUND") {
         return NextResponse.json(
           { ok: false, error: "TICKET_NOT_FOUND", message: "Ticket not found or not available." },
           { status: 404 }
         );
       }
-
-      // Check if alert already exists
-      const existingAlert = await prisma.priceAlert.findFirst({
-        where: {
-          userId: gate.user.id,
-          ticketId: body.ticketId,
-          status: "ACTIVE",
-        },
-      });
-
-      if (existingAlert) {
+      if (result.error === "ALERT_EXISTS") {
         return NextResponse.json(
           { ok: false, error: "ALERT_EXISTS", message: "You already have an active alert for this ticket." },
           { status: 409 }
         );
       }
-
-      const alert = await prisma.priceAlert.create({
-        data: {
-          userId: gate.user.id,
-          ticketId: body.ticketId,
-          targetPriceCents: body.targetPrice ? Math.round(body.targetPrice * 100) : null,
-          originalPriceCents: ticket.priceCents,
-          status: "ACTIVE",
-        },
-      });
-
-      return NextResponse.json({
-        ok: true,
-        alert: {
-          ...alert,
-          targetPrice: alert.targetPriceCents ? alert.targetPriceCents / 100 : null,
-          originalPrice: alert.originalPriceCents ? alert.originalPriceCents / 100 : null,
-        },
-        message: `Alert created for "${ticket.title}". We'll notify you when the price drops.`,
-      }, { status: 201 });
-
-    } else if (body.eventQuery) {
-      // Alert for any ticket matching event query
-      const alert = await prisma.priceAlert.create({
-        data: {
-          userId: gate.user.id,
-          eventQuery: body.eventQuery,
-          targetPriceCents: body.targetPrice ? Math.round(body.targetPrice * 100) : null,
-          status: "ACTIVE",
-        },
-      });
-
-      return NextResponse.json({
-        ok: true,
-        alert: {
-          ...alert,
-          targetPrice: alert.targetPriceCents ? alert.targetPriceCents / 100 : null,
-        },
-        message: `Alert created for "${body.eventQuery}". We'll notify you when matching tickets are listed below your target price.`,
-      }, { status: 201 });
+      return NextResponse.json(
+        { ok: false, error: "VALIDATION_ERROR", message: "Choose a ticket or event query." },
+        { status: 400 },
+      );
     }
 
+    return NextResponse.json({
+      ok: true,
+      alert: {
+        ...result.alert,
+        targetPrice: result.alert.targetPriceCents ? result.alert.targetPriceCents / 100 : null,
+        ...(result.alert.originalPriceCents !== null
+          ? { originalPrice: result.alert.originalPriceCents / 100 }
+          : {}),
+      },
+      message: "ticketTitle" in result
+        ? `Alert created for "${result.ticketTitle}". We'll notify you when the price drops.`
+        : `Alert created for "${result.eventQuery}". We'll notify you when matching tickets are listed below your target price.`,
+    }, { status: 201 });
   } catch (err) {
+    if (err instanceof ManagedAccountPriceAlertWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("POST /api/price-alerts failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR", message: "Could not create price alert." },
@@ -164,25 +197,29 @@ export async function DELETE(req: Request) {
 
     const alertId = parsed.data.id;
 
-    // Ensure user owns this alert
-    const alert = await prisma.priceAlert.findFirst({
-      where: {
-        id: alertId,
-        userId: gate.user.id,
-      },
+    const deleted = await runOrdinaryPriceAlertWrite(gate.user.id, async (tx) => {
+      // Keep ownership validation and the state transition in one transaction.
+      const alert = await tx.priceAlert.findFirst({
+        where: {
+          id: alertId,
+          userId: gate.user.id,
+        },
+      });
+      if (!alert) return false;
+
+      await tx.priceAlert.update({
+        where: { id: alertId },
+        data: { status: "DELETED" },
+      });
+      return true;
     });
 
-    if (!alert) {
+    if (!deleted) {
       return NextResponse.json(
         { ok: false, error: "NOT_FOUND", message: "Alert not found." },
         { status: 404 }
       );
     }
-
-    await prisma.priceAlert.update({
-      where: { id: alertId },
-      data: { status: "DELETED" },
-    });
 
     return NextResponse.json({
       ok: true,
@@ -190,6 +227,9 @@ export async function DELETE(req: Request) {
     }, { status: 200 });
 
   } catch (err) {
+    if (err instanceof ManagedAccountPriceAlertWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("DELETE /api/price-alerts failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR", message: "Could not delete price alert." },
