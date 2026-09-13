@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma, type TransferProofDeliveryIntent } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { generateBuyerTransferConfirmationRequiredEmail, sendEmail, type EmailProvider } from "@/lib/email";
@@ -109,84 +109,110 @@ export async function drainTransferProofDeliveryIntents(
       dispatchStartedAt: null,
     },
   });
-  const recoverable = {
-    attemptCount: { lt: MAX_ATTEMPTS },
-    OR: [
-      { status: { in: ["PENDING", "FAILED"] }, availableAt: { lte: now } },
-      { status: "PROCESSING", leaseExpiresAt: { lte: now } },
-    ],
-  } satisfies Prisma.TransferProofDeliveryIntentWhereInput;
-  const rows = await db.transferProofDeliveryIntent.findMany({
-    where: { orderId: options.orderId, ...recoverable },
-    orderBy: { availableAt: "asc" },
-    take: Math.min(Math.max(options.limit ?? 50, 1), 100),
-  });
-
-  let claimed = 0;
-  let delivered = 0;
-  let failed = 0;
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+  const resendConfigured = providerIsConfigured("RESEND");
+  const sendGridConfigured = providerIsConfigured("SENDGRID");
+  const providerConfigured = resendConfigured || sendGridConfigured;
+  const resendWindowStart = new Date(now.getTime() - RESEND_IDEMPOTENCY_WINDOW_MS);
   let reconciliationRequired = exhausted.count;
-  for (const row of rows) {
-    const staleClaim = row.status === "PROCESSING";
-    const recordedProvider = row.provider === "RESEND" || row.provider === "SENDGRID"
-      ? row.provider
-      : null;
-    const attemptedProviderMissing = row.attemptCount > 0 && !row.provider;
-    const staleProviderMissing = staleClaim && !row.provider;
-    const recordedProviderInvalid = Boolean(row.provider && !recordedProvider);
-    const provider = recordedProvider
-      ?? (staleClaim || row.attemptCount > 0 ? null : configuredEmailProvider());
-    const resendAttemptTimeMissing = provider === "RESEND" && row.attemptCount > 0 && !row.firstAttemptAt;
-    const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
-      && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
-    const ambiguousStaleClaim = staleClaim && Boolean(row.dispatchStartedAt) && provider !== "RESEND";
-    if (attemptedProviderMissing || staleProviderMissing || recordedProviderInvalid || ambiguousStaleClaim || resendAttemptTimeMissing || resendWindowExpired) {
-      const quarantined = await db.transferProofDeliveryIntent.updateMany({
-        where: {
-          id: row.id, status: row.status, attemptCount: row.attemptCount, provider: row.provider,
-          claimToken: row.claimToken, dispatchStartedAt: row.dispatchStartedAt,
-          ...(staleClaim ? { leaseExpiresAt: { lte: now } } : { availableAt: { lte: now } }),
-        },
+  const acquisition = await db.$transaction(async (tx) => {
+    const orderFilter = options.orderId
+      ? Prisma.sql`AND "orderId" = ${options.orderId}`
+      : Prisma.empty;
+    const candidates = await tx.$queryRaw<TransferProofDeliveryIntent[]>(Prisma.sql`
+      SELECT *
+      FROM "TransferProofDeliveryIntent"
+      WHERE "attemptCount" < ${MAX_ATTEMPTS}
+        ${orderFilter}
+        AND (
+          ("status" IN ('PENDING', 'FAILED') AND "availableAt" <= ${now})
+          OR ("status" = 'PROCESSING' AND "leaseExpiresAt" <= ${now})
+        )
+        AND (
+          ("provider" IS NOT NULL AND "provider" NOT IN ('RESEND', 'SENDGRID'))
+          OR ("provider" IS NULL AND (
+            ${providerConfigured} OR "attemptCount" > 0 OR "status" = 'PROCESSING'
+          ))
+          OR ("provider" = 'RESEND' AND (
+            ${resendConfigured}
+            OR ("attemptCount" > 0 AND (
+              "firstAttemptAt" IS NULL OR "firstAttemptAt" <= ${resendWindowStart}
+            ))
+          ))
+          OR ("provider" = 'SENDGRID' AND (
+            ${sendGridConfigured}
+            OR ("status" = 'PROCESSING' AND "dispatchStartedAt" IS NOT NULL)
+          ))
+        )
+      ORDER BY "availableAt" ASC, "createdAt" ASC, "id" ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${limit}
+    `);
+    const acquired: Array<{
+      row: TransferProofDeliveryIntent;
+      provider: EmailProvider;
+      leaseExpiresAt: Date;
+      claimToken: string;
+    }> = [];
+    let quarantinedCount = 0;
+    for (const row of candidates) {
+      const staleClaim = row.status === "PROCESSING";
+      const recordedProvider = row.provider === "RESEND" || row.provider === "SENDGRID"
+        ? row.provider
+        : null;
+      const attemptedProviderMissing = row.attemptCount > 0 && !row.provider;
+      const staleProviderMissing = staleClaim && !row.provider;
+      const recordedProviderInvalid = Boolean(row.provider && !recordedProvider);
+      const provider = recordedProvider
+        ?? (staleClaim || row.attemptCount > 0 ? null : configuredEmailProvider());
+      const resendAttemptTimeMissing = provider === "RESEND" && row.attemptCount > 0 && !row.firstAttemptAt;
+      const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
+        && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
+      const ambiguousStaleClaim = staleClaim && Boolean(row.dispatchStartedAt) && provider !== "RESEND";
+      if (attemptedProviderMissing || staleProviderMissing || recordedProviderInvalid || ambiguousStaleClaim || resendAttemptTimeMissing || resendWindowExpired) {
+        const quarantined = await tx.transferProofDeliveryIntent.updateMany({
+          where: { id: row.id, status: row.status, claimToken: row.claimToken },
+          data: {
+            status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
+            claimToken: null, dispatchStartedAt: null,
+            lastError: attemptedProviderMissing
+              ? "Attempted delivery has no recorded provider; delivery requires reconciliation"
+              : staleProviderMissing
+              ? "Expired delivery claim has no recorded provider; delivery requires reconciliation"
+              : recordedProviderInvalid
+              ? `Unsupported recorded delivery provider ${row.provider}; delivery requires reconciliation`
+              : resendAttemptTimeMissing
+              ? "Resend first-attempt time is missing; delivery requires reconciliation"
+              : resendWindowExpired
+              ? "Resend idempotency window expired; delivery requires reconciliation"
+              : provider
+                ? `Ambiguous prior ${provider} delivery requires reconciliation`
+                : "Ambiguous prior delivery with no recorded provider requires reconciliation",
+          },
+        });
+        quarantinedCount += quarantined.count;
+        continue;
+      }
+      if (!provider || !providerIsConfigured(provider)) continue;
+      const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
+      const claimToken = randomUUID();
+      const claim = await tx.transferProofDeliveryIntent.updateMany({
+        where: { id: row.id, status: row.status, claimToken: row.claimToken, attemptCount: row.attemptCount },
         data: {
-          status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
-          claimToken: null, dispatchStartedAt: null,
-          lastError: attemptedProviderMissing
-            ? "Attempted delivery has no recorded provider; delivery requires reconciliation"
-            : staleProviderMissing
-            ? "Expired delivery claim has no recorded provider; delivery requires reconciliation"
-            : recordedProviderInvalid
-            ? `Unsupported recorded delivery provider ${row.provider}; delivery requires reconciliation`
-            : resendAttemptTimeMissing
-            ? "Resend first-attempt time is missing; delivery requires reconciliation"
-            : resendWindowExpired
-            ? "Resend idempotency window expired; delivery requires reconciliation"
-            : provider
-              ? `Ambiguous prior ${provider} delivery requires reconciliation`
-              : "Ambiguous prior delivery with no recorded provider requires reconciliation",
+          status: "PROCESSING", provider, processingAt: now, leaseExpiresAt,
+          claimToken, dispatchStartedAt: null, lastError: null,
         },
       });
-      reconciliationRequired += quarantined.count;
-      continue;
+      if (claim.count === 1) acquired.push({ row, provider, leaseExpiresAt, claimToken });
     }
-    if (!provider) continue;
-    // A provider is pinned after the first claim so retries cannot cross provider
-    // identities. Configuration rotation must not consume that retry budget.
-    if (!providerIsConfigured(provider)) continue;
-    const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
-    const claimToken = randomUUID();
-    const claim = await db.transferProofDeliveryIntent.updateMany({
-      where: {
-        id: row.id, attemptCount: row.attemptCount, provider: row.provider,
-        claimToken: row.claimToken, dispatchStartedAt: row.dispatchStartedAt,
-        OR: recoverable.OR,
-      },
-      data: {
-        status: "PROCESSING", provider, processingAt: now, leaseExpiresAt,
-        claimToken, dispatchStartedAt: null, lastError: null,
-      },
-    });
-    if (claim.count !== 1) continue;
-    claimed += 1;
+    return { candidates: candidates.length, acquired, quarantinedCount };
+  });
+
+  const claimed = acquisition.acquired.length;
+  let delivered = 0;
+  let failed = 0;
+  reconciliationRequired += acquisition.quarantinedCount;
+  for (const { row, provider, leaseExpiresAt, claimToken } of acquisition.acquired) {
 
     let attemptCount = row.attemptCount;
     let dispatchStarted = false;
@@ -374,5 +400,5 @@ export async function drainTransferProofDeliveryIntents(
       failed += recovered.count;
     }
   }
-  return { scanned: rows.length, claimed, delivered, failed, reconciliationRequired };
+  return { scanned: acquisition.candidates, claimed, delivered, failed, reconciliationRequired };
 }

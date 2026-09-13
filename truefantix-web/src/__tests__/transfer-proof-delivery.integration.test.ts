@@ -57,6 +57,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId } });
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
+    await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { idempotencyKey: { startsWith: `batch-${runId}-` } } });
     jest.clearAllMocks();
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "ACCEPTED" });
     mockedSendAdmin.mockResolvedValue({ ok: true, provider: "CONSOLE" });
@@ -67,6 +69,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId } });
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
+    await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { idempotencyKey: { startsWith: `batch-${runId}-` } } });
     await prisma.user.deleteMany({ where: { id: buyerUserId } });
     await prisma.$disconnect();
     await pool.end();
@@ -87,6 +91,28 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       deadline: new Date(now.getTime() + 86_400_000),
       now,
     };
+  }
+
+  async function seedAdminBatch(scope: string, count = 4) {
+    const ids: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const batchOrderId = `batch-order-${runId}-${scope}-${index}`;
+      const row = await prisma.transferProofDeliveryIntent.create({ data: {
+        orderId: batchOrderId,
+        kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
+        recipient: "admin@truefantix.com",
+        payloadJson: {
+          sellerEmail: "seller@example.test", buyerEmail,
+          ticketCount: 1, transferProofType: "EMAIL",
+          deadline: "2026-12-03T00:00:00.000Z",
+          completedAt: "2026-12-01T00:00:00.000Z",
+        },
+        availableAt: new Date(`2026-12-01T00:0${index}:00.000Z`),
+        idempotencyKey: `batch-${runId}-${scope}-${index}`,
+      } });
+      ids.push(row.id);
+    }
+    return ids;
   }
 
   it("rolls back all durable intents and performs zero external sends", async () => {
@@ -152,6 +178,107 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.emailDelivery.count({ where: { orderId, status: "SENT" } })).resolves.toBe(1);
   });
 
+  it("partitions a bounded batch across overlapping PostgreSQL drainers", async () => {
+    const ids = await seedAdminBatch("overlap");
+    const seen: string[] = [];
+    mockedSendAdmin.mockImplementation(async (input) => {
+      seen.push(String(input.summary).split(" ").at(-1)!);
+      await new Promise((resolve) => setImmediate(resolve));
+      return { ok: true, provider: "RESEND", providerResult: "ACCEPTED" };
+    });
+
+    const [first, second] = await Promise.all([
+      drainTransferProofDeliveryIntents({ now: new Date("2026-12-01T01:00:00.000Z"), limit: 2 }, prisma),
+      drainTransferProofDeliveryIntents({ now: new Date("2026-12-01T01:00:00.000Z"), limit: 2 }, prisma),
+    ]);
+
+    expect(first.claimed).toBe(2);
+    expect(second.claimed).toBe(2);
+    expect(new Set(seen).size).toBe(4);
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { id: { in: ids }, status: "DELIVERED" } }))
+      .resolves.toBe(4);
+    await expect(prisma.transferProofDeliveryIntent.findMany({ where: { id: { in: ids } }, select: { attemptCount: true } }))
+      .resolves.toEqual(expect.arrayContaining(Array.from({ length: 4 }, () => ({ attemptCount: 1 }))));
+  });
+
+  it("claims the oldest due rows when no earlier row is locked", async () => {
+    const ids = await seedAdminBatch("oldest");
+
+    await expect(drainTransferProofDeliveryIntents({
+      now: new Date("2026-12-01T01:00:00.000Z"), limit: 2,
+    }, prisma)).resolves.toMatchObject({ scanned: 2, claimed: 2, delivered: 2 });
+
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { id: { in: ids } }, orderBy: { availableAt: "asc" }, select: { status: true },
+    })).resolves.toEqual([
+      { status: "DELIVERED" }, { status: "DELIVERED" }, { status: "PENDING" }, { status: "PENDING" },
+    ]);
+  });
+
+  it("skips a locked oldest prefix and drains the next due rows", async () => {
+    const ids = await seedAdminBatch("locked-prefix");
+    const locker = await pool.connect();
+    try {
+      await locker.query("BEGIN");
+      await locker.query(
+        `SELECT "id" FROM "TransferProofDeliveryIntent" WHERE "id" = ANY($1::text[]) ORDER BY "availableAt" ASC LIMIT 2 FOR UPDATE`,
+        [ids.slice(0, 2)],
+      );
+
+      await expect(drainTransferProofDeliveryIntents({
+        now: new Date("2026-12-01T01:00:00.000Z"), limit: 2,
+      }, prisma)).resolves.toMatchObject({ scanned: 2, claimed: 2, delivered: 2 });
+    } finally {
+      await locker.query("ROLLBACK");
+      locker.release();
+    }
+
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { id: { in: ids } }, orderBy: { availableAt: "asc" }, select: { status: true, attemptCount: true },
+    })).resolves.toEqual([
+      { status: "PENDING", attemptCount: 0 },
+      { status: "PENDING", attemptCount: 0 },
+      { status: "DELIVERED", attemptCount: 1 },
+      { status: "DELIVERED", attemptCount: 1 },
+    ]);
+  });
+
+  it("skips an unavailable pinned-provider prefix and claims later actionable rows", async () => {
+    const ids = await seedAdminBatch("unavailable-prefix");
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { id: { in: ids.slice(0, 2) } },
+      data: {
+        status: "FAILED", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T00:00:00.000Z"),
+      },
+    });
+    const savedResendKey = process.env.RESEND_API_KEY;
+    const savedSendGridKey = process.env.SENDGRID_API_KEY;
+    delete process.env.RESEND_API_KEY;
+    process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
+    mockedSendAdmin.mockResolvedValue({ ok: true, provider: "SENDGRID", providerResult: "ACCEPTED" });
+    try {
+      await expect(drainTransferProofDeliveryIntents({
+        now: new Date("2026-12-01T01:00:00.000Z"), limit: 2,
+      }, prisma)).resolves.toMatchObject({ scanned: 2, claimed: 2, delivered: 2 });
+    } finally {
+      if (savedResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = savedResendKey;
+      if (savedSendGridKey === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = savedSendGridKey;
+    }
+
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { id: { in: ids } }, orderBy: { availableAt: "asc" },
+      select: { status: true, provider: true, attemptCount: true },
+    })).resolves.toEqual([
+      { status: "FAILED", provider: "RESEND", attemptCount: 1 },
+      { status: "FAILED", provider: "RESEND", attemptCount: 1 },
+      { status: "DELIVERED", provider: "SENDGRID", attemptCount: 1 },
+      { status: "DELIVERED", provider: "SENDGRID", attemptCount: 1 },
+    ]);
+  });
+
   it("fences a late worker and reclaims a pre-dispatch lease without spending an attempt", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("02")));
     await prisma.transferProofDeliveryIntent.deleteMany({
@@ -161,11 +288,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     const pausedPromise = new Promise<void>((resolve) => { paused = resolve; });
     let release!: () => void;
     const releasePromise = new Promise<void>((resolve) => { release = resolve; });
-    let shouldPause = true;
+    let transactionCalls = 0;
     const stalledDb = {
       $transaction: async <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => {
-        if (shouldPause) {
-          shouldPause = false;
+        transactionCalls += 1;
+        if (transactionCalls === 2) {
           paused();
           await releasePromise;
         }
