@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 
 export interface PriceRecommendation {
@@ -36,6 +37,7 @@ export async function getPriceRecommendation({
   seat,
   faceValueCents,
   sellerId,
+  db = prisma,
 }: {
   eventTitle: string;
   venue: string;
@@ -44,12 +46,13 @@ export async function getPriceRecommendation({
   seat?: string;
   faceValueCents?: number;
   sellerId?: string;
+  db?: Prisma.TransactionClient | typeof prisma;
 }): Promise<PriceRecommendation> {
   const reasoning: string[] = [];
   const factors: PriceRecommendation["factors"] = [];
 
   // 1. Find comparable tickets (same event/venue/date)
-  const comparableTickets = await prisma.ticket.findMany({
+  const comparableTickets = await db.ticket.findMany({
     where: {
       OR: [
         { title: { contains: eventTitle, mode: "insensitive" } },
@@ -238,7 +241,7 @@ export async function getPriceRecommendation({
 
   // 9. Seller reputation adjustment
   if (sellerId) {
-    const seller = await prisma.seller.findUnique({
+    const seller = await db.seller.findUnique({
       where: { id: sellerId },
       select: { rating: true, reviews: true },
     });

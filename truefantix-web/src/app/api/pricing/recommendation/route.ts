@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { getPriceRecommendation, getPriceTrends } from "@/lib/pricing";
+import {
+  ManagedAccountPricingOperationError,
+  runOrdinaryPricingOperation,
+} from "@/lib/pricing/ordinary-user";
 import { schemas, validateRequest } from "@/lib/validation";
 
 // GET /api/pricing/recommendation
@@ -9,7 +12,8 @@ import { schemas, validateRequest } from "@/lib/validation";
 export async function GET(req: Request) {
   try {
     const gate = await requireUser(req);
-    
+    if (!gate.ok) return gate.res;
+
     const { searchParams } = new URL(req.url);
     const queryParsed = schemas.pricingRecommendationQuery.safeParse({
       eventTitle: searchParams.get("eventTitle"),
@@ -34,15 +38,19 @@ export async function GET(req: Request) {
 
     const { eventTitle, venue, date, row, seat, faceValue } = queryParsed.data;
 
-    const recommendation = await getPriceRecommendation({
-      eventTitle,
-      venue,
-      date,
-      row: row || undefined,
-      seat: seat || undefined,
-      faceValueCents: faceValue != null ? Math.round(faceValue * 100) : undefined,
-      sellerId: gate.user?.id,
-    });
+    const recommendation = await runOrdinaryPricingOperation(
+      gate.user.id,
+      async (tx, currentUser) => getPriceRecommendation({
+        eventTitle,
+        venue,
+        date,
+        row: row || undefined,
+        seat: seat || undefined,
+        faceValueCents: faceValue != null ? Math.round(faceValue * 100) : undefined,
+        sellerId: currentUser.seller?.id,
+        db: tx,
+      }),
+    );
 
     return NextResponse.json({
       ok: true,
@@ -64,6 +72,16 @@ export async function GET(req: Request) {
     }, { status: 200 });
 
   } catch (err) {
+    if (err instanceof ManagedAccountPricingOperationError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
     console.error("GET /api/pricing/recommendation failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR", message: "Could not generate price recommendation." },
