@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 
 export type AuditAction =
@@ -127,10 +128,13 @@ interface AuditLogEntry {
 /**
  * Create an audit log entry
  */
-export async function auditLog(entry: AuditLogEntry) {
+export async function auditLog(
+  entry: AuditLogEntry,
+  db: Pick<Prisma.TransactionClient, "auditLog"> = prisma,
+) {
   try {
     // Store in database
-    await prisma.auditLog.create({
+    await db.auditLog.create({
       data: {
         action: entry.action,
         userId: entry.userId,

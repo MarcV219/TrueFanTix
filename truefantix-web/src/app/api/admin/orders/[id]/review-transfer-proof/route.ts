@@ -110,7 +110,7 @@ export async function POST(req: Request) {
           details: { "Order ID": order.id, Seller: sellerUser?.email, "Ticket count": order.items.length, "Buyer confirmation deadline": disputeWindowEndsAt.toISOString(), "Approved by": gate.user.email },
         });
       }
-      await auditLog({ action: "TRANSFER_PROOF_VERIFY", userId: gate.user.id, targetType: "Order", targetId: order.id, metadata: { ...decision, sellerEmailSent }, ...createAuditContext(req) });
+      await auditLog({ action: "TRANSFER_PROOF_VERIFY", userId: gate.user.id, targetType: "Order", targetId: order.id, metadata: { ...decision, sellerEmailSent }, ...createAuditContext(req) }, tx);
 
       return NextResponse.json({ ok: true, message: transferProofAdminActionMessage(action), warning: Boolean(sellerUser?.email) && !sellerEmailSent });
     });
