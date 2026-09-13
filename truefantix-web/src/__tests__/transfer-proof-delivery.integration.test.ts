@@ -330,6 +330,90 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .resolves.toMatchObject({ status: "SENT", providerResult: "ACCEPTED" });
   });
 
+  it("fences a late post-dispatch result from overwriting replacement delivery evidence", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("03")));
+    await prisma.transferProofDeliveryIntent.deleteMany({
+      where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
+    });
+    let firstCallStarted!: () => void;
+    const firstCallStartedPromise = new Promise<void>((resolve) => { firstCallStarted = resolve; });
+    let releaseFirstCall!: () => void;
+    const releaseFirstCallPromise = new Promise<void>((resolve) => { releaseFirstCall = resolve; });
+    mockedSendEmail
+      .mockImplementationOnce(async () => {
+        firstCallStarted();
+        await releaseFirstCallPromise;
+        return { ok: false, provider: "RESEND", providerResult: "REJECTED", error: "late rejection" };
+      })
+      .mockResolvedValueOnce({ ok: true, provider: "RESEND", providerResult: "ACCEPTED" });
+
+    const lateWorker = drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T03:00:00.000Z") }, prisma,
+    );
+    await firstCallStartedPromise;
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
+        status: "PROCESSING", provider: "RESEND", attemptCount: 1,
+        dispatchStartedAt: new Date("2026-12-01T03:00:00.000Z"), claimToken: expect.any(String),
+      });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T03:16:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    releaseFirstCall();
+    await expect(lateWorker).resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 0 });
+
+    expect(mockedSendEmail).toHaveBeenCalledTimes(2);
+    expect(mockedSendEmail.mock.calls[1][0].idempotencyKey)
+      .toBe(mockedSendEmail.mock.calls[0][0].idempotencyKey);
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({ status: "DELIVERED", provider: "RESEND", attemptCount: 2 });
+    await expect(prisma.reminderDelivery.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
+        status: "SENT", providerResult: "ACCEPTED", failureReason: null,
+        completedAt: new Date("2026-12-01T03:16:00.000Z"),
+      });
+  });
+
+  it("fences a late administrator result from overwriting replacement delivery evidence", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("04")));
+    await prisma.transferProofDeliveryIntent.deleteMany({
+      where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
+    });
+    let firstCallStarted!: () => void;
+    const firstCallStartedPromise = new Promise<void>((resolve) => { firstCallStarted = resolve; });
+    let releaseFirstCall!: () => void;
+    const releaseFirstCallPromise = new Promise<void>((resolve) => { releaseFirstCall = resolve; });
+    mockedSendAdmin
+      .mockImplementationOnce(async () => {
+        firstCallStarted();
+        await releaseFirstCallPromise;
+        return { ok: false, provider: "RESEND", error: "late administrator rejection" };
+      })
+      .mockResolvedValueOnce({ ok: true, provider: "RESEND", providerResult: "ACCEPTED" });
+
+    const lateWorker = drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T04:00:00.000Z") }, prisma,
+    );
+    await firstCallStartedPromise;
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T04:16:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    releaseFirstCall();
+    await expect(lateWorker).resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 0 });
+
+    expect(mockedSendAdmin).toHaveBeenCalledTimes(2);
+    expect(mockedSendAdmin.mock.calls[1][0].idempotencyKey)
+      .toBe(mockedSendAdmin.mock.calls[0][0].idempotencyKey);
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({ status: "DELIVERED", provider: "RESEND", attemptCount: 2 });
+    await expect(prisma.emailDelivery.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
+        status: "SENT", provider: "RESEND", error: null,
+        sentAt: new Date("2026-12-01T04:16:00.000Z"),
+      });
+  });
+
   it("stages the buyer notification and Admin intent when buyer email is absent", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, { ...params("19"), buyerEmail: null }));
 
@@ -603,9 +687,34 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     ]));
   });
 
+  function transactionWithIntentUpdateFilter<T>(
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+    blocked: (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => boolean,
+  ) {
+    return prisma.$transaction((tx) => fn(new Proxy(tx, {
+      get(target, property, receiver) {
+        if (property !== "transferProofDeliveryIntent") return Reflect.get(target, property, receiver);
+        return new Proxy(target.transferProofDeliveryIntent, {
+          get(delegate, delegateProperty, delegateReceiver) {
+            if (delegateProperty !== "updateMany") return Reflect.get(delegate, delegateProperty, delegateReceiver);
+            return (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => blocked(args)
+              ? Promise.resolve({ count: 0 })
+              : delegate.updateMany(args);
+          },
+        });
+      },
+    }) as Prisma.TransactionClient));
+  }
+
   function completionLosingDb(providerAccepted: () => boolean) {
+    const blocksAcceptedTransition = (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => {
+      const status = typeof args.data.status === "string" ? args.data.status : undefined;
+      return Boolean(providerAccepted() && status && status !== "PROCESSING");
+    };
     return {
-      $transaction: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => prisma.$transaction(fn),
+      $transaction: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => transactionWithIntentUpdateFilter(
+        fn, blocksAcceptedTransition,
+      ),
       transferProofDeliveryIntent: {
         findMany: (args: Prisma.TransferProofDeliveryIntentFindManyArgs) => prisma.transferProofDeliveryIntent.findMany(args),
         updateMany: (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => {
@@ -791,8 +900,12 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       },
     });
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "RESEND", providerResult: "accepted" });
+    const blocksDeliveredTransition = (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) =>
+      args.data.status === "DELIVERED";
     const completionConflictingDb = {
-      $transaction: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => prisma.$transaction(fn),
+      $transaction: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => transactionWithIntentUpdateFilter(
+        fn, blocksDeliveredTransition,
+      ),
       transferProofDeliveryIntent: {
         findMany: (args: Prisma.TransferProofDeliveryIntentFindManyArgs) => prisma.transferProofDeliveryIntent.findMany(args),
         updateMany: (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => {

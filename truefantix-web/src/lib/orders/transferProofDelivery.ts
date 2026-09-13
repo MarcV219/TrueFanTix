@@ -218,6 +218,8 @@ export async function drainTransferProofDeliveryIntents(
     let dispatchStarted = false;
     let data: Payload = {};
     let providerAccepted = false;
+    let providerResult: string | null = null;
+    let providerFailure: string | null = null;
     try {
       data = payload(row.payloadJson);
       if (row.kind === BUYER_KIND) {
@@ -286,17 +288,25 @@ export async function drainTransferProofDeliveryIntents(
           idempotencyKey: providerIdempotencyKey(row.idempotencyKey), provider,
         });
         providerAccepted = result.ok;
-        await db.reminderDelivery.update({
-          where: key,
-          data: {
-            provider: result.provider || provider,
-            status: result.ok ? "SENT" : "FAILED",
-            providerResult: result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED"),
-            failureReason: result.ok ? null : result.error || "Unknown provider error",
-            completedAt: now,
-          },
-        });
+        providerResult = result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED");
+        providerFailure = result.ok ? null : result.error || "Unknown provider error";
         if (!result.ok) throw new Error(result.error || "Buyer email provider rejected delivery");
+        const recorded = await db.$transaction(async (tx) => {
+          const owned = await tx.transferProofDeliveryIntent.updateMany({
+            where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
+            data: { lastError: null },
+          });
+          if (owned.count !== 1) return owned;
+          await tx.reminderDelivery.update({
+            where: key,
+            data: {
+              provider: result.provider || provider, status: "SENT",
+              providerResult, failureReason: null, completedAt: now,
+            },
+          });
+          return owned;
+        });
+        if (recorded.count !== 1) throw new Error("Transfer-proof provider accepted delivery but claim ownership was lost");
       } else {
         const result = await sendAdminActivityEmail({
           activity: "TICKETS_TRANSFERRED", summary: `Ticket transfer submitted — order ${row.orderId}`,
@@ -307,23 +317,29 @@ export async function drainTransferProofDeliveryIntents(
           "Buyer confirmation deadline": String(data.deadline),
         } });
         providerAccepted = result.ok;
-        await db.emailDelivery.upsert({
-          where: { orderId_emailType_recipient: {
-            orderId: row.orderId, emailType: `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`, recipient: row.recipient,
-          } },
-          create: {
-            orderId: row.orderId, emailType: `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`,
-            recipient: row.recipient, provider, status: result.ok ? "SENT" : "FAILED",
-            error: result.ok ? null : result.error || "Unknown provider error", sentAt: now,
-          },
-          update: {
-            provider, status: result.ok ? "SENT" : "FAILED",
-            error: result.ok ? null : result.error || "Unknown provider error", sentAt: now,
-          },
-        });
+        providerFailure = result.ok ? null : result.error || "Unknown provider error";
         if (!result.ok) throw new Error(result.error || "Admin email provider rejected delivery");
+        const emailType = `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`;
+        const recorded = await db.$transaction(async (tx) => {
+          const owned = await tx.transferProofDeliveryIntent.updateMany({
+            where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
+            data: { lastError: null },
+          });
+          if (owned.count !== 1) return owned;
+          await tx.emailDelivery.upsert({
+            where: { orderId_emailType_recipient: {
+              orderId: row.orderId, emailType, recipient: row.recipient,
+            } },
+            create: {
+              orderId: row.orderId, emailType, recipient: row.recipient,
+              provider, status: "SENT", error: null, sentAt: now,
+            },
+            update: { provider, status: "SENT", error: null, sentAt: now },
+          });
+          return owned;
+        });
+        if (recorded.count !== 1) throw new Error("Transfer-proof provider accepted delivery but claim ownership was lost");
       }
-
       const completed = await db.transferProofDeliveryIntent.updateMany({
         where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
         data: {
@@ -350,51 +366,58 @@ export async function drainTransferProofDeliveryIntents(
         failed += quarantined.count;
         continue;
       }
-      if (!providerAccepted && row.kind === BUYER_KIND) {
-        const deadline = new Date(String(data.deadline));
-        const windowStart = new Date(String(data.windowStart));
-        if (!Number.isNaN(deadline.getTime()) && !Number.isNaN(windowStart.getTime())) {
-          await db.reminderDelivery.upsert({
-            where: { orderId_reminderType_recipient_windowStart: {
-              orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient, windowStart,
-            } },
-            create: {
-              orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient,
-              windowStart, deadline, provider, status: "FAILED",
-              providerResult: "EXCEPTION", failureReason: lastError, attemptedAt: now, completedAt: now,
-            },
-            update: { status: "FAILED", providerResult: "EXCEPTION", failureReason: lastError, completedAt: now },
-          });
-        }
-      } else if (!providerAccepted && row.kind === ADMIN_KIND) {
-        await db.emailDelivery.upsert({
-          where: { orderId_emailType_recipient: {
-            orderId: row.orderId, emailType: `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`, recipient: row.recipient,
-          } },
-          create: {
-            orderId: row.orderId, emailType: `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`,
-            recipient: row.recipient, provider, status: "FAILED", error: lastError, sentAt: now,
-          },
-          update: { provider, status: "FAILED", error: lastError, sentAt: now },
-        });
-      }
       const retryAcceptedResend = providerAccepted && provider === "RESEND" && attemptCount < MAX_ATTEMPTS;
       const requiresReconciliation = providerAccepted
         ? !retryAcceptedResend
         : provider === "SENDGRID" || attemptCount >= MAX_ATTEMPTS;
-      const recovered = await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
-        data: {
-          status: retryAcceptedResend ? "PROCESSING" : requiresReconciliation ? "RECONCILIATION_REQUIRED" : "FAILED",
-          processingAt: retryAcceptedResend ? now : null,
-          leaseExpiresAt: retryAcceptedResend ? now : null,
-          claimToken: retryAcceptedResend ? claimToken : null,
-          dispatchStartedAt: retryAcceptedResend ? now : null,
-          lastError: lastError.slice(0, 2000),
-          availableAt: attemptCount < MAX_ATTEMPTS
-            ? new Date(now.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
-            : now,
-        },
+      const recovered = await db.$transaction(async (tx) => {
+        const owned = await tx.transferProofDeliveryIntent.updateMany({
+          where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
+          data: {
+            status: retryAcceptedResend ? "PROCESSING" : requiresReconciliation ? "RECONCILIATION_REQUIRED" : "FAILED",
+            processingAt: retryAcceptedResend ? now : null,
+            leaseExpiresAt: retryAcceptedResend ? now : null,
+            claimToken: retryAcceptedResend ? claimToken : null,
+            dispatchStartedAt: retryAcceptedResend ? now : null,
+            lastError: lastError.slice(0, 2000),
+            availableAt: attemptCount < MAX_ATTEMPTS
+              ? new Date(now.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
+              : now,
+          },
+        });
+        if (owned.count !== 1 || providerAccepted) return owned;
+        if (row.kind === BUYER_KIND) {
+          const deadline = new Date(String(data.deadline));
+          const windowStart = new Date(String(data.windowStart));
+          if (!Number.isNaN(deadline.getTime()) && !Number.isNaN(windowStart.getTime())) {
+            await tx.reminderDelivery.upsert({
+              where: { orderId_reminderType_recipient_windowStart: {
+                orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient, windowStart,
+              } },
+              create: {
+                orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient,
+                windowStart, deadline, provider, status: "FAILED",
+                providerResult: providerResult || "EXCEPTION",
+                failureReason: providerFailure || lastError, attemptedAt: now, completedAt: now,
+              },
+              update: {
+                status: "FAILED", providerResult: providerResult || "EXCEPTION",
+                failureReason: providerFailure || lastError, completedAt: now,
+              },
+            });
+          }
+        } else if (row.kind === ADMIN_KIND) {
+          const emailType = `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`;
+          await tx.emailDelivery.upsert({
+            where: { orderId_emailType_recipient: { orderId: row.orderId, emailType, recipient: row.recipient } },
+            create: {
+              orderId: row.orderId, emailType, recipient: row.recipient,
+              provider, status: "FAILED", error: providerFailure || lastError, sentAt: now,
+            },
+            update: { provider, status: "FAILED", error: providerFailure || lastError, sentAt: now },
+          });
+        }
+        return owned;
       });
       if (requiresReconciliation) reconciliationRequired += recovered.count;
       failed += recovered.count;
