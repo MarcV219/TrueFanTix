@@ -3,6 +3,23 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { updateSellerBadges } from "@/lib/reputation";
 import { schemas, validateRequest } from "@/lib/validation";
+import {
+  ManagedAccountReviewWriteError,
+  runOrdinaryReviewWrite,
+} from "@/lib/reviews/ordinary-author";
+
+function stagingConsoleOnlyError() {
+  const response = NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403 },
+  );
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
 
 // GET /api/reviews
 // Get reviews for a seller or by a buyer
@@ -122,101 +139,113 @@ export async function POST(req: Request) {
 
     const body = validation.data;
 
-    // Check order exists and is completed
-    const order = await prisma.order.findUnique({
-      where: { id: body.orderId },
-      include: {
-        seller: true,
-        buyerSeller: true,
-        items: {
+    let result;
+    try {
+      result = await runOrdinaryReviewWrite(gate.user.id, async (tx) => {
+        // Check order exists and is completed while the reviewer identity is locked.
+        const order = await tx.order.findUnique({
+          where: { id: body.orderId },
           include: {
-            ticket: {
-              select: { title: true },
+            seller: true,
+            buyerSeller: true,
+            items: {
+              include: {
+                ticket: {
+                  select: { title: true },
+                },
+              },
             },
           },
-        },
-      },
-    });
+        });
 
-    if (!order) {
-      return NextResponse.json(
-        { ok: false, error: "ORDER_NOT_FOUND" },
-        { status: 404 }
-      );
+        if (!order) {
+          return NextResponse.json(
+            { ok: false, error: "ORDER_NOT_FOUND" },
+            { status: 404 }
+          );
+        }
+
+        if (order.status !== "COMPLETED") {
+          return NextResponse.json(
+            { ok: false, error: "ORDER_NOT_COMPLETED", message: "Can only review completed orders" },
+            { status: 400 }
+          );
+        }
+
+        // Verify user is the buyer.
+        const buyerUser = await tx.user.findFirst({
+          where: { sellerId: order.buyerSellerId },
+          select: { id: true },
+        });
+
+        if (buyerUser?.id !== gate.user.id) {
+          return NextResponse.json(
+            { ok: false, error: "UNAUTHORIZED", message: "Only the buyer can review" },
+            { status: 403 }
+          );
+        }
+
+        // Check if review already exists.
+        const existingReview = await tx.review.findUnique({
+          where: { orderId: body.orderId },
+        });
+
+        if (existingReview) {
+          return NextResponse.json(
+            { ok: false, error: "REVIEW_EXISTS", message: "You have already reviewed this order" },
+            { status: 409 }
+          );
+        }
+
+        // Create review.
+        const review = await tx.review.create({
+          data: {
+            orderId: body.orderId,
+            sellerId: order.sellerId,
+            reviewerId: gate.user.id,
+            rating: body.rating,
+            title: body.title,
+            content: body.content,
+            aspects: body.aspects,
+            status: "APPROVED", // Auto-approve for now, could add moderation
+          },
+          include: {
+            reviewer: {
+              select: { id: true, firstName: true, displayName: true },
+            },
+          },
+        });
+
+        // Keep the denormalized seller totals atomic with the review write.
+        const sellerStats = await tx.review.aggregate({
+          where: { sellerId: order.sellerId, status: "APPROVED" },
+          _avg: { rating: true },
+          _count: { id: true },
+        });
+
+        await tx.seller.update({
+          where: { id: order.sellerId },
+          data: {
+            rating: sellerStats._avg.rating || 0,
+            reviews: sellerStats._count.id,
+          },
+        });
+
+        return { review, sellerId: order.sellerId };
+      });
+    } catch (error) {
+      if (error instanceof ManagedAccountReviewWriteError) return stagingConsoleOnlyError();
+      throw error;
     }
 
-    if (order.status !== "COMPLETED") {
-      return NextResponse.json(
-        { ok: false, error: "ORDER_NOT_COMPLETED", message: "Can only review completed orders" },
-        { status: 400 }
-      );
-    }
-
-    // Verify user is the buyer
-    const buyerUser = await prisma.user.findFirst({
-      where: { sellerId: order.buyerSellerId },
-      select: { id: true },
-    });
-
-    if (buyerUser?.id !== gate.user.id) {
-      return NextResponse.json(
-        { ok: false, error: "UNAUTHORIZED", message: "Only the buyer can review" },
-        { status: 403 }
-      );
-    }
-
-    // Check if review already exists
-    const existingReview = await prisma.review.findUnique({
-      where: { orderId: body.orderId },
-    });
-
-    if (existingReview) {
-      return NextResponse.json(
-        { ok: false, error: "REVIEW_EXISTS", message: "You have already reviewed this order" },
-        { status: 409 }
-      );
-    }
-
-    // Create review
-    const review = await prisma.review.create({
-      data: {
-        orderId: body.orderId,
-        sellerId: order.sellerId,
-        reviewerId: gate.user.id,
-        rating: body.rating,
-        title: body.title,
-        content: body.content,
-        aspects: body.aspects,
-        status: "APPROVED", // Auto-approve for now, could add moderation
-      },
-      include: {
-        reviewer: {
-          select: { id: true, firstName: true, displayName: true },
-        },
-      },
-    });
-
-    // Update seller rating
-    const sellerStats = await prisma.review.aggregate({
-      where: { sellerId: order.sellerId, status: "APPROVED" },
-      _avg: { rating: true },
-      _count: { id: true },
-    });
-
-    await prisma.seller.update({
-      where: { id: order.sellerId },
-      data: {
-        rating: sellerStats._avg.rating || 0,
-        reviews: sellerStats._count.id,
-      },
-    });
+    if (result instanceof Response) return result;
 
     // Update seller badges
-    await updateSellerBadges(order.sellerId);
+    await updateSellerBadges(result.sellerId);
 
     return NextResponse.json({
       ok: true,
-      review,
+      review: result.review,
       message: "Review submitted successfully",
     }, { status: 201 });
 
@@ -241,54 +270,66 @@ export async function PATCH(req: Request) {
 
     const body = validation.data;
 
-    const review = await prisma.review.findFirst({
-      where: {
-        id: body.reviewId,
-        reviewerId: gate.user.id,
-      },
-    });
+    let result;
+    try {
+      result = await runOrdinaryReviewWrite(gate.user.id, async (tx) => {
+        const review = await tx.review.findFirst({
+          where: {
+            id: body.reviewId,
+            reviewerId: gate.user.id,
+          },
+        });
 
-    if (!review) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_FOUND" },
-        { status: 404 }
-      );
-    }
+        if (!review) {
+          return NextResponse.json(
+            { ok: false, error: "NOT_FOUND" },
+            { status: 404 }
+          );
+        }
 
-    // Check if within 24 hours
-    const hoursSinceCreated = (Date.now() - new Date(review.createdAt).getTime()) / (1000 * 60 * 60);
-    if (hoursSinceCreated > 24) {
-      return NextResponse.json(
-        { ok: false, error: "EDIT_WINDOW_EXPIRED", message: "Reviews can only be edited within 24 hours" },
-        { status: 400 }
-      );
-    }
+        // Check if within 24 hours.
+        const hoursSinceCreated = (Date.now() - new Date(review.createdAt).getTime()) / (1000 * 60 * 60);
+        if (hoursSinceCreated > 24) {
+          return NextResponse.json(
+            { ok: false, error: "EDIT_WINDOW_EXPIRED", message: "Reviews can only be edited within 24 hours" },
+            { status: 400 }
+          );
+        }
 
-    const updatedReview = await prisma.review.update({
-      where: { id: body.reviewId },
-      data: {
-        rating: body.rating,
-        title: body.title,
-        content: body.content,
-      },
-    });
+        const updatedReview = await tx.review.update({
+          where: { id: body.reviewId },
+          data: {
+            rating: body.rating,
+            title: body.title,
+            content: body.content,
+          },
+        });
 
-    // Update seller rating if rating changed
-    if (body.rating && body.rating !== review.rating) {
-      const sellerStats = await prisma.review.aggregate({
-        where: { sellerId: review.sellerId, status: "APPROVED" },
-        _avg: { rating: true },
+        // Keep the denormalized seller rating atomic with the review write.
+        if (body.rating && body.rating !== review.rating) {
+          const sellerStats = await tx.review.aggregate({
+            where: { sellerId: review.sellerId, status: "APPROVED" },
+            _avg: { rating: true },
+          });
+
+          await tx.seller.update({
+            where: { id: review.sellerId },
+            data: { rating: sellerStats._avg.rating || 0 },
+          });
+        }
+
+        return updatedReview;
       });
-
-      await prisma.seller.update({
-        where: { id: review.sellerId },
-        data: { rating: sellerStats._avg.rating || 0 },
-      });
+    } catch (error) {
+      if (error instanceof ManagedAccountReviewWriteError) return stagingConsoleOnlyError();
+      throw error;
     }
+
+    if (result instanceof Response) return result;
 
     return NextResponse.json({
       ok: true,
-      review: updatedReview,
+      review: result,
     });
 
   } catch (err) {
@@ -317,38 +358,50 @@ export async function DELETE(req: Request) {
     }
     const reviewId = parsed.data.id;
 
-    const review = await prisma.review.findFirst({
-      where: {
-        id: reviewId,
-        reviewerId: gate.user.id,
-      },
-    });
+    let result;
+    try {
+      result = await runOrdinaryReviewWrite(gate.user.id, async (tx) => {
+        const review = await tx.review.findFirst({
+          where: {
+            id: reviewId,
+            reviewerId: gate.user.id,
+          },
+        });
 
-    if (!review) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_FOUND" },
-        { status: 404 }
-      );
+        if (!review) {
+          return NextResponse.json(
+            { ok: false, error: "NOT_FOUND" },
+            { status: 404 }
+          );
+        }
+
+        await tx.review.delete({
+          where: { id: reviewId },
+        });
+
+        // Keep the denormalized seller totals atomic with the review deletion.
+        const sellerStats = await tx.review.aggregate({
+          where: { sellerId: review.sellerId, status: "APPROVED" },
+          _avg: { rating: true },
+          _count: { id: true },
+        });
+
+        await tx.seller.update({
+          where: { id: review.sellerId },
+          data: {
+            rating: sellerStats._avg.rating || 0,
+            reviews: sellerStats._count.id,
+          },
+        });
+
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof ManagedAccountReviewWriteError) return stagingConsoleOnlyError();
+      throw error;
     }
 
-    await prisma.review.delete({
-      where: { id: reviewId },
-    });
-
-    // Recalculate seller rating
-    const sellerStats = await prisma.review.aggregate({
-      where: { sellerId: review.sellerId, status: "APPROVED" },
-      _avg: { rating: true },
-      _count: { id: true },
-    });
-
-    await prisma.seller.update({
-      where: { id: review.sellerId },
-      data: {
-        rating: sellerStats._avg.rating || 0,
-        reviews: sellerStats._count.id,
-      },
-    });
+    if (result instanceof Response) return result;
 
     return NextResponse.json({
       ok: true,
