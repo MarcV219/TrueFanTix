@@ -1,11 +1,14 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { sendEmail } from "@/lib/email";
 import { schemas, validateRequest } from "@/lib/validation";
 import { resolveCatalogRequest } from "@/lib/catalog/request-resolver";
+import {
+  ManagedAccountCatalogRequestWriteError,
+  runOrdinaryCatalogRequestWrite,
+} from "@/lib/catalog/ordinary-requester";
 
 const ADMIN_EMAIL = "admin@truefantix.com";
 
@@ -73,34 +76,49 @@ export async function POST(req: Request) {
     const gate = await requireUser(req);
     if (!gate.ok) return gate.res;
 
-    const validation = await validateRequest(schemas.catalogRequestCreateApi)(req);
+    const validation = await validateRequest(schemas.catalogRequestCreateApi)(
+      req,
+    );
     if (!validation.success) return validation.response;
 
     const type = validation.data.type;
     const value = normalizeRequestedValue(validation.data.value);
     const notes = validation.data.notes?.trim() || null;
 
-    const existingPreference = await prisma.notificationPreference.findUnique({
-      where: { userId_type_value: { userId: gate.user.id, type, value } },
-      select: { id: true, type: true, value: true, status: true, catalogEntityId: true },
-    });
+    return await runOrdinaryCatalogRequestWrite(gate.user.id, async (tx) => {
+      const existingPreference = await tx.notificationPreference.findUnique({
+        where: { userId_type_value: { userId: gate.user.id, type, value } },
+        select: {
+          id: true,
+          type: true,
+          value: true,
+          status: true,
+          catalogEntityId: true,
+        },
+      });
 
-    if (existingPreference) {
-      return NextResponse.json({ ok: true, preference: existingPreference, alreadyExists: true }, { status: 200 });
-    }
-
-    const resolution = await resolveCatalogRequest({ type, value });
-
-    if (resolution.status === "FOUND") {
-      const entityId = resolution.suggestion.catalogEntityId;
-      if (!entityId) {
+      if (existingPreference) {
         return NextResponse.json(
-          { ok: false, error: "CATALOG_ENTITY_NOT_CACHED", message: "Could not save the verified catalog match." },
-          { status: 500 }
+          { ok: true, preference: existingPreference, alreadyExists: true },
+          { status: 200 },
         );
       }
 
-      const result = await prisma.$transaction(async (tx) => {
+      const resolution = await resolveCatalogRequest({ type, value });
+
+      if (resolution.status === "FOUND") {
+        const entityId = resolution.suggestion.catalogEntityId;
+        if (!entityId) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "CATALOG_ENTITY_NOT_CACHED",
+              message: "Could not save the verified catalog match.",
+            },
+            { status: 500 },
+          );
+        }
+
         const preference = await tx.notificationPreference.upsert({
           where: {
             userId_type_value: {
@@ -120,7 +138,13 @@ export async function POST(req: Request) {
             catalogEntityId: entityId,
             status: "ACTIVE",
           },
-          select: { id: true, type: true, value: true, status: true, catalogEntityId: true },
+          select: {
+            id: true,
+            type: true,
+            value: true,
+            status: true,
+            catalogEntityId: true,
+          },
         });
 
         const request = await tx.catalogRequest.upsert({
@@ -162,22 +186,67 @@ export async function POST(req: Request) {
           },
         });
 
-        return { preference, request };
-      });
+        return NextResponse.json(
+          {
+            ok: true,
+            preference,
+            request,
+            autoFulfilled: true,
+            message: `Verified ${resolution.suggestion.canonicalName} and added it to your notifications.`,
+          },
+          { status: 201 },
+        );
+      }
 
-      return NextResponse.json(
-        {
-          ok: true,
-          ...result,
-          autoFulfilled: true,
-          message: `Verified ${resolution.suggestion.canonicalName} and added it to your notifications.`,
-        },
-        { status: 201 }
-      );
-    }
+      if (resolution.status === "NEEDS_CLARIFICATION") {
+        const request = await tx.catalogRequest.upsert({
+          where: {
+            userId_requestedType_requestedValue: {
+              userId: gate.user.id,
+              requestedType: type,
+              requestedValue: value,
+            },
+          },
+          create: {
+            userId: gate.user.id,
+            requestedType: type,
+            requestedValue: value,
+            notes,
+            status: "NEEDS_CLARIFICATION",
+            adminNotes: resolution.question,
+            reviewedAt: new Date(),
+          },
+          update: {
+            notes,
+            status: "NEEDS_CLARIFICATION",
+            adminNotes: resolution.question,
+            reviewedAt: new Date(),
+            resolvedCatalogEntityId: null,
+            fulfilledPreferenceId: null,
+          },
+          select: {
+            id: true,
+            requestedType: true,
+            requestedValue: true,
+            status: true,
+            adminNotes: true,
+            createdAt: true,
+          },
+        });
 
-    if (resolution.status === "NEEDS_CLARIFICATION") {
-      const request = await prisma.catalogRequest.upsert({
+        return NextResponse.json(
+          {
+            ok: true,
+            request,
+            needsClarification: true,
+            suggestions: resolution.suggestions,
+            message: resolution.question,
+          },
+          { status: 200 },
+        );
+      }
+
+      let request = await tx.catalogRequest.upsert({
         where: {
           userId_requestedType_requestedValue: {
             userId: gate.user.id,
@@ -190,120 +259,93 @@ export async function POST(req: Request) {
           requestedType: type,
           requestedValue: value,
           notes,
-          status: "NEEDS_CLARIFICATION",
-          adminNotes: resolution.question,
-          reviewedAt: new Date(),
+          status: "PENDING",
         },
         update: {
           notes,
-          status: "NEEDS_CLARIFICATION",
-          adminNotes: resolution.question,
-          reviewedAt: new Date(),
-          resolvedCatalogEntityId: null,
-          fulfilledPreferenceId: null,
+          status: "PENDING",
+          adminNotes: null,
+          reviewedAt: null,
         },
         select: {
           id: true,
           requestedType: true,
           requestedValue: true,
           status: true,
-          adminNotes: true,
+          emailSentAt: true,
           createdAt: true,
         },
       });
+
+      const emailContent = adminEmail({
+        requestId: request.id,
+        type,
+        value,
+        notes,
+        user: {
+          id: gate.user.id,
+          email: gate.user.email,
+          firstName: gate.user.firstName,
+          lastName: gate.user.lastName,
+        },
+      });
+      const emailResult = await sendEmail({
+        to: ADMIN_EMAIL,
+        subject: emailContent.subject,
+        text: emailContent.text,
+        html: emailContent.html,
+      });
+
+      request = await tx.catalogRequest.update({
+        where: { id: request.id },
+        data: emailResult.ok
+          ? { emailSentAt: new Date(), emailError: null }
+          : { emailError: emailResult.error ?? "Email failed" },
+        select: {
+          id: true,
+          requestedType: true,
+          requestedValue: true,
+          status: true,
+          emailSentAt: true,
+          createdAt: true,
+        },
+      });
+
+      if (!emailResult.ok) {
+        console.error("Catalog request admin email failed:", emailResult.error);
+      }
 
       return NextResponse.json(
         {
           ok: true,
           request,
-          needsClarification: true,
-          suggestions: resolution.suggestions,
-          message: resolution.question,
+          message:
+            "Request sent. TrueFanTix will research it and add it to your notifications when it is verified.",
         },
-        { status: 200 }
+        { status: 201 },
       );
-    }
-
-    let request = await prisma.catalogRequest.upsert({
-      where: {
-        userId_requestedType_requestedValue: {
-          userId: gate.user.id,
-          requestedType: type,
-          requestedValue: value,
-        },
-      },
-      create: {
-        userId: gate.user.id,
-        requestedType: type,
-        requestedValue: value,
-        notes,
-        status: "PENDING",
-      },
-      update: {
-        notes,
-        status: "PENDING",
-        adminNotes: null,
-        reviewedAt: null,
-      },
-      select: {
-        id: true,
-        requestedType: true,
-        requestedValue: true,
-        status: true,
-        emailSentAt: true,
-        createdAt: true,
-      },
     });
-
-    const emailContent = adminEmail({
-      requestId: request.id,
-      type,
-      value,
-      notes,
-      user: {
-        id: gate.user.id,
-        email: gate.user.email,
-        firstName: gate.user.firstName,
-        lastName: gate.user.lastName,
-      },
-    });
-    const emailResult = await sendEmail({
-      to: ADMIN_EMAIL,
-      subject: emailContent.subject,
-      text: emailContent.text,
-      html: emailContent.html,
-    });
-
-    request = await prisma.catalogRequest.update({
-      where: { id: request.id },
-      data: emailResult.ok ? { emailSentAt: new Date(), emailError: null } : { emailError: emailResult.error ?? "Email failed" },
-      select: {
-        id: true,
-        requestedType: true,
-        requestedValue: true,
-        status: true,
-        emailSentAt: true,
-        createdAt: true,
-      },
-    });
-
-    if (!emailResult.ok) {
-      console.error("Catalog request admin email failed:", emailResult.error);
-    }
-
-    return NextResponse.json(
-      {
-        ok: true,
-        request,
-        message: "Request sent. TrueFanTix will research it and add it to your notifications when it is verified.",
-      },
-      { status: 201 }
-    );
   } catch (err) {
+    if (err instanceof ManagedAccountCatalogRequestWriteError) {
+      const response = NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403 },
+      );
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    }
     console.error("POST /api/catalog/requests failed:", err);
     return NextResponse.json(
-      { ok: false, error: "SERVER_ERROR", message: "Could not submit catalog request." },
-      { status: 500 }
+      {
+        ok: false,
+        error: "SERVER_ERROR",
+        message: "Could not submit catalog request.",
+      },
+      { status: 500 },
     );
   }
 }
