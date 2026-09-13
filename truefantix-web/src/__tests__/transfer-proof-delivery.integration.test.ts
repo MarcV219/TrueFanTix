@@ -979,7 +979,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.update({
       where: { id },
       data: { dispatchStartedAt: null },
-    })).rejects.toThrow("Transfer-proof delivery active claim evidence requires an expired-lease handoff");
+    })).rejects.toThrow("Transfer-proof delivery expired claim is not replay-safe");
     await expect(prisma.transferProofDeliveryIntent.update({
       where: { id },
       data: {
@@ -987,7 +987,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         leaseExpiresAt: new Date("2026-12-01T02:25:00.000Z"),
         claimToken: "premature-handoff", dispatchStartedAt: null,
       },
-    })).rejects.toThrow("Transfer-proof delivery active claim evidence requires an expired-lease handoff");
+    })).rejects.toThrow("Transfer-proof delivery expired claim is not replay-safe");
 
     const successorProcessingAt = leaseExpiresAt;
     await expect(prisma.transferProofDeliveryIntent.update({
@@ -1000,6 +1000,61 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).resolves.toMatchObject({
       attemptCount: 1, processingAt: successorProcessingAt,
       claimToken: "expired-lease-successor", dispatchStartedAt: null,
+    });
+  });
+
+  it("permits expired claim handoff only while the provider identity is replay-safe", async () => {
+    const [sendGridId, expiredResendId, activeResendId] = await seedAdminBatch("replay-safe-handoff", 3);
+    const processingAt = new Date("2026-12-01T02:00:00.000Z");
+    const dispatchStartedAt = new Date("2026-12-01T02:00:01.000Z");
+    const leaseExpiresAt = new Date("2026-12-01T02:15:00.000Z");
+
+    for (const [id, provider] of [
+      [sendGridId, "SENDGRID"], [expiredResendId, "RESEND"], [activeResendId, "RESEND"],
+    ] as const) {
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", provider, processingAt, leaseExpiresAt,
+          claimToken: `${provider.toLowerCase()}-${id}`,
+        },
+      });
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          attemptCount: 1, firstAttemptAt: dispatchStartedAt, dispatchStartedAt,
+        },
+      });
+    }
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: sendGridId },
+      data: {
+        processingAt: leaseExpiresAt,
+        leaseExpiresAt: new Date("2026-12-01T02:30:00.000Z"),
+        claimToken: "sendgrid-successor", dispatchStartedAt: null,
+      },
+    })).rejects.toThrow("Transfer-proof delivery expired claim is not replay-safe");
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: expiredResendId },
+      data: {
+        processingAt: new Date("2026-12-02T02:00:01.000Z"),
+        leaseExpiresAt: new Date("2026-12-02T02:15:01.000Z"),
+        claimToken: "expired-resend-successor", dispatchStartedAt: null,
+      },
+    })).rejects.toThrow("Transfer-proof delivery expired claim is not replay-safe");
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: activeResendId },
+      data: {
+        processingAt: leaseExpiresAt,
+        leaseExpiresAt: new Date("2026-12-01T02:30:00.000Z"),
+        claimToken: "active-resend-successor", dispatchStartedAt: null,
+      },
+    })).resolves.toMatchObject({
+      attemptCount: 1, processingAt: leaseExpiresAt,
+      claimToken: "active-resend-successor", dispatchStartedAt: null,
     });
   });
 
@@ -1061,6 +1116,79 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${transitionSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs replay-safe handoff fencing as a forward-only upgrade", async () => {
+    const handoffSchema = `transfer_proof_handoff_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${handoffSchema}"`);
+      await client.query(`SET search_path TO "${handoffSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt", "processingAt",
+          "leaseExpiresAt", "claimToken", "dispatchStartedAt", "availableAt"
+        ) VALUES
+          ('permissive-65', 'SENDGRID', 'PROCESSING', 1, NOW(), NOW(),
+            NOW() + INTERVAL '15 minutes', 'pre-66-owner', NOW(), NOW()),
+          ('strict-66', 'SENDGRID', 'PROCESSING', 1, NOW(), NOW(),
+            NOW() + INTERVAL '15 minutes', 'post-66-owner', NOW(), NOW())
+      `);
+
+      for (const migration of [
+        "20260913200000_enforce_transfer_proof_delivery_transitions",
+        "20260913203000_pin_transfer_proof_provider_on_dispatch",
+        "20260913210000_bind_first_transfer_proof_attempt_timestamp",
+        "20260913213000_fence_transfer_proof_claim_reassignment",
+      ]) {
+        const sql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(sql);
+      }
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "processingAt" = "leaseExpiresAt",
+          "leaseExpiresAt" = "leaseExpiresAt" + INTERVAL '15 minutes',
+          "claimToken" = 'pre-66-successor', "dispatchStartedAt" = NULL
+        WHERE id = 'permissive-65'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const replayFencingMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913220000_fence_transfer_proof_replay_handoffs/migration.sql",
+      ), "utf8");
+      await client.query(replayFencingMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "processingAt" = "leaseExpiresAt",
+          "leaseExpiresAt" = "leaseExpiresAt" + INTERVAL '15 minutes',
+          "claimToken" = 'post-66-successor', "dispatchStartedAt" = NULL
+        WHERE id = 'strict-66'
+      `)).rejects.toThrow("Transfer-proof delivery expired claim is not replay-safe");
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${handoffSchema}" CASCADE`);
       client.release();
     }
   });
