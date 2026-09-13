@@ -19,6 +19,7 @@ export async function sendAdminActivityEmail(params: {
   activity: AdminActivity;
   summary: string;
   details: Record<string, string | number | null | undefined>;
+  idempotencyKey?: string;
 }) {
   const completedAt = new Date().toISOString();
   const detailLines = Object.entries(params.details)
@@ -33,6 +34,7 @@ export async function sendAdminActivityEmail(params: {
       subject,
       text,
       html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#1f2937"><div style="background:#064a93;color:white;padding:18px 22px"><strong>${escapeHtml(params.summary)}</strong></div><div style="background:#f9fafb;padding:22px"><p><strong>Activity:</strong> ${escapeHtml(params.activity)}</p><ul>${htmlDetails}</ul><p style="color:#6b7280;font-size:12px">Completed: ${escapeHtml(completedAt)}</p></div></div>`,
+      idempotencyKey: params.idempotencyKey,
     });
     if (!result.ok) console.error(`[EMAIL] Admin activity notification failed (${params.activity}):`, result.error);
     return result;

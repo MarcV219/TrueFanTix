@@ -200,4 +200,24 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
   });
+
+  it("quarantines an ambiguous stale SendGrid acceptance instead of resending", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("09")));
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: { status: "PROCESSING", attemptCount: 1, leaseExpiresAt: new Date("2026-12-01T09:00:00.000Z") },
+    });
+    const previousSendGridKey = process.env.SENDGRID_API_KEY;
+    process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
+    try {
+      await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T00:00:00.000Z") }, prisma))
+        .resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0 });
+    } finally {
+      if (previousSendGridKey === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = previousSendGridKey;
+    }
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "RECONCILIATION_REQUIRED" } })).resolves.toBe(2);
+  });
 });

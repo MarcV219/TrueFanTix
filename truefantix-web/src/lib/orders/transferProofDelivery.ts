@@ -100,6 +100,15 @@ export async function drainTransferProofDeliveryIntents(
   let delivered = 0;
   let failed = 0;
   for (const row of rows) {
+    const provider = configuredEmailProvider();
+    const staleClaim = row.status === "PROCESSING";
+    if (staleClaim && provider === "SENDGRID") {
+      await db.transferProofDeliveryIntent.updateMany({
+        where: { id: row.id, status: "PROCESSING", leaseExpiresAt: { lte: now } },
+        data: { status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null, lastError: "Ambiguous prior SendGrid delivery requires reconciliation" },
+      });
+      continue;
+    }
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
     const claim = await db.transferProofDeliveryIntent.updateMany({
       where: { id: row.id, attemptCount: row.attemptCount, OR: recoverable.OR },
@@ -107,6 +116,13 @@ export async function drainTransferProofDeliveryIntents(
     });
     if (claim.count !== 1) continue;
     claimed += 1;
+
+    if (provider === "SENDGRID") {
+      await db.transferProofDeliveryIntent.updateMany({
+        where: { id: row.id, status: "PROCESSING", leaseExpiresAt },
+        data: { status: "RECONCILIATION_REQUIRED", lastError: "SendGrid does not support provider-level idempotency" },
+      });
+    }
 
     const attemptCount = row.attemptCount + 1;
     let data: Payload = {};
@@ -131,7 +147,7 @@ export async function drainTransferProofDeliveryIntents(
           },
         });
         const email = generateBuyerTransferConfirmationRequiredEmail(row.orderId, data.buyerFirstName ? String(data.buyerFirstName) : null, Number(data.ticketCount), deadline);
-        const result = await sendEmail({ to: row.recipient, ...email });
+        const result = await sendEmail({ to: row.recipient, ...email, idempotencyKey: row.idempotencyKey });
         await db.reminderDelivery.update({
           where: key,
           data: {
@@ -144,7 +160,7 @@ export async function drainTransferProofDeliveryIntents(
         });
         if (!result.ok) throw new Error(result.error || "Buyer email provider rejected delivery");
       } else if (row.kind === ADMIN_KIND) {
-        const result = await sendAdminActivityEmail({ activity: "TICKETS_TRANSFERRED", summary: `Ticket transfer submitted — order ${row.orderId}`, details: {
+        const result = await sendAdminActivityEmail({ activity: "TICKETS_TRANSFERRED", summary: `Ticket transfer submitted — order ${row.orderId}`, idempotencyKey: row.idempotencyKey, details: {
           "Order ID": row.orderId, Seller: data.sellerEmail ? String(data.sellerEmail) : null,
           Buyer: data.buyerEmail ? String(data.buyerEmail) : null, "Ticket count": Number(data.ticketCount),
           "Proof type": data.transferProofType ? String(data.transferProofType) : null,
@@ -168,7 +184,7 @@ export async function drainTransferProofDeliveryIntents(
       } else throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
 
       await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: "PROCESSING", leaseExpiresAt, attemptCount },
+        where: { id: row.id, status: { in: ["PROCESSING", "RECONCILIATION_REQUIRED"] }, leaseExpiresAt, attemptCount },
         data: { status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null, lastError: null },
       });
       delivered += 1;
@@ -203,9 +219,9 @@ export async function drainTransferProofDeliveryIntents(
         });
       }
       await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: "PROCESSING", leaseExpiresAt, attemptCount },
+        where: { id: row.id, status: { in: ["PROCESSING", "RECONCILIATION_REQUIRED"] }, leaseExpiresAt, attemptCount },
         data: {
-          status: "FAILED", processingAt: null, leaseExpiresAt: null, lastError: lastError.slice(0, 2000),
+          status: provider === "SENDGRID" ? "RECONCILIATION_REQUIRED" : "FAILED", processingAt: null, leaseExpiresAt: null, lastError: lastError.slice(0, 2000),
           availableAt: attemptCount < MAX_ATTEMPTS
             ? new Date(now.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
             : now,

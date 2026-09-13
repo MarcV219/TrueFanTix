@@ -7,6 +7,7 @@ export type EmailPayload = {
   subject: string;
   text: string;
   html?: string;
+  idempotencyKey?: string;
 };
 
 function cleanSecret(value: string | undefined) {
@@ -50,6 +51,7 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult>
         headers: {
           Authorization: `Bearer ${resendApiKey}`,
           "Content-Type": "application/json",
+          ...(payload.idempotencyKey ? { "Idempotency-Key": payload.idempotencyKey } : {}),
         },
         body: JSON.stringify({
           from: fromEmail,
