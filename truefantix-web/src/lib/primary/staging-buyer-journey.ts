@@ -20,7 +20,7 @@ export class PrimaryStagingBuyerError extends Error {
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function ids(generation: number) {
   const base = `${EVENT_PREFIX}${generation}`;
-  return { base, eventId: `${base}-event`, ticketTypeId: `${base}-type`, reservationId: `${base}-reservation`, orderId: `${base}-order`, lineId: `${base}-line`, paymentId: `${base}-payment`, ticketId: `${base}-ticket`, credentialId: randomUUID() };
+  return { generation, base, eventId: `${base}-event`, ticketTypeId: `${base}-type`, reservationId: `${base}-reservation`, orderId: `${base}-order`, lineId: `${base}-line`, paymentId: `${base}-payment`, ticketId: `${base}-ticket`, credentialId: randomUUID() };
 }
 function requireAdmin(actor: Actor) {
   if (actor.email !== STAGING_ADMIN_EMAIL || actor.role !== "ADMIN") throw new PrimaryStagingBuyerError("STAGING_ADMIN_REQUIRED");
@@ -62,6 +62,27 @@ async function requireSyntheticFixture(tx: Tx, actor: Actor) {
   return buyer;
 }
 
+async function requireScenarioRoot(tx: Tx, scope: ReturnType<typeof ids>, actor: Actor) {
+  const [event, ticketType] = await Promise.all([
+    tx.primaryEvent.findUnique({ where: { id: scope.eventId } }),
+    tx.primaryTicketType.findUnique({ where: { id: scope.ticketTypeId } }),
+  ]);
+  if (
+    !event || !ticketType
+    || event.organizerId !== ORGANIZER_ID || event.title !== `Synthetic Buyer Journey / Generation ${scope.generation}`
+    || event.description !== "Staging-only purchase and admission walkthrough." || event.category !== "SYNTHETIC"
+    || event.venueName !== "Synthetic Admission Hall" || event.venueAddressLine1 !== "1 Synthetic Way" || event.venueAddressLine2 !== null
+    || event.venueCity !== "Toronto" || event.venueRegion !== "ON" || event.venuePostalCode !== "M5V 0A1" || event.venueCountry !== "CA"
+    || event.startsAtLocal.toISOString() !== "2038-07-01T19:00:00.000Z" || event.endsAtLocal.toISOString() !== "2038-07-01T22:00:00.000Z"
+    || event.timezone !== "America/Toronto" || event.contactEmail !== ORGANIZER_SUPPORT_EMAIL || event.contactPhone !== BUYER_PHONE
+    || event.draftPolicyText !== "Synthetic staging-only policy." || event.totalCapacity !== 10 || event.status !== "APPROVED" || event.approvedByUserId !== actor.id
+    || ticketType.organizerId !== ORGANIZER_ID || ticketType.eventId !== scope.eventId
+    || ticketType.name !== "General admission" || ticketType.description !== "Synthetic inventory only."
+    || ticketType.allocatedQuantity !== 10 || ticketType.status !== "ACTIVE" || ticketType.minimumPerOrder !== 1 || ticketType.maximumPerOrder !== 2
+    || ticketType.currency !== "CAD" || ticketType.basePriceMinor !== 3500
+  ) throw new PrimaryStagingBuyerError("STAGING_BUYER_SCENARIO_INVALID");
+}
+
 async function generation(tx: Tx) {
   const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-buyer-g([0-9]+)-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
   return Number(rows[0]?.generation ?? 0);
@@ -87,7 +108,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
   return db.$transaction(async (tx) => {
     requireAdmin(actor); await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836292)");
     const currentGeneration = await generation(tx); if (!currentGeneration) throw new PrimaryStagingBuyerError("STAGING_BUYER_SCENARIO_REQUIRED");
-    const scope = ids(currentGeneration); const now = new Date(); const buyer = await requireSyntheticFixture(tx, actor);
+    const scope = ids(currentGeneration); const now = new Date(); const buyer = await requireSyntheticFixture(tx, actor); await requireScenarioRoot(tx, scope, actor);
     const reservation = await tx.primaryInventoryReservation.findUnique({ where: { id: scope.reservationId } });
     if (!reservation) {
       await tx.primaryInventoryReservation.create({ data: { id: scope.reservationId, organizerId: ORGANIZER_ID, eventId: scope.eventId, ticketTypeId: scope.ticketTypeId, buyerUserId: buyer.id, quantity: 1, expiresAt: new Date(now.getTime() + 600_000), createIdempotencyKey: `${scope.base}:hold` } });

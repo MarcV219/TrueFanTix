@@ -55,4 +55,19 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(db.user.findUniqueOrThrow({ where: { id: organizerUser.id } })).resolves.toMatchObject({ firstName: "Staging", lastName: "Organizer", displayName: "Staging Organizer", passwordHash: "synthetic-staging-no-login", phoneVerifiedAt: expect.any(Date), canBuy: false, canSell: false, canComment: false, role: "USER", isBanned: false, sellerId: null });
     await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: "HELD" });
   });
+
+  it("rejects deterministic event or ticket-type drift before purchase mutation", async () => {
+    const first = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const firstBase = `staging-buyer-g${first.generation}`;
+    await db.primaryEvent.update({ where: { id: `${firstBase}-event` }, data: { contactEmail: "drift@example.invalid" } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_SCENARIO_INVALID" });
+    await expect(db.primaryInventoryReservation.count({ where: { eventId: `${firstBase}-event` } })).resolves.toBe(0);
+
+    const second = await reseedPrimaryStagingBuyerJourney(db, admin);
+    expect(second.generation).toBe(first.generation + 1);
+    const secondBase = `staging-buyer-g${second.generation}`;
+    await db.primaryTicketType.update({ where: { id: `${secondBase}-type` }, data: { basePriceMinor: 9999 } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_SCENARIO_INVALID" });
+    await expect(db.primaryInventoryReservation.count({ where: { eventId: `${secondBase}-event` } })).resolves.toBe(0);
+  });
 });
