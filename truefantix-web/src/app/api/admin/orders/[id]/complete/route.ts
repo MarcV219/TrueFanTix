@@ -1,10 +1,14 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { consumeOrderAccessTokenHolds } from "@/lib/accessTokenHolds";
 import { awardLaunchSale } from "@/lib/launchPromotion";
+import {
+  AdminOperationAccessChangedError,
+  ManagedAccountAdminOperationError,
+  runOrdinaryAdminOperation,
+} from "@/lib/admin/ordinary-admin";
 
 const ACCESS_TOKEN_AWARD_PER_SOLDOUT_SALE = 1; // seller earns per sold-out ticket
 const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1; // buyer spends per sold-out ticket
@@ -59,7 +63,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await prisma.$transaction(async (tx: any) => {
+    const result = await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
       // Load order + items + tickets + event sellout
       const order = await tx.order.findUnique({
         where: { id: orderId },
@@ -425,6 +429,28 @@ export async function POST(req: Request) {
 
     return NextResponse.json((result as any).body, { status: (result as any).status });
   } catch (err: unknown) {
+    if (err instanceof ManagedAccountAdminOperationError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+
+    if (err instanceof AdminOperationAccessChangedError) {
+      const responses = {
+        NOT_AUTHENTICATED: [401, "Please log in."],
+        BANNED: [403, "This account is restricted."],
+        NOT_VERIFIED: [403, "Please verify your email and phone number."],
+        FORBIDDEN: [403, "Not authorized."],
+      } as const;
+      const [status, message] = responses[err.code];
+      return NextResponse.json({ ok: false, error: err.code, message }, { status });
+    }
+
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
       { ok: false, error: "Complete failed", details: message },
