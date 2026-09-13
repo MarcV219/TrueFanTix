@@ -8,6 +8,7 @@ import { schemas, validateRequest } from "@/lib/validation";
 import {
   isPrimaryStagingManagedUser,
   isPrimaryStagingSyntheticPhone,
+  primaryStagingManagedUserWhere,
 } from "@/lib/primary/staging-console";
 
 function jsonError(status: number, error: string, message: string) {
@@ -19,6 +20,9 @@ function reservedIdentityError(error: "PROFILE_LOCKED" | "PHONE_IN_USE", message
   response.headers.set("Cache-Control", "private, no-store");
   return response;
 }
+
+class ManagedAccountProfileUpdateError extends Error {}
+class AccountProfileUpdateConflictError extends Error {}
 
 function normalizePhone(phone: string) {
   const cleaned = phone.trim().replace(/[^\d+]/g, "");
@@ -56,7 +60,7 @@ export async function PATCH(req: Request) {
 
     const body = validation.data;
 
-    const updateData: Record<string, any> = {};
+    const updateData: Prisma.UserUpdateManyMutationInput = {};
 
     if (body.firstName !== undefined) updateData.firstName = body.firstName;
     if (body.lastName !== undefined) updateData.lastName = body.lastName;
@@ -91,27 +95,65 @@ export async function PATCH(req: Request) {
       return jsonError(400, "VALIDATION_ERROR", "No fields provided to update.");
     }
 
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: updateData,
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        displayName: true,
-        phone: true,
-        streetAddress1: true,
-        streetAddress2: true,
-        city: true,
-        region: true,
-        postalCode: true,
-        country: true,
-        emailVerifiedAt: true,
-        phoneVerifiedAt: true,
-        updatedAt: true,
-      },
-    });
+    let updatedUser;
+    try {
+      updatedUser = await prisma.$transaction(async (tx) => {
+        const updated = await tx.user.updateMany({
+          where: {
+            id: userId,
+            NOT: primaryStagingManagedUserWhere(),
+          },
+          data: updateData,
+        });
+        if (updated.count !== 1) {
+          const currentUser = await tx.user.findUnique({
+            where: { id: userId },
+            select: {
+              email: true,
+              phone: true,
+              termsVersion: true,
+              privacyVersion: true,
+            },
+          });
+          if (currentUser && isPrimaryStagingManagedUser(currentUser)) {
+            throw new ManagedAccountProfileUpdateError();
+          }
+          throw new AccountProfileUpdateConflictError();
+        }
+
+        return tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            displayName: true,
+            phone: true,
+            streetAddress1: true,
+            streetAddress2: true,
+            city: true,
+            region: true,
+            postalCode: true,
+            country: true,
+            emailVerifiedAt: true,
+            phoneVerifiedAt: true,
+            updatedAt: true,
+          },
+        });
+      }, { isolationLevel: "Serializable" });
+    } catch (error) {
+      if (error instanceof ManagedAccountProfileUpdateError) {
+        return reservedIdentityError(
+          "PROFILE_LOCKED",
+          "This account profile is managed by the staging console.",
+        );
+      }
+      if (error instanceof AccountProfileUpdateConflictError) {
+        return jsonError(404, "NOT_FOUND", "Account not found.");
+      }
+      throw error;
+    }
 
     return NextResponse.json(
       {
@@ -121,7 +163,7 @@ export async function PATCH(req: Request) {
       },
       { status: 200 }
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("PATCH /api/account/profile error:", err);
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
       if (err.code === "P2002") {
