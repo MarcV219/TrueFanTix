@@ -156,7 +156,7 @@ export function isPrimaryStagingManagedUser(user: {
     || user.privacyVersion === STAGING_LEGAL_VERSION;
 }
 
-function primaryStagingManagedUserWhere(): Prisma.UserWhereInput {
+export function primaryStagingManagedUserWhere(): Prisma.UserWhereInput {
   return {
     OR: [
       {

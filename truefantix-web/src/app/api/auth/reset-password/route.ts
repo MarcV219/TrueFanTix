@@ -6,7 +6,10 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
-import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
+import {
+  isPrimaryStagingManagedUser,
+  primaryStagingManagedUserWhere,
+} from "@/lib/primary/staging-console";
 
 function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
@@ -31,6 +34,8 @@ function sha256(input: string) {
 }
 
 const MAX_ATTEMPTS = 5;
+
+class InvalidPasswordResetError extends Error {}
 
 export async function POST(req: Request) {
   try {
@@ -79,28 +84,50 @@ export async function POST(req: Request) {
       return jsonError(400, "INVALID_TOKEN", "Reset link is invalid.");
     }
 
-    // Increment only after the reset code's user has passed the managed-account
-    // boundary. A legacy code must not mutate staging-owned verification state.
-    await prisma.verificationCode.update({
-      where: { id: resetCode.id },
-      data: { attemptCount: { increment: 1 } },
-    });
-
     // Hash new password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Update password and mark token as used
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: user.id },
-        data: { passwordHash },
-      }),
-      prisma.verificationCode.update({
-        where: { id: resetCode.id },
-        data: { usedAt: new Date() },
-      }),
-      prisma.session.deleteMany({ where: { userId: user.id } }),
-    ]);
+    // Consume the code and revalidate the managed-account boundary atomically.
+    // A staging persona restored while bcrypt is running must not inherit the
+    // caller's password or lose its newly issued console session.
+    try {
+      await prisma.$transaction(async (tx) => {
+        const usedAt = new Date();
+        const consumed = await tx.verificationCode.updateMany({
+          where: {
+            id: resetCode.id,
+            userId: user.id,
+            destination: `reset:${email.toLowerCase()}`,
+            codeHash: tokenHash,
+            usedAt: null,
+            expiresAt: { gt: usedAt },
+            attemptCount: { lt: MAX_ATTEMPTS },
+          },
+          data: {
+            attemptCount: { increment: 1 },
+            usedAt,
+          },
+        });
+        if (consumed.count !== 1) throw new InvalidPasswordResetError();
+
+        const updated = await tx.user.updateMany({
+          where: {
+            id: user.id,
+            email: { equals: email, mode: "insensitive" },
+            NOT: primaryStagingManagedUserWhere(),
+          },
+          data: { passwordHash },
+        });
+        if (updated.count !== 1) throw new InvalidPasswordResetError();
+
+        await tx.session.deleteMany({ where: { userId: user.id } });
+      });
+    } catch (error) {
+      if (error instanceof InvalidPasswordResetError) {
+        return privateJsonError(400, "INVALID_TOKEN", "Reset link is invalid.");
+      }
+      throw error;
+    }
 
     return NextResponse.json(
       { ok: true, message: "Password has been reset successfully." },

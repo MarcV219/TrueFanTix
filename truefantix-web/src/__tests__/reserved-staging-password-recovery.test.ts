@@ -16,15 +16,18 @@ jest.mock("@/lib/prisma", () => ({
       create: jest.fn(),
       findFirst: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     verificationCode: {
       findFirst: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     session: { deleteMany: jest.fn() },
     user: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     $transaction: jest.fn(),
   },
@@ -57,15 +60,18 @@ const mockedPrisma = prisma as unknown as {
     create: jest.Mock;
     findFirst: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
   verificationCode: {
     findFirst: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
   session: { deleteMany: jest.Mock };
   user: {
     findUnique: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
   $transaction: jest.Mock;
 };
@@ -168,5 +174,62 @@ describe("reserved staging personas cannot use password recovery", () => {
     expect(mockedPrisma.verificationCode.update).not.toHaveBeenCalled();
     expect(mockedPrisma.user.update).not.toHaveBeenCalled();
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rechecks current reset ownership atomically if persona restoration wins the race", async () => {
+    mockValidation({ token: "a".repeat(64), userId: managedUser.id, newPassword: "NewPassword123!" });
+    mockedPrisma.passwordResetToken.findFirst.mockResolvedValue({ id: "reset-token-1" });
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      ...managedUser,
+      email: "ordinary-before-restore@example.test",
+      phone: "+14165550199",
+      termsVersion: "v1",
+      privacyVersion: "v1",
+    });
+    mockedPrisma.passwordResetToken.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+    mockedPrisma.$transaction.mockImplementation(async (work: (tx: typeof mockedPrisma) => unknown) => work(mockedPrisma));
+
+    const response = await completePasswordReset(new Request(
+      "https://preview.example/api/auth/forgot-password",
+      { method: "PATCH" },
+    ));
+
+    await expectPrivateInvalidToken(response);
+    expect(mockedPrisma.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: managedUser.id, NOT: expect.any(Object) }),
+    }));
+    expect(mockedPrisma.session.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rechecks legacy reset ownership atomically if persona restoration wins the race", async () => {
+    const priorEmail = "ordinary-before-restore@example.test";
+    mockValidation({ token: "123456", email: priorEmail, password: "NewPassword123!" });
+    mockedPrisma.verificationCode.findFirst.mockResolvedValue({
+      id: "legacy-reset-code-1",
+      userId: managedUser.id,
+      attemptCount: 0,
+    });
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      ...managedUser,
+      email: priorEmail,
+      phone: "+14165550199",
+      termsVersion: "v1",
+      privacyVersion: "v1",
+    });
+    mockedPrisma.verificationCode.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+    mockedPrisma.$transaction.mockImplementation(async (work: (tx: typeof mockedPrisma) => unknown) => work(mockedPrisma));
+
+    const response = await completeLegacyPasswordReset(new Request(
+      "https://preview.example/api/auth/reset-password",
+      { method: "POST" },
+    ));
+
+    await expectPrivateInvalidToken(response);
+    expect(mockedPrisma.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: managedUser.id, NOT: expect.any(Object) }),
+    }));
+    expect(mockedPrisma.session.deleteMany).not.toHaveBeenCalled();
   });
 });

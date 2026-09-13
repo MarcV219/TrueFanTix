@@ -6,9 +6,14 @@ import bcrypt from "bcryptjs";
 import { schemas, validateRequest } from "@/lib/validation";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { applyRateLimit } from "@/lib/rate-limit";
-import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
+import {
+  isPrimaryStagingManagedUser,
+  primaryStagingManagedUserWhere,
+} from "@/lib/primary/staging-console";
 
 const SALT_ROUNDS = 12;
+
+class InvalidPasswordResetError extends Error {}
 
 function privateNoStore<T extends NextResponse>(response: T) {
   response.headers.set("Cache-Control", "private, no-store");
@@ -262,18 +267,44 @@ export async function PATCH(req: Request) {
     // Hash new password
     const passwordHash = await bcrypt.hash(data.newPassword, SALT_ROUNDS);
 
-    // Update password and mark token as used
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: data.userId },
-        data: { passwordHash },
-      }),
-      prisma.passwordResetToken.update({
-        where: { id: resetToken.id },
-        data: { usedAt: new Date() },
-      }),
-      prisma.session.deleteMany({ where: { userId: data.userId } }),
-    ]);
+    // Revalidate both the one-time token and the managed-account boundary in
+    // the write transaction. Persona restoration can otherwise race the
+    // checks above while bcrypt is running and let an in-flight ordinary reset
+    // overwrite a newly restored staging persona.
+    try {
+      await prisma.$transaction(async (tx) => {
+        const usedAt = new Date();
+        const consumed = await tx.passwordResetToken.updateMany({
+          where: {
+            id: resetToken.id,
+            userId: data.userId,
+            usedAt: null,
+            expiresAt: { gt: usedAt },
+          },
+          data: { usedAt },
+        });
+        if (consumed.count !== 1) throw new InvalidPasswordResetError();
+
+        const updated = await tx.user.updateMany({
+          where: {
+            id: data.userId,
+            NOT: primaryStagingManagedUserWhere(),
+          },
+          data: { passwordHash },
+        });
+        if (updated.count !== 1) throw new InvalidPasswordResetError();
+
+        await tx.session.deleteMany({ where: { userId: data.userId } });
+      });
+    } catch (error) {
+      if (error instanceof InvalidPasswordResetError) {
+        return privateNoStore(NextResponse.json(
+          { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
+          { status: 400 },
+        ));
+      }
+      throw error;
+    }
 
     await auditLog({
       action: "PASSWORD_RESET_COMPLETE",
