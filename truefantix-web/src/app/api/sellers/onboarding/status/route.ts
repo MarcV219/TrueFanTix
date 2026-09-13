@@ -5,6 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import { instantPayoutDestination, instantPayoutStatusLabel } from "@/lib/payouts/instantPayout";
 import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
+import {
+  ManagedAccountSellerOnboardingError,
+  runOrdinarySellerOnboardingOperation,
+} from "@/lib/sellers/ordinary-onboarding";
 
 function noStoreJson(body: any, init?: ResponseInit) {
   const res = NextResponse.json(body, init);
@@ -54,132 +58,144 @@ export async function GET() {
       );
     }
 
-    const seller = user.seller;
+    return await runOrdinarySellerOnboardingOperation(user.id, async (tx, currentUser) => {
+      const seller = currentUser.seller;
 
-    if (!seller || !seller.stripeAccountId) {
+      if (!seller || !seller.stripeAccountId) {
+        return noStoreJson(
+          {
+            ok: true,
+            stripe: {
+              hasAccount: false,
+              detailsSubmitted: false,
+              chargesEnabled: false,
+              payoutsEnabled: false,
+              fullyEnabled: false,
+              instantPayout: { status: "SETUP_REQUIRED", eligible: false, feePaidBy: "TRUEFANTIX" },
+              // debug
+              capabilities: null,
+              requirements: null,
+            },
+          },
+          { status: 200 },
+        );
+      }
+
+      const stripe = await getStripe();
+      if (!stripe) {
+        return noStoreJson(
+          {
+            ok: false,
+            error: "STRIPE_NOT_CONFIGURED",
+            message: "Seller verification is temporarily unavailable while Stripe setup is completed.",
+          },
+          { status: 503 },
+        );
+      }
+
+      const acct: any = await stripe.accounts.retrieve(seller.stripeAccountId);
+      const externalAccounts: any = await stripe.accounts.listExternalAccounts(seller.stripeAccountId, { limit: 100 });
+
+      const detailsSubmitted = !!acct?.details_submitted;
+
+      // Legacy booleans (sometimes lag / not the best signal)
+      const chargesEnabledLegacy = !!acct?.charges_enabled;
+      const payoutsEnabledLegacy = !!acct?.payouts_enabled;
+
+      // Capabilities are the best signal for Connect
+      const cap = acct?.capabilities ?? {};
+      const cardPaymentsActive = isActiveCapability(cap?.card_payments);
+      const transfersActive = isActiveCapability(cap?.transfers);
+
+      // TrueFanTix charges buyers on the platform account and releases funds to
+      // sellers later, so seller readiness only depends on transfer/payout access.
+      const chargesEnabled = chargesEnabledLegacy || cardPaymentsActive;
+      const payoutsEnabled = payoutsEnabledLegacy || transfersActive;
+
+      const requirements = acct?.requirements
+        ? {
+            currently_due: Array.isArray(acct.requirements.currently_due)
+              ? acct.requirements.currently_due
+              : [],
+            eventually_due: Array.isArray(acct.requirements.eventually_due)
+              ? acct.requirements.eventually_due
+              : [],
+            past_due: Array.isArray(acct.requirements.past_due) ? acct.requirements.past_due : [],
+            disabled_reason: acct.requirements.disabled_reason ?? null,
+          }
+        : null;
+
+      const fullyEnabled = detailsSubmitted && payoutsEnabled;
+      const payoutAccounts = Array.isArray(externalAccounts?.data) ? externalAccounts.data : [];
+      const instantDestination = instantPayoutDestination(payoutAccounts, "CAD");
+      const instantPayoutStatus = instantPayoutStatusLabel(!!instantDestination, payoutAccounts.length > 0);
+
+      // Store what Stripe says (source of truth).
+      await tx.seller.update({
+        where: { id: seller.id },
+        data: {
+          stripeDetailsSubmitted: detailsSubmitted,
+          stripeChargesEnabled: chargesEnabled,
+          stripePayoutsEnabled: payoutsEnabled,
+        },
+      });
+
+      // If fully enabled, approve seller + allow selling.
+      if (fullyEnabled) {
+        await tx.seller.update({
+          where: { id: seller.id },
+          data: {
+            status: "APPROVED",
+            statusUpdatedAt: new Date(),
+            statusReason: null,
+          },
+        });
+
+        if (!currentUser.canSell) {
+          await tx.user.update({
+            where: { id: currentUser.id },
+            data: { canSell: true },
+          });
+        }
+      }
+
       return noStoreJson(
         {
           ok: true,
           stripe: {
-            hasAccount: false,
-            detailsSubmitted: false,
-            chargesEnabled: false,
-            payoutsEnabled: false,
-            fullyEnabled: false,
-            instantPayout: { status: "SETUP_REQUIRED", eligible: false, feePaidBy: "TRUEFANTIX" },
-            // debug
-            capabilities: null,
-            requirements: null,
+            hasAccount: true,
+            detailsSubmitted,
+            chargesEnabled,
+            payoutsEnabled,
+            fullyEnabled,
+            instantPayout: {
+              status: instantPayoutStatus,
+              eligible: !!instantDestination,
+              feePaidBy: "TRUEFANTIX",
+              destinationType: instantDestination?.object ?? null,
+            },
+            // debug (helps us if Stripe still disagrees)
+            capabilities: {
+              card_payments: cap?.card_payments ?? null,
+              transfers: cap?.transfers ?? null,
+            },
+            requirements,
           },
         },
-        { status: 200 }
+        { status: 200 },
       );
-    }
-
-    const stripe = await getStripe();
-    if (!stripe) {
+    });
+  } catch (err: any) {
+    if (err instanceof ManagedAccountSellerOnboardingError) {
       return noStoreJson(
         {
           ok: false,
-          error: "STRIPE_NOT_CONFIGURED",
-          message: "Seller verification is temporarily unavailable while Stripe setup is completed.",
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
         },
-        { status: 503 }
+        { status: 403 },
       );
     }
-
-    const acct: any = await stripe.accounts.retrieve(seller.stripeAccountId);
-    const externalAccounts: any = await stripe.accounts.listExternalAccounts(seller.stripeAccountId, { limit: 100 });
-
-    const detailsSubmitted = !!acct?.details_submitted;
-
-    // Legacy booleans (sometimes lag / not the best signal)
-    const chargesEnabledLegacy = !!acct?.charges_enabled;
-    const payoutsEnabledLegacy = !!acct?.payouts_enabled;
-
-    // Capabilities are the best signal for Connect
-    const cap = acct?.capabilities ?? {};
-    const cardPaymentsActive = isActiveCapability(cap?.card_payments);
-    const transfersActive = isActiveCapability(cap?.transfers);
-
-    // TrueFanTix charges buyers on the platform account and releases funds to
-    // sellers later, so seller readiness only depends on transfer/payout access.
-    const chargesEnabled = chargesEnabledLegacy || cardPaymentsActive;
-    const payoutsEnabled = payoutsEnabledLegacy || transfersActive;
-
-    const requirements = acct?.requirements
-      ? {
-          currently_due: Array.isArray(acct.requirements.currently_due)
-            ? acct.requirements.currently_due
-            : [],
-          eventually_due: Array.isArray(acct.requirements.eventually_due)
-            ? acct.requirements.eventually_due
-            : [],
-          past_due: Array.isArray(acct.requirements.past_due) ? acct.requirements.past_due : [],
-          disabled_reason: acct.requirements.disabled_reason ?? null,
-        }
-      : null;
-
-    const fullyEnabled = detailsSubmitted && payoutsEnabled;
-    const payoutAccounts = Array.isArray(externalAccounts?.data) ? externalAccounts.data : [];
-    const instantDestination = instantPayoutDestination(payoutAccounts, "CAD");
-    const instantPayoutStatus = instantPayoutStatusLabel(!!instantDestination, payoutAccounts.length > 0);
-
-    // Store what Stripe says (source of truth)
-    await prisma.seller.update({
-      where: { id: seller.id },
-      data: {
-        stripeDetailsSubmitted: detailsSubmitted,
-        stripeChargesEnabled: chargesEnabled,
-        stripePayoutsEnabled: payoutsEnabled,
-      },
-    });
-
-    // If fully enabled, approve seller + allow selling
-    if (fullyEnabled) {
-      await prisma.seller.update({
-        where: { id: seller.id },
-        data: {
-          status: "APPROVED",
-          statusUpdatedAt: new Date(),
-          statusReason: null,
-        },
-      });
-
-      if (!user.canSell) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { canSell: true },
-        });
-      }
-    }
-
-    return noStoreJson(
-      {
-        ok: true,
-        stripe: {
-          hasAccount: true,
-          detailsSubmitted,
-          chargesEnabled,
-          payoutsEnabled,
-          fullyEnabled,
-          instantPayout: {
-            status: instantPayoutStatus,
-            eligible: !!instantDestination,
-            feePaidBy: "TRUEFANTIX",
-            destinationType: instantDestination?.object ?? null,
-          },
-          // debug (helps us if Stripe still disagrees)
-          capabilities: {
-            card_payments: cap?.card_payments ?? null,
-            transfers: cap?.transfers ?? null,
-          },
-          requirements,
-        },
-      },
-      { status: 200 }
-    );
-  } catch (err: any) {
     console.error("GET /api/sellers/onboarding/status failed:", err);
     const message = err?.message ? String(err.message) : "SERVER_ERROR";
     return noStoreJson({ ok: false, error: "SERVER_ERROR", message }, { status: 500 });
