@@ -1,12 +1,16 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { createNotification } from "@/lib/notifications/service";
 import { DISPUTE_SUPPORT_EMAIL, parseDisputeCase, sendDisputeEmails } from "@/lib/disputes";
 import { canBuyerCancelDispute } from "@/lib/dispute-case";
+import {
+  ManagedAccountOrderOperationError,
+  OrderOperationAccessChangedError,
+  runOrdinaryOrderOperation,
+} from "@/lib/orders/ordinary-user";
 import { schemas, validateRequest } from "@/lib/validation";
 import { awardLaunchSale } from "@/lib/launchPromotion";
 
@@ -19,44 +23,48 @@ export async function POST(req: Request) {
     if (!validation.success) return validation.response;
 
     const { orderId } = validation.data;
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        items: { include: { ticket: true } },
-        seller: { include: { user: true } },
-        buyerSeller: { include: { user: true } },
-      },
-    });
 
-    if (!order) {
-      return NextResponse.json({ ok: false, error: "NOT_FOUND", message: "Order not found." }, { status: 404 });
-    }
-    if (order.buyerSellerId !== gate.user.sellerId) {
-      return NextResponse.json({ ok: false, error: "FORBIDDEN", message: "Only this order’s buyer may cancel the dispute." }, { status: 403 });
-    }
-    if (!canBuyerCancelDispute(order.buyerConfirmationStatus, order.transferVerificationStatus)) {
-      return NextResponse.json({ ok: false, error: "INVALID_STATE", message: "This dispute is no longer open." }, { status: 409 });
-    }
+    return await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
+      // Serialize buyer cancellation with evidence submission and administrator
+      // resolution. The locked snapshot is authoritative for case closure.
+      await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        include: {
+          items: { include: { ticket: true } },
+          seller: { include: { user: true } },
+          buyerSeller: { include: { user: true } },
+        },
+      });
 
-    const dispute = parseDisputeCase(order.transferVerificationReason);
-    if (!dispute) {
-      return NextResponse.json({ ok: false, error: "INVALID_CASE", message: "Dispute case details could not be found." }, { status: 409 });
-    }
-    if (dispute.openedByUserId !== gate.user.id) {
-      return NextResponse.json({ ok: false, error: "FORBIDDEN", message: "Only the user who opened this dispute may cancel it." }, { status: 403 });
-    }
+      if (!order) {
+        return NextResponse.json({ ok: false, error: "NOT_FOUND", message: "Order not found." }, { status: 404 });
+      }
+      if (order.buyerSellerId !== current.sellerId) {
+        return NextResponse.json({ ok: false, error: "FORBIDDEN", message: "Only this order’s buyer may cancel the dispute." }, { status: 403 });
+      }
+      if (!canBuyerCancelDispute(order.buyerConfirmationStatus, order.transferVerificationStatus)) {
+        return NextResponse.json({ ok: false, error: "INVALID_STATE", message: "This dispute is no longer open." }, { status: 409 });
+      }
 
-    const now = new Date();
-    const cancellation = {
-      cancelledAt: now.toISOString(),
-      cancelledByUserId: gate.user.id,
-      satisfactorilyResolved: true as const,
-    };
-    const updatedDispute = { ...dispute, cancellation };
+      const dispute = parseDisputeCase(order.transferVerificationReason);
+      if (!dispute) {
+        return NextResponse.json({ ok: false, error: "INVALID_CASE", message: "Dispute case details could not be found." }, { status: 409 });
+      }
+      if (dispute.openedByUserId !== current.id) {
+        return NextResponse.json({ ok: false, error: "FORBIDDEN", message: "Only the user who opened this dispute may cancel it." }, { status: 403 });
+      }
 
-    const updatedOrder = await prisma.$transaction(async (tx: any) => {
+      const now = new Date();
+      const cancellation = {
+        cancelledAt: now.toISOString(),
+        cancelledByUserId: current.id,
+        satisfactorilyResolved: true as const,
+      };
+      const updatedDispute = { ...dispute, cancellation };
+
       await tx.ticket.updateMany({
-        where: { id: { in: order.items.map((item: any) => item.ticketId) } },
+        where: { id: { in: order.items.map((item) => item.ticketId) } },
         data: { status: "SOLD", soldAt: now, reservedByOrderId: null, reservedUntil: null },
       });
       await tx.sellerMetrics.upsert({
@@ -103,36 +111,33 @@ export async function POST(req: Request) {
         select: { id: true, status: true, buyerConfirmationStatus: true, transferVerificationStatus: true },
       });
       await awardLaunchSale(tx, { orderId: order.id, sellerId: order.sellerId, ticketCount: order.items.length, occurredAt: now });
-      return completedOrder;
-    });
 
-    const sellerUserId = order.seller.user?.id;
-    const disputedTicketDetails = order.items
-      .filter((item: any) => dispute.ticketIds?.includes(item.ticketId))
-      .map((item: any) => {
-        const location = [item.ticket.row ? `Row ${item.ticket.row}` : null, item.ticket.seat ? `Seat ${item.ticket.seat}` : null]
-          .filter(Boolean)
-          .join(", ");
-        return `${item.ticket.title} — ${item.ticket.venue} — ${item.ticket.date}${location ? ` — ${location}` : ""} (ticket ${item.ticketId})`;
-      });
-    const sideEffects = await Promise.allSettled([
-      auditLog({
+      const sellerUserId = order.seller.user?.id;
+      const disputedTicketDetails = order.items
+        .filter((item) => dispute.ticketIds?.includes(item.ticketId))
+        .map((item) => {
+          const location = [item.ticket.row ? `Row ${item.ticket.row}` : null, item.ticket.seat ? `Seat ${item.ticket.seat}` : null]
+            .filter(Boolean)
+            .join(", ");
+          return `${item.ticket.title} — ${item.ticket.venue} — ${item.ticket.date}${location ? ` — ${location}` : ""} (ticket ${item.ticketId})`;
+        });
+      await auditLog({
         action: "DISPUTE_CANCEL",
-        userId: gate.user.id,
+        userId: current.id,
         targetType: "Order",
         targetId: order.id,
         metadata: cancellation,
         ...createAuditContext(req),
-      }),
-      sellerUserId
-        ? createNotification({
-            userId: sellerUserId,
-            type: "DISPUTE_OPENED",
-            message: `The buyer cancelled dispute ${order.id} and confirmed it was satisfactorily resolved. Seller payout is now pending.`,
-            link: "/account/tickets/seller-holding",
-          })
-        : Promise.resolve(),
-      sendDisputeEmails({
+      }, tx);
+      if (sellerUserId) {
+        await createNotification({
+          userId: sellerUserId,
+          type: "DISPUTE_OPENED",
+          message: `The buyer cancelled dispute ${order.id} and confirmed it was satisfactorily resolved. Seller payout is now pending.`,
+          link: "/account/tickets/seller-holding",
+        }, tx);
+      }
+      await sendDisputeEmails({
         orderId: order.id,
         kind: "CANCELLED",
         submittedBy: "Buyer",
@@ -145,20 +150,33 @@ export async function POST(req: Request) {
           ...(order.seller.user?.email ? [{ email: order.seller.user.email, firstName: order.seller.user.firstName, role: "Seller" as const }] : []),
           { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
         ],
-      }),
-    ]);
-    sideEffects.forEach((result, index) => {
-      if (result.status === "rejected") {
-        console.error(`Dispute cancellation follow-up ${index + 1} failed for order ${order.id}:`, result.reason);
-      }
-    });
+      }, tx);
 
-    return NextResponse.json({
-      ok: true,
-      order: updatedOrder,
-      message: "Dispute cancelled. You confirmed that it was satisfactorily resolved.",
+      return NextResponse.json({
+        ok: true,
+        order: completedOrder,
+        message: "Dispute cancelled. You confirmed that it was satisfactorily resolved.",
+      });
     });
   } catch (err) {
+    if (err instanceof ManagedAccountOrderOperationError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+
+    if (err instanceof OrderOperationAccessChangedError) {
+      const [status, message] = err.code === "NOT_AUTHENTICATED"
+        ? [401, "Please log in."]
+        : [403, "This account is restricted."];
+      return NextResponse.json({ ok: false, error: err.code, message }, { status });
+    }
+
     console.error("POST /api/orders/dispute/cancel failed:", err);
     return NextResponse.json({ ok: false, error: "SERVER_ERROR", message: "Could not cancel dispute." }, { status: 500 });
   }
