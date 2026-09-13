@@ -1451,6 +1451,126 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
   });
 
+  it("freezes retryable failure evidence until a due retry claim is acquired", async () => {
+    const [rewrittenId, validId] = await seedAdminBatch("failure-evidence-freeze", 2);
+    const firstAttemptAt = new Date("2026-12-01T01:00:00.000Z");
+    const availableAt = new Date("2026-12-01T03:00:00.000Z");
+    await forceLegacyIntentState(
+      { id: { in: [rewrittenId, validId] } },
+      {
+        status: "FAILED", provider: "RESEND", attemptCount: 1, firstAttemptAt,
+        availableAt, lastError: "synthetic retryable rejection",
+      },
+    );
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: rewrittenId },
+      data: {
+        lastError: "rewritten rejection",
+        availableAt: new Date("2026-12-01T02:00:00.000Z"),
+      },
+    })).rejects.toThrow(
+      "Failed transfer-proof delivery evidence is immutable until retry or reconciliation",
+    );
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validId },
+      data: {
+        status: "PROCESSING", processingAt: availableAt,
+        leaseExpiresAt: new Date("2026-12-01T03:15:00.000Z"),
+        claimToken: "valid-frozen-failure-retry", lastError: null,
+      },
+    })).resolves.toMatchObject({
+      status: "PROCESSING", attemptCount: 1, lastError: null,
+    });
+  });
+
+  it("installs immutable retryable failure evidence as a forward-only upgrade", async () => {
+    const failureSchema = `transfer_proof_failure_freeze_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${failureSchema}"`);
+      await client.query(`SET search_path TO "${failureSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt", "lastError", "availableAt"
+        ) VALUES
+          ('permissive-70', 'RESEND', 'FAILED', 1,
+            TIMESTAMP '2026-12-01 01:00:00', 'original rejection',
+            TIMESTAMP '2026-12-01 03:00:00'),
+          ('strict-71', 'RESEND', 'FAILED', 1,
+            TIMESTAMP '2026-12-01 01:00:00', 'original rejection',
+            TIMESTAMP '2026-12-01 03:00:00')
+      `);
+
+      for (const migration of [
+        "20260913200000_enforce_transfer_proof_delivery_transitions",
+        "20260913203000_pin_transfer_proof_provider_on_dispatch",
+        "20260913210000_bind_first_transfer_proof_attempt_timestamp",
+        "20260913213000_fence_transfer_proof_claim_reassignment",
+        "20260913220000_fence_transfer_proof_replay_handoffs",
+        "20260913223000_freeze_transfer_proof_attempt_identity",
+        "20260913230000_require_transfer_proof_claim_before_dispatch",
+        "20260913233000_require_transfer_proof_dispatch_before_delivery",
+        "20260914000000_require_transfer_proof_dispatch_before_failure",
+      ]) {
+        const sql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(sql);
+      }
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "lastError" = 'rewritten rejection',
+          "availableAt" = TIMESTAMP '2026-12-01 02:00:00'
+        WHERE id = 'permissive-70'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const failureFreezeMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914003000_freeze_transfer_proof_failure_evidence/migration.sql",
+      ), "utf8");
+      await client.query(failureFreezeMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "lastError" = 'rewritten rejection',
+          "availableAt" = TIMESTAMP '2026-12-01 02:00:00'
+        WHERE id = 'strict-71'
+      `)).rejects.toThrow(
+        "Failed transfer-proof delivery evidence is immutable until retry or reconciliation",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING', "processingAt" = "availableAt",
+          "leaseExpiresAt" = "availableAt" + INTERVAL '15 minutes',
+          "claimToken" = 'strict-71-retry', "lastError" = NULL
+        WHERE id = 'strict-71'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${failureSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("installs dispatch-bound failure evidence as a forward-only upgrade", async () => {
     const failureSchema = `transfer_proof_failure_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
