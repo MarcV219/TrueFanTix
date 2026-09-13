@@ -4,7 +4,10 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSessionTokenHash, getUserIdFromSessionCookie } from "@/lib/auth/session";
-import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
+import {
+  isPrimaryStagingManagedUser,
+  primaryStagingManagedUserWhere,
+} from "@/lib/primary/staging-console";
 import { schemas, validateRequest } from "@/lib/validation";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { enforceOriginAndCsrf } from "@/lib/security/csrf";
@@ -22,6 +25,9 @@ function stagingConsoleOnlyError() {
   response.headers.set("Cache-Control", "private, no-store");
   return response;
 }
+
+class ManagedAccountPasswordChangeError extends Error {}
+class PasswordChangeConflictError extends Error {}
 
 export async function POST(req: Request) {
   try {
@@ -72,18 +78,52 @@ export async function POST(req: Request) {
 
     const currentSessionTokenHash = await getCurrentSessionTokenHash();
 
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: userId },
-        data: { passwordHash: newPasswordHash },
-      }),
-      prisma.session.deleteMany({
-        where: {
-          userId,
-          ...(currentSessionTokenHash ? { tokenHash: { not: currentSessionTokenHash } } : {}),
-        },
-      }),
-    ]);
+    // Revalidate the managed-account boundary in the same transaction as the
+    // credential mutation. Persona restoration can otherwise race bcrypt and
+    // let an in-flight ordinary password change overwrite the restored
+    // staging password or revoke its newly issued console bearer.
+    try {
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.user.updateMany({
+          where: {
+            id: userId,
+            passwordHash: user.passwordHash,
+            NOT: primaryStagingManagedUserWhere(),
+          },
+          data: { passwordHash: newPasswordHash },
+        });
+        if (updated.count !== 1) {
+          const currentUser = await tx.user.findUnique({
+            where: { id: userId },
+            select: {
+              email: true,
+              phone: true,
+              termsVersion: true,
+              privacyVersion: true,
+            },
+          });
+          if (currentUser && isPrimaryStagingManagedUser(currentUser)) {
+            throw new ManagedAccountPasswordChangeError();
+          }
+          throw new PasswordChangeConflictError();
+        }
+
+        await tx.session.deleteMany({
+          where: {
+            userId,
+            ...(currentSessionTokenHash ? { tokenHash: { not: currentSessionTokenHash } } : {}),
+          },
+        });
+      });
+    } catch (error) {
+      if (error instanceof ManagedAccountPasswordChangeError) {
+        return stagingConsoleOnlyError();
+      }
+      if (error instanceof PasswordChangeConflictError) {
+        return jsonError(400, "INVALID_PASSWORD", "Current password is incorrect.");
+      }
+      throw error;
+    }
 
     return NextResponse.json(
       { ok: true, message: "Password changed successfully." },
