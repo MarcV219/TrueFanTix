@@ -1674,6 +1674,7 @@ model TransferProofDeliveryIntent {
   payloadJson    Json
   status         String    @default("PENDING")
   attemptCount   Int       @default(0)
+  firstAttemptAt DateTime?
   availableAt    DateTime  @default(now())
   processingAt   DateTime?
   leaseExpiresAt DateTime?

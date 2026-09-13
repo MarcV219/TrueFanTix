@@ -20,8 +20,9 @@ export async function sendAdminActivityEmail(params: {
   summary: string;
   details: Record<string, string | number | null | undefined>;
   idempotencyKey?: string;
+  completedAt?: string;
 }) {
-  const completedAt = new Date().toISOString();
+  const completedAt = params.completedAt ?? new Date().toISOString();
   const detailLines = Object.entries(params.details)
     .filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "")
     .map(([label, value]) => `${label}: ${String(value)}`);

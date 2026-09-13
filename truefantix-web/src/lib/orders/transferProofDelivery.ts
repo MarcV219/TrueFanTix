@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { generateBuyerTransferConfirmationRequiredEmail, sendEmail } from "@/lib/email";
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
@@ -9,6 +10,11 @@ const ADMIN_KIND = "ADMIN_TRANSFER_ACTIVITY_EMAIL";
 const LEASE_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 const RETRY_BASE_MS = 5 * 60 * 1000;
+const RESEND_IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function providerIdempotencyKey(durableKey: string) {
+  return `tft-transfer-proof-${createHash("sha256").update(durableKey).digest("hex")}`;
+}
 
 function configuredEmailProvider() {
   if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
@@ -59,7 +65,7 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
       orderId: params.orderId, kind: ADMIN_KIND, recipient: ADMIN_ACTIVITY_EMAIL,
       payloadJson: {
         sellerEmail: params.sellerEmail, buyerEmail: params.buyerEmail, ticketCount: params.ticketCount,
-        transferProofType: params.transferProofType, deadline: params.deadline.toISOString(),
+        transferProofType: params.transferProofType, deadline: params.deadline.toISOString(), completedAt: params.now.toISOString(),
       },
       idempotencyKey: `${params.orderId}:${windowStart.toISOString()}:${ADMIN_KIND}:${ADMIN_ACTIVITY_EMAIL}`,
     },
@@ -102,17 +108,27 @@ export async function drainTransferProofDeliveryIntents(
   for (const row of rows) {
     const provider = configuredEmailProvider();
     const staleClaim = row.status === "PROCESSING";
-    if (staleClaim && provider === "SENDGRID") {
+    const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
+      && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
+    if ((staleClaim && provider === "SENDGRID") || resendWindowExpired) {
       await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: "PROCESSING", leaseExpiresAt: { lte: now } },
-        data: { status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null, lastError: "Ambiguous prior SendGrid delivery requires reconciliation" },
+        where: { id: row.id, status: row.status },
+        data: {
+          status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
+          lastError: provider === "SENDGRID"
+            ? "Ambiguous prior SendGrid delivery requires reconciliation"
+            : "Resend idempotency window expired; delivery requires reconciliation",
+        },
       });
       continue;
     }
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
     const claim = await db.transferProofDeliveryIntent.updateMany({
       where: { id: row.id, attemptCount: row.attemptCount, OR: recoverable.OR },
-      data: { status: "PROCESSING", processingAt: now, leaseExpiresAt, attemptCount: { increment: 1 }, lastError: null },
+      data: {
+        status: "PROCESSING", processingAt: now, firstAttemptAt: row.firstAttemptAt ?? now,
+        leaseExpiresAt, attemptCount: { increment: 1 }, lastError: null,
+      },
     });
     if (claim.count !== 1) continue;
     claimed += 1;
@@ -147,7 +163,7 @@ export async function drainTransferProofDeliveryIntents(
           },
         });
         const email = generateBuyerTransferConfirmationRequiredEmail(row.orderId, data.buyerFirstName ? String(data.buyerFirstName) : null, Number(data.ticketCount), deadline);
-        const result = await sendEmail({ to: row.recipient, ...email, idempotencyKey: row.idempotencyKey });
+        const result = await sendEmail({ to: row.recipient, ...email, idempotencyKey: providerIdempotencyKey(row.idempotencyKey) });
         await db.reminderDelivery.update({
           where: key,
           data: {
@@ -160,7 +176,9 @@ export async function drainTransferProofDeliveryIntents(
         });
         if (!result.ok) throw new Error(result.error || "Buyer email provider rejected delivery");
       } else if (row.kind === ADMIN_KIND) {
-        const result = await sendAdminActivityEmail({ activity: "TICKETS_TRANSFERRED", summary: `Ticket transfer submitted — order ${row.orderId}`, idempotencyKey: row.idempotencyKey, details: {
+        const result = await sendAdminActivityEmail({
+          activity: "TICKETS_TRANSFERRED", summary: `Ticket transfer submitted — order ${row.orderId}`,
+          idempotencyKey: providerIdempotencyKey(row.idempotencyKey), completedAt: String(data.completedAt), details: {
           "Order ID": row.orderId, Seller: data.sellerEmail ? String(data.sellerEmail) : null,
           Buyer: data.buyerEmail ? String(data.buyerEmail) : null, "Ticket count": Number(data.ticketCount),
           "Proof type": data.transferProofType ? String(data.transferProofType) : null,

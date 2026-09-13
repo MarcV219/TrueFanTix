@@ -136,6 +136,12 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await drainTransferProofDeliveryIntents({ orderId }, prisma);
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
     expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
+    expect(mockedSendEmail.mock.calls[0][0].idempotencyKey).toMatch(/^tft-transfer-proof-[a-f0-9]{64}$/);
+    expect(mockedSendEmail.mock.calls[0][0].idempotencyKey!.length).toBeLessThanOrEqual(256);
+    expect(mockedSendAdmin.mock.calls[0][0]).toMatchObject({
+      idempotencyKey: expect.stringMatching(/^tft-transfer-proof-[a-f0-9]{64}$/),
+      completedAt: "2026-12-01T13:00:00.000Z",
+    });
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "DELIVERED" } })).resolves.toBe(2);
     await expect(prisma.reminderDelivery.count({ where: { orderId, status: "SENT" } })).resolves.toBe(1);
     await expect(prisma.emailDelivery.count({ where: { orderId, status: "SENT" } })).resolves.toBe(1);
@@ -215,6 +221,31 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } finally {
       if (previousSendGridKey === undefined) delete process.env.SENDGRID_API_KEY;
       else process.env.SENDGRID_API_KEY = previousSendGridKey;
+    }
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "RECONCILIATION_REQUIRED" } })).resolves.toBe(2);
+  });
+
+  it("quarantines ambiguous Resend recovery after its 24-hour idempotency window", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("11")));
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: {
+        status: "PROCESSING",
+        attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T11:00:00.000Z"),
+        leaseExpiresAt: new Date("2026-12-01T11:15:00.000Z"),
+      },
+    });
+    const previousResendKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = "synthetic-resend-key";
+    try {
+      await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T11:00:00.000Z") }, prisma))
+        .resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0 });
+    } finally {
+      if (previousResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousResendKey;
     }
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
