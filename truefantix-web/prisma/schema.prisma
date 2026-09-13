@@ -1666,6 +1666,28 @@ model ReminderDelivery {
   @@index([orderId, attemptedAt])
 }
 
+model TransferProofDeliveryIntent {
+  id             String    @id @default(cuid())
+  orderId        String
+  kind           String
+  recipient      String
+  payloadJson    Json
+  status         String    @default("PENDING")
+  attemptCount   Int       @default(0)
+  availableAt    DateTime  @default(now())
+  processingAt   DateTime?
+  leaseExpiresAt DateTime?
+  deliveredAt    DateTime?
+  lastError      String?
+  idempotencyKey String    @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, availableAt])
+  @@index([status, leaseExpiresAt])
+  @@index([orderId, createdAt])
+}
+
 model ProductionIncident {
   id              String    @id @default(cuid())
   fingerprint     String    @unique

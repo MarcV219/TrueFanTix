@@ -9,9 +9,8 @@ import {
 } from "@/lib/orders/transferWorkflow";
 import { analyzeTransferProof, transferProofIssueMessage } from "@/lib/orders/transferProofReview";
 import {
-  dispatchTransferProofDeliveryIntent,
+  drainTransferProofDeliveryIntents,
   stageTransferProofDeliveryIntent,
-  type TransferProofDeliveryIntent,
 } from "@/lib/orders/transferProofDelivery";
 import {
   ManagedAccountOrderOperationError,
@@ -31,7 +30,7 @@ export async function POST(req: Request) {
 
     const { orderId, transferProofType, transferProofData, transferProofImage, transferProofFileName } = validation.data;
 
-    let deliveryIntent: TransferProofDeliveryIntent | undefined;
+    let shouldDrainDelivery = false;
     const response = await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
       // Serialize proof analysis and persistence with every competing order
       // transition so provider work cannot outlive a stale seller or order.
@@ -197,19 +196,18 @@ export async function POST(req: Request) {
         },
       });
 
-      if (order.buyerSeller.user?.id && order.buyerSeller.user.email) {
-        deliveryIntent = await stageTransferProofDeliveryIntent(tx, {
-          buyerUserId: order.buyerSeller.user.id,
-          buyerEmail: order.buyerSeller.user.email,
-          buyerFirstName: order.buyerSeller.user.firstName ?? null,
-          sellerEmail: current.email,
-          orderId,
-          ticketCount: order.items.length,
-          deadline: disputeWindowEndsAt,
-          transferProofType,
-          now: submittedAt,
-        });
-      }
+      await stageTransferProofDeliveryIntent(tx, {
+        buyerUserId: order.buyerSeller.user?.id ?? null,
+        buyerEmail: order.buyerSeller.user?.email ?? null,
+        buyerFirstName: order.buyerSeller.user?.firstName ?? null,
+        sellerEmail: current.email,
+        orderId,
+        ticketCount: order.items.length,
+        transferProofType,
+        deadline: disputeWindowEndsAt,
+        now: submittedAt,
+      });
+      shouldDrainDelivery = true;
       return NextResponse.json(
         {
           ok: true,
@@ -220,9 +218,9 @@ export async function POST(req: Request) {
         { status: 200 }
       );
     });
-    if (deliveryIntent) {
+    if (shouldDrainDelivery) {
       try {
-        await dispatchTransferProofDeliveryIntent(deliveryIntent);
+        await drainTransferProofDeliveryIntents({ orderId });
       } catch (deliveryError) {
         console.error("Post-commit transfer-proof delivery dispatch failed:", deliveryError);
       }

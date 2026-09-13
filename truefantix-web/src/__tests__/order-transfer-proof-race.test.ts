@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { analyzeTransferProof } from "@/lib/orders/transferProofReview";
 import {
-  dispatchTransferProofDeliveryIntent,
+  drainTransferProofDeliveryIntents,
   stageTransferProofDeliveryIntent,
 } from "@/lib/orders/transferProofDelivery";
 import { validateRequest } from "@/lib/validation";
@@ -29,7 +29,7 @@ jest.mock("@/lib/orders/transferWorkflow", () => ({
 }));
 jest.mock("@/lib/orders/transferProofDelivery", () => ({
   stageTransferProofDeliveryIntent: jest.fn(),
-  dispatchTransferProofDeliveryIntent: jest.fn(),
+  drainTransferProofDeliveryIntents: jest.fn(),
 }));
 jest.mock("@/lib/validation", () => ({
   schemas: { orderTransferProof: { kind: "order-transfer-proof" } },
@@ -45,7 +45,7 @@ const mockedPrisma = prisma as unknown as {
 const mockedRequireUser = requireUser as jest.MockedFunction<typeof requireUser>;
 const mockedAnalyzeTransferProof = analyzeTransferProof as jest.MockedFunction<typeof analyzeTransferProof>;
 const mockedStageDelivery = stageTransferProofDeliveryIntent as jest.MockedFunction<typeof stageTransferProofDeliveryIntent>;
-const mockedDispatchDelivery = dispatchTransferProofDeliveryIntent as jest.MockedFunction<typeof dispatchTransferProofDeliveryIntent>;
+const mockedDrainDelivery = drainTransferProofDeliveryIntents as jest.MockedFunction<typeof drainTransferProofDeliveryIntents>;
 const mockedValidateRequest = validateRequest as jest.Mock;
 
 const orderId = "cm1234567890abcdefghijkl";
@@ -141,19 +141,8 @@ describe("seller transfer-proof staging-persona race boundary", () => {
       issues: [],
       reason: "Synthetic proof accepted.",
     } as never);
-    mockedStageDelivery.mockResolvedValue({
-      orderId,
-      buyerUserId: "buyer-user-1",
-      buyerEmail: "buyer@example.test",
-      buyerFirstName: "Buyer",
-      sellerEmail: ordinarySeller.email,
-      ticketCount: 1,
-      transferProofType: "EMAIL",
-      deadline: new Date("2026-12-02T00:00:00.000Z"),
-      windowStart: new Date("2026-12-01T00:00:00.000Z"),
-      adminEmailType: "ADMIN_TRANSFER_SUBMITTED_2026-12-01T00:00:00.000Z",
-    });
-    mockedDispatchDelivery.mockResolvedValue(undefined);
+    mockedStageDelivery.mockResolvedValue(undefined);
+    mockedDrainDelivery.mockResolvedValue({ scanned: 2, claimed: 2, delivered: 2, failed: 0 });
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -171,7 +160,7 @@ describe("seller transfer-proof staging-persona race boundary", () => {
     expect(mockedAnalyzeTransferProof).not.toHaveBeenCalled();
     expect(mockedPrisma.order.update).not.toHaveBeenCalled();
     expect(mockedStageDelivery).not.toHaveBeenCalled();
-    expect(mockedDispatchDelivery).not.toHaveBeenCalled();
+    expect(mockedDrainDelivery).not.toHaveBeenCalled();
   });
 
   it("reclassifies a serialization abort after persona restoration", async () => {
@@ -214,8 +203,8 @@ describe("seller transfer-proof staging-persona race boundary", () => {
     expect(mockedAnalyzeTransferProof).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
     expect(mockedStageDelivery).toHaveBeenCalledTimes(1);
-    expect(mockedStageDelivery.mock.invocationCallOrder[0]).toBeLessThan(mockedDispatchDelivery.mock.invocationCallOrder[0]);
-    expect(mockedDispatchDelivery).toHaveBeenCalledTimes(1);
+    expect(mockedStageDelivery.mock.invocationCallOrder[0]).toBeLessThan(mockedDrainDelivery.mock.invocationCallOrder[0]);
+    expect(mockedDrainDelivery).toHaveBeenCalledWith({ orderId });
   });
 
   it("rechecks the locked order state before provider work or mutation", async () => {
@@ -229,7 +218,7 @@ describe("seller transfer-proof staging-persona race boundary", () => {
     expect(mockedAnalyzeTransferProof).not.toHaveBeenCalled();
     expect(mockedPrisma.order.update).not.toHaveBeenCalled();
     expect(mockedStageDelivery).not.toHaveBeenCalled();
-    expect(mockedDispatchDelivery).not.toHaveBeenCalled();
+    expect(mockedDrainDelivery).not.toHaveBeenCalled();
   });
 
   it("does not dispatch staged delivery when the serializable transaction rolls back", async () => {
@@ -242,6 +231,6 @@ describe("seller transfer-proof staging-persona race boundary", () => {
 
     expect(response.status).toBe(500);
     expect(mockedStageDelivery).toHaveBeenCalledTimes(1);
-    expect(mockedDispatchDelivery).not.toHaveBeenCalled();
+    expect(mockedDrainDelivery).not.toHaveBeenCalled();
   });
 });

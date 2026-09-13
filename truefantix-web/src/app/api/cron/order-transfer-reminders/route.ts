@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { hasInternalCronAuth } from "@/lib/auth/guards";
 import { runTransferReminderWorkflow } from "@/lib/orders/transferWorkflow";
+import { drainTransferProofDeliveryIntents } from "@/lib/orders/transferProofDelivery";
 import { prisma } from "@/lib/prisma";
 import { reportProductionIncident } from "@/lib/productionIncidents";
 
@@ -15,7 +16,8 @@ export async function POST(req: Request) {
   const startedAt = new Date();
 
   try {
-    const result = await runTransferReminderWorkflow(startedAt);
+    const transferProofDeliveries = await drainTransferProofDeliveryIntents({ now: startedAt });
+    const result = { ...(await runTransferReminderWorkflow(startedAt)), transferProofDeliveries };
     await recordSchedulerRun("SUCCESS", startedAt, result);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {

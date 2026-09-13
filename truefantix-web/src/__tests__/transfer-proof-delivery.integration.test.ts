@@ -6,7 +6,7 @@ import { Pool } from "pg";
 import { sendEmail } from "@/lib/email";
 import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import {
-  dispatchTransferProofDeliveryIntent,
+  drainTransferProofDeliveryIntents,
   stageTransferProofDeliveryIntent,
 } from "@/lib/orders/transferProofDelivery";
 
@@ -49,7 +49,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     buyerUserId = buyer.id;
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await prisma.notification.deleteMany({ where: { userId: buyerUserId } });
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId } });
+    await prisma.reminderDelivery.deleteMany({ where: { orderId } });
+    await prisma.emailDelivery.deleteMany({ where: { orderId } });
     jest.clearAllMocks();
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "ACCEPTED" });
     mockedSendAdmin.mockResolvedValue({ ok: true, provider: "CONSOLE" });
@@ -57,6 +61,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   afterAll(async () => {
     await prisma.notification.deleteMany({ where: { userId: buyerUserId } });
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId } });
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
     await prisma.user.deleteMany({ where: { id: buyerUserId } });
@@ -86,8 +91,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     }, { isolationLevel: "Serializable" })).rejects.toThrow("force rollback");
 
     await expect(prisma.notification.count({ where: { userId: buyerUserId } })).resolves.toBe(0);
-    await expect(prisma.reminderDelivery.count({ where: { orderId } })).resolves.toBe(0);
-    await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } })).resolves.toBe(0);
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
   });
@@ -114,25 +118,86 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     competingCommitted();
 
     await expect(loser).rejects.toMatchObject({ code: "P2034" });
-    await expect(prisma.reminderDelivery.count({ where: { orderId } })).resolves.toBe(0);
-    await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } })).resolves.toBe(0);
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
   });
 
-  it("dispatches each claimed outbox intent only after commit", async () => {
-    const intent = await prisma.$transaction(async (tx) => {
-      const stagedIntent = await stageTransferProofDeliveryIntent(tx, params("13"));
+  it("drains persisted intents once after the in-memory commit handoff is gone", async () => {
+    await prisma.$transaction(async (tx) => {
+      await stageTransferProofDeliveryIntent(tx, params("13"));
       expect(mockedSendEmail).not.toHaveBeenCalled();
       expect(mockedSendAdmin).not.toHaveBeenCalled();
-      return stagedIntent;
     }, { isolationLevel: "Serializable" });
 
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
-    await dispatchTransferProofDeliveryIntent(intent, prisma);
-    await dispatchTransferProofDeliveryIntent(intent, prisma);
+    await drainTransferProofDeliveryIntents({ orderId }, prisma);
+    await drainTransferProofDeliveryIntents({ orderId }, prisma);
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
     expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "DELIVERED" } })).resolves.toBe(2);
+    await expect(prisma.reminderDelivery.count({ where: { orderId, status: "SENT" } })).resolves.toBe(1);
+    await expect(prisma.emailDelivery.count({ where: { orderId, status: "SENT" } })).resolves.toBe(1);
+  });
+
+  it("stages the buyer notification and Admin intent when buyer email is absent", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, { ...params("19"), buyerEmail: null }));
+
+    await expect(prisma.notification.count({ where: { userId: buyerUserId } })).resolves.toBe(1);
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" } })).resolves.toBe(0);
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, recipient: "admin@truefantix.com" } })).resolves.toBe(1);
+  });
+
+  it("recovers failed and stale claims through the persisted drainer", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("23")));
+    await prisma.transferProofDeliveryIntent.updateMany({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" }, data: { status: "FAILED", availableAt: new Date("2026-12-01T18:00:00.000Z") } });
+    await prisma.transferProofDeliveryIntent.updateMany({ where: { orderId, recipient: "admin@truefantix.com" }, data: { status: "PROCESSING", attemptCount: 1, leaseExpiresAt: new Date("2026-12-01T18:00:00.000Z") } });
+
+    await drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T00:00:00.000Z") }, prisma);
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
+    await expect(prisma.transferProofDeliveryIntent.findMany({ where: { orderId }, select: { status: true, attemptCount: true } }))
+      .resolves.toEqual(expect.arrayContaining([
+        { status: "DELIVERED", attemptCount: 1 },
+        { status: "DELIVERED", attemptCount: 2 },
+      ]));
+  });
+
+  it("records exceptions and retries only after the bounded backoff", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("03")));
+    mockedSendEmail.mockResolvedValueOnce({ ok: false, provider: "CONSOLE", error: "buyer rejected" });
+    mockedSendAdmin.mockRejectedValueOnce(new Error("admin exception"));
+    const firstAttempt = new Date("2026-12-01T03:00:00.000Z");
+
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: firstAttempt }, prisma))
+      .resolves.toMatchObject({ claimed: 2, delivered: 0, failed: 2 });
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "FAILED", attemptCount: 1 } })).resolves.toBe(2);
+    await expect(prisma.reminderDelivery.count({ where: { orderId, status: "FAILED" } })).resolves.toBe(1);
+    await expect(prisma.emailDelivery.count({ where: { orderId, status: "FAILED", error: "admin exception" } })).resolves.toBe(1);
+
+    jest.clearAllMocks();
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "ACCEPTED" });
+    mockedSendAdmin.mockResolvedValue({ ok: true, provider: "CONSOLE" });
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T03:04:59.999Z") }, prisma))
+      .resolves.toMatchObject({ claimed: 0 });
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T03:05:00.000Z") }, prisma))
+      .resolves.toMatchObject({ claimed: 2, delivered: 2, failed: 0 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "DELIVERED", attemptCount: 2 } })).resolves.toBe(2);
+  });
+
+  it("does not claim a delivery after its bounded attempt budget is exhausted", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("05")));
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: { status: "FAILED", attemptCount: 3, availableAt: new Date("2026-12-01T00:00:00.000Z") },
+    });
+
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T00:00:00.000Z") }, prisma))
+      .resolves.toMatchObject({ claimed: 0 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
   });
 });
