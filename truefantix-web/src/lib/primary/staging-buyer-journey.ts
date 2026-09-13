@@ -90,7 +90,9 @@ function requireReservationState(reservation: Prisma.PrimaryInventoryReservation
   if (
     reservation.organizerId !== ORGANIZER_ID || reservation.eventId !== scope.eventId || reservation.ticketTypeId !== scope.ticketTypeId
     || reservation.buyerUserId !== buyerId || reservation.quantity !== 1 || reservation.createIdempotencyKey !== `${scope.base}:hold`
-    || holdLifetimeMs < 599_000 || holdLifetimeMs > 601_000 || reservation.releasedAt !== null || reservation.expiredAt !== null
+    || holdLifetimeMs < 599_000 || holdLifetimeMs > 601_000
+    || reservation.releasedAt !== null || reservation.releaseIdempotencyKey !== null
+    || reservation.expiredAt !== null || reservation.expireIdempotencyKey !== null
     || (!heldState && !committedState)
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_RESERVATION_INVALID");
 }

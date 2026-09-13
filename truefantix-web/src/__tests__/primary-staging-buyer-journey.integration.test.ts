@@ -78,5 +78,19 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await db.primaryInventoryReservation.update({ where: { id: `${base}-reservation` }, data: { quantity: 2 } });
     await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_RESERVATION_INVALID" });
     await expect(db.primaryOrder.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+
+    const releaseSeed = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const releaseBase = `staging-buyer-g${releaseSeed.generation}`;
+    await advancePrimaryStagingBuyerJourney(db, admin);
+    await db.primaryInventoryReservation.update({ where: { id: `${releaseBase}-reservation` }, data: { releaseIdempotencyKey: `${releaseBase}:unexpected-release` } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_RESERVATION_INVALID" });
+    await expect(db.primaryOrder.count({ where: { eventId: `${releaseBase}-event` } })).resolves.toBe(0);
+
+    const expirySeed = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const expiryBase = `staging-buyer-g${expirySeed.generation}`;
+    await advancePrimaryStagingBuyerJourney(db, admin);
+    await db.primaryInventoryReservation.update({ where: { id: `${expiryBase}-reservation` }, data: { expireIdempotencyKey: `${expiryBase}:unexpected-expiry` } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_RESERVATION_INVALID" });
+    await expect(db.primaryOrder.count({ where: { eventId: `${expiryBase}-event` } })).resolves.toBe(0);
   });
 });
