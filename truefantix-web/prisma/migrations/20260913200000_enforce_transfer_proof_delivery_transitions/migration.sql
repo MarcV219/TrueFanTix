@@ -46,6 +46,7 @@ BEGIN
       AND NEW.status = 'PROCESSING'
       AND OLD."dispatchStartedAt" IS NULL
       AND NEW."dispatchStartedAt" IS NOT NULL
+      AND NEW.provider IS NOT DISTINCT FROM OLD.provider
       AND NEW."claimToken" IS NOT DISTINCT FROM OLD."claimToken"
       AND NEW."processingAt" IS NOT DISTINCT FROM OLD."processingAt"
       AND NEW."leaseExpiresAt" IS NOT DISTINCT FROM OLD."leaseExpiresAt"

@@ -901,6 +901,32 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     ]);
   });
 
+  it("rejects changing the pinned provider while incrementing an owned dispatch attempt", async () => {
+    const [id] = await seedAdminBatch("provider-change-attempt", 1);
+    const processingAt = new Date("2026-12-01T02:00:00.000Z");
+    const leaseExpiresAt = new Date("2026-12-01T02:15:00.000Z");
+    await prisma.transferProofDeliveryIntent.update({
+      where: { id },
+      data: {
+        status: "PROCESSING", provider: "RESEND", processingAt, leaseExpiresAt,
+        claimToken: "provider-change-claim",
+      },
+    });
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id },
+      data: {
+        provider: "SENDGRID", attemptCount: 1, firstAttemptAt: processingAt,
+        dispatchStartedAt: processingAt,
+      },
+    })).rejects.toThrow("Transfer-proof delivery provider identity is immutable once pinned");
+
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id },
+      select: { provider: true, attemptCount: true, dispatchStartedAt: true },
+    })).resolves.toEqual({ provider: "RESEND", attemptCount: 0, dispatchStartedAt: null });
+  });
+
   it("quarantines ambiguous legacy lifecycle rows without inferring delivery", async () => {
     const lifecycleSchema = `transfer_proof_lifecycle_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
