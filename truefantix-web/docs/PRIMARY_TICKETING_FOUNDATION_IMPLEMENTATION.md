@@ -264,6 +264,7 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - The journey performs no Stripe SDK call, email, webhook, payout, refund, cron, public sale, or live-data access. Prior generations remain intact for auditability.
 - Every advance revalidates the complete reserved buyer and organizer fixture under the journey advisory lock. Any capability, role, contact, ownership, payment-account, or business-identity drift fails closed before purchase or admission mutation; an explicit admin reseed restores only the reserved synthetic fixture and creates a new generation.
 - The current generation's event and ticket type are also revalidated as exact deterministic synthetic roots before a hold can be created. Event identity/contact/schedule/policy/capacity/approval drift or ticket inventory/limit/currency/price drift fails closed without purchase mutation; reseed preserves the drifted generation as evidence and creates a clean successor.
+- Once a hold exists, its tenant, event, ticket type, buyer, quantity, lifecycle timestamps, and idempotency evidence are revalidated before order creation or any later transition. Reservation drift fails closed without creating an order.
 
 ### Refund, cancellation, and revocation design gate
 

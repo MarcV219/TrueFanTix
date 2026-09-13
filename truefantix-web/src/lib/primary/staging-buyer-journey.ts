@@ -83,6 +83,18 @@ async function requireScenarioRoot(tx: Tx, scope: ReturnType<typeof ids>, actor:
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_SCENARIO_INVALID");
 }
 
+function requireReservationState(reservation: Prisma.PrimaryInventoryReservationGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string) {
+  const holdLifetimeMs = reservation.expiresAt.getTime() - reservation.createdAt.getTime();
+  const heldState = reservation.status === "HELD" && reservation.paymentCommittedAt === null && reservation.reconciliationAfter === null && reservation.commitIdempotencyKey === null;
+  const committedState = reservation.status === "PAYMENT_COMMITTED" && reservation.paymentCommittedAt !== null && reservation.reconciliationAfter !== null && reservation.commitIdempotencyKey === `${scope.base}:commit`;
+  if (
+    reservation.organizerId !== ORGANIZER_ID || reservation.eventId !== scope.eventId || reservation.ticketTypeId !== scope.ticketTypeId
+    || reservation.buyerUserId !== buyerId || reservation.quantity !== 1 || reservation.createIdempotencyKey !== `${scope.base}:hold`
+    || holdLifetimeMs < 599_000 || holdLifetimeMs > 601_000 || reservation.releasedAt !== null || reservation.expiredAt !== null
+    || (!heldState && !committedState)
+  ) throw new PrimaryStagingBuyerError("STAGING_BUYER_RESERVATION_INVALID");
+}
+
 async function generation(tx: Tx) {
   const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-buyer-g([0-9]+)-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
   return Number(rows[0]?.generation ?? 0);
@@ -114,6 +126,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       await tx.primaryInventoryReservation.create({ data: { id: scope.reservationId, organizerId: ORGANIZER_ID, eventId: scope.eventId, ticketTypeId: scope.ticketTypeId, buyerUserId: buyer.id, quantity: 1, expiresAt: new Date(now.getTime() + 600_000), createIdempotencyKey: `${scope.base}:hold` } });
       return { step: "HELD" };
     }
+    requireReservationState(reservation, scope, buyer.id);
     const order = await tx.primaryOrder.findUnique({ where: { id: scope.orderId } });
     if (!order) {
       await tx.primaryOrder.create({ data: { id: scope.orderId, organizerId: ORGANIZER_ID, eventId: scope.eventId, buyerUserId: buyer.id, reservationId: scope.reservationId, currency: "CAD", faceValueSubtotalMinor: 3500, grossTotalMinor: 3800, createIdempotencyKey: `${scope.base}:order` } });

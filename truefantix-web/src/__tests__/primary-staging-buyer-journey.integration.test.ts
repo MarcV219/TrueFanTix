@@ -70,4 +70,13 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_SCENARIO_INVALID" });
     await expect(db.primaryInventoryReservation.count({ where: { eventId: `${secondBase}-event` } })).resolves.toBe(0);
   });
+
+  it("rejects reservation drift before order mutation", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: "HELD" });
+    await db.primaryInventoryReservation.update({ where: { id: `${base}-reservation` }, data: { quantity: 2 } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_RESERVATION_INVALID" });
+    await expect(db.primaryOrder.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+  });
 });
