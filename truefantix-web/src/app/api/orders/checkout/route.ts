@@ -1,13 +1,17 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
 import { calculateAdminFeeTax, getTaxRateForVenue } from "@/lib/tax-rates";
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
 import { calculateBuyerAdminFeeCents } from "@/lib/checkout-fees";
+import {
+  BuyerPurchaseAccessChangedError,
+  ManagedAccountPurchaseError,
+  runOrdinaryPurchase,
+} from "@/lib/tickets/ordinary-buyer";
 
 const RESERVATION_MINUTES = 15;
 const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1;
@@ -57,30 +61,7 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.orderCheckout)(req);
     if (!validation.success) return validation.response;
 
-    const buyerSellerId = normalizeId(gate.user.sellerId);
     const requestedBuyerSellerId = normalizeId(validation.data.buyerSellerId);
-
-    if (!buyerSellerId) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "BUYER_WALLET_MISSING",
-          message: "Buyer wallet is not set up for this account.",
-        },
-        { status: 409 }
-      );
-    }
-
-    if (requestedBuyerSellerId && requestedBuyerSellerId !== buyerSellerId) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "FORBIDDEN_BUYER",
-          message: "buyerSellerId does not match the logged-in user.",
-        },
-        { status: 403 }
-      );
-    }
 
     // IMPORTANT: de-dupe ticketIds to avoid duplicate OrderItems / confusing totals
     const ticketIds = Array.from(
@@ -102,54 +83,60 @@ export async function POST(req: Request) {
       );
     }
 
-    // Idempotency replay (fast path)
-    // Only replay if the prior order exists and has items (i.e., a real checkout result)
-    const existing = await prisma.order.findUnique({
-      where: { idempotencyKey },
-      include: { items: { include: { ticket: true } }, payment: true },
-    });
-    if (existing && existing.items?.length) {
-      if (existing.buyerSellerId !== buyerSellerId) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "FORBIDDEN_BUYER",
-            message: "Idempotency key belongs to a different buyer.",
-          },
-          { status: 403 }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          ok: true,
-          replay: true,
-          order: {
-            ...existing,
-            amount: centsToDollars(existing.amountCents),
-            adminFee: centsToDollars(existing.adminFeeCents),
-            adminFeeTax: centsToDollars(existing.adminFeeTaxCents ?? 0),
-            total: centsToDollars(existing.totalCents),
-          },
-        },
-        { status: 200 }
-      );
-    }
-
     const now = new Date();
     const reservedUntil = new Date(now.getTime() + RESERVATION_MINUTES * 60_000);
 
-    const result = await prisma.$transaction(async (tx: any) => {
-      // Buyer must exist (buyer is a Seller record in your current model)
-      const buyer = await tx.seller.findUnique({
-        where: { id: buyerSellerId },
-        select: { id: true, accessTokenBalance: true },
-      });
-      if (!buyer) {
+    const result = await runOrdinaryPurchase(gate.user.id, async (tx, currentUser) => {
+      // Checkout authorization and every reservation mutation use the current
+      // wallet reloaded beneath the identity lock, never the stale route guard.
+      const buyerSellerId = currentUser.seller.id;
+      const buyer = currentUser.seller;
+
+      if (requestedBuyerSellerId && requestedBuyerSellerId !== buyerSellerId) {
         return {
           ok: false as const,
-          status: 400 as const,
-          body: { ok: false, error: "buyerSellerId not found" },
+          status: 403 as const,
+          body: {
+            ok: false,
+            error: "FORBIDDEN_BUYER",
+            message: "buyerSellerId does not match the logged-in user.",
+          },
+        };
+      }
+
+      // Resolve idempotency only after the current identity and wallet are
+      // serialized against staging-persona restoration.
+      const existing = await tx.order.findUnique({
+        where: { idempotencyKey },
+        include: { items: { include: { ticket: true } }, payment: true },
+      });
+      if (existing && existing.items?.length) {
+        if (existing.buyerSellerId !== buyerSellerId) {
+          return {
+            ok: false as const,
+            status: 403 as const,
+            body: {
+              ok: false,
+              error: "FORBIDDEN_BUYER",
+              message: "Idempotency key belongs to a different buyer.",
+            },
+          };
+        }
+
+        return {
+          ok: true as const,
+          status: 200 as const,
+          body: {
+            ok: true,
+            replay: true,
+            order: {
+              ...existing,
+              amount: centsToDollars(existing.amountCents),
+              adminFee: centsToDollars(existing.adminFeeCents),
+              adminFeeTax: centsToDollars(existing.adminFeeTaxCents ?? 0),
+              total: centsToDollars(existing.totalCents),
+            },
+          },
         };
       }
 
@@ -416,6 +403,32 @@ export async function POST(req: Request) {
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
+
+    if (err instanceof ManagedAccountPurchaseError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+
+    if (err instanceof BuyerPurchaseAccessChangedError) {
+      const responses = {
+        NOT_AUTHENTICATED: [401, "Please log in."],
+        BANNED: [403, "This account is restricted."],
+        NOT_VERIFIED: [403, "Please verify your email and phone number."],
+        BUYING_DISABLED: [403, "Buying is disabled for this account."],
+        BUYER_WALLET_MISSING: [409, "Buyer wallet is not set up for this account."],
+      } as const;
+      const [status, accessMessage] = responses[err.code];
+      return NextResponse.json(
+        { ok: false, error: err.code, message: accessMessage },
+        { status },
+      );
+    }
 
     if (err instanceof TicketNotAvailableError) {
       return NextResponse.json(
