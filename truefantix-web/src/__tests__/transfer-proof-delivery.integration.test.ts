@@ -123,6 +123,16 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     return ids;
   }
 
+  async function forceLegacyIntentState(
+    where: Prisma.TransferProofDeliveryIntentWhereInput,
+    data: Prisma.TransferProofDeliveryIntentUpdateManyMutationInput,
+  ) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofDeliveryIntent.updateMany({ where, data });
+    });
+  }
+
   it("rolls back all durable intents and performs zero external sends", async () => {
     await expect(prisma.$transaction(async (tx) => {
       await stageTransferProofDeliveryIntent(tx, params("01"));
@@ -258,6 +268,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       data: {
         status: "FAILED", provider: "RESEND", attemptCount: 1,
         firstAttemptAt: new Date("2026-12-01T00:00:00.000Z"),
+        lastError: "synthetic rejection",
       },
     });
     const savedResendKey = process.env.RESEND_API_KEY;
@@ -432,8 +443,23 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("recovers failed and stale claims through the persisted drainer", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("23")));
-    await prisma.transferProofDeliveryIntent.updateMany({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" }, data: { status: "FAILED", availableAt: new Date("2026-12-01T18:00:00.000Z") } });
-    await prisma.transferProofDeliveryIntent.updateMany({ where: { orderId, recipient: "admin@truefantix.com" }, data: { status: "PROCESSING", provider: "RESEND", attemptCount: 1, firstAttemptAt: new Date("2026-12-01T18:00:00.000Z"), leaseExpiresAt: new Date("2026-12-01T18:00:00.000Z") } });
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
+      data: {
+        status: "FAILED", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T18:00:00.000Z"),
+        availableAt: new Date("2026-12-01T18:00:00.000Z"), lastError: "synthetic rejection",
+      },
+    });
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId, recipient: "admin@truefantix.com" },
+      data: {
+        status: "PROCESSING", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T18:00:00.000Z"),
+        processingAt: new Date("2026-12-01T18:00:00.000Z"),
+        leaseExpiresAt: new Date("2026-12-01T18:00:00.000Z"), claimToken: "synthetic-stale-claim",
+      },
+    });
 
     const previousResendKey = process.env.RESEND_API_KEY;
     process.env.RESEND_API_KEY = "synthetic-resend-key";
@@ -447,7 +473,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
     await expect(prisma.transferProofDeliveryIntent.findMany({ where: { orderId }, select: { status: true, attemptCount: true } }))
       .resolves.toEqual(expect.arrayContaining([
-        { status: "DELIVERED", attemptCount: 1 },
+        { status: "DELIVERED", attemptCount: 2 },
         { status: "DELIVERED", attemptCount: 2 },
       ]));
   });
@@ -478,10 +504,13 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("escalates a failed delivery after its bounded attempt budget is exhausted", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("05")));
-    await prisma.transferProofDeliveryIntent.updateMany({
-      where: { orderId },
-      data: { status: "FAILED", attemptCount: 3, availableAt: new Date("2026-12-01T00:00:00.000Z") },
-    });
+    await forceLegacyIntentState(
+      { orderId },
+      {
+        status: "FAILED", attemptCount: 3, availableAt: new Date("2026-12-01T00:00:00.000Z"),
+        lastError: "synthetic third rejection",
+      },
+    );
 
     await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T00:00:00.000Z") }, prisma))
       .resolves.toMatchObject({ claimed: 0, reconciliationRequired: 2 });
@@ -502,6 +531,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         status: "FAILED", provider: "RESEND", attemptCount: 2,
         firstAttemptAt: new Date("2026-12-01T05:00:00.000Z"),
         availableAt: new Date("2026-12-01T06:00:00.000Z"),
+        lastError: "synthetic earlier rejection",
       },
     });
     mockedSendEmail.mockResolvedValue({ ok: false, provider: "RESEND", providerResult: "HTTP 429", error: "rate limited" });
@@ -522,6 +552,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       data: {
         status: "PROCESSING", provider: "SENDGRID", attemptCount: 1,
         firstAttemptAt: new Date("2026-12-01T09:00:00.000Z"),
+        processingAt: new Date("2026-12-01T09:00:00.000Z"),
         dispatchStartedAt: new Date("2026-12-01T09:00:00.000Z"),
         claimToken: "synthetic-expired-sendgrid-claim",
         leaseExpiresAt: new Date("2026-12-01T09:00:00.000Z"),
@@ -550,7 +581,9 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         provider: "RESEND",
         attemptCount: 1,
         firstAttemptAt: new Date("2026-12-01T11:00:00.000Z"),
+        processingAt: new Date("2026-12-01T11:00:00.000Z"),
         leaseExpiresAt: new Date("2026-12-01T11:15:00.000Z"),
+        claimToken: "synthetic-expired-resend-claim",
       },
     });
     const previousResendKey = process.env.RESEND_API_KEY;
@@ -577,6 +610,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         attemptCount: 1,
         firstAttemptAt: new Date("2026-12-01T12:00:00.000Z"),
         availableAt: new Date("2026-12-01T12:05:00.000Z"),
+        lastError: "synthetic rejection",
       },
     });
 
@@ -597,16 +631,17 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("quarantines attempted Resend rows whose first-attempt evidence is missing", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("14")));
-    await prisma.transferProofDeliveryIntent.updateMany({
-      where: { orderId },
-      data: {
+    await forceLegacyIntentState(
+      { orderId },
+      {
         status: "FAILED",
         provider: "RESEND",
         attemptCount: 1,
         firstAttemptAt: null,
         availableAt: new Date("2026-12-01T14:05:00.000Z"),
+        lastError: "synthetic rejection with missing first-attempt evidence",
       },
-    });
+    );
 
     await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T14:10:00.000Z") }, prisma))
       .resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 2 });
@@ -625,16 +660,17 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("quarantines attempted rows whose provider evidence is missing instead of crossing providers", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("18")));
-    await prisma.transferProofDeliveryIntent.updateMany({
-      where: { orderId },
-      data: {
+    await forceLegacyIntentState(
+      { orderId },
+      {
         status: "FAILED",
         provider: null,
         attemptCount: 1,
         firstAttemptAt: new Date("2026-12-01T18:00:00.000Z"),
         availableAt: new Date("2026-12-01T18:05:00.000Z"),
+        lastError: "synthetic rejection with missing provider evidence",
       },
-    });
+    );
     const previousResendKey = process.env.RESEND_API_KEY;
     const previousSendGridKey = process.env.SENDGRID_API_KEY;
     delete process.env.RESEND_API_KEY;
@@ -666,16 +702,17 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("quarantines unsupported recorded providers instead of stranding failed rows", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("20")));
-    await prisma.transferProofDeliveryIntent.updateMany({
-      where: { orderId },
-      data: {
+    await forceLegacyIntentState(
+      { orderId },
+      {
         status: "FAILED",
         provider: "CONSOLE",
         attemptCount: 1,
         firstAttemptAt: new Date("2026-12-01T20:00:00.000Z"),
         availableAt: new Date("2026-12-01T20:05:00.000Z"),
+        lastError: "synthetic rejection with unsupported provider evidence",
       },
-    });
+    );
 
     await expect(drainTransferProofDeliveryIntents(
       { orderId, now: new Date("2026-12-01T20:10:00.000Z") }, prisma,
@@ -780,6 +817,132 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
     expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects impossible persisted lifecycle combinations", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("21")));
+    const buyerIntent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
+    });
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: buyerIntent.id },
+      data: { status: "PROCESSING", provider: "RESEND" },
+    })).rejects.toThrow("Invalid transfer-proof delivery lifecycle state");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: buyerIntent.id },
+      data: { deliveredAt: new Date("2026-12-01T21:00:00.000Z") },
+    })).rejects.toThrow("Invalid transfer-proof delivery lifecycle state");
+
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({ where: { id: buyerIntent.id } }))
+      .resolves.toMatchObject({
+        status: "PENDING", provider: null, attemptCount: 0, processingAt: null,
+        leaseExpiresAt: null, claimToken: null, dispatchStartedAt: null, deliveredAt: null,
+      });
+  });
+
+  it("quarantines ambiguous legacy lifecycle rows without inferring delivery", async () => {
+    const lifecycleSchema = `transfer_proof_lifecycle_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${lifecycleSchema}"`);
+      await client.query(`SET search_path TO "${lifecycleSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL DEFAULT 'PENDING',
+          "attemptCount" INTEGER NOT NULL DEFAULT 0,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (id)
+        VALUES ('coherent-pending')
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt", "processingAt",
+          "leaseExpiresAt", "dispatchStartedAt", "deliveredAt", "lastError"
+        ) VALUES (
+          'ambiguous-processing', 'SENDGRID', 'PROCESSING', 1, NOW(), NOW(),
+          NOW() + INTERVAL '15 minutes', NOW(), NOW(), 'legacy warning'
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, status, "attemptCount", "firstAttemptAt", "lastError"
+        ) VALUES ('ambiguous-failed-no-provider', 'FAILED', 1, NOW(), 'provider missing')
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt", "deliveredAt"
+        ) VALUES ('coherent-delivered', 'RESEND', 'DELIVERED', 1, NOW(), NOW())
+      `);
+
+      const migration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913190500_enforce_transfer_proof_delivery_lifecycle/migration.sql",
+      ), "utf8");
+      await client.query(migration);
+
+      await expect(client.query(`
+        SELECT id, status, "claimToken", "processingAt", "leaseExpiresAt",
+          "dispatchStartedAt", "deliveredAt", "lastError"
+        FROM "TransferProofDeliveryIntent" ORDER BY id
+      `)).resolves.toMatchObject({ rows: [
+        {
+          id: "ambiguous-failed-no-provider", status: "RECONCILIATION_REQUIRED", claimToken: null,
+          processingAt: null, leaseExpiresAt: null, dispatchStartedAt: null,
+          deliveredAt: null,
+          lastError: "Lifecycle migration quarantined incoherent legacy row from status FAILED: provider missing",
+        },
+        {
+          id: "ambiguous-processing", status: "RECONCILIATION_REQUIRED", claimToken: null,
+          processingAt: null, leaseExpiresAt: null, dispatchStartedAt: null,
+          deliveredAt: expect.any(Date),
+          lastError: "Lifecycle migration quarantined incoherent legacy row from status PROCESSING: legacy warning",
+        },
+        {
+          id: "coherent-delivered", status: "DELIVERED", claimToken: null,
+          processingAt: null, leaseExpiresAt: null, dispatchStartedAt: null,
+          deliveredAt: expect.any(Date), lastError: null,
+        },
+        {
+          id: "coherent-pending", status: "PENDING", claimToken: null,
+          processingAt: null, leaseExpiresAt: null, dispatchStartedAt: null,
+          deliveredAt: null, lastError: null,
+        },
+      ] });
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED'
+        WHERE id = 'coherent-pending'
+      `)).rejects.toThrow("Invalid transfer-proof delivery lifecycle state");
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'FAILED', "attemptCount" = 1, "firstAttemptAt" = NOW(),
+          "lastError" = 'provider missing'
+        WHERE id = 'coherent-pending'
+      `)).rejects.toThrow("Invalid transfer-proof delivery lifecycle state");
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING', provider = 'RESEND', "processingAt" = NOW(),
+          "leaseExpiresAt" = NOW() + INTERVAL '15 minutes', "claimToken" = 'owned-claim'
+        WHERE id = 'coherent-pending'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${lifecycleSchema}" CASCADE`);
+      client.release();
+    }
   });
 
   it("quarantines an initially inconsistent full-envelope identity", async () => {
@@ -1206,7 +1369,9 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       data: {
         status: "PROCESSING", provider: "RESEND", attemptCount: 2,
         firstAttemptAt: new Date("2026-12-01T22:00:00.000Z"),
+        processingAt: new Date("2026-12-01T22:00:00.000Z"),
         leaseExpiresAt: new Date("2026-12-01T22:15:00.000Z"),
+        claimToken: "synthetic-exhaustion-claim",
       },
     });
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "RESEND", providerResult: "accepted" });
