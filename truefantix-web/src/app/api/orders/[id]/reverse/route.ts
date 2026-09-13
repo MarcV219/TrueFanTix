@@ -1,10 +1,14 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { refundOrderAccessTokens } from "@/lib/accessTokenHolds";
 
 import { requireAdmin } from "@/lib/auth/guards";
+import {
+  AdminOperationAccessChangedError,
+  ManagedAccountAdminOperationError,
+  runOrdinaryAdminOperation,
+} from "@/lib/admin/ordinary-admin";
 
 type Ctx = { params?: Promise<{ id?: string }> | { id?: string } };
 
@@ -22,14 +26,15 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
-    const result = await prisma.$transaction(async (tx: any) => {
-      // 1) Load order with items and related ticket
+    const result = await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
+      // Serialize reversal with every other order workflow before reading its
+      // state, so only one transition can restore tickets and access tokens.
+      await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
       const order = await tx.order.findUnique({
         where: { id: orderId },
         include: {
           items: { include: { ticket: true } },
           payment: true,
-          buyer: { include: { user: true } },
         },
       });
 
@@ -37,7 +42,6 @@ export async function POST(req: Request, ctx: Ctx) {
         return { ok: false, error: "NOT_FOUND", message: "Order not found." };
       }
 
-      // Only allow reverse for paid/delivered/completed orders
       const allowed = ["PAID", "DELIVERED", "COMPLETED"];
       if (!allowed.includes(order.status)) {
         return {
@@ -47,14 +51,12 @@ export async function POST(req: Request, ctx: Ctx) {
         };
       }
 
-      // 2) Mark order as cancelled
       await tx.order.update({
         where: { id: orderId },
-        data: { status: "CANCELLED", updatedAt: new Date() },
+        data: { status: "CANCELLED" },
       });
 
-      // 3) Restore tickets to AVAILABLE and clear order linkage
-      const ticketIds: string[] = order.items.map((item: any) => item.ticketId);
+      const ticketIds = order.items.map((item) => item.ticketId);
       if (ticketIds.length > 0) {
         await tx.ticket.updateMany({
           where: { id: { in: ticketIds } },
@@ -62,7 +64,6 @@ export async function POST(req: Request, ctx: Ctx) {
         });
       }
 
-      // 4) Return any held or spent buyer access tokens exactly once.
       await refundOrderAccessTokens(tx, order.id);
 
       return { ok: true, message: "Order reversed and tickets restored." };
@@ -76,7 +77,29 @@ export async function POST(req: Request, ctx: Ctx) {
     }
 
     return NextResponse.json({ ok: true, message: result.message });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    if (err instanceof ManagedAccountAdminOperationError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+
+    if (err instanceof AdminOperationAccessChangedError) {
+      const responses = {
+        NOT_AUTHENTICATED: [401, "Please log in."],
+        BANNED: [403, "This account is restricted."],
+        NOT_VERIFIED: [403, "Please verify your email and phone number."],
+        FORBIDDEN: [403, "Not authorized."],
+      } as const;
+      const [status, message] = responses[err.code];
+      return NextResponse.json({ ok: false, error: err.code, message }, { status });
+    }
+
     console.error("POST /api/orders/[id]/reverse error:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR", message: "Could not reverse order." },
