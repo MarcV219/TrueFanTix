@@ -174,6 +174,7 @@ describe("admin transfer-proof review staging-persona boundary", () => {
     expect(mockedPrisma.emailDelivery.create).toHaveBeenCalledTimes(1);
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
     expect(mockedCreateNotification).toHaveBeenCalledTimes(1);
+    expect(mockedCreateNotification).toHaveBeenCalledWith(expect.any(Object), mockedPrisma);
     expect(mockedNotifyBuyer).toHaveBeenCalledTimes(1);
     expect(mockedSendAdminActivityEmail).toHaveBeenCalledTimes(1);
     expect(mockedAuditLog).toHaveBeenCalledTimes(1);

@@ -100,7 +100,7 @@ export async function POST(req: Request) {
         const result = await sendEmail({ to: sellerUser.email, ...email });
         sellerEmailSent = result.ok;
         await tx.emailDelivery.create({ data: { orderId: order.id, emailType: `TRANSFER_PROOF_ADMIN_${action}_${decision.id}`, recipient: sellerUser.email, provider: process.env.RESEND_API_KEY ? "RESEND" : process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE", status: result.ok ? "SENT" : "FAILED", error: result.error || null } });
-        await createNotification({ userId: sellerUser.id, type: action === "APPROVE" ? "TRANSFER_RECEIVED" : "VERIFICATION_NEEDED", message: action === "APPROVE" ? `Support approved the transfer proof for order ${order.id}.` : action === "REJECT" ? `Support rejected the transfer proof for order ${order.id}. Upload corrected documentation.` : `Support requested more transfer information for order ${order.id}: ${note}`, link: "/account/tickets/seller-holding" });
+        await createNotification({ userId: sellerUser.id, type: action === "APPROVE" ? "TRANSFER_RECEIVED" : "VERIFICATION_NEEDED", message: action === "APPROVE" ? `Support approved the transfer proof for order ${order.id}.` : action === "REJECT" ? `Support rejected the transfer proof for order ${order.id}. Upload corrected documentation.` : `Support requested more transfer information for order ${order.id}: ${note}`, link: "/account/tickets/seller-holding" }, tx);
       }
       if (action === "APPROVE" && order.buyerSeller.user?.id && disputeWindowEndsAt) {
         await notifyBuyerTransferConfirmationRequired({ buyerUserId: order.buyerSeller.user.id, orderId: order.id, ticketCount: order.items.length, deadline: disputeWindowEndsAt, sendEmail: true, now: decidedAt });
