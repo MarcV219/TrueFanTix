@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { haversineKm, inferCityCoordsFromVenue, inferCoordsFromCity, parseVenue } from "@/lib/ticketsView";
 
@@ -36,9 +37,9 @@ export async function createNotification({
   type,
   message,
   link,
-}: CreateNotificationParams) {
+}: CreateNotificationParams, db: Pick<Prisma.TransactionClient, "notification"> = prisma) {
   try {
-    const notification = await prisma.notification.create({
+    const notification = await db.notification.create({
       data: {
         userId,
         type,
