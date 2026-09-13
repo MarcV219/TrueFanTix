@@ -108,7 +108,7 @@ export async function drainTransferProofDeliveryIntents(
   let reconciliationRequired = 0;
   for (const row of rows) {
     const staleClaim = row.status === "PROCESSING";
-    const provider = staleClaim ? row.provider as EmailProvider | null : configuredEmailProvider();
+    const provider = row.provider as EmailProvider | null ?? configuredEmailProvider();
     const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
       && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
     if ((staleClaim && provider !== "RESEND") || resendWindowExpired) {

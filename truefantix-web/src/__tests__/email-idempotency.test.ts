@@ -23,4 +23,29 @@ describe("email provider idempotency", () => {
       else process.env.RESEND_API_KEY = previous;
     }
   });
+
+  it("does not cross providers when the claimed provider is unavailable", async () => {
+    const previousResend = process.env.RESEND_API_KEY;
+    const previousSendGrid = process.env.SENDGRID_API_KEY;
+    delete process.env.RESEND_API_KEY;
+    process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
+    try {
+      await expect(sendEmail({
+        to: "buyer@example.test",
+        subject: "Subject",
+        text: "Text",
+        provider: "RESEND",
+        idempotencyKey: "transfer-proof-outbox-key",
+      })).resolves.toMatchObject({
+        ok: false,
+        provider: "RESEND",
+        providerResult: "NOT_CONFIGURED",
+      });
+    } finally {
+      if (previousResend === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousResend;
+      if (previousSendGrid === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = previousSendGrid;
+    }
+  });
 });
