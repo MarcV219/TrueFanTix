@@ -16,10 +16,10 @@ function providerIdempotencyKey(durableKey: string) {
   return `tft-transfer-proof-${createHash("sha256").update(durableKey).digest("hex")}`;
 }
 
-function configuredEmailProvider(): EmailProvider {
+function configuredEmailProvider(): EmailProvider | null {
   if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
   if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
-  return "CONSOLE";
+  return null;
 }
 
 type StageParams = {
@@ -108,7 +108,8 @@ export async function drainTransferProofDeliveryIntents(
   let reconciliationRequired = 0;
   for (const row of rows) {
     const staleClaim = row.status === "PROCESSING";
-    const provider = row.provider as EmailProvider | null ?? configuredEmailProvider();
+    const provider = row.provider as EmailProvider | null
+      ?? (staleClaim ? null : configuredEmailProvider());
     const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
       && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
     if ((staleClaim && provider !== "RESEND") || resendWindowExpired) {
@@ -143,6 +144,7 @@ export async function drainTransferProofDeliveryIntents(
 
     const attemptCount = row.attemptCount + 1;
     let data: Payload = {};
+    let providerAccepted = false;
     try {
       data = payload(row.payloadJson);
       if (row.kind === BUYER_KIND) {
@@ -167,6 +169,7 @@ export async function drainTransferProofDeliveryIntents(
           to: row.recipient, ...email,
           idempotencyKey: providerIdempotencyKey(row.idempotencyKey), provider,
         });
+        providerAccepted = result.ok;
         await db.reminderDelivery.update({
           where: key,
           data: {
@@ -187,6 +190,7 @@ export async function drainTransferProofDeliveryIntents(
           "Proof type": data.transferProofType ? String(data.transferProofType) : null,
           "Buyer confirmation deadline": String(data.deadline),
         } });
+        providerAccepted = result.ok;
         await db.emailDelivery.upsert({
           where: { orderId_emailType_recipient: {
             orderId: row.orderId, emailType: `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`, recipient: row.recipient,
@@ -212,7 +216,7 @@ export async function drainTransferProofDeliveryIntents(
       delivered += 1;
     } catch (error) {
       const lastError = error instanceof Error ? error.message : "Unknown transfer-proof delivery error";
-      if (row.kind === BUYER_KIND) {
+      if (!providerAccepted && row.kind === BUYER_KIND) {
         const deadline = new Date(String(data.deadline));
         const windowStart = new Date(String(data.windowStart));
         if (!Number.isNaN(deadline.getTime()) && !Number.isNaN(windowStart.getTime())) {
@@ -228,7 +232,7 @@ export async function drainTransferProofDeliveryIntents(
             update: { status: "FAILED", providerResult: "EXCEPTION", failureReason: lastError, completedAt: now },
           });
         }
-      } else if (row.kind === ADMIN_KIND) {
+      } else if (!providerAccepted && row.kind === ADMIN_KIND) {
         await db.emailDelivery.upsert({
           where: { orderId_emailType_recipient: {
             orderId: row.orderId, emailType: `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`, recipient: row.recipient,
@@ -243,7 +247,12 @@ export async function drainTransferProofDeliveryIntents(
       await db.transferProofDeliveryIntent.updateMany({
         where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, attemptCount },
         data: {
-          status: provider === "SENDGRID" ? "RECONCILIATION_REQUIRED" : "FAILED", processingAt: null, leaseExpiresAt: null, lastError: lastError.slice(0, 2000),
+          status: providerAccepted
+            ? provider === "RESEND" ? "PROCESSING" : "RECONCILIATION_REQUIRED"
+            : provider === "SENDGRID" ? "RECONCILIATION_REQUIRED" : "FAILED",
+          processingAt: providerAccepted && provider === "RESEND" ? now : null,
+          leaseExpiresAt: providerAccepted && provider === "RESEND" ? now : null,
+          lastError: lastError.slice(0, 2000),
           availableAt: attemptCount < MAX_ATTEMPTS
             ? new Date(now.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
             : now,
