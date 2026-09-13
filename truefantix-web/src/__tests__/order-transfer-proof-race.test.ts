@@ -3,8 +3,10 @@
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { analyzeTransferProof } from "@/lib/orders/transferProofReview";
-import { notifyBuyerTransferConfirmationRequired } from "@/lib/orders/transferWorkflow";
-import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
+import {
+  dispatchTransferProofDeliveryIntent,
+  stageTransferProofDeliveryIntent,
+} from "@/lib/orders/transferProofDelivery";
 import { validateRequest } from "@/lib/validation";
 import { POST } from "@/app/api/orders/transfer-proof/route";
 
@@ -24,9 +26,11 @@ jest.mock("@/lib/orders/transferProofReview", () => ({
 jest.mock("@/lib/orders/transferWorkflow", () => ({
   BUYER_CONFIRMATION_DEADLINE_HOURS: 24,
   addHours: jest.fn((date: Date, hours: number) => new Date(date.getTime() + hours * 60 * 60 * 1000)),
-  notifyBuyerTransferConfirmationRequired: jest.fn(),
 }));
-jest.mock("@/lib/adminActivityEmail", () => ({ sendAdminActivityEmail: jest.fn() }));
+jest.mock("@/lib/orders/transferProofDelivery", () => ({
+  stageTransferProofDeliveryIntent: jest.fn(),
+  dispatchTransferProofDeliveryIntent: jest.fn(),
+}));
 jest.mock("@/lib/validation", () => ({
   schemas: { orderTransferProof: { kind: "order-transfer-proof" } },
   validateRequest: jest.fn(),
@@ -40,12 +44,8 @@ const mockedPrisma = prisma as unknown as {
 };
 const mockedRequireUser = requireUser as jest.MockedFunction<typeof requireUser>;
 const mockedAnalyzeTransferProof = analyzeTransferProof as jest.MockedFunction<typeof analyzeTransferProof>;
-const mockedNotifyBuyer = notifyBuyerTransferConfirmationRequired as jest.MockedFunction<
-  typeof notifyBuyerTransferConfirmationRequired
->;
-const mockedSendAdminActivityEmail = sendAdminActivityEmail as jest.MockedFunction<
-  typeof sendAdminActivityEmail
->;
+const mockedStageDelivery = stageTransferProofDeliveryIntent as jest.MockedFunction<typeof stageTransferProofDeliveryIntent>;
+const mockedDispatchDelivery = dispatchTransferProofDeliveryIntent as jest.MockedFunction<typeof dispatchTransferProofDeliveryIntent>;
 const mockedValidateRequest = validateRequest as jest.Mock;
 
 const orderId = "cm1234567890abcdefghijkl";
@@ -141,8 +141,19 @@ describe("seller transfer-proof staging-persona race boundary", () => {
       issues: [],
       reason: "Synthetic proof accepted.",
     } as never);
-    mockedNotifyBuyer.mockResolvedValue(undefined as never);
-    mockedSendAdminActivityEmail.mockResolvedValue(undefined as never);
+    mockedStageDelivery.mockResolvedValue({
+      orderId,
+      buyerUserId: "buyer-user-1",
+      buyerEmail: "buyer@example.test",
+      buyerFirstName: "Buyer",
+      sellerEmail: ordinarySeller.email,
+      ticketCount: 1,
+      transferProofType: "EMAIL",
+      deadline: new Date("2026-12-02T00:00:00.000Z"),
+      windowStart: new Date("2026-12-01T00:00:00.000Z"),
+      adminEmailType: "ADMIN_TRANSFER_SUBMITTED_2026-12-01T00:00:00.000Z",
+    });
+    mockedDispatchDelivery.mockResolvedValue(undefined);
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -159,8 +170,8 @@ describe("seller transfer-proof staging-persona race boundary", () => {
     expect(mockedPrisma.order.findUnique).not.toHaveBeenCalled();
     expect(mockedAnalyzeTransferProof).not.toHaveBeenCalled();
     expect(mockedPrisma.order.update).not.toHaveBeenCalled();
-    expect(mockedNotifyBuyer).not.toHaveBeenCalled();
-    expect(mockedSendAdminActivityEmail).not.toHaveBeenCalled();
+    expect(mockedStageDelivery).not.toHaveBeenCalled();
+    expect(mockedDispatchDelivery).not.toHaveBeenCalled();
   });
 
   it("reclassifies a serialization abort after persona restoration", async () => {
@@ -202,8 +213,9 @@ describe("seller transfer-proof staging-persona race boundary", () => {
     expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(2);
     expect(mockedAnalyzeTransferProof).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
-    expect(mockedNotifyBuyer).toHaveBeenCalledTimes(1);
-    expect(mockedSendAdminActivityEmail).toHaveBeenCalledTimes(1);
+    expect(mockedStageDelivery).toHaveBeenCalledTimes(1);
+    expect(mockedStageDelivery.mock.invocationCallOrder[0]).toBeLessThan(mockedDispatchDelivery.mock.invocationCallOrder[0]);
+    expect(mockedDispatchDelivery).toHaveBeenCalledTimes(1);
   });
 
   it("rechecks the locked order state before provider work or mutation", async () => {
@@ -216,7 +228,20 @@ describe("seller transfer-proof staging-persona race boundary", () => {
     expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(2);
     expect(mockedAnalyzeTransferProof).not.toHaveBeenCalled();
     expect(mockedPrisma.order.update).not.toHaveBeenCalled();
-    expect(mockedNotifyBuyer).not.toHaveBeenCalled();
-    expect(mockedSendAdminActivityEmail).not.toHaveBeenCalled();
+    expect(mockedStageDelivery).not.toHaveBeenCalled();
+    expect(mockedDispatchDelivery).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch staged delivery when the serializable transaction rolls back", async () => {
+    mockedPrisma.$transaction.mockImplementation(async (work: (tx: typeof mockedPrisma) => unknown) => {
+      await work(mockedPrisma);
+      throw Object.assign(new Error("serialization failure"), { code: "P2034" });
+    });
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(500);
+    expect(mockedStageDelivery).toHaveBeenCalledTimes(1);
+    expect(mockedDispatchDelivery).not.toHaveBeenCalled();
   });
 });

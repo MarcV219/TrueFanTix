@@ -6,10 +6,13 @@ import { schemas, validateRequest } from "@/lib/validation";
 import {
   BUYER_CONFIRMATION_DEADLINE_HOURS,
   addHours,
-  notifyBuyerTransferConfirmationRequired,
 } from "@/lib/orders/transferWorkflow";
 import { analyzeTransferProof, transferProofIssueMessage } from "@/lib/orders/transferProofReview";
-import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
+import {
+  dispatchTransferProofDeliveryIntent,
+  stageTransferProofDeliveryIntent,
+  type TransferProofDeliveryIntent,
+} from "@/lib/orders/transferProofDelivery";
 import {
   ManagedAccountOrderOperationError,
   OrderOperationAccessChangedError,
@@ -28,7 +31,8 @@ export async function POST(req: Request) {
 
     const { orderId, transferProofType, transferProofData, transferProofImage, transferProofFileName } = validation.data;
 
-    return await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
+    let deliveryIntent: TransferProofDeliveryIntent | undefined;
+    const response = await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
       // Serialize proof analysis and persistence with every competing order
       // transition so provider work cannot outlive a stale seller or order.
       await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
@@ -193,28 +197,19 @@ export async function POST(req: Request) {
         },
       });
 
-      if (order.buyerSeller.user?.id) {
-        await notifyBuyerTransferConfirmationRequired({
+      if (order.buyerSeller.user?.id && order.buyerSeller.user.email) {
+        deliveryIntent = await stageTransferProofDeliveryIntent(tx, {
           buyerUserId: order.buyerSeller.user.id,
+          buyerEmail: order.buyerSeller.user.email,
+          buyerFirstName: order.buyerSeller.user.firstName ?? null,
+          sellerEmail: current.email,
           orderId,
           ticketCount: order.items.length,
           deadline: disputeWindowEndsAt,
-          sendEmail: true,
+          transferProofType,
           now: submittedAt,
         });
       }
-      await sendAdminActivityEmail({
-        activity: "TICKETS_TRANSFERRED",
-        summary: `Ticket transfer submitted — order ${orderId}`,
-        details: {
-          "Order ID": orderId,
-          Seller: current.email,
-          Buyer: order.buyerSeller.user?.email,
-          "Ticket count": order.items.length,
-          "Proof type": transferProofType,
-          "Buyer confirmation deadline": disputeWindowEndsAt.toISOString(),
-        },
-      });
       return NextResponse.json(
         {
           ok: true,
@@ -225,6 +220,14 @@ export async function POST(req: Request) {
         { status: 200 }
       );
     });
+    if (deliveryIntent) {
+      try {
+        await dispatchTransferProofDeliveryIntent(deliveryIntent);
+      } catch (deliveryError) {
+        console.error("Post-commit transfer-proof delivery dispatch failed:", deliveryError);
+      }
+    }
+    return response;
   } catch (err) {
     if (err instanceof ManagedAccountOrderOperationError) {
       return NextResponse.json(
