@@ -2,6 +2,7 @@
 set -euo pipefail
 
 app_dir="/home/marc/.openclaw/workspace/TrueFanTix/truefantix-web"
+sync_url="${OUTREACH_GMAIL_SYNC_URL:-https://truefantix.ca/api/cron/outreach-gmail-sync}"
 temp_dir="$(mktemp -d)"
 cleanup() {
   rm -f "$temp_dir/production.env" "$temp_dir/response.json"
@@ -29,7 +30,7 @@ set +a
 status="$(curl --silent --show-error --output "$temp_dir/response.json" --write-out '%{http_code}' \
   --request POST \
   --header "Authorization: Bearer $CRON_SECRET" \
-  https://truefantix.ca/api/cron/outreach-gmail-sync)"
+  "$sync_url")"
 if [[ "$status" != "200" ]] || ! grep -q '"ok":true' "$temp_dir/response.json"; then
   echo "Gmail reply sync failed with HTTP $status" >&2
   exit 1
