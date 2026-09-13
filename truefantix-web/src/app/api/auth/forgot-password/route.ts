@@ -190,10 +190,10 @@ export async function GET(req: Request) {
     });
 
     if (!resetToken || isPrimaryStagingManagedUser(resetToken.user)) {
-      return NextResponse.json(
+      return privateNoStore(NextResponse.json(
         { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
         { status: 400 }
-      );
+      ));
     }
 
     return NextResponse.json(
@@ -253,10 +253,10 @@ export async function PATCH(req: Request) {
       select: { email: true, phone: true, termsVersion: true, privacyVersion: true },
     });
     if (!resetUser || isPrimaryStagingManagedUser(resetUser)) {
-      return NextResponse.json(
+      return privateNoStore(NextResponse.json(
         { ok: false, error: "INVALID_TOKEN", message: "Invalid or expired reset link." },
         { status: 400 }
-      );
+      ));
     }
 
     // Hash new password

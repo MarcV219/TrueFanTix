@@ -12,6 +12,12 @@ function jsonError(status: number, error: string, message: string) {
   return NextResponse.json({ ok: false, error, message }, { status });
 }
 
+function privateJsonError(status: number, error: string, message: string) {
+  const response = jsonError(status, error, message);
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
 function getResetSecret() {
   const secret = process.env.VERIFICATION_SECRET;
   if (!secret || secret.length < 32) {
@@ -59,25 +65,26 @@ export async function POST(req: Request) {
       return jsonError(400, "MAX_ATTEMPTS", "Too many failed attempts. Please request a new reset link.");
     }
 
-    // Increment attempt count
-    await prisma.verificationCode.update({
-      where: { id: resetCode.id },
-      data: { attemptCount: { increment: 1 } },
-    });
-
     // Find user
     const user = await prisma.user.findUnique({
       where: { id: resetCode.userId },
       select: { id: true, email: true, phone: true, termsVersion: true, privacyVersion: true },
     });
 
-    if (
-      !user
-      || isPrimaryStagingManagedUser(user)
-      || user.email.toLowerCase() !== email.toLowerCase()
-    ) {
+    if (user && isPrimaryStagingManagedUser(user)) {
+      return privateJsonError(400, "INVALID_TOKEN", "Reset link is invalid.");
+    }
+
+    if (!user || user.email.toLowerCase() !== email.toLowerCase()) {
       return jsonError(400, "INVALID_TOKEN", "Reset link is invalid.");
     }
+
+    // Increment only after the reset code's user has passed the managed-account
+    // boundary. A legacy code must not mutate staging-owned verification state.
+    await prisma.verificationCode.update({
+      where: { id: resetCode.id },
+      data: { attemptCount: { increment: 1 } },
+    });
 
     // Hash new password
     const passwordHash = await bcrypt.hash(password, 12);
@@ -99,7 +106,7 @@ export async function POST(req: Request) {
       { ok: true, message: "Password has been reset successfully." },
       { status: 200 }
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("POST /api/auth/reset-password error:", err);
     return jsonError(500, "SERVER_ERROR", "An unexpected error occurred.");
   }
