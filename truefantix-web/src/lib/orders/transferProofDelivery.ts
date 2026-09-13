@@ -294,7 +294,10 @@ export async function drainTransferProofDeliveryIntents(
         const recorded = await db.$transaction(async (tx) => {
           const owned = await tx.transferProofDeliveryIntent.updateMany({
             where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
-            data: { lastError: null },
+            data: {
+              status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null,
+              claimToken: null, dispatchStartedAt: null, lastError: null,
+            },
           });
           if (owned.count !== 1) return owned;
           await tx.reminderDelivery.update({
@@ -323,7 +326,10 @@ export async function drainTransferProofDeliveryIntents(
         const recorded = await db.$transaction(async (tx) => {
           const owned = await tx.transferProofDeliveryIntent.updateMany({
             where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
-            data: { lastError: null },
+            data: {
+              status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null,
+              claimToken: null, dispatchStartedAt: null, lastError: null,
+            },
           });
           if (owned.count !== 1) return owned;
           await tx.emailDelivery.upsert({
@@ -340,14 +346,6 @@ export async function drainTransferProofDeliveryIntents(
         });
         if (recorded.count !== 1) throw new Error("Transfer-proof provider accepted delivery but claim ownership was lost");
       }
-      const completed = await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
-        data: {
-          status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null,
-          claimToken: null, dispatchStartedAt: null, lastError: null,
-        },
-      });
-      if (completed.count !== 1) throw new Error("Transfer-proof provider accepted delivery but completion persistence was lost");
       delivered += 1;
     } catch (error) {
       const lastError = error instanceof Error ? error.message : "Unknown transfer-proof delivery error";

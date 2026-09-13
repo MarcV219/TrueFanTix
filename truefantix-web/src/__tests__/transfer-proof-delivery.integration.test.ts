@@ -728,7 +728,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } as unknown as NonNullable<Parameters<typeof drainTransferProofDeliveryIntents>[1]>;
   }
 
-  it("waits for the pinned Resend provider before reclaiming a lost completion", async () => {
+  it("waits for the pinned Resend provider after atomic success persistence loses ownership", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("15")));
     await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
     const previousResendKey = process.env.RESEND_API_KEY;
@@ -745,7 +745,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
         .resolves.toMatchObject({ status: "PROCESSING", provider: "RESEND", attemptCount: 1 });
       await expect(prisma.reminderDelivery.findFirstOrThrow({ where: { orderId } }))
-        .resolves.toMatchObject({ status: "SENT", provider: "RESEND", failureReason: null });
+        .resolves.toMatchObject({ status: "ATTEMPTING", provider: "RESEND", completedAt: null });
 
       accepted = false;
       delete process.env.RESEND_API_KEY;
@@ -806,7 +806,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       });
   });
 
-  it("quarantines a lost SendGrid completion after config changes instead of crossing providers", async () => {
+  it("quarantines an accepted SendGrid delivery when atomic success persistence loses ownership", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("17")));
     await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
     const previousResendKey = process.env.RESEND_API_KEY;
@@ -839,7 +839,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .resolves.toMatchObject({ status: "RECONCILIATION_REQUIRED", provider: "SENDGRID", attemptCount: 1 });
   });
 
-  it("preserves SENT administrator evidence when outbox completion persistence is lost", async () => {
+  it("does not commit administrator SENT evidence without the matching outbox completion", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("19")));
     await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" } });
     let accepted = false;
@@ -853,8 +853,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       completionLosingDb(() => accepted),
     );
 
-    await expect(prisma.emailDelivery.findFirstOrThrow({ where: { orderId } }))
-      .resolves.toMatchObject({ status: "SENT", provider: "RESEND", error: null });
+    await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
     await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
       .resolves.toMatchObject({ status: "PROCESSING", provider: "RESEND", attemptCount: 1 });
   });
@@ -888,7 +887,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .resolves.toMatchObject({ status: "DELIVERED", provider: "SENDGRID", attemptCount: 1 });
   });
 
-  it("escalates an accepted Resend delivery when completion persistence exhausts the retry budget", async () => {
+  it("escalates an accepted Resend delivery when atomic success persistence exhausts the retry budget", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("22")));
     await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
     await prisma.transferProofDeliveryIntent.updateMany({
@@ -923,6 +922,6 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
       .resolves.toMatchObject({ status: "RECONCILIATION_REQUIRED", provider: "RESEND", attemptCount: 3 });
     await expect(prisma.reminderDelivery.findFirstOrThrow({ where: { orderId } }))
-      .resolves.toMatchObject({ status: "SENT", provider: "RESEND", failureReason: null });
+      .resolves.toMatchObject({ status: "ATTEMPTING", provider: "RESEND", completedAt: null });
   });
 });
