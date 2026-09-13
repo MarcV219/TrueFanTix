@@ -927,6 +927,68 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).resolves.toEqual({ provider: "RESEND", attemptCount: 0, dispatchStartedAt: null });
   });
 
+  it("installs provider pinning as a forward-only upgrade after the transition migration", async () => {
+    const transitionSchema = `transfer_proof_transition_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${transitionSchema}"`);
+      await client.query(`SET search_path TO "${transitionSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "processingAt", "leaseExpiresAt",
+          "claimToken", "availableAt"
+        ) VALUES (
+          'pre-forward-migration', 'RESEND', 'PROCESSING', 0, NOW(),
+          NOW() + INTERVAL '15 minutes', 'owned-upgrade-claim', NOW()
+        )
+      `);
+
+      const transitionMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913200000_enforce_transfer_proof_delivery_transitions/migration.sql",
+      ), "utf8");
+      await client.query(transitionMigration);
+      const providerPinMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913203000_pin_transfer_proof_provider_on_dispatch/migration.sql",
+      ), "utf8");
+      await client.query(providerPinMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET provider = 'SENDGRID', "attemptCount" = 1,
+          "firstAttemptAt" = "processingAt", "dispatchStartedAt" = "processingAt"
+        WHERE id = 'pre-forward-migration'
+      `)).rejects.toThrow("Transfer-proof delivery attempt increment requires its owned dispatch boundary");
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 1, "firstAttemptAt" = "processingAt",
+          "dispatchStartedAt" = "processingAt"
+        WHERE id = 'pre-forward-migration'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${transitionSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("quarantines ambiguous legacy lifecycle rows without inferring delivery", async () => {
     const lifecycleSchema = `transfer_proof_lifecycle_${process.pid}_${Date.now()}`;
     const client = await pool.connect();

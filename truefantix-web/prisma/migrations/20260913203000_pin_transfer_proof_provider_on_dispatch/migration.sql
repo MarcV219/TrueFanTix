@@ -1,5 +1,5 @@
--- Lifecycle shapes alone are not enough: a syntactically coherent update must
--- not resurrect a terminal outcome or rewrite its evidence after commitment.
+-- Migration 62 is already deployed on isolated staging, so preserve its
+-- checksum and tighten the dispatch boundary with a forward-only replacement.
 CREATE OR REPLACE FUNCTION enforce_transfer_proof_delivery_transition()
 RETURNS trigger AS $$
 BEGIN
@@ -46,6 +46,7 @@ BEGIN
       AND NEW.status = 'PROCESSING'
       AND OLD."dispatchStartedAt" IS NULL
       AND NEW."dispatchStartedAt" IS NOT NULL
+      AND NEW.provider IS NOT DISTINCT FROM OLD.provider
       AND NEW."claimToken" IS NOT DISTINCT FROM OLD."claimToken"
       AND NEW."processingAt" IS NOT DISTINCT FROM OLD."processingAt"
       AND NEW."leaseExpiresAt" IS NOT DISTINCT FROM OLD."leaseExpiresAt"
@@ -56,7 +57,3 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE TRIGGER "TransferProofDeliveryIntent_lifecycle_transition"
-BEFORE UPDATE ON "TransferProofDeliveryIntent"
-FOR EACH ROW EXECUTE FUNCTION enforce_transfer_proof_delivery_transition();
