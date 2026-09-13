@@ -22,6 +22,12 @@ function configuredEmailProvider(): EmailProvider | null {
   return null;
 }
 
+function providerIsConfigured(provider: EmailProvider) {
+  if (provider === "RESEND") return Boolean(process.env.RESEND_API_KEY?.trim());
+  if (provider === "SENDGRID") return Boolean(process.env.SENDGRID_API_KEY?.trim());
+  return false;
+}
+
 type StageParams = {
   orderId: string;
   buyerUserId: string | null;
@@ -146,6 +152,9 @@ export async function drainTransferProofDeliveryIntents(
       continue;
     }
     if (!provider) continue;
+    // A provider is pinned after the first claim so retries cannot cross provider
+    // identities. Configuration rotation must not consume that retry budget.
+    if (!providerIsConfigured(provider)) continue;
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
     const claim = await db.transferProofDeliveryIntent.updateMany({
       where: { id: row.id, attemptCount: row.attemptCount, OR: recoverable.OR },
