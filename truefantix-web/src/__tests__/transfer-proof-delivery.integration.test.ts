@@ -1330,6 +1330,157 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).resolves.toMatchObject({ attemptCount: 2, dispatchStartedAt: availableAt });
   });
 
+  it("requires an owned dispatch boundary before recording delivery", async () => {
+    const [undispatchedId, earlyCompletionId, validId] = await seedAdminBatch(
+      "delivery-dispatch-boundary", 3,
+    );
+    const firstAttemptAt = new Date("2026-12-01T01:00:00.000Z");
+    const availableAt = new Date("2026-12-01T03:00:00.000Z");
+    const leaseExpiresAt = new Date("2026-12-01T03:15:00.000Z");
+    await forceLegacyIntentState(
+      { id: { in: [undispatchedId, earlyCompletionId, validId] } },
+      {
+        status: "FAILED", provider: "RESEND", attemptCount: 1, firstAttemptAt,
+        availableAt, lastError: "synthetic retryable rejection",
+      },
+    );
+    for (const id of [undispatchedId, earlyCompletionId, validId]) {
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", processingAt: availableAt, leaseExpiresAt,
+          claimToken: `delivery-claim-${id}`, lastError: null,
+        },
+      });
+    }
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: undispatchedId },
+      data: {
+        status: "DELIVERED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, deliveredAt: new Date("2026-12-01T03:05:00.000Z"),
+      },
+    })).rejects.toThrow("Transfer-proof delivery completion requires its owned dispatch boundary");
+
+    for (const id of [earlyCompletionId, validId]) {
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: { attemptCount: 2, dispatchStartedAt: availableAt },
+      });
+    }
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: earlyCompletionId },
+      data: {
+        status: "DELIVERED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, dispatchStartedAt: null,
+        deliveredAt: new Date("2026-12-01T02:59:00.000Z"),
+      },
+    })).rejects.toThrow("Transfer-proof delivery completion requires its owned dispatch boundary");
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validId },
+      data: {
+        status: "DELIVERED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, dispatchStartedAt: null,
+        deliveredAt: new Date("2026-12-01T03:01:00.000Z"),
+      },
+    })).resolves.toMatchObject({ status: "DELIVERED", attemptCount: 2 });
+  });
+
+  it("installs dispatch-bound completion as a forward-only upgrade", async () => {
+    const completionSchema = `transfer_proof_completion_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${completionSchema}"`);
+      await client.query(`SET search_path TO "${completionSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt", "processingAt",
+          "leaseExpiresAt", "claimToken", "availableAt"
+        ) VALUES
+          ('permissive-68', 'RESEND', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 01:00:00', TIMESTAMP '2026-12-01 03:00:00',
+            TIMESTAMP '2026-12-01 03:15:00', 'permissive-owner',
+            TIMESTAMP '2026-12-01 03:00:00'),
+          ('strict-69', 'RESEND', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 01:00:00', TIMESTAMP '2026-12-01 03:00:00',
+            TIMESTAMP '2026-12-01 03:15:00', 'strict-owner',
+            TIMESTAMP '2026-12-01 03:00:00')
+      `);
+
+      for (const migration of [
+        "20260913200000_enforce_transfer_proof_delivery_transitions",
+        "20260913203000_pin_transfer_proof_provider_on_dispatch",
+        "20260913210000_bind_first_transfer_proof_attempt_timestamp",
+        "20260913213000_fence_transfer_proof_claim_reassignment",
+        "20260913220000_fence_transfer_proof_replay_handoffs",
+        "20260913223000_freeze_transfer_proof_attempt_identity",
+        "20260913230000_require_transfer_proof_claim_before_dispatch",
+      ]) {
+        const sql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(sql);
+      }
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "deliveredAt" = TIMESTAMP '2026-12-01 03:05:00'
+        WHERE id = 'permissive-68'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const completionMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913233000_require_transfer_proof_dispatch_before_delivery/migration.sql",
+      ), "utf8");
+      await client.query(completionMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "deliveredAt" = TIMESTAMP '2026-12-01 03:05:00'
+        WHERE id = 'strict-69'
+      `)).rejects.toThrow("Transfer-proof delivery completion requires its owned dispatch boundary");
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 2, "dispatchStartedAt" = "processingAt"
+        WHERE id = 'strict-69'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "dispatchStartedAt" = NULL,
+          "deliveredAt" = TIMESTAMP '2026-12-01 03:05:00'
+        WHERE id = 'strict-69'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${completionSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("installs pre-dispatch claim acquisition as a forward-only upgrade", async () => {
     const claimSchema = `transfer_proof_retry_claim_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
