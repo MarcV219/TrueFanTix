@@ -1,9 +1,23 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin, requireUser } from "@/lib/auth/guards";
-import { createNotification } from "@/lib/notifications/service";
 import { createHash } from "crypto";
 import { schemas, validateRequest } from "@/lib/validation";
+import {
+  ManagedAccountReferralWriteError,
+  runOrdinaryReferralWrite,
+} from "@/lib/referrals/ordinary-user";
+
+function stagingConsoleOnlyResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403, headers: { "Cache-Control": "private, no-store" } },
+  );
+}
 
 function getReferralSecret(): string {
   const secret = process.env.REFERRAL_SECRET || process.env.SESSION_SECRET;
@@ -36,25 +50,27 @@ export async function GET(req: Request) {
     if (!gate.ok) return gate.res;
 
     // Get or generate referral code
-    let user = await prisma.user.findUnique({
-      where: { id: gate.user.id },
-      select: {
-        id: true,
-        referralCode: true,
-      },
-    });
-
-    if (!user?.referralCode) {
-      const referralCode = generateReferralCode(gate.user.id);
-      user = await prisma.user.update({
+    const user = await runOrdinaryReferralWrite([gate.user.id], async (tx) => {
+      const current = await tx.user.findUnique({
         where: { id: gate.user.id },
-        data: { referralCode },
         select: {
           id: true,
           referralCode: true,
         },
       });
-    }
+
+      if (!current?.referralCode) {
+        return tx.user.update({
+          where: { id: gate.user.id },
+          data: { referralCode: generateReferralCode(gate.user.id) },
+          select: {
+            id: true,
+            referralCode: true,
+          },
+        });
+      }
+      return current;
+    });
 
     // Get referral stats
     const [referrals, stats] = await Promise.all([
@@ -105,6 +121,9 @@ export async function GET(req: Request) {
     });
 
   } catch (err) {
+    if (err instanceof ManagedAccountReferralWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("GET /api/referrals failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR" },
@@ -153,44 +172,70 @@ export async function POST(req: Request) {
       );
     }
 
-    // Check if user already has a referral
-    const existingReferral = await prisma.referral.findUnique({
-      where: { referredId: body.newUserId },
-    });
+    const result = await runOrdinaryReferralWrite(
+      [body.newUserId, referrer.id],
+      async (tx) => {
+        const currentReferrer = await tx.user.findUnique({
+          where: { referralCode: body.referralCode.toUpperCase() },
+          select: { id: true },
+        });
+        if (!currentReferrer || currentReferrer.id !== referrer.id) {
+          return { error: "INVALID_CODE" as const };
+        }
 
-    if (existingReferral) {
+        const existingReferral = await tx.referral.findUnique({
+          where: { referredId: body.newUserId },
+        });
+        if (existingReferral) return { error: "ALREADY_REFERRED" as const };
+
+        const referral = await tx.referral.create({
+          data: {
+            referrerId: referrer.id,
+            referredId: body.newUserId,
+            code: body.referralCode.toUpperCase(),
+            status: "PENDING",
+            accessTokensAwarded: 0,
+          },
+        });
+
+        await tx.notification.create({
+          data: {
+            userId: referrer.id,
+            type: "REFERRAL_SIGNUP",
+            message: "Someone used your referral code to sign up! You'll earn access tokens when they make their first purchase.",
+            link: "/referrals",
+            isRead: false,
+          },
+        });
+
+        return { referral };
+      },
+    );
+
+    if ("error" in result && result.error === "INVALID_CODE") {
+      return NextResponse.json(
+        { ok: false, error: "INVALID_CODE", message: "Invalid referral code" },
+        { status: 400 },
+      );
+    }
+
+    if ("error" in result) {
       return NextResponse.json(
         { ok: false, error: "ALREADY_REFERRED", message: "User already has a referral" },
         { status: 409 }
       );
     }
 
-    // Create referral record
-    const referral = await prisma.referral.create({
-      data: {
-        referrerId: referrer.id,
-        referredId: body.newUserId,
-        code: body.referralCode.toUpperCase(),
-        status: "PENDING",
-        accessTokensAwarded: 0,
-      },
-    });
-
-    // Notify referrer
-    await createNotification({
-      userId: referrer.id,
-      type: "REFERRAL_SIGNUP",
-      message: "Someone used your referral code to sign up! You'll earn access tokens when they make their first purchase.",
-      link: "/referrals",
-    });
-
     return NextResponse.json({
       ok: true,
-      referral,
+      referral: result.referral,
       message: "Referral code applied successfully!",
     });
 
   } catch (err) {
+    if (err instanceof ManagedAccountReferralWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("POST /api/referrals/claim failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR" },
@@ -211,15 +256,13 @@ export async function PATCH(req: Request) {
 
     const body = validation.data;
 
-    // Find pending referral
-    const referral = await prisma.referral.findUnique({
+    // Resolve the participant IDs before acquiring their ordered row locks.
+    const candidate = await prisma.referral.findUnique({
       where: { referredId: body.referredId },
-      include: {
-        referrer: true,
-      },
+      select: { id: true, referrerId: true, referredId: true },
     });
 
-    if (!referral || referral.status !== "PENDING") {
+    if (!candidate) {
       return NextResponse.json(
         { ok: false, error: "NO_PENDING_REFERRAL" },
         { status: 404 }
@@ -229,44 +272,59 @@ export async function PATCH(req: Request) {
     // Calculate access tokens (e.g., fixed amount)
     const accessTokenAmount = 10; // 10 access tokens per successful referral
 
-    // Complete the referral and award access tokens
-    await prisma.$transaction([
-      prisma.referral.update({
-        where: { id: referral.id },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          accessTokensAwarded: accessTokenAmount,
-        },
-      }),
-      prisma.seller.update({
-        where: { id: referral.referrerId },
-        data: {
-          accessTokenBalance: {
-            increment: accessTokenAmount,
-          },
-        },
-      }),
-      prisma.accessTokenTransaction.create({
-        data: {
-          sellerId: referral.referrerId,
-          type: "EARNED",
-          amountAccessTokens: accessTokenAmount,
-          source: "ADMIN",
-          referenceType: "REFERRAL",
-          referenceId: referral.id,
-          note: `Referral bonus for inviting ${referral.referredId}`,
-        },
-      }),
-    ]);
+    const completed = await runOrdinaryReferralWrite(
+      [gate.user.id, candidate.referrerId, candidate.referredId],
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Referral" WHERE "id" = ${candidate.id} FOR UPDATE`;
+        const referral = await tx.referral.findUnique({
+          where: { id: candidate.id },
+          include: { referrer: { select: { sellerId: true } } },
+        });
+        if (!referral || referral.status !== "PENDING") return false;
+        if (!referral.referrer.sellerId) return false;
 
-    // Notify referrer
-    await createNotification({
-      userId: referral.referrerId,
-      type: "REFERRAL_COMPLETED",
-      message: `Congratulations! Your referral completed their first purchase. You earned ${accessTokenAmount} access tokens!`,
-      link: "/referrals",
-    });
+        await tx.referral.update({
+          where: { id: referral.id },
+          data: {
+            status: "COMPLETED",
+            completedAt: new Date(),
+            accessTokensAwarded: accessTokenAmount,
+          },
+        });
+        await tx.seller.update({
+          where: { id: referral.referrer.sellerId },
+          data: { accessTokenBalance: { increment: accessTokenAmount } },
+        });
+        await tx.accessTokenTransaction.create({
+          data: {
+            sellerId: referral.referrer.sellerId,
+            type: "EARNED",
+            amountAccessTokens: accessTokenAmount,
+            source: "ADMIN",
+            referenceType: "REFERRAL",
+            referenceId: referral.id,
+            note: `Referral bonus for inviting ${referral.referredId}`,
+          },
+        });
+        await tx.notification.create({
+          data: {
+            userId: referral.referrerId,
+            type: "REFERRAL_COMPLETED",
+            message: `Congratulations! Your referral completed their first purchase. You earned ${accessTokenAmount} access tokens!`,
+            link: "/referrals",
+            isRead: false,
+          },
+        });
+        return true;
+      },
+    );
+
+    if (!completed) {
+      return NextResponse.json(
+        { ok: false, error: "NO_PENDING_REFERRAL" },
+        { status: 404 },
+      );
+    }
 
     return NextResponse.json({
       ok: true,
@@ -275,6 +333,9 @@ export async function PATCH(req: Request) {
     });
 
   } catch (err) {
+    if (err instanceof ManagedAccountReferralWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("PATCH /api/referrals failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR" },
