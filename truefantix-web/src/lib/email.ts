@@ -2,12 +2,15 @@ import sgMail from "@sendgrid/mail";
 
 export const DEFAULT_FROM_EMAIL = "noreply@truefantix.com";
 
+export type EmailProvider = "RESEND" | "SENDGRID" | "CONSOLE";
+
 export type EmailPayload = {
   to: string;
   subject: string;
   text: string;
   html?: string;
   idempotencyKey?: string;
+  provider?: EmailProvider;
 };
 
 function cleanSecret(value: string | undefined) {
@@ -33,7 +36,7 @@ function resendErrorMessage(status: number, body: string) {
 export type EmailSendResult = {
   ok: boolean;
   error?: string;
-  provider?: "RESEND" | "SENDGRID" | "CONSOLE";
+  provider?: EmailProvider;
   providerResult?: string;
 };
 
@@ -44,7 +47,7 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult>
   const fromEmail = configuredFromEmail || DEFAULT_FROM_EMAIL;
 
   // Prefer Resend when configured (Path B), fallback to SendGrid.
-  if (resendApiKey) {
+  if ((!payload.provider || payload.provider === "RESEND") && resendApiKey) {
     try {
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -76,7 +79,11 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult>
     }
   }
 
-  if (sendgridApiKey) {
+  if (payload.provider === "RESEND") {
+    return { ok: false, error: "Configured outbox provider Resend is unavailable", provider: "RESEND", providerResult: "NOT_CONFIGURED" };
+  }
+
+  if ((!payload.provider || payload.provider === "SENDGRID") && sendgridApiKey) {
     sgMail.setApiKey(sendgridApiKey);
 
     try {
@@ -93,6 +100,10 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult>
       console.error("[EMAIL] SendGrid error:", err);
       return { ok: false, error: err.message, provider: "SENDGRID", providerResult: "PROVIDER_ERROR" };
     }
+  }
+
+  if (payload.provider === "SENDGRID") {
+    return { ok: false, error: "Configured outbox provider SendGrid is unavailable", provider: "SENDGRID", providerResult: "NOT_CONFIGURED" };
   }
 
   if (process.env.NODE_ENV === "production") {

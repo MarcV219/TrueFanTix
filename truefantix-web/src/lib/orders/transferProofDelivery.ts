@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { prisma } from "@/lib/prisma";
-import { generateBuyerTransferConfirmationRequiredEmail, sendEmail } from "@/lib/email";
+import { generateBuyerTransferConfirmationRequiredEmail, sendEmail, type EmailProvider } from "@/lib/email";
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import { reminderWindowStart } from "@/lib/orders/transferWorkflow";
 
@@ -16,7 +16,7 @@ function providerIdempotencyKey(durableKey: string) {
   return `tft-transfer-proof-${createHash("sha256").update(durableKey).digest("hex")}`;
 }
 
-function configuredEmailProvider() {
+function configuredEmailProvider(): EmailProvider {
   if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
   if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
   return "CONSOLE";
@@ -105,40 +105,41 @@ export async function drainTransferProofDeliveryIntents(
   let claimed = 0;
   let delivered = 0;
   let failed = 0;
+  let reconciliationRequired = 0;
   for (const row of rows) {
-    const provider = configuredEmailProvider();
     const staleClaim = row.status === "PROCESSING";
+    const provider = staleClaim ? row.provider as EmailProvider | null : configuredEmailProvider();
     const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
       && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
-    if ((staleClaim && provider === "SENDGRID") || resendWindowExpired) {
-      await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: row.status },
+    if ((staleClaim && provider !== "RESEND") || resendWindowExpired) {
+      const quarantined = await db.transferProofDeliveryIntent.updateMany({
+        where: {
+          id: row.id, status: "PROCESSING", attemptCount: row.attemptCount,
+          leaseExpiresAt: { lte: now }, provider: row.provider,
+        },
         data: {
           status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
-          lastError: provider === "SENDGRID"
-            ? "Ambiguous prior SendGrid delivery requires reconciliation"
-            : "Resend idempotency window expired; delivery requires reconciliation",
+          lastError: resendWindowExpired
+            ? "Resend idempotency window expired; delivery requires reconciliation"
+            : provider
+              ? `Ambiguous prior ${provider} delivery requires reconciliation`
+              : "Ambiguous prior delivery with no recorded provider requires reconciliation",
         },
       });
+      reconciliationRequired += quarantined.count;
       continue;
     }
+    if (!provider) continue;
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
     const claim = await db.transferProofDeliveryIntent.updateMany({
       where: { id: row.id, attemptCount: row.attemptCount, OR: recoverable.OR },
       data: {
-        status: "PROCESSING", processingAt: now, firstAttemptAt: row.firstAttemptAt ?? now,
+        status: "PROCESSING", provider, processingAt: now, firstAttemptAt: row.firstAttemptAt ?? now,
         leaseExpiresAt, attemptCount: { increment: 1 }, lastError: null,
       },
     });
     if (claim.count !== 1) continue;
     claimed += 1;
-
-    if (provider === "SENDGRID") {
-      await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: "PROCESSING", leaseExpiresAt },
-        data: { status: "RECONCILIATION_REQUIRED", lastError: "SendGrid does not support provider-level idempotency" },
-      });
-    }
 
     const attemptCount = row.attemptCount + 1;
     let data: Payload = {};
@@ -150,7 +151,6 @@ export async function drainTransferProofDeliveryIntents(
         const key = { orderId_reminderType_recipient_windowStart: {
           orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient, windowStart,
         } };
-        const provider = configuredEmailProvider();
         await db.reminderDelivery.upsert({
           where: key,
           create: {
@@ -163,7 +163,10 @@ export async function drainTransferProofDeliveryIntents(
           },
         });
         const email = generateBuyerTransferConfirmationRequiredEmail(row.orderId, data.buyerFirstName ? String(data.buyerFirstName) : null, Number(data.ticketCount), deadline);
-        const result = await sendEmail({ to: row.recipient, ...email, idempotencyKey: providerIdempotencyKey(row.idempotencyKey) });
+        const result = await sendEmail({
+          to: row.recipient, ...email,
+          idempotencyKey: providerIdempotencyKey(row.idempotencyKey), provider,
+        });
         await db.reminderDelivery.update({
           where: key,
           data: {
@@ -178,7 +181,7 @@ export async function drainTransferProofDeliveryIntents(
       } else if (row.kind === ADMIN_KIND) {
         const result = await sendAdminActivityEmail({
           activity: "TICKETS_TRANSFERRED", summary: `Ticket transfer submitted — order ${row.orderId}`,
-          idempotencyKey: providerIdempotencyKey(row.idempotencyKey), completedAt: String(data.completedAt), details: {
+          idempotencyKey: providerIdempotencyKey(row.idempotencyKey), completedAt: String(data.completedAt), provider, details: {
           "Order ID": row.orderId, Seller: data.sellerEmail ? String(data.sellerEmail) : null,
           Buyer: data.buyerEmail ? String(data.buyerEmail) : null, "Ticket count": Number(data.ticketCount),
           "Proof type": data.transferProofType ? String(data.transferProofType) : null,
@@ -190,21 +193,22 @@ export async function drainTransferProofDeliveryIntents(
           } },
           create: {
             orderId: row.orderId, emailType: `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`,
-            recipient: row.recipient, provider: configuredEmailProvider(), status: result.ok ? "SENT" : "FAILED",
+            recipient: row.recipient, provider, status: result.ok ? "SENT" : "FAILED",
             error: result.ok ? null : result.error || "Unknown provider error", sentAt: now,
           },
           update: {
-            provider: configuredEmailProvider(), status: result.ok ? "SENT" : "FAILED",
+            provider, status: result.ok ? "SENT" : "FAILED",
             error: result.ok ? null : result.error || "Unknown provider error", sentAt: now,
           },
         });
         if (!result.ok) throw new Error(result.error || "Admin email provider rejected delivery");
       } else throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
 
-      await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: { in: ["PROCESSING", "RECONCILIATION_REQUIRED"] }, leaseExpiresAt, attemptCount },
+      const completed = await db.transferProofDeliveryIntent.updateMany({
+        where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, attemptCount },
         data: { status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null, lastError: null },
       });
+      if (completed.count !== 1) throw new Error("Transfer-proof provider accepted delivery but completion persistence was lost");
       delivered += 1;
     } catch (error) {
       const lastError = error instanceof Error ? error.message : "Unknown transfer-proof delivery error";
@@ -218,7 +222,7 @@ export async function drainTransferProofDeliveryIntents(
             } },
             create: {
               orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient,
-              windowStart, deadline, provider: configuredEmailProvider(), status: "FAILED",
+              windowStart, deadline, provider, status: "FAILED",
               providerResult: "EXCEPTION", failureReason: lastError, attemptedAt: now, completedAt: now,
             },
             update: { status: "FAILED", providerResult: "EXCEPTION", failureReason: lastError, completedAt: now },
@@ -231,13 +235,13 @@ export async function drainTransferProofDeliveryIntents(
           } },
           create: {
             orderId: row.orderId, emailType: `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`,
-            recipient: row.recipient, provider: configuredEmailProvider(), status: "FAILED", error: lastError, sentAt: now,
+            recipient: row.recipient, provider, status: "FAILED", error: lastError, sentAt: now,
           },
-          update: { provider: configuredEmailProvider(), status: "FAILED", error: lastError, sentAt: now },
+          update: { provider, status: "FAILED", error: lastError, sentAt: now },
         });
       }
       await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: { in: ["PROCESSING", "RECONCILIATION_REQUIRED"] }, leaseExpiresAt, attemptCount },
+        where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, attemptCount },
         data: {
           status: provider === "SENDGRID" ? "RECONCILIATION_REQUIRED" : "FAILED", processingAt: null, leaseExpiresAt: null, lastError: lastError.slice(0, 2000),
           availableAt: attemptCount < MAX_ATTEMPTS
@@ -245,8 +249,9 @@ export async function drainTransferProofDeliveryIntents(
             : now,
         },
       });
+      if (provider === "SENDGRID") reconciliationRequired += 1;
       failed += 1;
     }
   }
-  return { scanned: rows.length, claimed, delivered, failed };
+  return { scanned: rows.length, claimed, delivered, failed, reconciliationRequired };
 }

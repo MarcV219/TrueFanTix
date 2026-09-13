@@ -1,6 +1,6 @@
 /** @jest-environment node */
 
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { sendEmail } from "@/lib/email";
@@ -158,9 +158,16 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   it("recovers failed and stale claims through the persisted drainer", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("23")));
     await prisma.transferProofDeliveryIntent.updateMany({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" }, data: { status: "FAILED", availableAt: new Date("2026-12-01T18:00:00.000Z") } });
-    await prisma.transferProofDeliveryIntent.updateMany({ where: { orderId, recipient: "admin@truefantix.com" }, data: { status: "PROCESSING", attemptCount: 1, leaseExpiresAt: new Date("2026-12-01T18:00:00.000Z") } });
+    await prisma.transferProofDeliveryIntent.updateMany({ where: { orderId, recipient: "admin@truefantix.com" }, data: { status: "PROCESSING", provider: "RESEND", attemptCount: 1, firstAttemptAt: new Date("2026-12-01T18:00:00.000Z"), leaseExpiresAt: new Date("2026-12-01T18:00:00.000Z") } });
 
-    await drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T00:00:00.000Z") }, prisma);
+    const previousResendKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = "synthetic-resend-key";
+    try {
+      await drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T00:00:00.000Z") }, prisma);
+    } finally {
+      if (previousResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousResendKey;
+    }
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
     expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
     await expect(prisma.transferProofDeliveryIntent.findMany({ where: { orderId }, select: { status: true, attemptCount: true } }))
@@ -211,7 +218,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("09")));
     await prisma.transferProofDeliveryIntent.updateMany({
       where: { orderId },
-      data: { status: "PROCESSING", attemptCount: 1, leaseExpiresAt: new Date("2026-12-01T09:00:00.000Z") },
+      data: { status: "PROCESSING", provider: "SENDGRID", attemptCount: 1, firstAttemptAt: new Date("2026-12-01T09:00:00.000Z"), leaseExpiresAt: new Date("2026-12-01T09:00:00.000Z") },
     });
     const previousSendGridKey = process.env.SENDGRID_API_KEY;
     process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
@@ -233,6 +240,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       where: { orderId },
       data: {
         status: "PROCESSING",
+        provider: "RESEND",
         attemptCount: 1,
         firstAttemptAt: new Date("2026-12-01T11:00:00.000Z"),
         leaseExpiresAt: new Date("2026-12-01T11:15:00.000Z"),
@@ -250,5 +258,90 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "RECONCILIATION_REQUIRED" } })).resolves.toBe(2);
+  });
+
+  function completionLosingDb(providerAccepted: () => boolean) {
+    return {
+      transferProofDeliveryIntent: {
+        findMany: (args: Prisma.TransferProofDeliveryIntentFindManyArgs) => prisma.transferProofDeliveryIntent.findMany(args),
+        updateMany: (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => {
+          const status = typeof args.data.status === "string" ? args.data.status : undefined;
+          if (providerAccepted() && status && status !== "PROCESSING") return Promise.resolve({ count: 0 });
+          return prisma.transferProofDeliveryIntent.updateMany(args);
+        },
+      },
+      reminderDelivery: prisma.reminderDelivery,
+      emailDelivery: prisma.emailDelivery,
+    } as unknown as NonNullable<Parameters<typeof drainTransferProofDeliveryIntents>[1]>;
+  }
+
+  it("reclaims a lost Resend completion with the same provider and idempotency key after config changes", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("15")));
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    const previousResendKey = process.env.RESEND_API_KEY;
+    const previousSendGridKey = process.env.SENDGRID_API_KEY;
+    let accepted = false;
+    process.env.RESEND_API_KEY = "synthetic-resend-key";
+    delete process.env.SENDGRID_API_KEY;
+    mockedSendEmail.mockImplementation(async () => {
+      accepted = true;
+      return { ok: true, provider: "RESEND", providerResult: "accepted" };
+    });
+    try {
+      await drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T15:00:00.000Z") }, completionLosingDb(() => accepted));
+      await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+        .resolves.toMatchObject({ status: "PROCESSING", provider: "RESEND", attemptCount: 1 });
+
+      accepted = false;
+      delete process.env.RESEND_API_KEY;
+      process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
+      await drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T15:16:00.000Z") }, prisma);
+    } finally {
+      if (previousResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousResendKey;
+      if (previousSendGridKey === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = previousSendGridKey;
+    }
+    expect(mockedSendEmail).toHaveBeenCalledTimes(2);
+    expect(mockedSendEmail.mock.calls[0][0]).toMatchObject({ provider: "RESEND" });
+    expect(mockedSendEmail.mock.calls[1][0]).toMatchObject({
+      provider: "RESEND",
+      idempotencyKey: mockedSendEmail.mock.calls[0][0].idempotencyKey,
+    });
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({ status: "DELIVERED", provider: "RESEND", attemptCount: 2 });
+  });
+
+  it("quarantines a lost SendGrid completion after config changes instead of crossing providers", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("17")));
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    const previousResendKey = process.env.RESEND_API_KEY;
+    const previousSendGridKey = process.env.SENDGRID_API_KEY;
+    let accepted = false;
+    delete process.env.RESEND_API_KEY;
+    process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
+    mockedSendEmail.mockImplementation(async () => {
+      accepted = true;
+      return { ok: true, provider: "SENDGRID", providerResult: "accepted" };
+    });
+    try {
+      await drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T17:00:00.000Z") }, completionLosingDb(() => accepted));
+      await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+        .resolves.toMatchObject({ status: "PROCESSING", provider: "SENDGRID", attemptCount: 1 });
+
+      accepted = false;
+      process.env.RESEND_API_KEY = "synthetic-resend-key";
+      delete process.env.SENDGRID_API_KEY;
+      await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T17:16:00.000Z") }, prisma))
+        .resolves.toMatchObject({ claimed: 0, reconciliationRequired: 1 });
+    } finally {
+      if (previousResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousResendKey;
+      if (previousSendGridKey === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = previousSendGridKey;
+    }
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({ status: "RECONCILIATION_REQUIRED", provider: "SENDGRID", attemptCount: 1 });
   });
 });

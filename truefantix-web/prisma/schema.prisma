@@ -1672,6 +1672,7 @@ model TransferProofDeliveryIntent {
   kind           String
   recipient      String
   payloadJson    Json
+  provider       String?
   status         String    @default("PENDING")
   attemptCount   Int       @default(0)
   firstAttemptAt DateTime?

@@ -142,7 +142,7 @@ describe("seller transfer-proof staging-persona race boundary", () => {
       reason: "Synthetic proof accepted.",
     } as never);
     mockedStageDelivery.mockResolvedValue(undefined);
-    mockedDrainDelivery.mockResolvedValue({ scanned: 2, claimed: 2, delivered: 2, failed: 0 });
+    mockedDrainDelivery.mockResolvedValue({ scanned: 2, claimed: 2, delivered: 2, failed: 0, reconciliationRequired: 0 });
   });
 
   afterEach(() => jest.restoreAllMocks());

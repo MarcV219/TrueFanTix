@@ -1,4 +1,4 @@
-import { sendEmail } from "@/lib/email";
+import { sendEmail, type EmailProvider } from "@/lib/email";
 
 export const ADMIN_ACTIVITY_EMAIL = "admin@truefantix.com";
 
@@ -21,6 +21,7 @@ export async function sendAdminActivityEmail(params: {
   details: Record<string, string | number | null | undefined>;
   idempotencyKey?: string;
   completedAt?: string;
+  provider?: EmailProvider;
 }) {
   const completedAt = params.completedAt ?? new Date().toISOString();
   const detailLines = Object.entries(params.details)
@@ -36,6 +37,7 @@ export async function sendAdminActivityEmail(params: {
       text,
       html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#1f2937"><div style="background:#064a93;color:white;padding:18px 22px"><strong>${escapeHtml(params.summary)}</strong></div><div style="background:#f9fafb;padding:22px"><p><strong>Activity:</strong> ${escapeHtml(params.activity)}</p><ul>${htmlDetails}</ul><p style="color:#6b7280;font-size:12px">Completed: ${escapeHtml(completedAt)}</p></div></div>`,
       idempotencyKey: params.idempotencyKey,
+      provider: params.provider,
     });
     if (!result.ok) console.error(`[EMAIL] Admin activity notification failed (${params.activity}):`, result.error);
     return result;
