@@ -80,8 +80,8 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
 }
 
 type DeliveryDb = Pick<
-  Prisma.TransactionClient,
-  "transferProofDeliveryIntent" | "reminderDelivery" | "emailDelivery"
+  typeof prisma,
+  "$transaction" | "transferProofDeliveryIntent" | "reminderDelivery" | "emailDelivery"
 >;
 type Payload = Record<string, unknown>;
 
@@ -200,35 +200,53 @@ export async function drainTransferProofDeliveryIntents(
         const key = { orderId_reminderType_recipient_windowStart: {
           orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient, windowStart,
         } };
-        await db.reminderDelivery.upsert({
-          where: key,
-          create: {
-            orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient,
-            windowStart, deadline, provider, status: "ATTEMPTING", attemptedAt: now,
-          },
-          update: {
-            deadline, provider, status: "ATTEMPTING", providerResult: null,
-            failureReason: null, attemptedAt: now, completedAt: null,
-          },
+        const dispatch = await db.$transaction(async (tx) => {
+          const owned = await tx.transferProofDeliveryIntent.updateMany({
+            where: {
+              id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
+              attemptCount: row.attemptCount, dispatchStartedAt: null,
+            },
+            data: {
+              attemptCount: { increment: 1 },
+              firstAttemptAt: row.firstAttemptAt ?? now,
+              dispatchStartedAt: now,
+            },
+          });
+          if (owned.count !== 1) return owned;
+          await tx.reminderDelivery.upsert({
+            where: key,
+            create: {
+              orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient,
+              windowStart, deadline, provider, status: "ATTEMPTING", attemptedAt: now,
+            },
+            update: {
+              deadline, provider, status: "ATTEMPTING", providerResult: null,
+              failureReason: null, attemptedAt: now, completedAt: null,
+            },
+          });
+          return owned;
         });
+        if (dispatch.count !== 1) continue;
+        dispatchStarted = true;
+        attemptCount = row.attemptCount + 1;
       } else if (row.kind !== ADMIN_KIND) {
         throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
+      } else {
+        const dispatch = await db.transferProofDeliveryIntent.updateMany({
+          where: {
+            id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
+            attemptCount: row.attemptCount, dispatchStartedAt: null,
+          },
+          data: {
+            attemptCount: { increment: 1 },
+            firstAttemptAt: row.firstAttemptAt ?? now,
+            dispatchStartedAt: now,
+          },
+        });
+        if (dispatch.count !== 1) continue;
+        dispatchStarted = true;
+        attemptCount = row.attemptCount + 1;
       }
-
-      const dispatch = await db.transferProofDeliveryIntent.updateMany({
-        where: {
-          id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
-          attemptCount: row.attemptCount, dispatchStartedAt: null,
-        },
-        data: {
-          attemptCount: { increment: 1 },
-          firstAttemptAt: row.firstAttemptAt ?? now,
-          dispatchStartedAt: now,
-        },
-      });
-      if (dispatch.count !== 1) continue;
-      dispatchStarted = true;
-      attemptCount = row.attemptCount + 1;
 
       if (row.kind === BUYER_KIND) {
         const deadline = new Date(String(data.deadline));

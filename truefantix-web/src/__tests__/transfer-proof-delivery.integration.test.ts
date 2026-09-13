@@ -163,19 +163,16 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     const releasePromise = new Promise<void>((resolve) => { release = resolve; });
     let shouldPause = true;
     const stalledDb = {
-      transferProofDeliveryIntent: prisma.transferProofDeliveryIntent,
-      reminderDelivery: {
-        upsert: async (args: Prisma.ReminderDeliveryUpsertArgs) => {
-          const result = await prisma.reminderDelivery.upsert(args);
-          if (shouldPause) {
-            shouldPause = false;
-            paused();
-            await releasePromise;
-          }
-          return result;
-        },
-        update: (args: Prisma.ReminderDeliveryUpdateArgs) => prisma.reminderDelivery.update(args),
+      $transaction: async <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => {
+        if (shouldPause) {
+          shouldPause = false;
+          paused();
+          await releasePromise;
+        }
+        return prisma.$transaction(fn);
       },
+      transferProofDeliveryIntent: prisma.transferProofDeliveryIntent,
+      reminderDelivery: prisma.reminderDelivery,
       emailDelivery: prisma.emailDelivery,
     } as unknown as NonNullable<Parameters<typeof drainTransferProofDeliveryIntents>[1]>;
 
@@ -202,6 +199,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         status: "DELIVERED", provider: "RESEND", attemptCount: 1,
         claimToken: null, dispatchStartedAt: null,
       });
+    await expect(prisma.reminderDelivery.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({ status: "SENT", providerResult: "ACCEPTED" });
   });
 
   it("stages the buyer notification and Admin intent when buyer email is absent", async () => {
@@ -479,6 +478,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   function completionLosingDb(providerAccepted: () => boolean) {
     return {
+      $transaction: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => prisma.$transaction(fn),
       transferProofDeliveryIntent: {
         findMany: (args: Prisma.TransferProofDeliveryIntentFindManyArgs) => prisma.transferProofDeliveryIntent.findMany(args),
         updateMany: (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => {
@@ -665,6 +665,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "RESEND", providerResult: "accepted" });
     const completionConflictingDb = {
+      $transaction: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => prisma.$transaction(fn),
       transferProofDeliveryIntent: {
         findMany: (args: Prisma.TransferProofDeliveryIntentFindManyArgs) => prisma.transferProofDeliveryIntent.findMany(args),
         updateMany: (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => {
