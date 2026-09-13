@@ -869,6 +869,18 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         { id: "legacy-pending", idempotencyKey: buyerKey, identityVersion: 1, envelopeDigest: null },
         { id: "legacy-processing", idempotencyKey: adminKey, identityVersion: 1, envelopeDigest: null },
       ] });
+
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES (
+          'post-migration-v1', $1, 'BUYER_CONFIRMATION_EMAIL', $2, '{}'::jsonb,
+          'post-migration-v1-key', 1, NULL
+        )
+      `, [orderId, buyerEmail])).rejects.toThrow(
+        "New transfer-proof delivery intents require current envelope identity",
+      );
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${upgradeSchema}" CASCADE`);
