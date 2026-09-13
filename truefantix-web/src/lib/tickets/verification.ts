@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 type TicketForVerification = {
   id: string;
@@ -96,7 +96,10 @@ export function scoreTicket(ticket: TicketForVerification): VerificationDecision
   };
 }
 
-export async function autoVerifyTicketById(prisma: PrismaClient, ticketId: string) {
+export async function autoVerifyTicketById(
+  prisma: PrismaClient | Prisma.TransactionClient,
+  ticketId: string,
+) {
   const ticket = await prisma.ticket.findUnique({
     where: { id: ticketId },
     select: {

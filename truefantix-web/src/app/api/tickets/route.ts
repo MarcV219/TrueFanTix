@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSellerApproved } from "@/lib/auth/guards";
 import { autoVerifyTicketById } from "@/lib/tickets/verification";
@@ -20,6 +21,11 @@ import { canonicalizeEventTitle, canonicalTitleFromConfirmedSource, duplicateSea
 import { sendEmail } from "@/lib/email";
 import { DISPUTE_SUPPORT_EMAIL } from "@/lib/disputes";
 import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
+import {
+  ManagedAccountListingMutationError,
+  runOrdinaryListingMutation,
+  SellerListingAccessChangedError,
+} from "@/lib/tickets/ordinary-seller";
 
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -196,12 +202,14 @@ async function loadVenueLocations(venues: string[]) {
 }
 
 async function cacheReceiptConfirmedEventTitle({
+  tx,
   type,
   sellerTitle,
   receiptTitle,
   venue,
   date,
 }: {
+  tx: Prisma.TransactionClient;
   type: string | null | undefined;
   sellerTitle: string;
   receiptTitle: string | null | undefined;
@@ -214,7 +222,7 @@ async function cacheReceiptConfirmedEventTitle({
   const canonicalName = String(receiptTitle || "").trim();
   if (!canonicalName || normalizeListingText(canonicalName) !== normalizeListingText(sellerTitle)) return null;
 
-  return prisma.catalogEntity.upsert({
+  return tx.catalogEntity.upsert({
     where: {
       provider_providerId_type: {
         provider: "seller-receipt",
@@ -302,7 +310,7 @@ function officialWithReceiptSelloutSignal<T extends { soldOut: boolean | null; s
   };
 }
 
-async function findDuplicateSeatListing(params: {
+async function findDuplicateSeatListing(tx: Prisma.TransactionClient, params: {
   sellerId: string;
   date: string;
   venue: string;
@@ -319,7 +327,7 @@ async function findDuplicateSeatListing(params: {
 
   if (!normalizedVenue || !params.date || submittedParts.length < 2) return null;
 
-  const candidates = await prisma.ticket.findMany({
+  const candidates = await tx.ticket.findMany({
     where: {
       status: { in: ["AVAILABLE", "RESERVED", "SOLD"] },
       AND: [
@@ -749,19 +757,14 @@ export async function POST(req: Request) {
     barcodeHash = createHash("sha256").update(barcodeDataRaw).digest("hex");
   }
 
-  // ✅ Prevent impersonation: the sellerId must come from the logged-in user
-  const sellerId = gate.user.sellerId;
-  if (!sellerId) {
-    // Should not happen if requireSellerApproved() is correct, but keep it bulletproof.
-    return NextResponse.json(
-      { ok: false, error: "SELLER_LINK_MISSING", message: "Seller profile is missing." },
-      { status: 409 }
-    );
-  }
-
   try {
+    return await runOrdinaryListingMutation(gate.user.id, async (tx, currentUser) => {
+    // Prevent impersonation and stale-session reuse: the seller relationship is
+    // reloaded under the managed-account lock before any provider or listing work.
+    const sellerId = currentUser.seller.id;
+
     if (barcodeHash) {
-      const duplicate = await prisma.ticket.findFirst({
+      const duplicate = await tx.ticket.findFirst({
         where: {
           barcodeHash,
           status: { in: ["AVAILABLE", "SOLD"] },
@@ -783,7 +786,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const duplicateSeat = await findDuplicateSeatListing({
+    const duplicateSeat = await findDuplicateSeatListing(tx, {
       sellerId,
       date,
       venue,
@@ -893,6 +896,7 @@ export async function POST(req: Request) {
     title = canonicalTitleSource === "receipt" ? receiptConfirmedTitle : officialConfirmedTitle;
 
     const receiptCatalogEntity = await cacheReceiptConfirmedEventTitle({
+      tx,
       type: catalogRequestType,
       sellerTitle: title,
       receiptTitle: receiptReview?.eventTitle,
@@ -929,7 +933,7 @@ export async function POST(req: Request) {
       imageReason = "empty-image-fallback-default";
     }
 
-    const created = await prisma.ticket.create({
+    const created = await tx.ticket.create({
       data: {
         title,
         priceCents: priceCentsRaw,
@@ -996,26 +1000,26 @@ export async function POST(req: Request) {
       const selloutStatus = official.soldOut ? "SOLD_OUT" : "NOT_SOLD_OUT";
 
       if (linkedEventId) {
-        await prisma.event.update({
+        await tx.event.update({
           where: { id: linkedEventId },
           data: { selloutStatus },
         });
         shouldBackfillSiblingTickets = true;
       } else {
-        const existingEvent = await prisma.event.findFirst({
+        const existingEvent = await tx.event.findFirst({
           where: { title, date, venue },
           select: { id: true },
         });
 
         if (existingEvent) {
           linkedEventId = existingEvent.id;
-          await prisma.event.update({
+          await tx.event.update({
             where: { id: existingEvent.id },
             data: { selloutStatus, venue },
           });
           shouldBackfillSiblingTickets = true;
         } else {
-          const ev = await prisma.event.create({
+          const ev = await tx.event.create({
             data: { title, date, venue, selloutStatus },
             select: { id: true },
           });
@@ -1024,7 +1028,7 @@ export async function POST(req: Request) {
         }
       }
     } else if (!linkedEventId) {
-      const existingEvent = await prisma.event.findFirst({
+      const existingEvent = await tx.event.findFirst({
         where: { title, date, venue },
         select: { id: true },
       });
@@ -1043,7 +1047,7 @@ export async function POST(req: Request) {
       existingEvidence = {};
     }
 
-    await prisma.ticket.update({
+    await tx.ticket.update({
       where: { id: created.id },
       data: {
         priceCents: syncedPriceCents,
@@ -1078,7 +1082,7 @@ export async function POST(req: Request) {
     });
 
     if (linkedEventId && shouldBackfillSiblingTickets) {
-      await prisma.ticket.updateMany({
+      await tx.ticket.updateMany({
         where: {
           title,
           date,
@@ -1089,9 +1093,9 @@ export async function POST(req: Request) {
       });
     }
 
-    const verified = requestManualReview ? null : await autoVerifyTicketById(prisma, created.id);
+    const verified = requestManualReview ? null : await autoVerifyTicketById(tx, created.id);
 
-    const finalTicket = await prisma.ticket.findUnique({
+    const finalTicket = await tx.ticket.findUnique({
       where: { id: created.id },
       include: { event: true },
     });
@@ -1176,7 +1180,24 @@ export async function POST(req: Request) {
       },
       { status: 201 }
     );
+    });
   } catch (err: unknown) {
+    if (err instanceof ManagedAccountListingMutationError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    if (err instanceof SellerListingAccessChangedError) {
+      return NextResponse.json(
+        { ok: false, error: "SELLER_NOT_APPROVED", message: "Seller account is not approved." },
+        { status: 403 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
       { ok: false, error: "Ticket create failed", details: message },
