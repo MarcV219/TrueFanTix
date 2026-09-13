@@ -119,6 +119,13 @@ function requireIsoDate(data: Payload, field: string) {
   }
 }
 
+function requireDeliveryIdentity(row: TransferProofDeliveryIntent, windowStart: Date) {
+  const expectedKey = `${row.orderId}:${windowStart.toISOString()}:${row.kind}:${row.recipient}`;
+  if (row.idempotencyKey !== expectedKey) {
+    throw new Error("Transfer-proof delivery identity does not match its envelope");
+  }
+}
+
 function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Payload) {
   if (!row.recipient.trim()) throw new Error("Invalid transfer-proof delivery recipient");
   if (row.kind === BUYER_KIND) {
@@ -126,6 +133,11 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
     requirePositiveInteger(data, "ticketCount");
     requireIsoDate(data, "deadline");
     requireIsoDate(data, "windowStart");
+    const windowStart = new Date(String(data.windowStart));
+    if (reminderWindowStart(windowStart).getTime() !== windowStart.getTime()) {
+      throw new Error("Transfer-proof buyer delivery window is not normalized");
+    }
+    requireDeliveryIdentity(row, windowStart);
     return;
   }
   if (row.kind === ADMIN_KIND) {
@@ -138,6 +150,7 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
     requireNonEmptyString(data, "transferProofType");
     requireIsoDate(data, "deadline");
     requireIsoDate(data, "completedAt");
+    requireDeliveryIdentity(row, reminderWindowStart(new Date(String(data.completedAt))));
     return;
   }
   throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);

@@ -58,7 +58,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { idempotencyKey: { startsWith: `batch-${runId}-` } } });
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
     jest.clearAllMocks();
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "RESEND", providerResult: "ACCEPTED" });
     mockedSendAdmin.mockResolvedValue({ ok: true, provider: "RESEND" });
@@ -70,7 +70,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { idempotencyKey: { startsWith: `batch-${runId}-` } } });
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
     await prisma.user.deleteMany({ where: { id: buyerUserId } });
     await prisma.$disconnect();
     await pool.end();
@@ -108,7 +108,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
           completedAt: "2026-12-01T00:00:00.000Z",
         },
         availableAt: new Date(`2026-12-01T00:0${index}:00.000Z`),
-        idempotencyKey: `batch-${runId}-${scope}-${index}`,
+        idempotencyKey: `${batchOrderId}:2026-12-01T00:00:00.000Z:ADMIN_TRANSFER_ACTIVITY_EMAIL:admin@truefantix.com`,
       } });
       ids.push(row.id);
     }
@@ -731,6 +731,38 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     ]));
     await expect(prisma.reminderDelivery.count({ where: { orderId } })).resolves.toBe(0);
     await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+  });
+
+  it("quarantines envelope changes that diverge from the durable provider identity", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("21")));
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
+      data: { recipient: "changed-buyer@example.test" },
+    });
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
+      data: { idempotencyKey: `${orderId}:changed-admin-envelope` },
+    });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T21:00:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 2, delivered: 0, failed: 2, reconciliationRequired: 2 });
+
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { orderId },
+      select: { status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual(expect.arrayContaining([
+      {
+        status: "RECONCILIATION_REQUIRED",
+        attemptCount: 0,
+        lastError: "Pre-dispatch delivery failure: Transfer-proof delivery identity does not match its envelope",
+      },
+    ]));
+    await expect(prisma.transferProofDeliveryIntent.count({
+      where: { orderId, status: "RECONCILIATION_REQUIRED" },
+    })).resolves.toBe(2);
   });
 
   function transactionWithIntentUpdateFilter<T>(
