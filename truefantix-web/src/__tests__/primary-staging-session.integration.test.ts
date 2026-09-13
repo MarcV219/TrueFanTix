@@ -62,13 +62,66 @@ if (!databaseUrl) describe.skip("primary staging session PostgreSQL integration"
     process.env = originalEnv;
   });
 
-  it("atomically replaces every stale persona bearer with one access-token session", async () => {
+  it("atomically replaces every managed staging bearer with one access-token session", async () => {
     const admin = await ensurePrimaryStagingPersona("admin", db);
+    const organizer = await ensurePrimaryStagingPersona("organizer", db);
+    const buyer = await db.user.upsert({
+      where: { email: "refund-buyer@primary-staging.example.invalid" },
+      update: {},
+      create: {
+        email: "refund-buyer@primary-staging.example.invalid",
+        passwordHash: "disabled-synthetic-password-hash",
+        firstName: "Staging",
+        lastName: "Refund Buyer",
+        phone: "+15550001004",
+        streetAddress1: "1 Synthetic Way",
+        city: "Toronto",
+        region: "ON",
+        postalCode: "M5V 0A1",
+        country: "CA",
+      },
+      select: { id: true },
+    });
+    const uniqueSuffix = Date.now().toString().slice(-7);
+    const driftedManaged = await db.user.create({
+      data: {
+        email: `drifted-managed-session-${uniqueSuffix}@example.test`,
+        passwordHash: "disposable-password-hash",
+        firstName: "Drifted",
+        lastName: "Managed",
+        phone: `+1556${uniqueSuffix}`,
+        streetAddress1: "1 Test Way",
+        city: "Toronto",
+        region: "ON",
+        postalCode: "M5V 0A1",
+        country: "CA",
+        termsVersion: "primary-staging-only",
+      },
+      select: { id: true },
+    });
+    const ordinary = await db.user.create({
+      data: {
+        email: `ordinary-session-${uniqueSuffix}@example.test`,
+        passwordHash: "disposable-password-hash",
+        firstName: "Ordinary",
+        lastName: "Session",
+        phone: `+1557${uniqueSuffix}`,
+        streetAddress1: "1 Test Way",
+        city: "Toronto",
+        region: "ON",
+        postalCode: "M5V 0A1",
+        country: "CA",
+      },
+      select: { id: true },
+    });
     await db.session.deleteMany({ where: { userId: admin.id } });
     await db.session.createMany({
       data: [
-        { userId: admin.id, tokenHash: "stale-staging-session-a", expiresAt: new Date("2038-01-01T00:00:00Z") },
-        { userId: admin.id, tokenHash: "stale-staging-session-b", expiresAt: new Date("2038-01-01T00:00:00Z") },
+        { userId: admin.id, tokenHash: `stale-staging-session-a-${uniqueSuffix}`, expiresAt: new Date("2038-01-01T00:00:00Z") },
+        { userId: organizer.id, tokenHash: `stale-staging-session-b-${uniqueSuffix}`, expiresAt: new Date("2038-01-01T00:00:00Z") },
+        { userId: buyer.id, tokenHash: `stale-staging-session-c-${uniqueSuffix}`, expiresAt: new Date("2038-01-01T00:00:00Z") },
+        { userId: driftedManaged.id, tokenHash: `stale-staging-session-d-${uniqueSuffix}`, expiresAt: new Date("2038-01-01T00:00:00Z") },
+        { userId: ordinary.id, tokenHash: `ordinary-session-${uniqueSuffix}`, expiresAt: new Date("2038-01-01T00:00:00Z") },
       ],
     });
 
@@ -78,9 +131,13 @@ if (!databaseUrl) describe.skip("primary staging session PostgreSQL integration"
       role: "ADMIN",
     });
 
-    const sessions = await db.session.findMany({ where: { userId: admin.id } });
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].tokenHash).not.toMatch(/^stale-staging-session-/);
+    const managedSessions = await db.session.findMany({
+      where: { userId: { in: [admin.id, organizer.id, buyer.id, driftedManaged.id] } },
+    });
+    expect(managedSessions).toHaveLength(1);
+    expect(managedSessions[0]).toMatchObject({ userId: admin.id });
+    expect(managedSessions[0].tokenHash).not.toMatch(/^stale-staging-session-/);
+    await expect(db.session.count({ where: { userId: ordinary.id } })).resolves.toBe(1);
     expect(mockedCookieSet).toHaveBeenCalledWith(
       "tft_session",
       expect.stringMatching(/^[0-9a-f]{64}$/),

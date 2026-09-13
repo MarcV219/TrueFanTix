@@ -156,6 +156,22 @@ export function isPrimaryStagingManagedUser(user: {
     || user.privacyVersion === STAGING_LEGAL_VERSION;
 }
 
+function primaryStagingManagedUserWhere(): Prisma.UserWhereInput {
+  return {
+    OR: [
+      {
+        email: {
+          in: [STAGING_ORGANIZER_EMAIL, STAGING_ADMIN_EMAIL, STAGING_REFUND_BUYER_EMAIL],
+          mode: "insensitive",
+        },
+      },
+      { phone: { in: [STAGING_ORGANIZER_PHONE, STAGING_ADMIN_PHONE, STAGING_REFUND_BUYER_PHONE] } },
+      { termsVersion: STAGING_LEGAL_VERSION },
+      { privacyVersion: STAGING_LEGAL_VERSION },
+    ],
+  };
+}
+
 export function primaryStagingSyntheticContactEmail(email: string) {
   const normalized = email.trim().toLowerCase();
   const [local, domain, extra] = normalized.split("@");
@@ -278,13 +294,17 @@ export async function establishPrimaryStagingPersonaSession(
     const restored = await restorePrimaryStagingPersona(tx, persona, passwordHash);
 
     // A pre-existing session may have been issued before a managed identity was
-    // restored. Revoke every such bearer in the same transaction that restores
-    // the exact persona. Also revoke the caller's current bearer when switching
-    // personas so overwriting the browser cookie cannot leave that bearer valid.
+    // restored. Revoke every managed staging bearer in the same transaction that
+    // restores the exact persona, including identities recognized by immutable
+    // staging markers after contact drift. Also revoke the caller's current bearer
+    // so overwriting the browser cookie cannot leave an ordinary session valid.
     await tx.session.deleteMany({
-      where: currentTokenHash
-        ? { OR: [{ userId: restored.id }, { tokenHash: currentTokenHash }] }
-        : { userId: restored.id },
+      where: {
+        OR: [
+          { user: { is: primaryStagingManagedUserWhere() } },
+          ...(currentTokenHash ? [{ tokenHash: currentTokenHash }] : []),
+        ],
+      },
     });
     await tx.session.create({ data: { userId: restored.id, tokenHash, expiresAt } });
     return restored;

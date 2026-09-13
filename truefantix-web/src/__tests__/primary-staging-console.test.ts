@@ -244,7 +244,13 @@ describe("primary staging console boundary", () => {
       email: "organizer@primary-staging.example.invalid",
     });
 
-    expect(mockedTx.session.deleteMany).toHaveBeenCalledWith({ where: { userId: "organizer-1" } });
+    expect(mockedTx.session.deleteMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { user: { is: expect.objectContaining({ OR: expect.any(Array) }) } },
+        ],
+      },
+    });
     expect(mockedTx.session.create).toHaveBeenCalledWith({
       data: {
         userId: "organizer-1",
@@ -261,7 +267,7 @@ describe("primary staging console boundary", () => {
     );
   });
 
-  it("revokes the current bearer atomically when switching personas", async () => {
+  it("revokes the current bearer and every managed staging bearer atomically", async () => {
     mockedCurrentSessionHash.mockResolvedValue("current-admin-session-hash");
     mockedTx.user.findMany.mockResolvedValue([{
       id: "organizer-1",
@@ -278,7 +284,7 @@ describe("primary staging console boundary", () => {
     expect(mockedTx.session.deleteMany).toHaveBeenCalledWith({
       where: {
         OR: [
-          { userId: "organizer-1" },
+          { user: { is: expect.objectContaining({ OR: expect.any(Array) }) } },
           { tokenHash: "current-admin-session-hash" },
         ],
       },
