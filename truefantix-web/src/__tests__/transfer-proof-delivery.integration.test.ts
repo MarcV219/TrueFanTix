@@ -60,8 +60,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
     await prisma.transferProofDeliveryIntent.deleteMany({ where: { idempotencyKey: { startsWith: `batch-${runId}-` } } });
     jest.clearAllMocks();
-    mockedSendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "ACCEPTED" });
-    mockedSendAdmin.mockResolvedValue({ ok: true, provider: "CONSOLE" });
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "RESEND", providerResult: "ACCEPTED" });
+    mockedSendAdmin.mockResolvedValue({ ok: true, provider: "RESEND" });
   });
 
   afterAll(async () => {
@@ -856,6 +856,41 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
     await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
       .resolves.toMatchObject({ status: "PROCESSING", provider: "RESEND", attemptCount: 1 });
+  });
+
+  it("quarantines an accepted buyer delivery whose provider identity changed", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("20")));
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "SENDGRID", providerResult: "unexpected-acceptance" });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T20:00:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1, reconciliationRequired: 1 });
+
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED", provider: "RESEND", attemptCount: 1,
+        lastError: "Transfer-proof delivery provider changed from RESEND to SENDGRID",
+      });
+    await expect(prisma.reminderDelivery.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({ status: "ATTEMPTING", provider: "RESEND", completedAt: null });
+  });
+
+  it("quarantines an accepted administrator delivery whose provider identity changed", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("20")));
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" } });
+    mockedSendAdmin.mockResolvedValue({ ok: true, provider: "SENDGRID", providerResult: "unexpected-acceptance" });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T20:00:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1, reconciliationRequired: 1 });
+
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED", provider: "RESEND", attemptCount: 1,
+        lastError: "Transfer-proof delivery provider changed from RESEND to SENDGRID",
+      });
+    await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
   });
 
   it("leaves unconfigured intents pending and claims them after a provider is configured", async () => {

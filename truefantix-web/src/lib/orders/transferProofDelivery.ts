@@ -218,6 +218,7 @@ export async function drainTransferProofDeliveryIntents(
     let dispatchStarted = false;
     let data: Payload = {};
     let providerAccepted = false;
+    let providerIdentityMismatch = false;
     let providerResult: string | null = null;
     let providerFailure: string | null = null;
     try {
@@ -290,6 +291,10 @@ export async function drainTransferProofDeliveryIntents(
         providerAccepted = result.ok;
         providerResult = result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED");
         providerFailure = result.ok ? null : result.error || "Unknown provider error";
+        providerIdentityMismatch = result.ok && result.provider !== provider;
+        if (providerIdentityMismatch) {
+          throw new Error(`Transfer-proof delivery provider changed from ${provider} to ${result.provider ?? "UNKNOWN"}`);
+        }
         if (!result.ok) throw new Error(result.error || "Buyer email provider rejected delivery");
         const recorded = await db.$transaction(async (tx) => {
           const owned = await tx.transferProofDeliveryIntent.updateMany({
@@ -321,6 +326,10 @@ export async function drainTransferProofDeliveryIntents(
         } });
         providerAccepted = result.ok;
         providerFailure = result.ok ? null : result.error || "Unknown provider error";
+        providerIdentityMismatch = result.ok && result.provider !== provider;
+        if (providerIdentityMismatch) {
+          throw new Error(`Transfer-proof delivery provider changed from ${provider} to ${result.provider ?? "UNKNOWN"}`);
+        }
         if (!result.ok) throw new Error(result.error || "Admin email provider rejected delivery");
         const emailType = `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`;
         const recorded = await db.$transaction(async (tx) => {
@@ -364,8 +373,9 @@ export async function drainTransferProofDeliveryIntents(
         failed += quarantined.count;
         continue;
       }
-      const retryAcceptedResend = providerAccepted && provider === "RESEND" && attemptCount < MAX_ATTEMPTS;
-      const requiresReconciliation = providerAccepted
+      const retryAcceptedResend = providerAccepted && !providerIdentityMismatch
+        && provider === "RESEND" && attemptCount < MAX_ATTEMPTS;
+      const requiresReconciliation = (providerIdentityMismatch || providerAccepted)
         ? !retryAcceptedResend
         : provider === "SENDGRID" || attemptCount >= MAX_ATTEMPTS;
       const recovered = await db.$transaction(async (tx) => {
