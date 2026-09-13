@@ -687,6 +687,52 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     ]));
   });
 
+  it("quarantines malformed delivery envelopes before any provider dispatch", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("20")));
+    const buyerIntent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
+    });
+    await prisma.transferProofDeliveryIntent.update({
+      where: { id: buyerIntent.id },
+      data: {
+        payloadJson: {
+          ...(buyerIntent.payloadJson as Prisma.JsonObject),
+          ticketCount: 0,
+        },
+      },
+    });
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
+      data: { recipient: "unexpected-admin-recipient@example.test" },
+    });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T20:00:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 2, delivered: 0, failed: 2, reconciliationRequired: 2 });
+
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { orderId },
+      select: { kind: true, status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual(expect.arrayContaining([
+      {
+        kind: "BUYER_CONFIRMATION_EMAIL",
+        status: "RECONCILIATION_REQUIRED",
+        attemptCount: 0,
+        lastError: "Pre-dispatch delivery failure: Invalid transfer-proof delivery payload field: ticketCount",
+      },
+      {
+        kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
+        status: "RECONCILIATION_REQUIRED",
+        attemptCount: 0,
+        lastError: "Pre-dispatch delivery failure: Transfer-proof administrator recipient does not match the configured activity mailbox",
+      },
+    ]));
+    await expect(prisma.reminderDelivery.count({ where: { orderId } })).resolves.toBe(0);
+    await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+  });
+
   function transactionWithIntentUpdateFilter<T>(
     fn: (tx: Prisma.TransactionClient) => Promise<T>,
     blocked: (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => boolean,

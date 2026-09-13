@@ -90,6 +90,59 @@ function payload(value: Prisma.JsonValue): Payload {
   return value as Payload;
 }
 
+function requireNonEmptyString(data: Payload, field: string) {
+  const value = data[field];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`Invalid transfer-proof delivery payload field: ${field}`);
+  }
+}
+
+function requireOptionalString(data: Payload, field: string) {
+  const value = data[field];
+  if (value !== null && value !== undefined && (typeof value !== "string" || !value.trim())) {
+    throw new Error(`Invalid transfer-proof delivery payload field: ${field}`);
+  }
+}
+
+function requirePositiveInteger(data: Payload, field: string) {
+  const value = data[field];
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`Invalid transfer-proof delivery payload field: ${field}`);
+  }
+}
+
+function requireIsoDate(data: Payload, field: string) {
+  const value = data[field];
+  const parsed = typeof value === "string" ? new Date(value) : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new Error(`Invalid transfer-proof delivery payload field: ${field}`);
+  }
+}
+
+function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Payload) {
+  if (!row.recipient.trim()) throw new Error("Invalid transfer-proof delivery recipient");
+  if (row.kind === BUYER_KIND) {
+    requireOptionalString(data, "buyerFirstName");
+    requirePositiveInteger(data, "ticketCount");
+    requireIsoDate(data, "deadline");
+    requireIsoDate(data, "windowStart");
+    return;
+  }
+  if (row.kind === ADMIN_KIND) {
+    if (row.recipient !== ADMIN_ACTIVITY_EMAIL) {
+      throw new Error("Transfer-proof administrator recipient does not match the configured activity mailbox");
+    }
+    requireNonEmptyString(data, "sellerEmail");
+    requireOptionalString(data, "buyerEmail");
+    requirePositiveInteger(data, "ticketCount");
+    requireNonEmptyString(data, "transferProofType");
+    requireIsoDate(data, "deadline");
+    requireIsoDate(data, "completedAt");
+    return;
+  }
+  throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
+}
+
 export async function drainTransferProofDeliveryIntents(
   options: { orderId?: string; now?: Date; limit?: number } = {},
   db: DeliveryDb = prisma,
@@ -223,6 +276,7 @@ export async function drainTransferProofDeliveryIntents(
     let providerFailure: string | null = null;
     try {
       data = payload(row.payloadJson);
+      assertValidDeliveryEnvelope(row, data);
       if (row.kind === BUYER_KIND) {
         const deadline = new Date(String(data.deadline));
         const windowStart = new Date(String(data.windowStart));
@@ -258,8 +312,6 @@ export async function drainTransferProofDeliveryIntents(
         if (dispatch.count !== 1) continue;
         dispatchStarted = true;
         attemptCount = row.attemptCount + 1;
-      } else if (row.kind !== ADMIN_KIND) {
-        throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
       } else {
         const dispatch = await db.transferProofDeliveryIntent.updateMany({
           where: {
