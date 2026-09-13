@@ -4,11 +4,40 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
+import {
+  ForumCommentingDisabledError,
+  ManagedAccountForumWriteError,
+  runOrdinaryForumWrite,
+} from "@/lib/forum/ordinary-author";
 
 function badRequest(message: string) {
   return NextResponse.json(
     { ok: false, error: "VALIDATION_ERROR", message },
     { status: 400 }
+  );
+}
+
+function stagingConsoleOnlyError() {
+  const response = NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403 },
+  );
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
+function commentingDisabledError() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "FORBIDDEN",
+      message: "Commenting is disabled for this account.",
+    },
+    { status: 403 },
   );
 }
 
@@ -112,14 +141,7 @@ export async function POST(req: Request) {
     const user = auth.user;
 
     if (!user.canComment) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "FORBIDDEN",
-          message: "Commenting is disabled for this account.",
-        },
-        { status: 403 }
-      );
+      return commentingDisabledError();
     }
 
     const validation = await validateRequest(schemas.forumPostCreateApi)(req);
@@ -157,7 +179,7 @@ export async function POST(req: Request) {
 
     const effectiveParentId = resolved.parentId;
 
-    const post = await prisma.forumPost.create({
+    const post = await runOrdinaryForumWrite(user.id, (tx) => tx.forumPost.create({
       data: {
         threadId,
         body,
@@ -176,10 +198,12 @@ export async function POST(req: Request) {
         updatedAt: true,
         authorUserId: true,
       },
-    });
+    }));
 
     return NextResponse.json({ ok: true, post }, { status: 201 });
   } catch (err) {
+    if (err instanceof ManagedAccountForumWriteError) return stagingConsoleOnlyError();
+    if (err instanceof ForumCommentingDisabledError) return commentingDisabledError();
     console.error("POST /api/forum/posts failed:", err);
     return NextResponse.json({ ok: false, error: "SERVER_ERROR" }, { status: 500 });
   }
