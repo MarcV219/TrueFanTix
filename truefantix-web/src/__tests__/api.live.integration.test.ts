@@ -1,6 +1,8 @@
 import { execSync } from "child_process";
 
-const BASE_URL = process.env.LIVE_BASE_URL || "https://truefantix-web.vercel.app";
+// Fail locally when the caller forgets to select a disposable or explicitly
+// approved target. Regression runs must never default to the production site.
+const BASE_URL = process.env.LIVE_BASE_URL || "http://127.0.0.1:3000";
 
 type CurlResult = { status: number; body: any };
 
