@@ -1387,6 +1387,168 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).resolves.toMatchObject({ status: "DELIVERED", attemptCount: 2 });
   });
 
+  it("requires an owned dispatch boundary before recording a retryable failure", async () => {
+    const [undispatchedId, earlyRetryId, validId] = await seedAdminBatch(
+      "failure-dispatch-boundary", 3,
+    );
+    const firstAttemptAt = new Date("2026-12-01T01:00:00.000Z");
+    const availableAt = new Date("2026-12-01T03:00:00.000Z");
+    const dispatchStartedAt = new Date("2026-12-01T03:00:01.000Z");
+    const leaseExpiresAt = new Date("2026-12-01T03:15:00.000Z");
+    await forceLegacyIntentState(
+      { id: { in: [undispatchedId, earlyRetryId, validId] } },
+      {
+        status: "FAILED", provider: "RESEND", attemptCount: 1, firstAttemptAt,
+        availableAt, lastError: "synthetic retryable rejection",
+      },
+    );
+    for (const id of [undispatchedId, earlyRetryId, validId]) {
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", processingAt: availableAt, leaseExpiresAt,
+          claimToken: `failure-claim-${id}`, lastError: null,
+        },
+      });
+    }
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: undispatchedId },
+      data: {
+        status: "FAILED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, lastError: "synthetic undispatched rejection",
+        availableAt: new Date("2026-12-01T03:05:00.000Z"),
+      },
+    })).rejects.toThrow("Transfer-proof delivery failure requires its owned dispatch boundary");
+
+    for (const id of [earlyRetryId, validId]) {
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: { attemptCount: 2, dispatchStartedAt },
+      });
+    }
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: earlyRetryId },
+      data: {
+        status: "FAILED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, dispatchStartedAt: null,
+        lastError: "synthetic rejected delivery",
+        availableAt: new Date("2026-12-01T03:00:00.000Z"),
+      },
+    })).rejects.toThrow("Transfer-proof delivery failure requires its owned dispatch boundary");
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validId },
+      data: {
+        status: "FAILED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, dispatchStartedAt: null,
+        lastError: "synthetic rejected delivery",
+        availableAt: new Date("2026-12-01T03:05:00.000Z"),
+      },
+    })).resolves.toMatchObject({
+      status: "FAILED", attemptCount: 2,
+      availableAt: new Date("2026-12-01T03:05:00.000Z"),
+    });
+  });
+
+  it("installs dispatch-bound failure evidence as a forward-only upgrade", async () => {
+    const failureSchema = `transfer_proof_failure_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${failureSchema}"`);
+      await client.query(`SET search_path TO "${failureSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt", "processingAt",
+          "leaseExpiresAt", "claimToken", "availableAt"
+        ) VALUES
+          ('permissive-69', 'RESEND', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 01:00:00', TIMESTAMP '2026-12-01 03:00:00',
+            TIMESTAMP '2026-12-01 03:15:00', 'permissive-owner',
+            TIMESTAMP '2026-12-01 03:00:00'),
+          ('strict-70', 'RESEND', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 01:00:00', TIMESTAMP '2026-12-01 03:00:00',
+            TIMESTAMP '2026-12-01 03:15:00', 'strict-owner',
+            TIMESTAMP '2026-12-01 03:00:00')
+      `);
+
+      for (const migration of [
+        "20260913200000_enforce_transfer_proof_delivery_transitions",
+        "20260913203000_pin_transfer_proof_provider_on_dispatch",
+        "20260913210000_bind_first_transfer_proof_attempt_timestamp",
+        "20260913213000_fence_transfer_proof_claim_reassignment",
+        "20260913220000_fence_transfer_proof_replay_handoffs",
+        "20260913223000_freeze_transfer_proof_attempt_identity",
+        "20260913230000_require_transfer_proof_claim_before_dispatch",
+        "20260913233000_require_transfer_proof_dispatch_before_delivery",
+      ]) {
+        const sql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(sql);
+      }
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'FAILED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "lastError" = 'synthetic undispatched rejection',
+          "availableAt" = TIMESTAMP '2026-12-01 03:05:00'
+        WHERE id = 'permissive-69'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const failureMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914000000_require_transfer_proof_dispatch_before_failure/migration.sql",
+      ), "utf8");
+      await client.query(failureMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'FAILED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "lastError" = 'synthetic undispatched rejection',
+          "availableAt" = TIMESTAMP '2026-12-01 03:05:00'
+        WHERE id = 'strict-70'
+      `)).rejects.toThrow("Transfer-proof delivery failure requires its owned dispatch boundary");
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 2, "dispatchStartedAt" = "processingAt"
+        WHERE id = 'strict-70'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'FAILED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "dispatchStartedAt" = NULL,
+          "lastError" = 'synthetic rejected delivery',
+          "availableAt" = TIMESTAMP '2026-12-01 03:05:00'
+        WHERE id = 'strict-70'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${failureSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("installs dispatch-bound completion as a forward-only upgrade", async () => {
     const completionSchema = `transfer_proof_completion_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
