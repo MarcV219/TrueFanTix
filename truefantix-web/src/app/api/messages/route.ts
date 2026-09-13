@@ -3,7 +3,22 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { sendNotificationToUser } from "@/lib/websocket";
 import { createNotification } from "@/lib/notifications/service";
+import {
+  ManagedAccountMessageWriteError,
+  runOrdinaryMessageWrite,
+} from "@/lib/messages/ordinary-sender";
 import { schemas, validateRequest } from "@/lib/validation";
+
+function stagingConsoleOnlyResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403, headers: { "Cache-Control": "private, no-store" } },
+  );
+}
 
 // GET /api/messages
 // Get conversations or messages
@@ -14,7 +29,6 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const conversationId = searchParams.get("conversationId");
-    const orderId = searchParams.get("orderId");
     const page = parseInt(searchParams.get("page") || "1");
     const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
 
@@ -41,13 +55,18 @@ export async function GET(req: Request) {
       });
 
       // Mark messages as read
-      await prisma.message.updateMany({
-        where: {
-          conversationId,
-          senderId: { not: gate.user.id },
-          readAt: null,
-        },
-        data: { readAt: new Date() },
+      await runOrdinaryMessageWrite(gate.user.id, async (tx) => {
+        await tx.message.updateMany({
+          where: {
+            conversationId,
+            senderId: { not: gate.user.id },
+            readAt: null,
+            conversation: {
+              participants: { some: { userId: gate.user.id } },
+            },
+          },
+          data: { readAt: new Date() },
+        });
       });
 
       return NextResponse.json({
@@ -108,6 +127,9 @@ export async function GET(req: Request) {
     });
 
   } catch (err) {
+    if (err instanceof ManagedAccountMessageWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("GET /api/messages failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR" },
@@ -128,143 +150,149 @@ export async function POST(req: Request) {
 
     const body = validation.data;
 
-    let conversationId = body.conversationId;
+    const result = await runOrdinaryMessageWrite(gate.user.id, async (tx) => {
+      let conversationId = body.conversationId;
 
-    // Create conversation if it doesn't exist
-    if (!conversationId) {
-      if (body.orderId) {
-        // Find or create conversation for order
-        const order = await prisma.order.findUnique({
-          where: { id: body.orderId },
-          select: { sellerId: true, buyerSellerId: true },
-        });
+      // Create conversation if it doesn't exist.
+      if (!conversationId) {
+        if (body.orderId) {
+          const order = await tx.order.findUnique({
+            where: { id: body.orderId },
+            select: { sellerId: true, buyerSellerId: true },
+          });
 
-        if (!order) {
-          return NextResponse.json(
-            { ok: false, error: "ORDER_NOT_FOUND" },
-            { status: 404 }
-          );
-        }
+          if (!order) return { error: "ORDER_NOT_FOUND" as const };
 
-        // Get user IDs from seller IDs (User model has sellerId field)
-        const [sellerUser, buyerUser] = await Promise.all([
-          prisma.user.findFirst({ where: { sellerId: order.sellerId }, select: { id: true } }),
-          prisma.user.findFirst({ where: { sellerId: order.buyerSellerId }, select: { id: true } }),
-        ]);
+          const [sellerUser, buyerUser] = await Promise.all([
+            tx.user.findFirst({ where: { sellerId: order.sellerId }, select: { id: true } }),
+            tx.user.findFirst({ where: { sellerId: order.buyerSellerId }, select: { id: true } }),
+          ]);
 
-        if (!sellerUser?.id || !buyerUser?.id) {
-          return NextResponse.json(
-            { ok: false, error: "INVALID_ORDER" },
-            { status: 400 }
-          );
-        }
+          if (!sellerUser?.id || !buyerUser?.id) {
+            return { error: "INVALID_ORDER" as const };
+          }
 
-        const participantIds = [sellerUser.id, buyerUser.id];
+          const participantIds = [sellerUser.id, buyerUser.id];
+          if (!participantIds.includes(gate.user.id)) {
+            return { error: "NOT_FOUND" as const };
+          }
 
-        // Check for existing conversation
-        const existingConv = await prisma.conversation.findFirst({
-          where: {
-            orderId: body.orderId,
-            participants: {
-              every: { userId: { in: participantIds } },
-            },
-          },
-        });
-
-        if (existingConv) {
-          conversationId = existingConv.id;
-        } else {
-          // Create new conversation
-          const newConv = await prisma.conversation.create({
-            data: {
+          const existingConv = await tx.conversation.findFirst({
+            where: {
               orderId: body.orderId,
               participants: {
-                create: participantIds.map(userId => ({ userId })),
+                every: { userId: { in: participantIds } },
               },
             },
           });
-          conversationId = newConv.id;
-        }
-      } else if (body.recipientId) {
-        // Check for existing conversation between users
-        const existingConv = await prisma.conversation.findFirst({
-          where: {
-            AND: [
-              { participants: { some: { userId: gate.user.id } } },
-              { participants: { some: { userId: body.recipientId } } },
-            ],
-          },
-        });
 
-        if (existingConv) {
-          conversationId = existingConv.id;
-        } else {
-          const newConv = await prisma.conversation.create({
-            data: {
-              participants: {
-                create: [
-                  { userId: gate.user.id },
-                  { userId: body.recipientId },
-                ],
+          if (existingConv) {
+            conversationId = existingConv.id;
+          } else {
+            const newConv = await tx.conversation.create({
+              data: {
+                orderId: body.orderId,
+                participants: {
+                  create: participantIds.map(userId => ({ userId })),
+                },
               },
+            });
+            conversationId = newConv.id;
+          }
+        } else if (body.recipientId) {
+          const existingConv = await tx.conversation.findFirst({
+            where: {
+              AND: [
+                { participants: { some: { userId: gate.user.id } } },
+                { participants: { some: { userId: body.recipientId } } },
+              ],
             },
           });
-          conversationId = newConv.id;
+
+          if (existingConv) {
+            conversationId = existingConv.id;
+          } else {
+            const newConv = await tx.conversation.create({
+              data: {
+                participants: {
+                  create: [
+                    { userId: gate.user.id },
+                    { userId: body.recipientId },
+                  ],
+                },
+              },
+            });
+            conversationId = newConv.id;
+          }
         }
       }
-    }
 
-    if (!conversationId) {
+      if (!conversationId) return { error: "CONVERSATION_ERROR" as const };
+
+      const conversation = await tx.conversation.findFirst({
+        where: {
+          id: conversationId,
+          participants: { some: { userId: gate.user.id } },
+        },
+        include: {
+          participants: { select: { userId: true } },
+        },
+      });
+
+      if (!conversation) return { error: "NOT_FOUND" as const };
+
+      const message = await tx.message.create({
+        data: {
+          conversationId,
+          senderId: gate.user.id,
+          content: body.content,
+          attachments: body.attachments
+            ? { create: body.attachments }
+            : undefined,
+        },
+        include: {
+          sender: {
+            select: { id: true, firstName: true, lastName: true },
+          },
+          attachments: true,
+        },
+      });
+
+      await tx.conversation.update({
+        where: { id: conversationId },
+        data: { updatedAt: new Date() },
+      });
+
+      return { conversationId, conversation, message };
+    });
+
+    if ("error" in result) {
+      if (result.error === "ORDER_NOT_FOUND") {
+        return NextResponse.json(
+          { ok: false, error: "ORDER_NOT_FOUND" },
+          { status: 404 },
+        );
+      }
+      if (result.error === "INVALID_ORDER") {
+        return NextResponse.json(
+          { ok: false, error: "INVALID_ORDER" },
+          { status: 400 },
+        );
+      }
+      if (result.error === "NOT_FOUND") {
+        return NextResponse.json(
+          { ok: false, error: "NOT_FOUND", message: "Conversation not found" },
+          { status: 404 },
+        );
+      }
       return NextResponse.json(
         { ok: false, error: "CONVERSATION_ERROR" },
-        { status: 500 }
+        { status: 500 },
       );
     }
-
-    // Verify user is participant
-    const conversation = await prisma.conversation.findFirst({
-      where: {
-        id: conversationId,
-        participants: { some: { userId: gate.user.id } },
-      },
-      include: {
-        participants: { select: { userId: true } },
-      },
-    });
-
-    if (!conversation) {
-      return NextResponse.json(
-        { ok: false, error: "NOT_FOUND", message: "Conversation not found" },
-        { status: 404 }
-      );
-    }
-
-    // Create message
-    const message = await prisma.message.create({
-      data: {
-        conversationId,
-        senderId: gate.user.id,
-        content: body.content,
-        attachments: body.attachments
-          ? { create: body.attachments }
-          : undefined,
-      },
-      include: {
-        sender: {
-          select: { id: true, firstName: true, lastName: true },
-        },
-        attachments: true,
-      },
-    });
-
-    // Update conversation
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { updatedAt: new Date() },
-    });
 
     // Send real-time notification to other participants
-    const otherParticipants = conversation.participants.filter(
+    const otherParticipants = result.conversation.participants.filter(
       p => p.userId !== gate.user.id
     );
 
@@ -272,24 +300,27 @@ export async function POST(req: Request) {
       // WebSocket notification
       sendNotificationToUser(participant.userId, {
         type: "message:new",
-        data: message,
+        data: result.message,
       });
 
       // In-app notification
       await createNotification({
         userId: participant.userId,
         type: "NEW_MESSAGE",
-        message: `New message from ${message.sender.firstName}: ${body.content.slice(0, 50)}...`,
-        link: `/messages?conversation=${conversationId}`,
+        message: `New message from ${result.message.sender.firstName}: ${body.content.slice(0, 50)}...`,
+        link: `/messages?conversation=${result.conversationId}`,
       });
     }
 
     return NextResponse.json({
       ok: true,
-      message,
+      message: result.message,
     }, { status: 201 });
 
   } catch (err) {
+    if (err instanceof ManagedAccountMessageWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("POST /api/messages failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR" },
@@ -317,27 +348,32 @@ export async function DELETE(req: Request) {
 
     const messageId = parsed.data.id;
 
-    const message = await prisma.message.findFirst({
-      where: {
-        id: messageId,
-        senderId: gate.user.id,
-      },
+    const deleted = await runOrdinaryMessageWrite(gate.user.id, async (tx) => {
+      const message = await tx.message.findFirst({
+        where: {
+          id: messageId,
+          senderId: gate.user.id,
+        },
+      });
+
+      if (!message) return false;
+
+      await tx.message.update({
+        where: { id: messageId },
+        data: {
+          deletedAt: new Date(),
+          content: "[deleted]",
+        },
+      });
+      return true;
     });
 
-    if (!message) {
+    if (!deleted) {
       return NextResponse.json(
         { ok: false, error: "NOT_FOUND" },
         { status: 404 }
       );
     }
-
-    await prisma.message.update({
-      where: { id: messageId },
-      data: {
-        deletedAt: new Date(),
-        content: "[deleted]",
-      },
-    });
 
     return NextResponse.json({
       ok: true,
@@ -345,6 +381,9 @@ export async function DELETE(req: Request) {
     });
 
   } catch (err) {
+    if (err instanceof ManagedAccountMessageWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("DELETE /api/messages failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR" },
