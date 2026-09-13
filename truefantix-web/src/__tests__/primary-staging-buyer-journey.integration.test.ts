@@ -93,4 +93,20 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_RESERVATION_INVALID" });
     await expect(db.primaryOrder.count({ where: { eventId: `${expiryBase}-event` } })).resolves.toBe(0);
   });
+
+  it("rejects order snapshot drift before payment mutation", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    await advancePrimaryStagingBuyerJourney(db, admin);
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: "ORDER_CREATED" });
+    await db.$executeRawUnsafe(`ALTER TABLE "PrimaryOrder" DISABLE TRIGGER "PrimaryOrder_snapshot_immutable"`);
+    try {
+      await db.primaryOrder.update({ where: { id: `${base}-order` }, data: { grossTotalMinor: 9999 } });
+    } finally {
+      await db.$executeRawUnsafe(`ALTER TABLE "PrimaryOrder" ENABLE TRIGGER "PrimaryOrder_snapshot_immutable"`);
+    }
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_ORDER_INVALID" });
+    await expect(db.primaryPaymentAttempt.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+    await expect(db.primaryInventoryReservation.findUniqueOrThrow({ where: { id: `${base}-reservation` } })).resolves.toMatchObject({ status: "HELD", paymentCommittedAt: null });
+  });
 });

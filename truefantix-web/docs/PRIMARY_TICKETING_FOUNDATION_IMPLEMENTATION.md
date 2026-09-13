@@ -265,6 +265,7 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Every advance revalidates the complete reserved buyer and organizer fixture under the journey advisory lock. Any capability, role, contact, ownership, payment-account, or business-identity drift fails closed before purchase or admission mutation; an explicit admin reseed restores only the reserved synthetic fixture and creates a new generation.
 - The current generation's event and ticket type are also revalidated as exact deterministic synthetic roots before a hold can be created. Event identity/contact/schedule/policy/capacity/approval drift or ticket inventory/limit/currency/price drift fails closed without purchase mutation; reseed preserves the drifted generation as evidence and creates a clean successor.
 - Once a hold exists, its tenant, event, ticket type, buyer, quantity, lifecycle timestamps, and idempotency evidence are revalidated before order creation or any later transition. Reservation drift fails closed without creating an order.
+- Once an order exists, its tenant/buyer/reservation bindings, lifecycle, totals, currency, idempotency key, sole line snapshot, and exact face-value/organizer-fee components are revalidated before payment preparation. Snapshot drift fails closed without committing the hold or creating a payment attempt.
 
 ### Refund, cancellation, and revocation design gate
 
