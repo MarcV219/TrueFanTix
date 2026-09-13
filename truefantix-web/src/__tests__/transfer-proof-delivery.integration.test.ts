@@ -1193,6 +1193,96 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     }
   });
 
+  it("freezes attempted provider and first-attempt identities before replay handoffs", async () => {
+    const identitySchema = `transfer_proof_attempt_identity_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${identitySchema}"`);
+      await client.query(`SET search_path TO "${identitySchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt", "processingAt",
+          "leaseExpiresAt", "claimToken", "dispatchStartedAt", "lastError", "availableAt"
+        ) VALUES
+          ('provider-rewrite', 'SENDGRID', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 00:00:00', TIMESTAMP '2026-12-02 00:00:00',
+            TIMESTAMP '2026-12-02 00:15:00', 'provider-owner',
+            TIMESTAMP '2026-12-01 00:00:00', NULL, TIMESTAMP '2026-12-02 00:00:00'),
+          ('timestamp-rewrite', 'RESEND', 'FAILED', 1,
+            TIMESTAMP '2026-12-01 00:00:00', NULL, NULL, NULL, NULL,
+            'temporary rejection', TIMESTAMP '2026-12-02 00:00:00')
+      `);
+
+      for (const migration of [
+        "20260913200000_enforce_transfer_proof_delivery_transitions",
+        "20260913203000_pin_transfer_proof_provider_on_dispatch",
+        "20260913210000_bind_first_transfer_proof_attempt_timestamp",
+        "20260913213000_fence_transfer_proof_claim_reassignment",
+        "20260913220000_fence_transfer_proof_replay_handoffs",
+        "20260913223000_freeze_transfer_proof_attempt_identity",
+      ]) {
+        const sql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(sql);
+      }
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET provider = 'RESEND'
+        WHERE id = 'provider-rewrite'
+      `)).rejects.toThrow("Transfer-proof delivery attempted provider identity is immutable");
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "firstAttemptAt" = TIMESTAMP '2026-12-02 00:00:00'
+        WHERE id = 'timestamp-rewrite'
+      `)).rejects.toThrow("Transfer-proof delivery attempted first-attempt identity is immutable");
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "processingAt" = "leaseExpiresAt",
+          "leaseExpiresAt" = "leaseExpiresAt" + INTERVAL '15 minutes',
+          "claimToken" = 'provider-successor', "dispatchStartedAt" = NULL
+        WHERE id = 'provider-rewrite'
+      `)).rejects.toThrow("Transfer-proof delivery expired claim is not replay-safe");
+
+      await expect(client.query(`
+        SELECT id, provider,
+          "firstAttemptAt" = TIMESTAMP '2026-12-01 00:00:00' AS "firstAttemptUnchanged"
+        FROM "TransferProofDeliveryIntent" ORDER BY id
+      `)).resolves.toMatchObject({ rows: [
+        {
+          id: "provider-rewrite", provider: "SENDGRID",
+          firstAttemptUnchanged: true,
+        },
+        {
+          id: "timestamp-rewrite", provider: "RESEND",
+          firstAttemptUnchanged: true,
+        },
+      ] });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${identitySchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("installs exact first-attempt evidence as a forward-only upgrade after provider pinning", async () => {
     const transitionSchema = `transfer_proof_first_attempt_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
