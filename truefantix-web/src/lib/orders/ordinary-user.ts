@@ -14,6 +14,7 @@ export class OrderOperationAccessChangedError extends Error {
 
 type CurrentOrderUser = {
   id: string;
+  email: string;
   sellerId: string | null;
 };
 
@@ -47,7 +48,11 @@ export async function runOrdinaryOrderOperation<T>(
         }
         if (current.isBanned) throw new OrderOperationAccessChangedError("BANNED");
 
-        return operation(tx, { id: current.id, sellerId: current.sellerId });
+        return operation(tx, {
+          id: current.id,
+          email: current.email,
+          sellerId: current.sellerId,
+        });
       },
       { isolationLevel: "Serializable", timeout: 120_000 },
     );
