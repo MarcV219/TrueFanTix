@@ -1,6 +1,8 @@
 /** @jest-environment node */
 
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -813,8 +815,68 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   it("preserves legacy provider keys for unattempted and ambiguous Resend upgrade rows", async () => {
     const buyerKey = `${orderId}:2026-12-01T18:00:00.000Z:BUYER_CONFIRMATION_EMAIL:${buyerEmail}`;
     const adminKey = `${orderId}:2026-12-01T18:00:00.000Z:ADMIN_TRANSFER_ACTIVITY_EMAIL:admin@truefantix.com`;
-    // These rows model records that existed before migration 60. The migration
-    // itself runs before the new INSERT trigger and grandfathers them as v1.
+    const upgradeSchema = `transfer_proof_upgrade_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${upgradeSchema}"`);
+      await client.query(`SET search_path TO "${upgradeSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          "payloadJson" JSONB NOT NULL,
+          "idempotencyKey" TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'PENDING',
+          provider TEXT,
+          "attemptCount" INTEGER NOT NULL DEFAULT 0,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey"
+        ) VALUES ('legacy-pending', $1, 'BUYER_CONFIRMATION_EMAIL', $2, '{}'::jsonb, $3)
+      `, [orderId, buyerEmail, buyerKey]);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey", status,
+          provider, "attemptCount", "firstAttemptAt", "processingAt", "leaseExpiresAt",
+          "claimToken", "dispatchStartedAt"
+        ) VALUES (
+          'legacy-processing', $1, 'ADMIN_TRANSFER_ACTIVITY_EMAIL', 'admin@truefantix.com',
+          '{}'::jsonb, $2, 'PROCESSING', 'RESEND', 1, NOW(), NOW(), NOW(),
+          'legacy-upgrade-claim', NOW()
+        )
+      `, [orderId, adminKey]);
+
+      const migration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913184000_protect_transfer_proof_delivery_envelopes/migration.sql",
+      ), "utf8");
+      await client.query(migration);
+
+      await expect(client.query(`
+        SELECT id, "idempotencyKey", "identityVersion", "envelopeDigest"
+        FROM "TransferProofDeliveryIntent" ORDER BY id
+      `)).resolves.toMatchObject({ rows: [
+        { id: "legacy-pending", idempotencyKey: buyerKey, identityVersion: 1, envelopeDigest: null },
+        { id: "legacy-processing", idempotencyKey: adminKey, identityVersion: 1, envelopeDigest: null },
+      ] });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${upgradeSchema}" CASCADE`);
+      client.release();
+    }
+
+    // Drain exact upgraded row shapes in the application schema. Trigger bypass
+    // is limited to setup because the real migration path was exercised above.
     await prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
       await tx.transferProofDeliveryIntent.createMany({ data: [
