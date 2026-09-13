@@ -244,21 +244,21 @@ export async function drainTransferProofDeliveryIntents(
           update: { provider, status: "FAILED", error: lastError, sentAt: now },
         });
       }
-      await db.transferProofDeliveryIntent.updateMany({
+      const retryAcceptedResend = providerAccepted && provider === "RESEND" && attemptCount < MAX_ATTEMPTS;
+      const requiresReconciliation = providerAccepted ? !retryAcceptedResend : provider === "SENDGRID";
+      const recovered = await db.transferProofDeliveryIntent.updateMany({
         where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, attemptCount },
         data: {
-          status: providerAccepted
-            ? provider === "RESEND" ? "PROCESSING" : "RECONCILIATION_REQUIRED"
-            : provider === "SENDGRID" ? "RECONCILIATION_REQUIRED" : "FAILED",
-          processingAt: providerAccepted && provider === "RESEND" ? now : null,
-          leaseExpiresAt: providerAccepted && provider === "RESEND" ? now : null,
+          status: retryAcceptedResend ? "PROCESSING" : requiresReconciliation ? "RECONCILIATION_REQUIRED" : "FAILED",
+          processingAt: retryAcceptedResend ? now : null,
+          leaseExpiresAt: retryAcceptedResend ? now : null,
           lastError: lastError.slice(0, 2000),
           availableAt: attemptCount < MAX_ATTEMPTS
             ? new Date(now.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
             : now,
         },
       });
-      if (provider === "SENDGRID") reconciliationRequired += 1;
+      if (requiresReconciliation) reconciliationRequired += recovered.count;
       failed += 1;
     }
   }

@@ -400,4 +400,37 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
       .resolves.toMatchObject({ status: "DELIVERED", provider: "SENDGRID", attemptCount: 1 });
   });
+
+  it("escalates an accepted Resend delivery when completion persistence exhausts the retry budget", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("22")));
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: {
+        status: "PROCESSING", provider: "RESEND", attemptCount: 2,
+        firstAttemptAt: new Date("2026-12-01T22:00:00.000Z"),
+        leaseExpiresAt: new Date("2026-12-01T22:15:00.000Z"),
+      },
+    });
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "RESEND", providerResult: "accepted" });
+    const completionConflictingDb = {
+      transferProofDeliveryIntent: {
+        findMany: (args: Prisma.TransferProofDeliveryIntentFindManyArgs) => prisma.transferProofDeliveryIntent.findMany(args),
+        updateMany: (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => {
+          if (args.data.status === "DELIVERED") return Promise.resolve({ count: 0 });
+          return prisma.transferProofDeliveryIntent.updateMany(args);
+        },
+      },
+      reminderDelivery: prisma.reminderDelivery,
+      emailDelivery: prisma.emailDelivery,
+    } as unknown as NonNullable<Parameters<typeof drainTransferProofDeliveryIntents>[1]>;
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T22:16:00.000Z") }, completionConflictingDb,
+    )).resolves.toMatchObject({ claimed: 1, reconciliationRequired: 1 });
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({ status: "RECONCILIATION_REQUIRED", provider: "RESEND", attemptCount: 3 });
+    await expect(prisma.reminderDelivery.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({ status: "SENT", provider: "RESEND", failureReason: null });
+  });
 });
