@@ -122,17 +122,20 @@ export async function drainTransferProofDeliveryIntents(
     const staleClaim = row.status === "PROCESSING";
     const provider = row.provider as EmailProvider | null
       ?? (staleClaim ? null : configuredEmailProvider());
+    const resendAttemptTimeMissing = provider === "RESEND" && row.attemptCount > 0 && !row.firstAttemptAt;
     const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
       && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
-    if ((staleClaim && provider !== "RESEND") || resendWindowExpired) {
+    if ((staleClaim && provider !== "RESEND") || resendAttemptTimeMissing || resendWindowExpired) {
       const quarantined = await db.transferProofDeliveryIntent.updateMany({
         where: {
-          id: row.id, status: "PROCESSING", attemptCount: row.attemptCount,
-          leaseExpiresAt: { lte: now }, provider: row.provider,
+          id: row.id, status: row.status, attemptCount: row.attemptCount, provider: row.provider,
+          ...(staleClaim ? { leaseExpiresAt: { lte: now } } : { availableAt: { lte: now } }),
         },
         data: {
           status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
-          lastError: resendWindowExpired
+          lastError: resendAttemptTimeMissing
+            ? "Resend first-attempt time is missing; delivery requires reconciliation"
+            : resendWindowExpired
             ? "Resend idempotency window expired; delivery requires reconciliation"
             : provider
               ? `Ambiguous prior ${provider} delivery requires reconciliation`

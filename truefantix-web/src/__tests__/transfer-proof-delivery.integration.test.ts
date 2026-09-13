@@ -228,7 +228,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
     await prisma.transferProofDeliveryIntent.updateMany({
       where: { orderId },
-      data: { status: "FAILED", provider: "RESEND", attemptCount: 2, availableAt: new Date("2026-12-01T06:00:00.000Z") },
+      data: {
+        status: "FAILED", provider: "RESEND", attemptCount: 2,
+        firstAttemptAt: new Date("2026-12-01T05:00:00.000Z"),
+        availableAt: new Date("2026-12-01T06:00:00.000Z"),
+      },
     });
     mockedSendEmail.mockResolvedValue({ ok: false, provider: "RESEND", providerResult: "HTTP 429", error: "rate limited" });
 
@@ -285,6 +289,62 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "RECONCILIATION_REQUIRED" } })).resolves.toBe(2);
+  });
+
+  it("quarantines failed Resend retries after their idempotency window instead of stranding them", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("12")));
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: {
+        status: "FAILED",
+        provider: "RESEND",
+        attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T12:00:00.000Z"),
+        availableAt: new Date("2026-12-01T12:05:00.000Z"),
+      },
+    });
+
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T12:00:00.000Z") }, prisma))
+      .resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 2 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { orderId },
+      select: { status: true, lastError: true },
+    })).resolves.toEqual(expect.arrayContaining([
+      {
+        status: "RECONCILIATION_REQUIRED",
+        lastError: "Resend idempotency window expired; delivery requires reconciliation",
+      },
+    ]));
+  });
+
+  it("quarantines attempted Resend rows whose first-attempt evidence is missing", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("14")));
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: {
+        status: "FAILED",
+        provider: "RESEND",
+        attemptCount: 1,
+        firstAttemptAt: null,
+        availableAt: new Date("2026-12-01T14:05:00.000Z"),
+      },
+    });
+
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T14:10:00.000Z") }, prisma))
+      .resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 2 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { orderId },
+      select: { status: true, lastError: true },
+    })).resolves.toEqual(expect.arrayContaining([
+      {
+        status: "RECONCILIATION_REQUIRED",
+        lastError: "Resend first-attempt time is missing; delivery requires reconciliation",
+      },
+    ]));
   });
 
   function completionLosingDb(providerAccepted: () => boolean) {
