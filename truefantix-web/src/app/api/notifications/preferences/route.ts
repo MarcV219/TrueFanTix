@@ -4,6 +4,21 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
+import {
+  ManagedAccountNotificationPreferenceWriteError,
+  runOrdinaryNotificationPreferenceWrite,
+} from "@/lib/notifications/ordinary-preference-user";
+
+function stagingConsoleOnlyResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403, headers: { "Cache-Control": "private, no-store" } },
+  );
+}
 
 // GET /api/notifications/preferences
 // Get a user's notification preferences
@@ -69,14 +84,16 @@ export async function PATCH(req: Request) {
     const validation = await validateRequest(schemas.notificationPreferencesSettingsApi)(req);
     if (!validation.success) return validation.response;
 
-    const user = await prisma.user.update({
-      where: { id: gate.user.id },
-      data: {
-        notificationRadiusKm: validation.data.notificationRadiusKm,
-        notificationRadiusUnit: validation.data.notificationRadiusUnit ?? "KM",
-      },
-      select: { notificationRadiusKm: true, notificationRadiusUnit: true },
-    });
+    const user = await runOrdinaryNotificationPreferenceWrite(gate.user.id, (tx) =>
+      tx.user.update({
+        where: { id: gate.user.id },
+        data: {
+          notificationRadiusKm: validation.data.notificationRadiusKm,
+          notificationRadiusUnit: validation.data.notificationRadiusUnit ?? "KM",
+        },
+        select: { notificationRadiusKm: true, notificationRadiusUnit: true },
+      }),
+    );
 
     return NextResponse.json(
       {
@@ -89,6 +106,9 @@ export async function PATCH(req: Request) {
       { status: 200 }
     );
   } catch (err) {
+    if (err instanceof ManagedAccountNotificationPreferenceWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     if (err instanceof Error && err.message === "NOT_AUTHENTICATED") {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }
@@ -111,34 +131,42 @@ export async function POST(req: Request) {
     let value = validation.data.value;
     const catalogEntityId = validation.data.catalogEntityId ?? null;
 
-    if (catalogEntityId) {
-      const entity = await prisma.catalogEntity.findUnique({ where: { id: catalogEntityId } });
-      if (!entity) {
-        return NextResponse.json(
-          { ok: false, error: "CATALOG_ENTITY_NOT_FOUND", message: "Choose a valid catalog suggestion before adding it." },
-          { status: 400 }
-        );
+    const result = await runOrdinaryNotificationPreferenceWrite(gate.user.id, async (tx) => {
+      if (catalogEntityId) {
+        const entity = await tx.catalogEntity.findUnique({ where: { id: catalogEntityId } });
+        if (!entity) return { error: "CATALOG_ENTITY_NOT_FOUND" as const };
+        if (entity.type !== requestedType) return { error: "CATALOG_TYPE_MISMATCH" as const };
+        type = entity.type;
+        value = entity.canonicalName;
       }
-      if (entity.type !== requestedType) {
-        return NextResponse.json(
-          { ok: false, error: "CATALOG_TYPE_MISMATCH", message: "The selected catalog suggestion does not match this preference type." },
-          { status: 400 }
-        );
-      }
-      type = entity.type;
-      value = entity.canonicalName;
-    }
 
-    // Prevent duplicates with upsert
-    const preference = await prisma.notificationPreference.upsert({
-      where: { userId_type_value: { userId: gate.user.id, type, value } },
-      create: { userId: gate.user.id, type, value, catalogEntityId, status: "ACTIVE" },
-      update: { catalogEntityId, status: "ACTIVE" },
-      select: { id: true, type: true, value: true, status: true, createdAt: true, catalogEntityId: true },
+      // Prevent duplicates with upsert.
+      const preference = await tx.notificationPreference.upsert({
+        where: { userId_type_value: { userId: gate.user.id, type, value } },
+        create: { userId: gate.user.id, type, value, catalogEntityId, status: "ACTIVE" },
+        update: { catalogEntityId, status: "ACTIVE" },
+        select: { id: true, type: true, value: true, status: true, createdAt: true, catalogEntityId: true },
+      });
+      return { preference };
     });
 
-    return NextResponse.json({ ok: true, preference }, { status: 201 });
+    if ("error" in result) {
+      return result.error === "CATALOG_ENTITY_NOT_FOUND"
+        ? NextResponse.json(
+            { ok: false, error: result.error, message: "Choose a valid catalog suggestion before adding it." },
+            { status: 400 },
+          )
+        : NextResponse.json(
+            { ok: false, error: result.error, message: "The selected catalog suggestion does not match this preference type." },
+            { status: 400 },
+          );
+    }
+
+    return NextResponse.json({ ok: true, preference: result.preference }, { status: 201 });
   } catch (err) {
+    if (err instanceof ManagedAccountNotificationPreferenceWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     if (err instanceof Error && err.message === "NOT_AUTHENTICATED") {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }
@@ -158,21 +186,23 @@ export async function DELETE(req: Request) {
 
     const { id } = validation.data;
 
-    // Ensure user owns the preference before deleting
-    const preference = await prisma.notificationPreference.findUnique({
-      where: { id },
+    const deleted = await runOrdinaryNotificationPreferenceWrite(gate.user.id, async (tx) => {
+      // Keep ownership validation and deletion in the same transaction.
+      const preference = await tx.notificationPreference.findUnique({ where: { id } });
+      if (!preference || preference.userId !== gate.user.id) return false;
+      await tx.notificationPreference.delete({ where: { id } });
+      return true;
     });
 
-    if (!preference || preference.userId !== gate.user.id) {
+    if (!deleted) {
       return NextResponse.json({ ok: false, error: "NOT_FOUND", message: "Preference not found or not owned by user." }, { status: 404 });
     }
 
-    await prisma.notificationPreference.delete({
-      where: { id },
-    });
-
     return NextResponse.json({ ok: true, message: "Preference deleted." }, { status: 200 });
   } catch (err) {
+    if (err instanceof ManagedAccountNotificationPreferenceWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     if (err instanceof Error && err.message === "NOT_AUTHENTICATED") {
       return NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED", message: "User not authenticated." }, { status: 401 });
     }
