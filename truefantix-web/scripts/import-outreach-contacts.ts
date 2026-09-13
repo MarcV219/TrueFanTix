@@ -52,11 +52,48 @@ const sources: Source[] = [
   { namespace: "college-other", category: "SPORTS_COLLEGE", file: path.join(workspace, "marketing/sports-contacts/college-other.csv"), kind: "sports" },
 ];
 
+const syncStatePath = process.env.OUTREACH_SYNC_STATE_PATH
+  || path.join(process.env.XDG_STATE_HOME || "/home/marc/.local/state", "truefantix", "outreach-import.json");
+
+type SyncState = { version: 1; sources: Record<string, string> };
+
+function sourceDigest(file: string) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function loadSyncState(): SyncState {
+  try {
+    const state = JSON.parse(fs.readFileSync(syncStatePath, "utf8")) as SyncState;
+    return state.version === 1 && state.sources ? state : { version: 1, sources: {} };
+  } catch {
+    return { version: 1, sources: {} };
+  }
+}
+
+function saveSyncState(state: SyncState) {
+  fs.mkdirSync(path.dirname(syncStatePath), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${syncStatePath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryPath, syncStatePath);
+}
+
 async function main() {
+  const previousState = loadSyncState();
+  const currentDigests = Object.fromEntries(
+    sources.filter((source) => fs.existsSync(source.file)).map((source) => [source.namespace, sourceDigest(source.file)]),
+  );
+  const changedSources = new Set(
+    Object.entries(currentDigests).filter(([namespace, digest]) => previousState.sources[namespace] !== digest).map(([namespace]) => namespace),
+  );
+  if (changedSources.size === 0) {
+    console.log("Outreach import skipped: source files are unchanged.");
+    return;
+  }
   let processed = 0;
   const supersededExternalKeys = new Set<string>();
   for (const source of sources) {
     if (!fs.existsSync(source.file)) { console.warn(`Skipping missing ${source.file}`); continue; }
+    if (!changedSources.has(source.namespace)) continue;
     const rows = parseCsv(fs.readFileSync(source.file, "utf8"));
     const mappedRows = rows.map((row) => {
         const isArtist = source.kind === "artist"; const organization = value(row.organization) || (isArtist ? null : value(row.team)); const rawSubjectName = isArtist ? value(row.artist) : value(row.team); const subjectName = isArtist ? rawSubjectName : sportsSubjectName(row.team, row.league);
@@ -125,30 +162,29 @@ async function main() {
     removedSupersededKeys += removed.count;
   }
   console.log(`Removed ${removedSupersededKeys.toLocaleString()} contacts with superseded import identities.`);
-  const namedContacts = await prisma.outreachContact.findMany({
-    where: { contactName: { not: null } },
-    include: { _count: { select: { recipients: true, replies: true, communications: true } } },
-  });
-  const identityGroups = new Map<string, typeof namedContacts>();
-  for (const contact of namedContacts) {
-    const identity = [contact.category, contact.subjectName || contact.organization, contact.contactName]
-      .map((part) => (part || "").trim().toLocaleLowerCase("en-CA")).join("\u001f");
-    const group = identityGroups.get(identity) || [];
-    group.push(contact); identityGroups.set(identity, group);
-  }
-  const duplicateIds: string[] = [];
-  for (const group of identityGroups.values()) {
-    if (group.length < 2) continue;
-    const ranked = [...group].sort((a, b) => contactScore(b) - contactScore(a));
-    for (const duplicate of ranked.slice(1)) {
-      if (duplicate._count.recipients === 0 && duplicate._count.replies === 0 && duplicate._count.communications === 0) duplicateIds.push(duplicate.id);
-    }
-  }
-  let removedDuplicates = 0;
-  for (let offset = 0; offset < duplicateIds.length; offset += 1000) {
-    const removed = await prisma.outreachContact.deleteMany({ where: { id: { in: duplicateIds.slice(offset, offset + 1000) } } });
-    removedDuplicates += removed.count;
-  }
+  const removedDuplicates = await prisma.$executeRaw`
+    WITH ranked AS (
+      SELECT c.id,
+        row_number() OVER (
+          PARTITION BY lower(trim(c.category)), lower(trim(coalesce(c."subjectName", c.organization, ''))), lower(trim(c."contactName"))
+          ORDER BY
+            (CASE WHEN c.email IS NOT NULL THEN 1000000 ELSE 0 END)
+            + (CASE WHEN c.confidence = 'HIGH' THEN 100000 WHEN c.confidence = 'MEDIUM' THEN 50000 ELSE 0 END)
+            + (CASE WHEN c."researchStatus" IN ('VERIFIED', 'RESEARCHED') THEN 10000 ELSE 0 END) DESC,
+            c."verifiedAt" DESC NULLS LAST,
+            ((c.phone IS NOT NULL)::int + (c."sourceUrl" IS NOT NULL)::int + (c.notes IS NOT NULL)::int) DESC,
+            c.id ASC
+        ) AS duplicate_rank
+      FROM "OutreachContact" c
+      WHERE c."contactName" IS NOT NULL
+    )
+    DELETE FROM "OutreachContact" c
+    USING ranked r
+    WHERE c.id = r.id AND r.duplicate_rank > 1
+      AND NOT EXISTS (SELECT 1 FROM "OutreachRecipient" x WHERE x."contactId" = c.id)
+      AND NOT EXISTS (SELECT 1 FROM "OutreachReply" x WHERE x."contactId" = c.id)
+      AND NOT EXISTS (SELECT 1 FROM "OutreachCommunication" x WHERE x."contactId" = c.id)
+  `;
   console.log(`Removed ${removedDuplicates.toLocaleString()} superseded duplicate contact(s).`);
   const classificationCandidates = await prisma.outreachContact.findMany({
     where: {
@@ -175,5 +211,6 @@ async function main() {
   }
   console.log(`Classified ${classifiedCount.toLocaleString()} high-confidence published business contact(s).`);
   console.log(`Outreach import complete: ${processed.toLocaleString()} rows processed.`);
+  saveSyncState({ version: 1, sources: currentDigests });
 }
 main().finally(async () => { await prisma.$disconnect(); await pool.end(); });
