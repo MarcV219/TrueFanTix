@@ -100,6 +100,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     const ids: string[] = [];
     for (let index = 0; index < count; index += 1) {
       const batchOrderId = `batch-order-${runId}-${scope}-${index}`;
+      const availableAt = new Date(`2026-12-01T00:0${index}:00.000Z`);
       await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
         orderId: batchOrderId,
         buyerUserId: null,
@@ -109,14 +110,10 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         ticketCount: 1,
         transferProofType: "EMAIL",
         deadline: new Date("2026-12-03T00:00:00.000Z"),
-        now: new Date("2026-12-01T00:00:00.000Z"),
+        now: availableAt,
       }));
       const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
         where: { orderId: batchOrderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
-      });
-      await prisma.transferProofDeliveryIntent.update({
-        where: { id: row.id },
-        data: { availableAt: new Date(`2026-12-01T00:0${index}:00.000Z`) },
       });
       ids.push(row.id);
     }
@@ -1483,6 +1480,89 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).resolves.toMatchObject({
       status: "PROCESSING", attemptCount: 1, lastError: null,
     });
+  });
+
+  it("freezes a pending delivery schedule until its due claim is acquired", async () => {
+    const [rewrittenId, validId] = await seedAdminBatch("pending-schedule-freeze", 2);
+    const valid = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: validId },
+      select: { availableAt: true },
+    });
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: rewrittenId },
+      data: { availableAt: new Date("2026-12-01T02:00:00.000Z") },
+    })).rejects.toThrow(
+      "Pending transfer-proof delivery availability is immutable until claim",
+    );
+
+    await expect(prisma.$executeRaw`
+      UPDATE "TransferProofDeliveryIntent"
+      SET "updatedAt" = "updatedAt" + INTERVAL '1 second'
+      WHERE id = ${validId}
+    `).resolves.toBe(1);
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validId },
+      data: {
+        status: "PROCESSING", provider: "RESEND", processingAt: valid.availableAt,
+        leaseExpiresAt: new Date(valid.availableAt.getTime() + 15 * 60 * 1000),
+        claimToken: "valid-pending-schedule-claim",
+      },
+    })).resolves.toMatchObject({
+      status: "PROCESSING", availableAt: valid.availableAt,
+    });
+  });
+
+  it("installs immutable pending availability as a forward-only upgrade", async () => {
+    const pendingSchema = `transfer_proof_pending_freeze_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${pendingSchema}"`);
+      await client.query(`SET search_path TO "${pendingSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (id, status, "availableAt")
+        VALUES
+          ('permissive-71', 'PENDING', TIMESTAMP '2026-12-01 03:00:00'),
+          ('strict-72', 'PENDING', TIMESTAMP '2026-12-01 03:00:00')
+      `);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "availableAt" = TIMESTAMP '2026-12-01 02:00:00'
+        WHERE id = 'permissive-71'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const pendingFreezeMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914010000_freeze_transfer_proof_pending_schedule/migration.sql",
+      ), "utf8");
+      await client.query(pendingFreezeMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "availableAt" = TIMESTAMP '2026-12-01 02:00:00'
+        WHERE id = 'strict-72'
+      `)).rejects.toThrow(
+        "Pending transfer-proof delivery availability is immutable until claim",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING'
+        WHERE id = 'strict-72'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${pendingSchema}" CASCADE`);
+      client.release();
+    }
   });
 
   it("installs immutable retryable failure evidence as a forward-only upgrade", async () => {
