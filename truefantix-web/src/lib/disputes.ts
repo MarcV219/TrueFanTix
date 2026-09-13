@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
 
@@ -28,7 +29,7 @@ export async function sendDisputeEmails(params: {
   ticketCount: number;
   tickets?: string[];
   fileNames: string[];
-}) {
+}, db: Pick<Prisma.TransactionClient, "emailDelivery"> = prisma) {
   const buyerLink = `${appOrigin()}/account/tickets/holding`;
   const sellerLink = `${appOrigin()}/account/tickets/seller-holding`;
   const adminLink = `${appOrigin()}/admin/orders/${encodeURIComponent(params.orderId)}`;
@@ -88,7 +89,7 @@ TrueFanTix Support`;
 <p><a href="${link}" style="display:inline-block;padding:12px 18px;background:#064a93;color:white;text-decoration:none;border-radius:8px;font-weight:bold">${params.kind === "CANCELLED" || params.kind === "RESOLVED" || params.kind === "REFUNDED" ? "View resolved case" : party.role === "TrueFanTix Support" ? "Review dispute case" : "View or add dispute information"}</a></p>
 <p>${params.kind === "REFUNDED" ? "The buyer’s full payment has been refunded. No seller payout will be issued for this order." : params.kind === "CANCELLED" || params.kind === "RESOLVED" ? "The order has returned to the normal completed-order payout process." : "Seller payout remains paused while this case is reviewed."}</p>`;
       const result = await sendEmail({ to: party.email, subject, text, html });
-      await prisma.emailDelivery.upsert({
+      await db.emailDelivery.upsert({
         where: {
           orderId_emailType_recipient: {
             orderId: params.orderId,
