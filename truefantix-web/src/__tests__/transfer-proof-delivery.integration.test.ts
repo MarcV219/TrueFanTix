@@ -206,7 +206,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "DELIVERED", attemptCount: 2 } })).resolves.toBe(2);
   });
 
-  it("does not claim a delivery after its bounded attempt budget is exhausted", async () => {
+  it("escalates a failed delivery after its bounded attempt budget is exhausted", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("05")));
     await prisma.transferProofDeliveryIntent.updateMany({
       where: { orderId },
@@ -214,9 +214,31 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
 
     await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T00:00:00.000Z") }, prisma))
-      .resolves.toMatchObject({ claimed: 0 });
+      .resolves.toMatchObject({ claimed: 0, reconciliationRequired: 2 });
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "RECONCILIATION_REQUIRED" } }))
+      .resolves.toBe(2);
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-02T00:01:00.000Z") }, prisma))
+      .resolves.toMatchObject({ claimed: 0, reconciliationRequired: 0 });
+  });
+
+  it("escalates the final rejected Resend attempt instead of stranding it as failed", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("06")));
+    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: { status: "FAILED", provider: "RESEND", attemptCount: 2, availableAt: new Date("2026-12-01T06:00:00.000Z") },
+    });
+    mockedSendEmail.mockResolvedValue({ ok: false, provider: "RESEND", providerResult: "HTTP 429", error: "rate limited" });
+
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: new Date("2026-12-01T06:10:00.000Z") }, prisma))
+      .resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1, reconciliationRequired: 1 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED", provider: "RESEND", attemptCount: 3, lastError: "rate limited",
+      });
   });
 
   it("quarantines an ambiguous stale SendGrid acceptance instead of resending", async () => {

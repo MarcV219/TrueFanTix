@@ -89,6 +89,18 @@ export async function drainTransferProofDeliveryIntents(
   db: DeliveryDb = prisma,
 ) {
   const now = options.now ?? new Date();
+  const exhausted = await db.transferProofDeliveryIntent.updateMany({
+    where: {
+      orderId: options.orderId,
+      status: "FAILED",
+      attemptCount: { gte: MAX_ATTEMPTS },
+    },
+    data: {
+      status: "RECONCILIATION_REQUIRED",
+      processingAt: null,
+      leaseExpiresAt: null,
+    },
+  });
   const recoverable = {
     attemptCount: { lt: MAX_ATTEMPTS },
     OR: [
@@ -105,7 +117,7 @@ export async function drainTransferProofDeliveryIntents(
   let claimed = 0;
   let delivered = 0;
   let failed = 0;
-  let reconciliationRequired = 0;
+  let reconciliationRequired = exhausted.count;
   for (const row of rows) {
     const staleClaim = row.status === "PROCESSING";
     const provider = row.provider as EmailProvider | null
@@ -245,7 +257,9 @@ export async function drainTransferProofDeliveryIntents(
         });
       }
       const retryAcceptedResend = providerAccepted && provider === "RESEND" && attemptCount < MAX_ATTEMPTS;
-      const requiresReconciliation = providerAccepted ? !retryAcceptedResend : provider === "SENDGRID";
+      const requiresReconciliation = providerAccepted
+        ? !retryAcceptedResend
+        : provider === "SENDGRID" || attemptCount >= MAX_ATTEMPTS;
       const recovered = await db.transferProofDeliveryIntent.updateMany({
         where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, attemptCount },
         data: {
