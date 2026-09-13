@@ -1,12 +1,28 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { sendEmail } from "@/lib/email";
 import { getSpotifyImportCandidates } from "@/lib/integrations/spotify";
+import {
+  ManagedAccountSpotifyOperationError,
+  runOrdinarySpotifyOperation,
+} from "@/lib/integrations/ordinary-spotify-user";
 
 const ADMIN_EMAIL = "admin@truefantix.com";
+
+function stagingConsoleOnlyError() {
+  const response = NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403 },
+  );
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
 
 function normalizeValue(value: string) {
   return value.trim().replace(/\s+/g, " ");
@@ -53,9 +69,12 @@ export async function GET(req: Request) {
     const gate = await requireUser(req);
     if (!gate.ok) return gate.res;
 
-    const result = await getSpotifyImportCandidates(gate.user.id);
+    const result = await runOrdinarySpotifyOperation(gate.user.id, (tx) =>
+      getSpotifyImportCandidates(gate.user.id, tx),
+    );
     return NextResponse.json({ ok: true, ...result }, { status: 200 });
   } catch (err) {
+    if (err instanceof ManagedAccountSpotifyOperationError) return stagingConsoleOnlyError();
     console.error("GET /api/integrations/spotify/artists failed:", err);
     return NextResponse.json(
       { ok: false, error: "SPOTIFY_IMPORT_FAILED", message: "Could not load Spotify artists." },
@@ -75,91 +94,94 @@ export async function POST(req: Request) {
       : null;
     const includeUnmatched = body?.includeUnmatched !== false;
 
-    const result = await getSpotifyImportCandidates(gate.user.id);
-    if (!result.connected) {
-      return NextResponse.json(
-        { ok: false, error: "SPOTIFY_NOT_CONNECTED", message: "Connect Spotify before importing artists." },
-        { status: 400 }
-      );
-    }
+    return await runOrdinarySpotifyOperation(gate.user.id, async (tx) => {
+      const result = await getSpotifyImportCandidates(gate.user.id, tx);
+      if (!result.connected) {
+        return NextResponse.json(
+          { ok: false, error: "SPOTIFY_NOT_CONNECTED", message: "Connect Spotify before importing artists." },
+          { status: 400 },
+        );
+      }
 
-    const selected = result.artists.filter((artist) => !selectedIds || selectedIds.has(artist.spotifyId));
-    const imported = [];
-    const requested = [];
+      const selected = result.artists.filter((artist) => !selectedIds || selectedIds.has(artist.spotifyId));
+      const imported = [];
+      const requested = [];
 
-    for (const artist of selected) {
-      const name = normalizeValue(artist.name);
-      if (!name) continue;
+      for (const artist of selected) {
+        const name = normalizeValue(artist.name);
+        if (!name) continue;
 
-      if (artist.match?.catalogEntityId) {
-        const entity = await prisma.catalogEntity.findUnique({
-          where: { id: artist.match.catalogEntityId },
-          select: { id: true, type: true, canonicalName: true },
-        });
-        if (!entity || entity.type !== "ARTIST") continue;
+        if (artist.match?.catalogEntityId) {
+          const entity = await tx.catalogEntity.findUnique({
+            where: { id: artist.match.catalogEntityId },
+            select: { id: true, type: true, canonicalName: true },
+          });
+          if (!entity || entity.type !== "ARTIST") continue;
 
-        const preference = await prisma.notificationPreference.upsert({
-          where: {
-            userId_type_value: {
+          const preference = await tx.notificationPreference.upsert({
+            where: {
+              userId_type_value: {
+                userId: gate.user.id,
+                type: "ARTIST",
+                value: entity.canonicalName,
+              },
+            },
+            create: {
               userId: gate.user.id,
               type: "ARTIST",
               value: entity.canonicalName,
+              catalogEntityId: entity.id,
+              status: "ACTIVE",
             },
-          },
-          create: {
-            userId: gate.user.id,
-            type: "ARTIST",
-            value: entity.canonicalName,
-            catalogEntityId: entity.id,
-            status: "ACTIVE",
-          },
-          update: {
-            catalogEntityId: entity.id,
-            status: "ACTIVE",
-          },
-          select: { id: true, type: true, value: true, status: true, catalogEntityId: true },
-        });
-        imported.push(preference);
-      } else if (includeUnmatched) {
-        const request = await prisma.catalogRequest.upsert({
-          where: {
-            userId_requestedType_requestedValue: {
+            update: {
+              catalogEntityId: entity.id,
+              status: "ACTIVE",
+            },
+            select: { id: true, type: true, value: true, status: true, catalogEntityId: true },
+          });
+          imported.push(preference);
+        } else if (includeUnmatched) {
+          const request = await tx.catalogRequest.upsert({
+            where: {
+              userId_requestedType_requestedValue: {
+                userId: gate.user.id,
+                requestedType: "ARTIST",
+                requestedValue: name,
+              },
+            },
+            create: {
               userId: gate.user.id,
               requestedType: "ARTIST",
               requestedValue: name,
+              notes: "Imported from Spotify; needs catalog review.",
+              status: "PENDING",
             },
-          },
-          create: {
-            userId: gate.user.id,
-            requestedType: "ARTIST",
-            requestedValue: name,
-            notes: "Imported from Spotify; needs catalog review.",
-            status: "PENDING",
-          },
-          update: {
-            notes: "Imported from Spotify; needs catalog review.",
-            status: "PENDING",
-            adminNotes: null,
-            reviewedAt: null,
-          },
-          select: { id: true, requestedValue: true, status: true },
-        });
-        requested.push(request);
+            update: {
+              notes: "Imported from Spotify; needs catalog review.",
+              status: "PENDING",
+              adminNotes: null,
+              reviewedAt: null,
+            },
+            select: { id: true, requestedValue: true, status: true },
+          });
+          requested.push(request);
+        }
       }
-    }
 
-    await notifyAdminOfUnmatched({
-      user: {
-        id: gate.user.id,
-        email: gate.user.email,
-        firstName: gate.user.firstName,
-        lastName: gate.user.lastName,
-      },
-      names: requested.map((request) => request.requestedValue),
+      await notifyAdminOfUnmatched({
+        user: {
+          id: gate.user.id,
+          email: gate.user.email,
+          firstName: gate.user.firstName,
+          lastName: gate.user.lastName,
+        },
+        names: requested.map((request) => request.requestedValue),
+      });
+
+      return NextResponse.json({ ok: true, imported, requested }, { status: 200 });
     });
-
-    return NextResponse.json({ ok: true, imported, requested }, { status: 200 });
   } catch (err) {
+    if (err instanceof ManagedAccountSpotifyOperationError) return stagingConsoleOnlyError();
     console.error("POST /api/integrations/spotify/artists failed:", err);
     return NextResponse.json(
       { ok: false, error: "SPOTIFY_IMPORT_FAILED", message: "Could not import Spotify artists." },

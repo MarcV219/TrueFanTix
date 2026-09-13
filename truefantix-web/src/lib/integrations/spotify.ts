@@ -1,6 +1,9 @@
 import crypto from "crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { searchProviderCatalog, type ProviderCatalogSuggestion } from "@/lib/catalog/provider-catalog";
+
+type SpotifyDb = Pick<Prisma.TransactionClient, "connectedAccount">;
 
 const SPOTIFY_PROVIDER = "spotify";
 const TOKEN_URL = "https://accounts.spotify.com/api/token";
@@ -112,14 +115,14 @@ export async function exchangeSpotifyCode(code: string) {
 async function refreshSpotifyToken(account: {
   id: string;
   refreshTokenEncrypted: string | null;
-}) {
+}, db: SpotifyDb = prisma) {
   if (!account.refreshTokenEncrypted) throw new Error("Spotify refresh token is missing.");
   const body = new URLSearchParams();
   body.set("grant_type", "refresh_token");
   body.set("refresh_token", decrypt(account.refreshTokenEncrypted));
   const data = await tokenRequest(body);
   const expiresAt = typeof data.expires_in === "number" ? new Date(Date.now() + data.expires_in * 1000) : null;
-  await prisma.connectedAccount.update({
+  await db.connectedAccount.update({
     where: { id: account.id },
     data: {
       accessTokenEncrypted: encrypt(data.access_token),
@@ -132,8 +135,8 @@ async function refreshSpotifyToken(account: {
   return data.access_token as string;
 }
 
-export async function getSpotifyAccessToken(userId: string) {
-  const account = await prisma.connectedAccount.findUnique({
+export async function getSpotifyAccessToken(userId: string, db: SpotifyDb = prisma) {
+  const account = await db.connectedAccount.findUnique({
     where: { userId_provider: { userId, provider: SPOTIFY_PROVIDER } },
     select: {
       id: true,
@@ -144,21 +147,21 @@ export async function getSpotifyAccessToken(userId: string) {
   });
   if (!account) return null;
   if (account.expiresAt && account.expiresAt.getTime() < Date.now() + 60_000) {
-    return refreshSpotifyToken(account);
+    return refreshSpotifyToken(account, db);
   }
   return decrypt(account.accessTokenEncrypted);
 }
 
-export async function hasSpotifyConnection(userId: string) {
-  const account = await prisma.connectedAccount.findUnique({
+export async function hasSpotifyConnection(userId: string, db: SpotifyDb = prisma) {
+  const account = await db.connectedAccount.findUnique({
     where: { userId_provider: { userId, provider: SPOTIFY_PROVIDER } },
     select: { id: true },
   });
   return Boolean(account);
 }
 
-export async function disconnectSpotify(userId: string) {
-  await prisma.connectedAccount.deleteMany({
+export async function disconnectSpotify(userId: string, db: SpotifyDb = prisma) {
+  await db.connectedAccount.deleteMany({
     where: { userId, provider: SPOTIFY_PROVIDER },
   });
 }
@@ -176,15 +179,17 @@ async function spotifyApi<T>(accessToken: string, path: string): Promise<T> {
 export async function storeSpotifyConnection({
   userId,
   token,
+  db = prisma,
 }: {
   userId: string;
   token: any;
+  db?: SpotifyDb;
 }) {
   const accessToken = token.access_token as string;
   const me: any = await spotifyApi(accessToken, "/me");
   const expiresAt = typeof token.expires_in === "number" ? new Date(Date.now() + token.expires_in * 1000) : null;
 
-  return prisma.connectedAccount.upsert({
+  return db.connectedAccount.upsert({
     where: { userId_provider: { userId, provider: SPOTIFY_PROVIDER } },
     create: {
       userId,
@@ -269,8 +274,8 @@ async function matchArtist(name: string) {
   );
 }
 
-export async function getSpotifyImportCandidates(userId: string) {
-  const accessToken = await getSpotifyAccessToken(userId);
+export async function getSpotifyImportCandidates(userId: string, db: SpotifyDb = prisma) {
+  const accessToken = await getSpotifyAccessToken(userId, db);
   if (!accessToken) return { connected: false as const, artists: [] };
 
   const [followed, top] = await Promise.all([
