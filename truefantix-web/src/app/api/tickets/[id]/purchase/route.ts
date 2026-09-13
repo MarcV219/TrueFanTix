@@ -2,12 +2,16 @@ export const runtime = "nodejs";
 
 import crypto from "crypto";
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
 import { schemas } from "@/lib/validation";
 import { calculateAdminFeeTax, getTaxRateForVenue } from "@/lib/tax-rates";
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
+import {
+  BuyerPurchaseAccessChangedError,
+  ManagedAccountPurchaseError,
+  runOrdinaryPurchase,
+} from "@/lib/tickets/ordinary-buyer";
 
 const ADMIN_FEE_BPS = 875; // 8.75%
 const BPS_DENOMINATOR = 10_000;
@@ -71,11 +75,12 @@ export async function POST(req: Request, ctx: Ctx) {
   const gate = await requireVerifiedUser(req);
   if (!gate.ok) return gate.res;
 
-  // Optional: if you want a "canBuy" kill-switch.
+  // Preserve the fast capability refusal while rechecking the same field under
+  // the buyer lock before any order lookup or reservation mutation.
   if (gate.user.canBuy !== true) {
     return NextResponse.json(
       { ok: false, error: "BUYING_DISABLED", message: "Buying is disabled for this account." },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
@@ -118,33 +123,6 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
-    // ✅ Bulletproof buyer identity enforcement:
-    // Purchases MUST use the buyer "wallet" Seller record linked at User.sellerId
-    // (created via /api/auth/ensure-buyer).
-    const loggedInBuyerSellerId = gate.user.sellerId;
-
-    if (!loggedInBuyerSellerId) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "BUYER_WALLET_MISSING",
-          message: "Buyer wallet is not set up for this account.",
-        },
-        { status: 409 }
-      );
-    }
-
-    if (buyerSellerId !== loggedInBuyerSellerId) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "FORBIDDEN_BUYER",
-          message: "buyerSellerId does not match the logged-in user.",
-        },
-        { status: 403 }
-      );
-    }
-
     if (!idempotencyKey) {
       return NextResponse.json(
         { ok: false, error: "Missing idempotency key" },
@@ -152,52 +130,58 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
-    // Fast idempotency replay (outside tx)
-    const existingByKey = await prisma.order.findUnique({ where: { idempotencyKey } });
-    if (existingByKey) {
-      if (existingByKey.buyerSellerId !== loggedInBuyerSellerId) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "FORBIDDEN_BUYER",
-            message: "Idempotency key belongs to a different buyer.",
-          },
-          { status: 403 }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          ok: true,
-          replay: true,
-          order: {
-            ...existingByKey,
-            amount: centsToDollars(existingByKey.amountCents),
-            adminFee: centsToDollars(existingByKey.adminFeeCents),
-            adminFeeTax: centsToDollars(existingByKey.adminFeeTaxCents ?? 0),
-            total: centsToDollars(existingByKey.totalCents),
-          },
-        },
-        { status: 200 }
-      );
-    }
-
     const now = new Date();
     const reservedUntil = new Date(now.getTime() + RESERVATION_MINUTES * 60_000);
 
-    const result = await prisma.$transaction(async (tx: any) => {
-      const buyer = await tx.seller.findUnique({
-        where: { id: buyerSellerId },
-        select: { id: true, accessTokenBalance: true },
-      });
+    const result = await runOrdinaryPurchase(gate.user.id, async (tx, currentUser) => {
+      // Purchases must use the wallet reloaded beneath the current identity lock,
+      // rather than the potentially stale relationship returned by the route guard.
+      const loggedInBuyerSellerId = currentUser.seller.id;
 
-      if (!buyer) {
+      if (buyerSellerId !== loggedInBuyerSellerId) {
         return {
           ok: false as const,
-          status: 400 as const,
-          body: { ok: false, error: "buyerSellerId not found", debug: { buyerSellerId } },
+          status: 403 as const,
+          body: {
+            ok: false,
+            error: "FORBIDDEN_BUYER",
+            message: "buyerSellerId does not match the logged-in user.",
+          },
         };
       }
+
+      const existingByKey = await tx.order.findUnique({ where: { idempotencyKey } });
+      if (existingByKey) {
+        if (existingByKey.buyerSellerId !== loggedInBuyerSellerId) {
+          return {
+            ok: false as const,
+            status: 403 as const,
+            body: {
+              ok: false,
+              error: "FORBIDDEN_BUYER",
+              message: "Idempotency key belongs to a different buyer.",
+            },
+          };
+        }
+
+        return {
+          ok: true as const,
+          status: 200 as const,
+          body: {
+            ok: true,
+            replay: true,
+            order: {
+              ...existingByKey,
+              amount: centsToDollars(existingByKey.amountCents),
+              adminFee: centsToDollars(existingByKey.adminFeeCents),
+              adminFeeTax: centsToDollars(existingByKey.adminFeeTaxCents ?? 0),
+              total: centsToDollars(existingByKey.totalCents),
+            },
+          },
+        };
+      }
+
+      const buyer = currentUser.seller;
 
       const ticket = await tx.ticket.findUnique({
         where: { id: ticketId },
@@ -404,39 +388,35 @@ export async function POST(req: Request, ctx: Ctx) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
 
-    // Better P2002 handling: try idempotency replay; otherwise return a clear 409.
-    if (err && typeof err === "object" && "code" in err && (err as any).code === "P2002") {
-      const key = getIdempotencyKey(req);
-      if (key) {
-        const existing = await prisma.order.findUnique({ where: { idempotencyKey: key } });
-        if (existing) {
-          if (existing.buyerSellerId !== gate.user.sellerId) {
-            return NextResponse.json(
-              {
-                ok: false,
-                error: "FORBIDDEN_BUYER",
-                message: "Idempotency key belongs to a different buyer.",
-              },
-              { status: 403 }
-            );
-          }
+    if (err instanceof ManagedAccountPurchaseError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
 
-          return NextResponse.json(
-            {
-              ok: true,
-              replay: true,
-              order: {
-                ...existing,
-                amount: centsToDollars(existing.amountCents),
-                adminFee: centsToDollars(existing.adminFeeCents),
-                adminFeeTax: centsToDollars(existing.adminFeeTaxCents ?? 0),
-                total: centsToDollars(existing.totalCents),
-              },
-            },
-            { status: 200 }
-          );
-        }
-      }
+    if (err instanceof BuyerPurchaseAccessChangedError) {
+      const responses = {
+        NOT_AUTHENTICATED: [401, "Please log in."],
+        BANNED: [403, "This account is restricted."],
+        NOT_VERIFIED: [403, "Please verify your email and phone number."],
+        BUYING_DISABLED: [403, "Buying is disabled for this account."],
+        BUYER_WALLET_MISSING: [409, "Buyer wallet is not set up for this account."],
+      } as const;
+      const [status, accessMessage] = responses[err.code];
+      return NextResponse.json(
+        { ok: false, error: err.code, message: accessMessage },
+        { status },
+      );
+    }
+
+    // A unique collision is returned as a conflict. Idempotency replays are
+    // resolved beneath the buyer lock before attempting a new reservation.
+    if (err && typeof err === "object" && "code" in err && (err as any).code === "P2002") {
       return NextResponse.json(
         {
           ok: false,
