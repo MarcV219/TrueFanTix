@@ -2,7 +2,22 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { createNotification } from "@/lib/notifications/service";
+import {
+  ManagedAccountWaitlistWriteError,
+  runOrdinaryWaitlistWrite,
+} from "@/lib/waitlist/ordinary-user";
 import { schemas, validateRequest } from "@/lib/validation";
+
+function stagingConsoleOnlyResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403, headers: { "Cache-Control": "private, no-store" } },
+  );
+}
 
 // GET /api/waitlist
 // Get user's waitlist entries
@@ -59,81 +74,89 @@ export async function POST(req: Request) {
 
     const body = validation.data;
 
-    // Check if event exists
-    const event = await prisma.event.findUnique({
-      where: { id: body.eventId },
-      select: {
-        id: true,
-        title: true,
-        venue: true,
-        date: true,
-        selloutStatus: true,
-      },
+    const result = await runOrdinaryWaitlistWrite(gate.user.id, async (tx) => {
+      const event = await tx.event.findUnique({
+        where: { id: body.eventId },
+        select: {
+          id: true,
+          title: true,
+          venue: true,
+          date: true,
+          selloutStatus: true,
+        },
+      });
+
+      if (!event) return { error: "EVENT_NOT_FOUND" as const };
+
+      const existingEntry = await tx.waitlistEntry.findFirst({
+        where: {
+          userId: gate.user.id,
+          eventId: body.eventId,
+          status: "ACTIVE",
+        },
+      });
+
+      if (existingEntry) return { error: "ALREADY_WAITLISTED" as const };
+
+      const entry = await tx.waitlistEntry.create({
+        data: {
+          userId: gate.user.id,
+          eventId: body.eventId,
+          maxPriceCents: body.maxPrice ? Math.round(body.maxPrice * 100) : null,
+          notes: body.notes,
+          status: "ACTIVE",
+          notifiedAt: null,
+        },
+        include: {
+          event: {
+            select: {
+              id: true,
+              title: true,
+              venue: true,
+              date: true,
+            },
+          },
+        },
+      });
+
+      return { event, entry };
     });
 
-    if (!event) {
+    if ("error" in result && result.error === "EVENT_NOT_FOUND") {
       return NextResponse.json(
         { ok: false, error: "EVENT_NOT_FOUND", message: "Event not found." },
         { status: 404 }
       );
     }
 
-    // Check if already on waitlist
-    const existingEntry = await prisma.waitlistEntry.findFirst({
-      where: {
-        userId: gate.user.id,
-        eventId: body.eventId,
-        status: "ACTIVE",
-      },
-    });
-
-    if (existingEntry) {
+    if ("error" in result) {
       return NextResponse.json(
         { ok: false, error: "ALREADY_WAITLISTED", message: "You're already on the waitlist for this event." },
         { status: 409 }
       );
     }
 
-    // Create waitlist entry
-    const entry = await prisma.waitlistEntry.create({
-      data: {
-        userId: gate.user.id,
-        eventId: body.eventId,
-        maxPriceCents: body.maxPrice ? Math.round(body.maxPrice * 100) : null,
-        notes: body.notes,
-        status: "ACTIVE",
-        notifiedAt: null,
-      },
-      include: {
-        event: {
-          select: {
-            id: true,
-            title: true,
-            venue: true,
-            date: true,
-          },
-        },
-      },
-    });
-
     // Send confirmation notification
     await createNotification({
       userId: gate.user.id,
       type: "WAITLIST_JOINED",
-      message: `You're on the waitlist for "${event.title}". We'll notify you when tickets become available!`,
-      link: `/events/${event.id}`,
+      message: `You're on the waitlist for "${result.event.title}". We'll notify you when tickets become available!`,
+      link: `/events/${result.event.id}`,
     });
 
     return NextResponse.json({
       ok: true,
       entry: {
-        ...entry,
-        maxPrice: entry.maxPriceCents ? entry.maxPriceCents / 100 : null,
+        ...result.entry,
+        maxPrice: result.entry.maxPriceCents ? result.entry.maxPriceCents / 100 : null,
       },
       message: "You've joined the waitlist! We'll notify you when tickets become available.",
     }, { status: 201 });
 
   } catch (err) {
+    if (err instanceof ManagedAccountWaitlistWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("POST /api/waitlist failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR", message: "Could not join waitlist." },
@@ -163,25 +186,29 @@ export async function DELETE(req: Request) {
 
     const entryId = parsed.data.id;
 
-    // Verify ownership
-    const entry = await prisma.waitlistEntry.findFirst({
-      where: {
-        id: entryId,
-        userId: gate.user.id,
-      },
+    const removed = await runOrdinaryWaitlistWrite(gate.user.id, async (tx) => {
+      const entry = await tx.waitlistEntry.findFirst({
+        where: {
+          id: entryId,
+          userId: gate.user.id,
+        },
+      });
+
+      if (!entry) return false;
+
+      await tx.waitlistEntry.update({
+        where: { id: entryId },
+        data: { status: "CANCELLED" },
+      });
+      return true;
     });
 
-    if (!entry) {
+    if (!removed) {
       return NextResponse.json(
         { ok: false, error: "NOT_FOUND", message: "Waitlist entry not found." },
         { status: 404 }
       );
     }
-
-    await prisma.waitlistEntry.update({
-      where: { id: entryId },
-      data: { status: "CANCELLED" },
-    });
 
     return NextResponse.json({
       ok: true,
@@ -189,6 +216,9 @@ export async function DELETE(req: Request) {
     }, { status: 200 });
 
   } catch (err) {
+    if (err instanceof ManagedAccountWaitlistWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("DELETE /api/waitlist failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR", message: "Could not leave waitlist." },
