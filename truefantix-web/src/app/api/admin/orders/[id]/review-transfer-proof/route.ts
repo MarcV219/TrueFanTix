@@ -1,7 +1,6 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
@@ -10,6 +9,11 @@ import { BUYER_CONFIRMATION_DEADLINE_HOURS, addHours, notifyBuyerTransferConfirm
 import { transferProofAdminActionMessage, transferProofStatusForAdminAction } from "@/lib/orders/transferProofAdminReview";
 import { schemas, validateRequest } from "@/lib/validation";
 import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
+import {
+  AdminOperationAccessChangedError,
+  ManagedAccountAdminOperationError,
+  runOrdinaryAdminOperation,
+} from "@/lib/admin/ordinary-admin";
 
 function orderIdFromUrl(req: Request) {
   const parts = new URL(req.url).pathname.split("/").filter(Boolean);
@@ -51,64 +55,88 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.adminReviewTransferProof)(req);
     if (!validation.success) return validation.response;
     const { action, note } = validation.data;
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-      select: {
-        id: true,
-        status: true,
-        buyerConfirmationStatus: true,
-        transferVerificationStatus: true,
-        transferProofData: true,
-        seller: { select: { user: { select: { id: true, email: true, firstName: true } } } },
-        buyerSeller: { select: { user: { select: { id: true } } } },
-        items: { select: { id: true } },
-      },
-    });
-    if (!order) return NextResponse.json({ ok: false, error: "NOT_FOUND", message: "Order not found." }, { status: 404 });
-    if (order.status !== "PAID" || order.buyerConfirmationStatus !== "PENDING" || order.transferVerificationStatus !== "MANUAL_REVIEW") {
-      return NextResponse.json({ ok: false, error: "INVALID_STATE", message: "This transfer proof is no longer awaiting human review." }, { status: 409 });
-    }
-
-    const decidedAt = new Date();
-    const decision = { id: crypto.randomUUID(), action, note, decidedAt: decidedAt.toISOString(), decidedByUserId: gate.user.id };
-    const existingProof = parseProofData(order.transferProofData);
-    const history = Array.isArray((existingProof as { adminReviews?: unknown }).adminReviews)
-      ? (existingProof as { adminReviews: unknown[] }).adminReviews
-      : [];
-    const disputeWindowEndsAt = action === "APPROVE" ? addHours(decidedAt, BUYER_CONFIRMATION_DEADLINE_HOURS) : undefined;
-    const updated = await prisma.order.updateMany({
-      where: { id: order.id, transferVerificationStatus: "MANUAL_REVIEW" },
-      data: {
-        ...(action === "APPROVE" ? {} : { transferProofType: null }),
-        transferVerificationStatus: transferProofStatusForAdminAction(action),
-        transferVerificationReason: JSON.stringify({ type: "TRANSFER_PROOF_ADMIN_REVIEW", ...decision }),
-        transferProofData: JSON.stringify({ ...existingProof, adminReviews: [...history, decision] }),
-        ...(disputeWindowEndsAt ? { disputeWindowEndsAt } : {}),
-      },
-    });
-    if (updated.count !== 1) return NextResponse.json({ ok: false, error: "STALE_REVIEW", message: "Another Admin already updated this review. Refresh the order." }, { status: 409 });
-
-    const sellerUser = order.seller.user;
-    let sellerEmailSent = false;
-    if (sellerUser?.email) {
-      const email = actionEmail(action, order.id, sellerUser.firstName, note);
-      const result = await sendEmail({ to: sellerUser.email, ...email });
-      sellerEmailSent = result.ok;
-      await prisma.emailDelivery.create({ data: { orderId: order.id, emailType: `TRANSFER_PROOF_ADMIN_${action}_${decision.id}`, recipient: sellerUser.email, provider: process.env.RESEND_API_KEY ? "RESEND" : process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE", status: result.ok ? "SENT" : "FAILED", error: result.error || null } });
-      await createNotification({ userId: sellerUser.id, type: action === "APPROVE" ? "TRANSFER_RECEIVED" : "VERIFICATION_NEEDED", message: action === "APPROVE" ? `Support approved the transfer proof for order ${order.id}.` : action === "REJECT" ? `Support rejected the transfer proof for order ${order.id}. Upload corrected documentation.` : `Support requested more transfer information for order ${order.id}: ${note}`, link: "/account/tickets/seller-holding" });
-    }
-    if (action === "APPROVE" && order.buyerSeller.user?.id && disputeWindowEndsAt) {
-      await notifyBuyerTransferConfirmationRequired({ buyerUserId: order.buyerSeller.user.id, orderId: order.id, ticketCount: order.items.length, deadline: disputeWindowEndsAt, sendEmail: true, now: decidedAt });
-      await sendAdminActivityEmail({
-        activity: "TICKETS_TRANSFERRED",
-        summary: `Ticket transfer approved — order ${order.id}`,
-        details: { "Order ID": order.id, Seller: sellerUser?.email, "Ticket count": order.items.length, "Buyer confirmation deadline": disputeWindowEndsAt.toISOString(), "Approved by": gate.user.email },
+    return await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        select: {
+          id: true,
+          status: true,
+          buyerConfirmationStatus: true,
+          transferVerificationStatus: true,
+          transferProofData: true,
+          seller: { select: { user: { select: { id: true, email: true, firstName: true } } } },
+          buyerSeller: { select: { user: { select: { id: true } } } },
+          items: { select: { id: true } },
+        },
       });
-    }
-    await auditLog({ action: "TRANSFER_PROOF_VERIFY", userId: gate.user.id, targetType: "Order", targetId: order.id, metadata: { ...decision, sellerEmailSent }, ...createAuditContext(req) });
+      if (!order) return NextResponse.json({ ok: false, error: "NOT_FOUND", message: "Order not found." }, { status: 404 });
+      if (order.status !== "PAID" || order.buyerConfirmationStatus !== "PENDING" || order.transferVerificationStatus !== "MANUAL_REVIEW") {
+        return NextResponse.json({ ok: false, error: "INVALID_STATE", message: "This transfer proof is no longer awaiting human review." }, { status: 409 });
+      }
 
-    return NextResponse.json({ ok: true, message: transferProofAdminActionMessage(action), warning: Boolean(sellerUser?.email) && !sellerEmailSent });
+      const decidedAt = new Date();
+      const decision = { id: crypto.randomUUID(), action, note, decidedAt: decidedAt.toISOString(), decidedByUserId: gate.user.id };
+      const existingProof = parseProofData(order.transferProofData);
+      const history = Array.isArray((existingProof as { adminReviews?: unknown }).adminReviews)
+        ? (existingProof as { adminReviews: unknown[] }).adminReviews
+        : [];
+      const disputeWindowEndsAt = action === "APPROVE" ? addHours(decidedAt, BUYER_CONFIRMATION_DEADLINE_HOURS) : undefined;
+      const updated = await tx.order.updateMany({
+        where: { id: order.id, transferVerificationStatus: "MANUAL_REVIEW" },
+        data: {
+          ...(action === "APPROVE" ? {} : { transferProofType: null }),
+          transferVerificationStatus: transferProofStatusForAdminAction(action),
+          transferVerificationReason: JSON.stringify({ type: "TRANSFER_PROOF_ADMIN_REVIEW", ...decision }),
+          transferProofData: JSON.stringify({ ...existingProof, adminReviews: [...history, decision] }),
+          ...(disputeWindowEndsAt ? { disputeWindowEndsAt } : {}),
+        },
+      });
+      if (updated.count !== 1) return NextResponse.json({ ok: false, error: "STALE_REVIEW", message: "Another Admin already updated this review. Refresh the order." }, { status: 409 });
+
+      const sellerUser = order.seller.user;
+      let sellerEmailSent = false;
+      if (sellerUser?.email) {
+        const email = actionEmail(action, order.id, sellerUser.firstName, note);
+        const result = await sendEmail({ to: sellerUser.email, ...email });
+        sellerEmailSent = result.ok;
+        await tx.emailDelivery.create({ data: { orderId: order.id, emailType: `TRANSFER_PROOF_ADMIN_${action}_${decision.id}`, recipient: sellerUser.email, provider: process.env.RESEND_API_KEY ? "RESEND" : process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE", status: result.ok ? "SENT" : "FAILED", error: result.error || null } });
+        await createNotification({ userId: sellerUser.id, type: action === "APPROVE" ? "TRANSFER_RECEIVED" : "VERIFICATION_NEEDED", message: action === "APPROVE" ? `Support approved the transfer proof for order ${order.id}.` : action === "REJECT" ? `Support rejected the transfer proof for order ${order.id}. Upload corrected documentation.` : `Support requested more transfer information for order ${order.id}: ${note}`, link: "/account/tickets/seller-holding" });
+      }
+      if (action === "APPROVE" && order.buyerSeller.user?.id && disputeWindowEndsAt) {
+        await notifyBuyerTransferConfirmationRequired({ buyerUserId: order.buyerSeller.user.id, orderId: order.id, ticketCount: order.items.length, deadline: disputeWindowEndsAt, sendEmail: true, now: decidedAt });
+        await sendAdminActivityEmail({
+          activity: "TICKETS_TRANSFERRED",
+          summary: `Ticket transfer approved — order ${order.id}`,
+          details: { "Order ID": order.id, Seller: sellerUser?.email, "Ticket count": order.items.length, "Buyer confirmation deadline": disputeWindowEndsAt.toISOString(), "Approved by": gate.user.email },
+        });
+      }
+      await auditLog({ action: "TRANSFER_PROOF_VERIFY", userId: gate.user.id, targetType: "Order", targetId: order.id, metadata: { ...decision, sellerEmailSent }, ...createAuditContext(req) });
+
+      return NextResponse.json({ ok: true, message: transferProofAdminActionMessage(action), warning: Boolean(sellerUser?.email) && !sellerEmailSent });
+    });
   } catch (err) {
+    if (err instanceof ManagedAccountAdminOperationError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+
+    if (err instanceof AdminOperationAccessChangedError) {
+      const responses = {
+        NOT_AUTHENTICATED: [401, "Please log in."],
+        BANNED: [403, "This account is restricted."],
+        NOT_VERIFIED: [403, "Please verify your email and phone number."],
+        FORBIDDEN: [403, "Not authorized."],
+      } as const;
+      const [status, message] = responses[err.code];
+      return NextResponse.json({ ok: false, error: err.code, message }, { status });
+    }
+
     console.error("POST /api/admin/orders/[id]/review-transfer-proof failed:", err);
     return NextResponse.json({ ok: false, error: "SERVER_ERROR", message: "Could not update the transfer-proof review." }, { status: 500 });
   }
