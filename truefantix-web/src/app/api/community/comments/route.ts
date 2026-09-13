@@ -1,9 +1,14 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
+import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
+
+class ManagedAccountCommentError extends Error {}
+class CommentingDisabledError extends Error {}
 
 function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: "VALIDATION_ERROR", message }, { status: 400 });
@@ -17,15 +22,101 @@ function normalizeId(v: unknown) {
   }
 }
 
+function stagingConsoleOnlyError() {
+  const response = NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403 },
+  );
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
+function commentingDisabledError() {
+  return NextResponse.json(
+    { ok: false, error: "COMMENTING_DISABLED", message: "Commenting is disabled for this account." },
+    { status: 403 },
+  );
+}
+
+const commentSelect = {
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  body: true,
+  parentId: true,
+  ticketId: true,
+  eventId: true,
+  isDeleted: true,
+  user: {
+    select: {
+      id: true,
+      displayName: true,
+      firstName: true,
+      lastName: true,
+    },
+  },
+} satisfies Prisma.CommunityCommentSelect;
+
+async function createOrdinaryComment(
+  userId: string,
+  data: Prisma.CommunityCommentUncheckedCreateInput,
+) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      // Serialize against access-token persona restoration. Whichever operation
+      // locks the account first establishes whether this content write belongs
+      // to the ordinary account or to the managed staging persona.
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+      const current = await tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          email: true,
+          phone: true,
+          termsVersion: true,
+          privacyVersion: true,
+          canComment: true,
+        },
+      });
+
+      if (!current) throw new Error("ACCOUNT_NOT_FOUND");
+      if (isPrimaryStagingManagedUser(current)) throw new ManagedAccountCommentError();
+      if (current.canComment !== true) throw new CommentingDisabledError();
+
+      return tx.communityComment.create({ data, select: commentSelect });
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error instanceof ManagedAccountCommentError || error instanceof CommentingDisabledError) {
+      throw error;
+    }
+
+    // A serializable transaction can abort when persona restoration wins the
+    // row race. Reclassify only from the current complete managed predicate.
+    const current = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        email: true,
+        phone: true,
+        termsVersion: true,
+        privacyVersion: true,
+      },
+    });
+    if (current && isPrimaryStagingManagedUser(current)) {
+      throw new ManagedAccountCommentError();
+    }
+    throw error;
+  }
+}
+
 export async function POST(req: Request) {
   const gate = await requireVerifiedUser(req);
   if (!gate.ok) return gate.res;
 
   if (gate.user.canComment !== true) {
-    return NextResponse.json(
-      { ok: false, error: "COMMENTING_DISABLED", message: "Commenting is disabled for this account." },
-      { status: 403 }
-    );
+    return commentingDisabledError();
   }
 
   const validation = await validateRequest(schemas.communityCommentCreateApi)(req);
@@ -73,33 +164,20 @@ export async function POST(req: Request) {
     const finalTicketId = inheritedTicketId ?? ticketId;
     const finalEventId = inheritedEventId ?? eventId;
 
-    const created = await prisma.communityComment.create({
-      data: {
+    let created;
+    try {
+      created = await createOrdinaryComment(gate.user.id, {
         userId: gate.user.id,
         body: text,
         parentId: parent.id,
         ticketId: finalTicketId,
         eventId: finalEventId,
-      },
-      select: {
-        id: true,
-        createdAt: true,
-        updatedAt: true,
-        body: true,
-        parentId: true,
-        ticketId: true,
-        eventId: true,
-        isDeleted: true,
-        user: {
-          select: {
-            id: true,
-            displayName: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
-    });
+      });
+    } catch (error) {
+      if (error instanceof ManagedAccountCommentError) return stagingConsoleOnlyError();
+      if (error instanceof CommentingDisabledError) return commentingDisabledError();
+      throw error;
+    }
 
     return NextResponse.json({ ok: true, comment: created }, { status: 201 });
   }
@@ -114,32 +192,19 @@ export async function POST(req: Request) {
     if (!exists) return badRequest("Event not found.");
   }
 
-  const created = await prisma.communityComment.create({
-    data: {
+  let created;
+  try {
+    created = await createOrdinaryComment(gate.user.id, {
       userId: gate.user.id,
       body: text,
       ticketId,
       eventId,
-    },
-    select: {
-      id: true,
-      createdAt: true,
-      updatedAt: true,
-      body: true,
-      parentId: true,
-      ticketId: true,
-      eventId: true,
-      isDeleted: true,
-      user: {
-        select: {
-          id: true,
-          displayName: true,
-          firstName: true,
-          lastName: true,
-        },
-      },
-    },
-  });
+    });
+  } catch (error) {
+    if (error instanceof ManagedAccountCommentError) return stagingConsoleOnlyError();
+    if (error instanceof CommentingDisabledError) return commentingDisabledError();
+    throw error;
+  }
 
   return NextResponse.json({ ok: true, comment: created }, { status: 201 });
 }
