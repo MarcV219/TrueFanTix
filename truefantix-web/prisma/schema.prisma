@@ -1684,6 +1684,8 @@ model TransferProofDeliveryIntent {
   deliveredAt       DateTime?
   lastError         String?
   idempotencyKey    String    @unique
+  identityVersion   Int       @default(2)
+  envelopeDigest    String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

@@ -1,5 +1,6 @@
 /** @jest-environment node */
 
+import { createHash } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -97,19 +98,24 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     const ids: string[] = [];
     for (let index = 0; index < count; index += 1) {
       const batchOrderId = `batch-order-${runId}-${scope}-${index}`;
-      const row = await prisma.transferProofDeliveryIntent.create({ data: {
+      await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
         orderId: batchOrderId,
-        kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
-        recipient: "admin@truefantix.com",
-        payloadJson: {
-          sellerEmail: "seller@example.test", buyerEmail,
-          ticketCount: 1, transferProofType: "EMAIL",
-          deadline: "2026-12-03T00:00:00.000Z",
-          completedAt: "2026-12-01T00:00:00.000Z",
-        },
-        availableAt: new Date(`2026-12-01T00:0${index}:00.000Z`),
-        idempotencyKey: `${batchOrderId}:2026-12-01T00:00:00.000Z:ADMIN_TRANSFER_ACTIVITY_EMAIL:admin@truefantix.com`,
-      } });
+        buyerUserId: null,
+        buyerEmail: null,
+        buyerFirstName: null,
+        sellerEmail: "seller@example.test",
+        ticketCount: 1,
+        transferProofType: "EMAIL",
+        deadline: new Date("2026-12-03T00:00:00.000Z"),
+        now: new Date("2026-12-01T00:00:00.000Z"),
+      }));
+      const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+        where: { orderId: batchOrderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
+      });
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id: row.id },
+        data: { availableAt: new Date(`2026-12-01T00:0${index}:00.000Z`) },
+      });
       ids.push(row.id);
     }
     return ids;
@@ -688,23 +694,33 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   });
 
   it("quarantines malformed delivery envelopes before any provider dispatch", async () => {
-    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("20")));
-    const buyerIntent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
-      where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
-    });
-    await prisma.transferProofDeliveryIntent.update({
-      where: { id: buyerIntent.id },
-      data: {
+    await prisma.transferProofDeliveryIntent.createMany({ data: [
+      {
+        orderId,
+        kind: "BUYER_CONFIRMATION_EMAIL",
+        recipient: buyerEmail,
         payloadJson: {
-          ...(buyerIntent.payloadJson as Prisma.JsonObject),
-          ticketCount: 0,
+          buyerFirstName: "Buyer", ticketCount: 0,
+          deadline: "2026-12-02T20:00:00.000Z", windowStart: "2026-12-01T18:00:00.000Z",
         },
+        idempotencyKey: "synthetic-malformed-buyer-envelope",
+        identityVersion: 2,
+        envelopeDigest: "0".repeat(64),
       },
-    });
-    await prisma.transferProofDeliveryIntent.updateMany({
-      where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
-      data: { recipient: "unexpected-admin-recipient@example.test" },
-    });
+      {
+        orderId,
+        kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
+        recipient: "unexpected-admin-recipient@example.test",
+        payloadJson: {
+          sellerEmail: "seller@example.test", buyerEmail,
+          ticketCount: 1, transferProofType: "EMAIL",
+          deadline: "2026-12-02T20:00:00.000Z", completedAt: "2026-12-01T20:00:00.000Z",
+        },
+        idempotencyKey: "synthetic-malformed-admin-envelope",
+        identityVersion: 2,
+        envelopeDigest: "0".repeat(64),
+      },
+    ] });
 
     await expect(drainTransferProofDeliveryIntents(
       { orderId, now: new Date("2026-12-01T20:00:00.000Z") }, prisma,
@@ -733,36 +749,144 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
   });
 
-  it("quarantines envelope changes that diverge from the durable provider identity", async () => {
+  it("rejects changes to a persisted delivery envelope", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("21")));
-    await prisma.transferProofDeliveryIntent.updateMany({
+    const buyerIntent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
       where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
-      data: { recipient: "changed-buyer@example.test" },
     });
-    await prisma.transferProofDeliveryIntent.updateMany({
+    const adminIntent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
       where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
-      data: { idempotencyKey: `${orderId}:changed-admin-envelope` },
     });
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: buyerIntent.id },
+      data: {
+        payloadJson: {
+          ...(buyerIntent.payloadJson as Prisma.JsonObject),
+          buyerFirstName: "Changed buyer",
+        },
+      },
+    })).rejects.toThrow("Transfer-proof delivery envelope is immutable");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: adminIntent.id },
+      data: { recipient: "changed-admin@example.test" },
+    })).rejects.toThrow("Transfer-proof delivery envelope is immutable");
 
     await expect(drainTransferProofDeliveryIntents(
       { orderId, now: new Date("2026-12-01T21:00:00.000Z") }, prisma,
-    )).resolves.toMatchObject({ claimed: 2, delivered: 0, failed: 2, reconciliationRequired: 2 });
+    )).resolves.toMatchObject({ claimed: 2, delivered: 2, failed: 0, reconciliationRequired: 0 });
+
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
+  });
+
+  it("quarantines an initially inconsistent full-envelope identity", async () => {
+    await prisma.transferProofDeliveryIntent.create({ data: {
+      orderId,
+      kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
+      recipient: "admin@truefantix.com",
+      payloadJson: {
+        sellerEmail: "seller@example.test", buyerEmail,
+        ticketCount: 1, transferProofType: "EMAIL",
+        deadline: "2026-12-02T22:00:00.000Z",
+        completedAt: "2026-12-01T22:00:00.000Z",
+      },
+      idempotencyKey: `${orderId}:2026-12-01T18:00:00.000Z:ADMIN_TRANSFER_ACTIVITY_EMAIL:admin@truefantix.com`,
+      identityVersion: 2,
+      envelopeDigest: "0".repeat(64),
+    } });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T22:00:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1, reconciliationRequired: 1 });
 
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
-    await expect(prisma.transferProofDeliveryIntent.findMany({
-      where: { orderId },
-      select: { status: true, attemptCount: true, lastError: true },
-    })).resolves.toEqual(expect.arrayContaining([
-      {
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
         status: "RECONCILIATION_REQUIRED",
         attemptCount: 0,
-        lastError: "Pre-dispatch delivery failure: Transfer-proof delivery identity does not match its envelope",
+        lastError: "Pre-dispatch delivery failure: Transfer-proof delivery full-envelope identity does not match its payload",
+      });
+  });
+
+  it("preserves legacy provider keys for unattempted and ambiguous Resend upgrade rows", async () => {
+    const buyerKey = `${orderId}:2026-12-01T18:00:00.000Z:BUYER_CONFIRMATION_EMAIL:${buyerEmail}`;
+    const adminKey = `${orderId}:2026-12-01T18:00:00.000Z:ADMIN_TRANSFER_ACTIVITY_EMAIL:admin@truefantix.com`;
+    // These rows model records that existed before migration 60. The migration
+    // itself runs before the new INSERT trigger and grandfathers them as v1.
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofDeliveryIntent.createMany({ data: [
+        {
+          orderId,
+          kind: "BUYER_CONFIRMATION_EMAIL",
+          recipient: buyerEmail,
+          payloadJson: {
+            buyerFirstName: "Buyer", ticketCount: 1,
+            deadline: "2026-12-02T23:00:00.000Z", windowStart: "2026-12-01T18:00:00.000Z",
+          },
+          idempotencyKey: buyerKey,
+          identityVersion: 1,
+        },
+        {
+          orderId,
+          kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
+          recipient: "admin@truefantix.com",
+          payloadJson: {
+            sellerEmail: "seller@example.test", buyerEmail,
+            ticketCount: 1, transferProofType: "EMAIL",
+            deadline: "2026-12-02T23:00:00.000Z", completedAt: "2026-12-01T23:00:00.000Z",
+          },
+          idempotencyKey: adminKey,
+          identityVersion: 1,
+          status: "PROCESSING",
+          provider: "RESEND",
+          attemptCount: 1,
+          firstAttemptAt: new Date("2026-12-01T23:00:00.000Z"),
+          processingAt: new Date("2026-12-01T23:00:00.000Z"),
+          leaseExpiresAt: new Date("2026-12-01T23:15:00.000Z"),
+          claimToken: "legacy-upgrade-claim",
+          dispatchStartedAt: new Date("2026-12-01T23:00:00.000Z"),
+        },
+      ] });
+    });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T23:16:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 2, delivered: 2, failed: 0, reconciliationRequired: 0 });
+
+    const expectedProviderKey = (durableKey: string) =>
+      `tft-transfer-proof-${createHash("sha256").update(durableKey).digest("hex")}`;
+    expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: expectedProviderKey(buyerKey),
+      provider: "RESEND",
+    }));
+    expect(mockedSendAdmin).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: expectedProviderKey(adminKey),
+      provider: "RESEND",
+    }));
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { orderId }, orderBy: { kind: "asc" },
+      select: { identityVersion: true, envelopeDigest: true, status: true },
+    })).resolves.toEqual([
+      { identityVersion: 1, envelopeDigest: null, status: "DELIVERED" },
+      { identityVersion: 1, envelopeDigest: null, status: "DELIVERED" },
+    ]);
+  });
+
+  it("rejects new legacy-identity rows after the upgrade", async () => {
+    await expect(prisma.transferProofDeliveryIntent.create({ data: {
+      orderId,
+      kind: "BUYER_CONFIRMATION_EMAIL",
+      recipient: buyerEmail,
+      payloadJson: {
+        buyerFirstName: "Buyer", ticketCount: 1,
+        deadline: "2026-12-03T00:00:00.000Z", windowStart: "2026-12-02T00:00:00.000Z",
       },
-    ]));
-    await expect(prisma.transferProofDeliveryIntent.count({
-      where: { orderId, status: "RECONCILIATION_REQUIRED" },
-    })).resolves.toBe(2);
+      idempotencyKey: `${orderId}:2026-12-02T00:00:00.000Z:BUYER_CONFIRMATION_EMAIL:${buyerEmail}`,
+      identityVersion: 1,
+    } })).rejects.toThrow("New transfer-proof delivery intents require current envelope identity");
   });
 
   function transactionWithIntentUpdateFilter<T>(

@@ -16,6 +16,31 @@ function providerIdempotencyKey(durableKey: string) {
   return `tft-transfer-proof-${createHash("sha256").update(durableKey).digest("hex")}`;
 }
 
+function canonicalJson(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
+  }
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) throw new Error("Transfer-proof delivery envelope is not JSON-serializable");
+  return encoded;
+}
+
+function deliveryEnvelopeDigest(input: {
+  orderId: string;
+  kind: string;
+  recipient: string;
+  payloadJson: unknown;
+}) {
+  return createHash("sha256").update(canonicalJson(input)).digest("hex");
+}
+
+function deliveryIdempotencyKey(orderId: string, windowStart: Date, kind: string, recipient: string) {
+  return `${orderId}:${windowStart.toISOString()}:${kind}:${recipient}`;
+}
+
 function configuredEmailProvider(): EmailProvider | null {
   if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
   if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
@@ -55,25 +80,34 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
     } });
   }
 
-  if (params.buyerEmail) await tx.transferProofDeliveryIntent.upsert({
-    where: { idempotencyKey: `${params.orderId}:${windowStart.toISOString()}:${BUYER_KIND}:${params.buyerEmail}` },
-    create: {
-      orderId: params.orderId, kind: BUYER_KIND, recipient: params.buyerEmail,
-      payloadJson: { buyerFirstName: params.buyerFirstName, ticketCount: params.ticketCount, deadline: params.deadline.toISOString(), windowStart: windowStart.toISOString() },
-      idempotencyKey: `${params.orderId}:${windowStart.toISOString()}:${BUYER_KIND}:${params.buyerEmail}`,
-    },
-    update: {},
-  });
-
-  await tx.transferProofDeliveryIntent.upsert({
-    where: { idempotencyKey: `${params.orderId}:${windowStart.toISOString()}:${ADMIN_KIND}:${ADMIN_ACTIVITY_EMAIL}` },
-    create: {
-      orderId: params.orderId, kind: ADMIN_KIND, recipient: ADMIN_ACTIVITY_EMAIL,
-      payloadJson: {
-        sellerEmail: params.sellerEmail, buyerEmail: params.buyerEmail, ticketCount: params.ticketCount,
-        transferProofType: params.transferProofType, deadline: params.deadline.toISOString(), completedAt: params.now.toISOString(),
+  if (params.buyerEmail) {
+    const payloadJson = {
+      buyerFirstName: params.buyerFirstName, ticketCount: params.ticketCount,
+      deadline: params.deadline.toISOString(), windowStart: windowStart.toISOString(),
+    };
+    const envelope = { orderId: params.orderId, kind: BUYER_KIND, recipient: params.buyerEmail, payloadJson };
+    const idempotencyKey = deliveryIdempotencyKey(params.orderId, windowStart, BUYER_KIND, params.buyerEmail);
+    await tx.transferProofDeliveryIntent.upsert({
+      where: { idempotencyKey },
+      create: {
+        ...envelope, idempotencyKey, identityVersion: 2,
+        envelopeDigest: deliveryEnvelopeDigest(envelope),
       },
-      idempotencyKey: `${params.orderId}:${windowStart.toISOString()}:${ADMIN_KIND}:${ADMIN_ACTIVITY_EMAIL}`,
+      update: {},
+    });
+  }
+
+  const payloadJson = {
+    sellerEmail: params.sellerEmail, buyerEmail: params.buyerEmail, ticketCount: params.ticketCount,
+    transferProofType: params.transferProofType, deadline: params.deadline.toISOString(), completedAt: params.now.toISOString(),
+  };
+  const envelope = { orderId: params.orderId, kind: ADMIN_KIND, recipient: ADMIN_ACTIVITY_EMAIL, payloadJson };
+  const idempotencyKey = deliveryIdempotencyKey(params.orderId, windowStart, ADMIN_KIND, ADMIN_ACTIVITY_EMAIL);
+  await tx.transferProofDeliveryIntent.upsert({
+    where: { idempotencyKey },
+    create: {
+      ...envelope, idempotencyKey, identityVersion: 2,
+      envelopeDigest: deliveryEnvelopeDigest(envelope),
     },
     update: {},
   });
@@ -119,10 +153,23 @@ function requireIsoDate(data: Payload, field: string) {
   }
 }
 
-function requireDeliveryIdentity(row: TransferProofDeliveryIntent, windowStart: Date) {
-  const expectedKey = `${row.orderId}:${windowStart.toISOString()}:${row.kind}:${row.recipient}`;
+function requireDeliveryIdentity(row: TransferProofDeliveryIntent, data: Payload, windowStart: Date) {
+  const expectedKey = deliveryIdempotencyKey(row.orderId, windowStart, row.kind, row.recipient);
   if (row.idempotencyKey !== expectedKey) {
     throw new Error("Transfer-proof delivery identity does not match its envelope");
+  }
+  if (row.identityVersion === 1 && row.envelopeDigest === null) return;
+  if (row.identityVersion !== 2 || !row.envelopeDigest) {
+    throw new Error("Unsupported transfer-proof delivery envelope identity version");
+  }
+  const expectedDigest = deliveryEnvelopeDigest({
+    orderId: row.orderId,
+    kind: row.kind,
+    recipient: row.recipient,
+    payloadJson: data,
+  });
+  if (row.envelopeDigest !== expectedDigest) {
+    throw new Error("Transfer-proof delivery full-envelope identity does not match its payload");
   }
 }
 
@@ -137,7 +184,7 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
     if (reminderWindowStart(windowStart).getTime() !== windowStart.getTime()) {
       throw new Error("Transfer-proof buyer delivery window is not normalized");
     }
-    requireDeliveryIdentity(row, windowStart);
+    requireDeliveryIdentity(row, data, windowStart);
     return;
   }
   if (row.kind === ADMIN_KIND) {
@@ -150,7 +197,7 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
     requireNonEmptyString(data, "transferProofType");
     requireIsoDate(data, "deadline");
     requireIsoDate(data, "completedAt");
-    requireDeliveryIdentity(row, reminderWindowStart(new Date(String(data.completedAt))));
+    requireDeliveryIdentity(row, data, reminderWindowStart(new Date(String(data.completedAt))));
     return;
   }
   throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
