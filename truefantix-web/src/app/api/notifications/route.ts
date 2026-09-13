@@ -2,6 +2,21 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
+import {
+  ManagedAccountNotificationWriteError,
+  runOrdinaryNotificationWrite,
+} from "@/lib/notifications/ordinary-notification-user";
+
+function stagingConsoleOnlyResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "STAGING_CONSOLE_ONLY",
+      message: "This managed account is restricted to the staging console.",
+    },
+    { status: 403, headers: { "Cache-Control": "private, no-store" } },
+  );
+}
 
 // GET /api/notifications
 // List all notifications for the current user
@@ -76,15 +91,17 @@ export async function PATCH(req: Request) {
 
     if (body.markAll) {
       // Mark all as read
-      const result = await prisma.notification.updateMany({
-        where: {
-          userId: gate.user.id,
-          isRead: false,
-        },
-        data: {
-          isRead: true,
-        },
-      });
+      const result = await runOrdinaryNotificationWrite(gate.user.id, (tx) =>
+        tx.notification.updateMany({
+          where: {
+            userId: gate.user.id,
+            isRead: false,
+          },
+          data: {
+            isRead: true,
+          },
+        }),
+      );
 
       return NextResponse.json(
         {
@@ -96,15 +113,17 @@ export async function PATCH(req: Request) {
       );
     } else if (body.ids && Array.isArray(body.ids) && body.ids.length > 0) {
       // Mark specific IDs as read
-      const result = await prisma.notification.updateMany({
-        where: {
-          id: { in: body.ids },
-          userId: gate.user.id, // Ensure user owns these notifications
-        },
-        data: {
-          isRead: true,
-        },
-      });
+      const result = await runOrdinaryNotificationWrite(gate.user.id, (tx) =>
+        tx.notification.updateMany({
+          where: {
+            id: { in: body.ids },
+            userId: gate.user.id, // Ensure user owns these notifications
+          },
+          data: {
+            isRead: true,
+          },
+        }),
+      );
 
       return NextResponse.json(
         {
@@ -121,6 +140,9 @@ export async function PATCH(req: Request) {
       );
     }
   } catch (err) {
+    if (err instanceof ManagedAccountNotificationWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("PATCH /api/notifications failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR", message: "Could not update notifications." },
@@ -149,9 +171,9 @@ export async function DELETE(req: Request) {
       ...(readOnly ? { isRead: true } : {}),
     };
 
-    const result = await prisma.notification.deleteMany({
-      where,
-    });
+    const result = await runOrdinaryNotificationWrite(gate.user.id, (tx) =>
+      tx.notification.deleteMany({ where }),
+    );
 
     return NextResponse.json(
       {
@@ -162,6 +184,9 @@ export async function DELETE(req: Request) {
       { status: 200 }
     );
   } catch (err) {
+    if (err instanceof ManagedAccountNotificationWriteError) {
+      return stagingConsoleOnlyResponse();
+    }
     console.error("DELETE /api/notifications failed:", err);
     return NextResponse.json(
       { ok: false, error: "SERVER_ERROR", message: "Could not delete notifications." },
