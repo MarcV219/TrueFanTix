@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { generateBuyerTransferConfirmationRequiredEmail, sendEmail, type EmailProvider } from "@/lib/email";
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
@@ -105,6 +105,8 @@ export async function drainTransferProofDeliveryIntents(
       status: "RECONCILIATION_REQUIRED",
       processingAt: null,
       leaseExpiresAt: null,
+      claimToken: null,
+      dispatchStartedAt: null,
     },
   });
   const recoverable = {
@@ -126,20 +128,35 @@ export async function drainTransferProofDeliveryIntents(
   let reconciliationRequired = exhausted.count;
   for (const row of rows) {
     const staleClaim = row.status === "PROCESSING";
-    const provider = row.provider as EmailProvider | null
-      ?? (staleClaim ? null : configuredEmailProvider());
+    const recordedProvider = row.provider === "RESEND" || row.provider === "SENDGRID"
+      ? row.provider
+      : null;
+    const attemptedProviderMissing = row.attemptCount > 0 && !row.provider;
+    const staleProviderMissing = staleClaim && !row.provider;
+    const recordedProviderInvalid = Boolean(row.provider && !recordedProvider);
+    const provider = recordedProvider
+      ?? (staleClaim || row.attemptCount > 0 ? null : configuredEmailProvider());
     const resendAttemptTimeMissing = provider === "RESEND" && row.attemptCount > 0 && !row.firstAttemptAt;
     const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
       && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
-    if ((staleClaim && provider !== "RESEND") || resendAttemptTimeMissing || resendWindowExpired) {
+    const ambiguousStaleClaim = staleClaim && Boolean(row.dispatchStartedAt) && provider !== "RESEND";
+    if (attemptedProviderMissing || staleProviderMissing || recordedProviderInvalid || ambiguousStaleClaim || resendAttemptTimeMissing || resendWindowExpired) {
       const quarantined = await db.transferProofDeliveryIntent.updateMany({
         where: {
           id: row.id, status: row.status, attemptCount: row.attemptCount, provider: row.provider,
+          claimToken: row.claimToken, dispatchStartedAt: row.dispatchStartedAt,
           ...(staleClaim ? { leaseExpiresAt: { lte: now } } : { availableAt: { lte: now } }),
         },
         data: {
           status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
-          lastError: resendAttemptTimeMissing
+          claimToken: null, dispatchStartedAt: null,
+          lastError: attemptedProviderMissing
+            ? "Attempted delivery has no recorded provider; delivery requires reconciliation"
+            : staleProviderMissing
+            ? "Expired delivery claim has no recorded provider; delivery requires reconciliation"
+            : recordedProviderInvalid
+            ? `Unsupported recorded delivery provider ${row.provider}; delivery requires reconciliation`
+            : resendAttemptTimeMissing
             ? "Resend first-attempt time is missing; delivery requires reconciliation"
             : resendWindowExpired
             ? "Resend idempotency window expired; delivery requires reconciliation"
@@ -156,17 +173,23 @@ export async function drainTransferProofDeliveryIntents(
     // identities. Configuration rotation must not consume that retry budget.
     if (!providerIsConfigured(provider)) continue;
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
+    const claimToken = randomUUID();
     const claim = await db.transferProofDeliveryIntent.updateMany({
-      where: { id: row.id, attemptCount: row.attemptCount, OR: recoverable.OR },
+      where: {
+        id: row.id, attemptCount: row.attemptCount, provider: row.provider,
+        claimToken: row.claimToken, dispatchStartedAt: row.dispatchStartedAt,
+        OR: recoverable.OR,
+      },
       data: {
-        status: "PROCESSING", provider, processingAt: now, firstAttemptAt: row.firstAttemptAt ?? now,
-        leaseExpiresAt, attemptCount: { increment: 1 }, lastError: null,
+        status: "PROCESSING", provider, processingAt: now, leaseExpiresAt,
+        claimToken, dispatchStartedAt: null, lastError: null,
       },
     });
     if (claim.count !== 1) continue;
     claimed += 1;
 
-    const attemptCount = row.attemptCount + 1;
+    let attemptCount = row.attemptCount;
+    let dispatchStarted = false;
     let data: Payload = {};
     let providerAccepted = false;
     try {
@@ -188,6 +211,31 @@ export async function drainTransferProofDeliveryIntents(
             failureReason: null, attemptedAt: now, completedAt: null,
           },
         });
+      } else if (row.kind !== ADMIN_KIND) {
+        throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
+      }
+
+      const dispatch = await db.transferProofDeliveryIntent.updateMany({
+        where: {
+          id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
+          attemptCount: row.attemptCount, dispatchStartedAt: null,
+        },
+        data: {
+          attemptCount: { increment: 1 },
+          firstAttemptAt: row.firstAttemptAt ?? now,
+          dispatchStartedAt: now,
+        },
+      });
+      if (dispatch.count !== 1) continue;
+      dispatchStarted = true;
+      attemptCount = row.attemptCount + 1;
+
+      if (row.kind === BUYER_KIND) {
+        const deadline = new Date(String(data.deadline));
+        const windowStart = new Date(String(data.windowStart));
+        const key = { orderId_reminderType_recipient_windowStart: {
+          orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient, windowStart,
+        } };
         const email = generateBuyerTransferConfirmationRequiredEmail(row.orderId, data.buyerFirstName ? String(data.buyerFirstName) : null, Number(data.ticketCount), deadline);
         const result = await sendEmail({
           to: row.recipient, ...email,
@@ -205,7 +253,7 @@ export async function drainTransferProofDeliveryIntents(
           },
         });
         if (!result.ok) throw new Error(result.error || "Buyer email provider rejected delivery");
-      } else if (row.kind === ADMIN_KIND) {
+      } else {
         const result = await sendAdminActivityEmail({
           activity: "TICKETS_TRANSFERRED", summary: `Ticket transfer submitted — order ${row.orderId}`,
           idempotencyKey: providerIdempotencyKey(row.idempotencyKey), completedAt: String(data.completedAt), provider, details: {
@@ -230,16 +278,34 @@ export async function drainTransferProofDeliveryIntents(
           },
         });
         if (!result.ok) throw new Error(result.error || "Admin email provider rejected delivery");
-      } else throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
+      }
 
       const completed = await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, attemptCount },
-        data: { status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null, lastError: null },
+        where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
+        data: {
+          status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null,
+          claimToken: null, dispatchStartedAt: null, lastError: null,
+        },
       });
       if (completed.count !== 1) throw new Error("Transfer-proof provider accepted delivery but completion persistence was lost");
       delivered += 1;
     } catch (error) {
       const lastError = error instanceof Error ? error.message : "Unknown transfer-proof delivery error";
+      if (!dispatchStarted) {
+        const quarantined = await db.transferProofDeliveryIntent.updateMany({
+          where: {
+            id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
+            attemptCount: row.attemptCount, dispatchStartedAt: null,
+          },
+          data: {
+            status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
+            claimToken: null, lastError: `Pre-dispatch delivery failure: ${lastError}`.slice(0, 2000),
+          },
+        });
+        reconciliationRequired += quarantined.count;
+        failed += quarantined.count;
+        continue;
+      }
       if (!providerAccepted && row.kind === BUYER_KIND) {
         const deadline = new Date(String(data.deadline));
         const windowStart = new Date(String(data.windowStart));
@@ -273,11 +339,13 @@ export async function drainTransferProofDeliveryIntents(
         ? !retryAcceptedResend
         : provider === "SENDGRID" || attemptCount >= MAX_ATTEMPTS;
       const recovered = await db.transferProofDeliveryIntent.updateMany({
-        where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, attemptCount },
+        where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
         data: {
           status: retryAcceptedResend ? "PROCESSING" : requiresReconciliation ? "RECONCILIATION_REQUIRED" : "FAILED",
           processingAt: retryAcceptedResend ? now : null,
           leaseExpiresAt: retryAcceptedResend ? now : null,
+          claimToken: retryAcceptedResend ? claimToken : null,
+          dispatchStartedAt: retryAcceptedResend ? now : null,
           lastError: lastError.slice(0, 2000),
           availableAt: attemptCount < MAX_ATTEMPTS
             ? new Date(now.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
@@ -285,7 +353,7 @@ export async function drainTransferProofDeliveryIntents(
         },
       });
       if (requiresReconciliation) reconciliationRequired += recovered.count;
-      failed += 1;
+      failed += recovered.count;
     }
   }
   return { scanned: rows.length, claimed, delivered, failed, reconciliationRequired };

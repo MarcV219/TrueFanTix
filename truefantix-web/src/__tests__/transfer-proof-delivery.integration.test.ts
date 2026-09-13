@@ -152,6 +152,58 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.emailDelivery.count({ where: { orderId, status: "SENT" } })).resolves.toBe(1);
   });
 
+  it("fences a late worker and reclaims a pre-dispatch lease without spending an attempt", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("02")));
+    await prisma.transferProofDeliveryIntent.deleteMany({
+      where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
+    });
+    let paused!: () => void;
+    const pausedPromise = new Promise<void>((resolve) => { paused = resolve; });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+    let shouldPause = true;
+    const stalledDb = {
+      transferProofDeliveryIntent: prisma.transferProofDeliveryIntent,
+      reminderDelivery: {
+        upsert: async (args: Prisma.ReminderDeliveryUpsertArgs) => {
+          const result = await prisma.reminderDelivery.upsert(args);
+          if (shouldPause) {
+            shouldPause = false;
+            paused();
+            await releasePromise;
+          }
+          return result;
+        },
+        update: (args: Prisma.ReminderDeliveryUpdateArgs) => prisma.reminderDelivery.update(args),
+      },
+      emailDelivery: prisma.emailDelivery,
+    } as unknown as NonNullable<Parameters<typeof drainTransferProofDeliveryIntents>[1]>;
+
+    const lateWorker = drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T02:00:00.000Z") },
+      stalledDb,
+    );
+    await pausedPromise;
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
+        status: "PROCESSING", provider: "RESEND", attemptCount: 0,
+        dispatchStartedAt: null, claimToken: expect.any(String),
+      });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T02:16:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    release();
+    await expect(lateWorker).resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 0 });
+
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    await expect(prisma.transferProofDeliveryIntent.findFirstOrThrow({ where: { orderId } }))
+      .resolves.toMatchObject({
+        status: "DELIVERED", provider: "RESEND", attemptCount: 1,
+        claimToken: null, dispatchStartedAt: null,
+      });
+  });
+
   it("stages the buyer notification and Admin intent when buyer email is absent", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, { ...params("19"), buyerEmail: null }));
 
@@ -249,7 +301,13 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("09")));
     await prisma.transferProofDeliveryIntent.updateMany({
       where: { orderId },
-      data: { status: "PROCESSING", provider: "SENDGRID", attemptCount: 1, firstAttemptAt: new Date("2026-12-01T09:00:00.000Z"), leaseExpiresAt: new Date("2026-12-01T09:00:00.000Z") },
+      data: {
+        status: "PROCESSING", provider: "SENDGRID", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T09:00:00.000Z"),
+        dispatchStartedAt: new Date("2026-12-01T09:00:00.000Z"),
+        claimToken: "synthetic-expired-sendgrid-claim",
+        leaseExpiresAt: new Date("2026-12-01T09:00:00.000Z"),
+      },
     });
     const previousSendGridKey = process.env.SENDGRID_API_KEY;
     process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
@@ -343,6 +401,78 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       {
         status: "RECONCILIATION_REQUIRED",
         lastError: "Resend first-attempt time is missing; delivery requires reconciliation",
+      },
+    ]));
+  });
+
+  it("quarantines attempted rows whose provider evidence is missing instead of crossing providers", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("18")));
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: {
+        status: "FAILED",
+        provider: null,
+        attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T18:00:00.000Z"),
+        availableAt: new Date("2026-12-01T18:05:00.000Z"),
+      },
+    });
+    const previousResendKey = process.env.RESEND_API_KEY;
+    const previousSendGridKey = process.env.SENDGRID_API_KEY;
+    delete process.env.RESEND_API_KEY;
+    process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
+    try {
+      await expect(drainTransferProofDeliveryIntents(
+        { orderId, now: new Date("2026-12-01T18:10:00.000Z") }, prisma,
+      )).resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 2 });
+    } finally {
+      if (previousResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousResendKey;
+      if (previousSendGridKey === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = previousSendGridKey;
+    }
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { orderId },
+      select: { status: true, provider: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual(expect.arrayContaining([
+      {
+        status: "RECONCILIATION_REQUIRED",
+        provider: null,
+        attemptCount: 1,
+        lastError: "Attempted delivery has no recorded provider; delivery requires reconciliation",
+      },
+    ]));
+  });
+
+  it("quarantines unsupported recorded providers instead of stranding failed rows", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("20")));
+    await prisma.transferProofDeliveryIntent.updateMany({
+      where: { orderId },
+      data: {
+        status: "FAILED",
+        provider: "CONSOLE",
+        attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T20:00:00.000Z"),
+        availableAt: new Date("2026-12-01T20:05:00.000Z"),
+      },
+    });
+
+    await expect(drainTransferProofDeliveryIntents(
+      { orderId, now: new Date("2026-12-01T20:10:00.000Z") }, prisma,
+    )).resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 2 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findMany({
+      where: { orderId },
+      select: { status: true, provider: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual(expect.arrayContaining([
+      {
+        status: "RECONCILIATION_REQUIRED",
+        provider: "CONSOLE",
+        attemptCount: 1,
+        lastError: "Unsupported recorded delivery provider CONSOLE; delivery requires reconciliation",
       },
     ]));
   });

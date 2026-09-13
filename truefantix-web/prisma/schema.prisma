@@ -1667,23 +1667,25 @@ model ReminderDelivery {
 }
 
 model TransferProofDeliveryIntent {
-  id             String    @id @default(cuid())
-  orderId        String
-  kind           String
-  recipient      String
-  payloadJson    Json
-  provider       String?
-  status         String    @default("PENDING")
-  attemptCount   Int       @default(0)
-  firstAttemptAt DateTime?
-  availableAt    DateTime  @default(now())
-  processingAt   DateTime?
-  leaseExpiresAt DateTime?
-  deliveredAt    DateTime?
-  lastError      String?
-  idempotencyKey String    @unique
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  orderId           String
+  kind              String
+  recipient         String
+  payloadJson       Json
+  provider          String?
+  status            String    @default("PENDING")
+  attemptCount      Int       @default(0)
+  firstAttemptAt    DateTime?
+  availableAt       DateTime  @default(now())
+  processingAt      DateTime?
+  leaseExpiresAt    DateTime?
+  claimToken        String?
+  dispatchStartedAt DateTime?
+  deliveredAt       DateTime?
+  lastError         String?
+  idempotencyKey    String    @unique
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([status, availableAt])
   @@index([status, leaseExpiresAt])
