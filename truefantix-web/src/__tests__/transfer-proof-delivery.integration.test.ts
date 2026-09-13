@@ -927,6 +927,36 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).resolves.toEqual({ provider: "RESEND", attemptCount: 0, dispatchStartedAt: null });
   });
 
+  it("binds first-attempt evidence to the exact owned dispatch boundary", async () => {
+    const [id] = await seedAdminBatch("first-attempt-boundary", 1);
+    const processingAt = new Date("2026-12-01T02:00:00.000Z");
+    const dispatchStartedAt = new Date("2026-12-01T02:00:01.000Z");
+    const leaseExpiresAt = new Date("2026-12-01T02:15:00.000Z");
+    await prisma.transferProofDeliveryIntent.update({
+      where: { id },
+      data: {
+        status: "PROCESSING", provider: "RESEND", processingAt, leaseExpiresAt,
+        claimToken: "first-attempt-boundary-claim",
+      },
+    });
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id },
+      data: {
+        attemptCount: 1, firstAttemptAt: processingAt, dispatchStartedAt,
+      },
+    })).rejects.toThrow("Transfer-proof delivery attempt increment requires its owned dispatch boundary");
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id },
+      data: {
+        attemptCount: 1, firstAttemptAt: dispatchStartedAt, dispatchStartedAt,
+      },
+    })).resolves.toMatchObject({
+      attemptCount: 1, firstAttemptAt: dispatchStartedAt, dispatchStartedAt,
+    });
+  });
+
   it("installs provider pinning as a forward-only upgrade after the transition migration", async () => {
     const transitionSchema = `transfer_proof_transition_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
@@ -981,6 +1011,83 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         SET "attemptCount" = 1, "firstAttemptAt" = "processingAt",
           "dispatchStartedAt" = "processingAt"
         WHERE id = 'pre-forward-migration'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${transitionSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs exact first-attempt evidence as a forward-only upgrade after provider pinning", async () => {
+    const transitionSchema = `transfer_proof_first_attempt_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${transitionSchema}"`);
+      await client.query(`SET search_path TO "${transitionSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "processingAt", "leaseExpiresAt",
+          "claimToken", "availableAt"
+        ) VALUES
+          ('permissive-63', 'RESEND', 'PROCESSING', 0, NOW(),
+            NOW() + INTERVAL '15 minutes', 'pre-64-claim', NOW()),
+          ('strict-64', 'RESEND', 'PROCESSING', 0, NOW(),
+            NOW() + INTERVAL '15 minutes', 'post-64-claim', NOW())
+      `);
+
+      const transitionMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913200000_enforce_transfer_proof_delivery_transitions/migration.sql",
+      ), "utf8");
+      await client.query(transitionMigration);
+      const providerPinMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913203000_pin_transfer_proof_provider_on_dispatch/migration.sql",
+      ), "utf8");
+      await client.query(providerPinMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 1, "firstAttemptAt" = "processingAt",
+          "dispatchStartedAt" = "processingAt" + INTERVAL '1 second'
+        WHERE id = 'permissive-63'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const firstAttemptMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260913210000_bind_first_transfer_proof_attempt_timestamp/migration.sql",
+      ), "utf8");
+      await client.query(firstAttemptMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 1, "firstAttemptAt" = "processingAt",
+          "dispatchStartedAt" = "processingAt" + INTERVAL '1 second'
+        WHERE id = 'strict-64'
+      `)).rejects.toThrow("Transfer-proof delivery attempt increment requires its owned dispatch boundary");
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 1,
+          "firstAttemptAt" = "processingAt" + INTERVAL '1 second',
+          "dispatchStartedAt" = "processingAt" + INTERVAL '1 second'
+        WHERE id = 'strict-64'
       `)).resolves.toMatchObject({ rowCount: 1 });
     } finally {
       await client.query("SET search_path TO public");
