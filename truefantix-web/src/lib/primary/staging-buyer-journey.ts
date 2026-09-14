@@ -112,16 +112,23 @@ function requireOrderState(order: Prisma.PrimaryOrderGetPayload<{ include: { lin
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_ORDER_INVALID");
 }
 
-function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string) {
+function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<object>, order: Prisma.PrimaryOrderGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string) {
   const pending = payment.status === "PENDING_PROVIDER" && payment.providerIntentId === null && payment.providerCreatedAt === null && payment.terminalAt === null;
   const processing = payment.status === "PROCESSING" && payment.providerIntentId === `synthetic_${scope.base}` && payment.providerCreatedAt !== null && payment.terminalAt === null;
   const succeeded = payment.status === "SUCCEEDED" && payment.providerIntentId === `synthetic_${scope.base}` && payment.providerCreatedAt !== null && payment.terminalAt !== null
     && payment.terminalAt.getTime() >= payment.providerCreatedAt.getTime();
+  const paymentProcessingOrder = order.status === "PAYMENT_PROCESSING" && order.prepareIdempotencyKey === `${scope.base}:prepare`
+    && order.prepareReconciliationDelayMs === 120000 && order.paymentProcessingAt !== null && order.paidAt === null && order.paymentFailedAt === null;
+  const paidOrder = order.status === "PAID" && order.prepareIdempotencyKey === `${scope.base}:prepare`
+    && order.prepareReconciliationDelayMs === 120000 && order.paymentProcessingAt !== null && order.paidAt !== null && order.paymentFailedAt === null;
+  const lifecycleMatches = (pending && paymentProcessingOrder)
+    || (processing && paymentProcessingOrder && payment.providerCreatedAt!.getTime() >= order.paymentProcessingAt!.getTime())
+    || (succeeded && paidOrder && payment.providerCreatedAt!.getTime() >= order.paymentProcessingAt!.getTime() && payment.terminalAt!.getTime() === order.paidAt!.getTime());
   if (
     payment.id !== scope.paymentId || payment.organizerId !== ORGANIZER_ID || payment.eventId !== scope.eventId
     || payment.buyerUserId !== buyerId || payment.reservationId !== scope.reservationId || payment.orderId !== scope.orderId
     || payment.expectedAmountMinor !== 3800 || payment.currency !== "CAD" || payment.createIdempotencyKey !== `${scope.base}:payment`
-    || (!pending && !processing && !succeeded)
+    || !lifecycleMatches
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_PAYMENT_INVALID");
 }
 
@@ -172,7 +179,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       await tx.primaryPaymentAttempt.create({ data: { id: scope.paymentId, organizerId: ORGANIZER_ID, eventId: scope.eventId, buyerUserId: buyer.id, reservationId: scope.reservationId, orderId: scope.orderId, expectedAmountMinor: 3800, currency: "CAD", createIdempotencyKey: `${scope.base}:payment` } });
       return { step: "PAYMENT_PROCESSING" };
     }
-    requirePaymentState(payment, scope, buyer.id);
+    requirePaymentState(payment, order, scope, buyer.id);
     if (payment.status === "PENDING_PROVIDER") {
       await tx.primaryPaymentAttempt.update({ where: { id: payment.id }, data: { status: "PROCESSING", providerIntentId: `synthetic_${scope.base}`, providerCreatedAt: now } });
       return { step: "PROCESSING" };

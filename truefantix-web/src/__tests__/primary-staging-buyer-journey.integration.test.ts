@@ -125,5 +125,22 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_PAYMENT_INVALID" });
     await expect(db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: `${base}-payment` } })).resolves.toMatchObject({ status: "PENDING_PROVIDER", providerIntentId: null, terminalAt: null });
     await expect(db.primaryAdmissionTicket.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+
+    const lifecycleSeed = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const lifecycleBase = `staging-buyer-g${lifecycleSeed.generation}`;
+    for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING", "PROCESSING"]) {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
+    }
+    const terminalAt = new Date();
+    await db.$executeRawUnsafe(`ALTER TABLE "PrimaryPaymentAttempt" DISABLE TRIGGER "PrimaryPaymentAttempt_immutable_evidence"`);
+    try {
+      await db.primaryPaymentAttempt.update({ where: { id: `${lifecycleBase}-payment` }, data: { status: "SUCCEEDED", terminalAt } });
+    } finally {
+      await db.$executeRawUnsafe(`ALTER TABLE "PrimaryPaymentAttempt" ENABLE TRIGGER "PrimaryPaymentAttempt_immutable_evidence"`);
+    }
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_PAYMENT_INVALID" });
+    await expect(db.primaryOrder.findUniqueOrThrow({ where: { id: `${lifecycleBase}-order` } })).resolves.toMatchObject({ status: "PAYMENT_PROCESSING", paidAt: null });
+    await expect(db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: `${lifecycleBase}-payment` } })).resolves.toMatchObject({ status: "SUCCEEDED", terminalAt });
+    await expect(db.primaryAdmissionTicket.count({ where: { eventId: `${lifecycleBase}-event` } })).resolves.toBe(0);
   });
 });
