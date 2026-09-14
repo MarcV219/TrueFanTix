@@ -2284,11 +2284,17 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
             TIMESTAMP '2026-12-01 09:00:00')
       `);
 
-      const dispatchClockMigration = await readFile(join(
-        process.cwd(),
-        "prisma/migrations/20260914033000_bind_transfer_proof_dispatch_clock/migration.sql",
-      ), "utf8");
-      await client.query(dispatchClockMigration);
+      const retrySchedulePredecessorMigrations = [
+        "20260914030000_bind_transfer_proof_claim_lease",
+        "20260914033000_bind_transfer_proof_dispatch_clock",
+      ];
+      for (const migration of retrySchedulePredecessorMigrations) {
+        const migrationSql = await readFile(join(
+          process.cwd(),
+          `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(migrationSql);
+      }
 
       await expect(client.query(`
         UPDATE "TransferProofDeliveryIntent"
