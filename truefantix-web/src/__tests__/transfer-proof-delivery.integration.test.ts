@@ -942,7 +942,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   it("binds first-attempt evidence to the exact owned dispatch boundary", async () => {
     const [id] = await seedAdminBatch("first-attempt-boundary", 1);
     const processingAt = new Date("2026-12-01T02:00:00.000Z");
-    const dispatchStartedAt = new Date("2026-12-01T02:00:01.000Z");
+    const divergentFirstAttemptAt = new Date("2026-12-01T01:59:59.000Z");
     const leaseExpiresAt = new Date("2026-12-01T02:15:00.000Z");
     await prisma.transferProofDeliveryIntent.update({
       where: { id },
@@ -955,24 +955,24 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.update({
       where: { id },
       data: {
-        attemptCount: 1, firstAttemptAt: processingAt, dispatchStartedAt,
+        attemptCount: 1, firstAttemptAt: divergentFirstAttemptAt,
+        dispatchStartedAt: processingAt,
       },
     })).rejects.toThrow("Transfer-proof delivery attempt increment requires its owned dispatch boundary");
 
     await expect(prisma.transferProofDeliveryIntent.update({
       where: { id },
       data: {
-        attemptCount: 1, firstAttemptAt: dispatchStartedAt, dispatchStartedAt,
+        attemptCount: 1, firstAttemptAt: processingAt, dispatchStartedAt: processingAt,
       },
     })).resolves.toMatchObject({
-      attemptCount: 1, firstAttemptAt: dispatchStartedAt, dispatchStartedAt,
+      attemptCount: 1, firstAttemptAt: processingAt, dispatchStartedAt: processingAt,
     });
   });
 
   it("requires an expired-lease handoff before active dispatch evidence can be reset", async () => {
     const [id] = await seedAdminBatch("claim-handoff-boundary", 1);
     const processingAt = new Date("2026-12-01T02:00:00.000Z");
-    const dispatchStartedAt = new Date("2026-12-01T02:00:01.000Z");
     const leaseExpiresAt = new Date("2026-12-01T02:15:00.000Z");
     await prisma.transferProofDeliveryIntent.update({
       where: { id },
@@ -984,7 +984,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.transferProofDeliveryIntent.update({
       where: { id },
       data: {
-        attemptCount: 1, firstAttemptAt: dispatchStartedAt, dispatchStartedAt,
+        attemptCount: 1, firstAttemptAt: processingAt, dispatchStartedAt: processingAt,
       },
     });
 
@@ -1018,7 +1018,6 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   it("permits expired claim handoff only while the provider identity is replay-safe", async () => {
     const [sendGridId, expiredResendId, activeResendId] = await seedAdminBatch("replay-safe-handoff", 3);
     const processingAt = new Date("2026-12-01T02:00:00.000Z");
-    const dispatchStartedAt = new Date("2026-12-01T02:00:01.000Z");
     const leaseExpiresAt = new Date("2026-12-01T02:15:00.000Z");
 
     for (const [id, provider] of [
@@ -1034,7 +1033,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await prisma.transferProofDeliveryIntent.update({
         where: { id },
         data: {
-          attemptCount: 1, firstAttemptAt: dispatchStartedAt, dispatchStartedAt,
+          attemptCount: 1, firstAttemptAt: processingAt, dispatchStartedAt: processingAt,
         },
       });
     }
@@ -1051,8 +1050,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.update({
       where: { id: expiredResendId },
       data: {
-        processingAt: new Date("2026-12-02T02:00:01.000Z"),
-        leaseExpiresAt: new Date("2026-12-02T02:15:01.000Z"),
+        processingAt: new Date("2026-12-02T02:00:00.000Z"),
+        leaseExpiresAt: new Date("2026-12-02T02:15:00.000Z"),
         claimToken: "expired-resend-successor", dispatchStartedAt: null,
       },
     })).rejects.toThrow("Transfer-proof delivery expired claim is not replay-safe");
@@ -1405,7 +1404,6 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     );
     const firstAttemptAt = new Date("2026-12-01T01:00:00.000Z");
     const availableAt = new Date("2026-12-01T03:00:00.000Z");
-    const dispatchStartedAt = new Date("2026-12-01T03:00:01.000Z");
     const leaseExpiresAt = new Date("2026-12-01T03:15:00.000Z");
     await forceLegacyIntentState(
       { id: { in: [undispatchedId, earlyRetryId, validId] } },
@@ -1436,7 +1434,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     for (const id of [earlyRetryId, validId]) {
       await prisma.transferProofDeliveryIntent.update({
         where: { id },
-        data: { attemptCount: 2, dispatchStartedAt },
+        data: { attemptCount: 2, dispatchStartedAt: availableAt },
       });
     }
     await expect(prisma.transferProofDeliveryIntent.update({
@@ -1685,6 +1683,76 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).rejects.toThrow(
       "Transfer-proof delivery claim requires the bounded worker lease",
     );
+  });
+
+  it("binds provider dispatch to the owned claim clock", async () => {
+    const [firstId, retryId, validId] = await seedAdminBatch("dispatch-clock", 3);
+
+    async function claim(id: string, token: string) {
+      const pending = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+        where: { id }, select: { availableAt: true },
+      });
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", provider: "RESEND", processingAt: pending.availableAt,
+          leaseExpiresAt: new Date(pending.availableAt.getTime() + 15 * 60 * 1000),
+          claimToken: token,
+        },
+      });
+      return pending.availableAt;
+    }
+
+    const firstProcessingAt = await claim(firstId, "first-dispatch-clock-owner");
+    const forgedFirstDispatch = new Date(firstProcessingAt.getTime() + 60 * 1000);
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: firstId },
+      data: {
+        attemptCount: { increment: 1 }, firstAttemptAt: forgedFirstDispatch,
+        dispatchStartedAt: forgedFirstDispatch,
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery dispatch must use its owned claim clock",
+    );
+
+    const retryAt = new Date("2026-12-01T11:00:00.000Z");
+    await forceLegacyIntentState(
+      { id: retryId },
+      {
+        status: "FAILED", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T10:00:00.000Z"),
+        availableAt: retryAt, lastError: "synthetic retryable failure",
+      },
+    );
+    await prisma.transferProofDeliveryIntent.update({
+      where: { id: retryId },
+      data: {
+        status: "PROCESSING", processingAt: retryAt,
+        leaseExpiresAt: new Date(retryAt.getTime() + 15 * 60 * 1000),
+        claimToken: "retry-dispatch-clock-owner", lastError: null,
+      },
+    });
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: retryId },
+      data: {
+        attemptCount: { increment: 1 },
+        dispatchStartedAt: new Date(retryAt.getTime() + 60 * 1000),
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery dispatch must use its owned claim clock",
+    );
+
+    const validProcessingAt = await claim(validId, "valid-dispatch-clock-owner");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validId },
+      data: {
+        attemptCount: { increment: 1 }, firstAttemptAt: validProcessingAt,
+        dispatchStartedAt: validProcessingAt,
+      },
+    })).resolves.toMatchObject({
+      status: "PROCESSING", attemptCount: 1,
+      dispatchStartedAt: validProcessingAt,
+    });
   });
 
   it("preserves active processing evidence outside replay-safe Resend recovery", async () => {
@@ -2011,6 +2079,78 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await client.query("SET TIME ZONE 'UTC'");
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${claimSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs claim-clock-bound dispatch as a forward-only upgrade", async () => {
+    const dispatchSchema = `transfer_proof_dispatch_clock_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${dispatchSchema}"`);
+      await client.query(`SET search_path TO "${dispatchSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3)
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, status, "attemptCount", "processingAt", "leaseExpiresAt",
+          "claimToken", "dispatchStartedAt"
+        ) VALUES
+          ('permissive-76', 'PROCESSING', 0,
+            TIMESTAMP '2026-12-01 07:00:00', TIMESTAMP '2026-12-01 07:15:00',
+            'permissive-owner', NULL),
+          ('strict-77', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 08:00:00', TIMESTAMP '2026-12-01 08:15:00',
+            'strict-owner', NULL),
+          ('valid-77', 'PROCESSING', 2,
+            TIMESTAMP '2026-12-01 09:00:00', TIMESTAMP '2026-12-01 09:15:00',
+            'valid-owner', NULL)
+      `);
+
+      const claimLeaseMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914030000_bind_transfer_proof_claim_lease/migration.sql",
+      ), "utf8");
+      await client.query(claimLeaseMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 1,
+          "dispatchStartedAt" = "processingAt" + INTERVAL '1 minute'
+        WHERE id = 'permissive-76'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const dispatchClockMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914033000_bind_transfer_proof_dispatch_clock/migration.sql",
+      ), "utf8");
+      await client.query(dispatchClockMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 2,
+          "dispatchStartedAt" = "processingAt" + INTERVAL '1 minute'
+        WHERE id = 'strict-77'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery dispatch must use its owned claim clock",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 3, "dispatchStartedAt" = "processingAt"
+        WHERE id = 'valid-77'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${dispatchSchema}" CASCADE`);
       client.release();
     }
   });
