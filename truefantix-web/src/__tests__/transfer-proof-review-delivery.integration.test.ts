@@ -446,6 +446,52 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
       .resolves.toBe(1);
   });
 
+  it("does not let a caller clock reclaim a live sub-max claim", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const databaseNow = await databaseUtcNow();
+    const liveLeaseExpiresAt = new Date(databaseNow.getTime() + 60 * 60 * 1000);
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofReviewDeliveryIntent.update({
+        where: { requestId },
+        data: {
+          status: "PROCESSING",
+          provider: "RESEND",
+          attemptCount: 1,
+          firstAttemptAt: requestedAt,
+          processingAt: requestedAt,
+          leaseExpiresAt: liveLeaseExpiresAt,
+          claimToken: `live-sub-max-${requestId}`,
+          dispatchStartedAt: null,
+        },
+      });
+    });
+
+    await expect(drainTransferProofReviewDeliveryIntents({
+      orderId,
+      now: new Date(liveLeaseExpiresAt.getTime() + 60 * 60 * 1000),
+    }, prisma)).resolves.toMatchObject({ claimed: 0, delivered: 0 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+
+    const expiredLease = new Date((await databaseUtcNow()).getTime() - 1);
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofReviewDeliveryIntent.update({
+        where: { requestId },
+        data: { leaseExpiresAt: expiredLease },
+      });
+    });
+
+    await expect(drainTransferProofReviewDeliveryIntents({
+      orderId,
+      now: databaseNow,
+    }, prisma)).resolves.toMatchObject({ claimed: 1, delivered: 1 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 0, delivered: 0 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["before provider result", null],
     ["after accepted-send persistence loss", "ACCEPTED"],
