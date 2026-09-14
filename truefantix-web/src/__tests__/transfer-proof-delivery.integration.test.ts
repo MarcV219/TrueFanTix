@@ -92,11 +92,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   beforeEach(async () => {
     await prisma.notification.deleteMany({ where: { userId: buyerUserId } });
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId } });
+    await forceDeleteDeliveryIntents({ orderId });
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
+    await forceDeleteDeliveryIntents({ orderId: { startsWith: `batch-order-${runId}-` } });
     jest.clearAllMocks();
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "RESEND", providerResult: "ACCEPTED" });
     mockedSendAdmin.mockResolvedValue({ ok: true, provider: "RESEND" });
@@ -104,11 +104,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   afterAll(async () => {
     await prisma.notification.deleteMany({ where: { userId: buyerUserId } });
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId } });
+    await forceDeleteDeliveryIntents({ orderId });
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
+    await forceDeleteDeliveryIntents({ orderId: { startsWith: `batch-order-${runId}-` } });
     await prisma.user.deleteMany({ where: { id: buyerUserId } });
     await useDatabaseClaimClock();
     await prisma.$disconnect();
@@ -166,6 +166,13 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
   }
 
+  async function forceDeleteDeliveryIntents(where: Prisma.TransferProofDeliveryIntentWhereInput) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofDeliveryIntent.deleteMany({ where });
+    });
+  }
+
   it("rolls back all durable intents and performs zero external sends", async () => {
     await expect(prisma.$transaction(async (tx) => {
       await stageTransferProofDeliveryIntent(tx, params("01"));
@@ -176,6 +183,17 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } })).resolves.toBe(0);
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
+  });
+
+  it("preserves transfer-proof delivery history against deletion", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
+
+    await expect(prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId } }))
+      .rejects.toThrow("Transfer-proof delivery intents are append-only");
+    await expect(prisma.$executeRawUnsafe('TRUNCATE TABLE "TransferProofDeliveryIntent"'))
+      .rejects.toThrow("Transfer-proof delivery intents are append-only");
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
+      .resolves.toBe(2);
   });
 
   it("loses a real Serializable race without intent residue or pre-commit sends", async () => {
@@ -333,9 +351,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("fences a late worker and reclaims a pre-dispatch lease without spending an attempt", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("02")));
-    await prisma.transferProofDeliveryIntent.deleteMany({
-      where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
-    });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     let paused!: () => void;
     const pausedPromise = new Promise<void>((resolve) => { paused = resolve; });
     let release!: () => void;
@@ -384,9 +400,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("fences a late post-dispatch result from overwriting replacement delivery evidence", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("03")));
-    await prisma.transferProofDeliveryIntent.deleteMany({
-      where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
-    });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     let firstCallStarted!: () => void;
     const firstCallStartedPromise = new Promise<void>((resolve) => { firstCallStarted = resolve; });
     let releaseFirstCall!: () => void;
@@ -429,9 +443,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("fences a late administrator result from overwriting replacement delivery evidence", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("04")));
-    await prisma.transferProofDeliveryIntent.deleteMany({
-      where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
-    });
+    await forceDeleteDeliveryIntents({ orderId, kind: "BUYER_CONFIRMATION_EMAIL" });
     let firstCallStarted!: () => void;
     const firstCallStartedPromise = new Promise<void>((resolve) => { firstCallStarted = resolve; });
     let releaseFirstCall!: () => void;
@@ -557,7 +569,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("escalates the final rejected Resend attempt instead of stranding it as failed", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("06")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     await forceLegacyIntentState(
       { orderId },
       {
@@ -3043,6 +3055,80 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     }
   });
 
+  it("installs append-only delivery history as a forward-only upgrade", async () => {
+    const appendOnlySchema = `transfer_proof_append_only_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${appendOnlySchema}"`);
+      await client.query(`SET search_path TO "${appendOnlySchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+
+      for (const migration of [
+        "20260914043000_bind_transfer_proof_claim_clock",
+        "20260914050000_bind_transfer_proof_dispatch_window",
+        "20260914053000_bind_transfer_proof_delivery_clock",
+        "20260914060000_bind_transfer_proof_result_lease",
+      ]) {
+        const migrationSql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(migrationSql);
+      }
+
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, status, "attemptCount", "availableAt"
+        ) VALUES
+          ('permissive-delete-82', 'PENDING', 0, statement_timestamp() AT TIME ZONE 'UTC'),
+          ('permissive-truncate-82', 'PENDING', 0, statement_timestamp() AT TIME ZONE 'UTC')
+      `);
+      await expect(client.query(`
+        DELETE FROM "TransferProofDeliveryIntent" WHERE id = 'permissive-delete-82'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query('TRUNCATE TABLE "TransferProofDeliveryIntent"'))
+        .resolves.toBeDefined();
+
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, status, "attemptCount", "availableAt"
+        ) VALUES ('strict-83', 'PENDING', 0, statement_timestamp() AT TIME ZONE 'UTC')
+      `);
+      const appendOnlyMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914063000_protect_transfer_proof_delivery_history/migration.sql",
+      ), "utf8");
+      await client.query(appendOnlyMigration);
+
+      await expect(client.query(`
+        DELETE FROM "TransferProofDeliveryIntent" WHERE id = 'strict-83'
+      `)).rejects.toThrow("Transfer-proof delivery intents are append-only");
+      await expect(client.query('TRUNCATE TABLE "TransferProofDeliveryIntent"'))
+        .rejects.toThrow("Transfer-proof delivery intents are append-only");
+      await expect(client.query(`
+        SELECT count(*)::int AS count FROM "TransferProofDeliveryIntent" WHERE id = 'strict-83'
+      `)).resolves.toMatchObject({ rows: [{ count: 1 }] });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${appendOnlySchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("installs processing-evidence binding as a forward-only upgrade", async () => {
     const processingSchema = `transfer_proof_processing_evidence_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
@@ -4018,7 +4104,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("waits for the pinned Resend provider after atomic success persistence loses ownership", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("15")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     const previousResendKey = process.env.RESEND_API_KEY;
     const previousSendGridKey = process.env.SENDGRID_API_KEY;
     let accepted = false;
@@ -4063,7 +4149,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("does not consume a rejected delivery retry while its pinned provider is unavailable", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("16")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     await forceLegacyIntentState(
       { orderId },
       {
@@ -4096,7 +4182,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("quarantines an accepted SendGrid delivery when atomic success persistence loses ownership", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("17")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     const previousResendKey = process.env.RESEND_API_KEY;
     const previousSendGridKey = process.env.SENDGRID_API_KEY;
     let accepted = false;
@@ -4129,7 +4215,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("does not commit administrator SENT evidence without the matching outbox completion", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("19")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "BUYER_CONFIRMATION_EMAIL" });
     let accepted = false;
     mockedSendAdmin.mockImplementation(async () => {
       accepted = true;
@@ -4148,7 +4234,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("quarantines an accepted buyer delivery whose provider identity changed", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("20")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "SENDGRID", providerResult: "unexpected-acceptance" });
 
     await expect(drainTransferProofDeliveryIntents(
@@ -4166,7 +4252,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("quarantines an accepted administrator delivery whose provider identity changed", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("20")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "BUYER_CONFIRMATION_EMAIL" });
     mockedSendAdmin.mockResolvedValue({ ok: true, provider: "SENDGRID", providerResult: "unexpected-acceptance" });
 
     await expect(drainTransferProofDeliveryIntents(
@@ -4183,7 +4269,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("leaves unconfigured intents pending and claims them after a provider is configured", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("21")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     const savedResendKey = process.env.RESEND_API_KEY;
     const savedSendGridKey = process.env.SENDGRID_API_KEY;
     delete process.env.RESEND_API_KEY;
@@ -4212,7 +4298,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("escalates an accepted Resend delivery when atomic success persistence exhausts the retry budget", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("22")));
-    await prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" } });
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
     await forceLegacyIntentState(
       { orderId },
       {
