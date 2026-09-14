@@ -1,6 +1,8 @@
 /** @jest-environment node */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -28,20 +30,23 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
   let requestId = "";
   let requestedAt = new Date();
   let previousResendKey: string | undefined;
+  let previousSendGridKey: string | undefined;
 
   function params(overrides: Partial<{
     requestId: string;
-    subject: string;
-    textBody: string;
-    htmlBody: string;
+    sellerName: string;
+    sellerEmail: string;
+    eventTitle: string;
+    appOrigin: string;
   }> = {}) {
     return {
       orderId,
       requestId: overrides.requestId ?? requestId,
       recipient: "support@truefantix.com",
-      subject: overrides.subject ?? `Review requested for ${orderId}`,
-      textBody: overrides.textBody ?? `Review ${orderId} requested at ${requestedAt.toISOString()}`,
-      htmlBody: overrides.htmlBody ?? `<p>Review ${orderId} requested at ${requestedAt.toISOString()}</p>`,
+      sellerName: overrides.sellerName ?? "Seller Review",
+      sellerEmail: overrides.sellerEmail ?? `review-delivery-${runId}@example.test`,
+      eventTitle: overrides.eventTitle ?? "Ticket order",
+      appOrigin: overrides.appOrigin ?? "http://localhost:3000",
       requestedAt,
     };
   }
@@ -109,7 +114,9 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
 
   beforeAll(async () => {
     previousResendKey = process.env.RESEND_API_KEY;
+    previousSendGridKey = process.env.SENDGRID_API_KEY;
     process.env.RESEND_API_KEY = "synthetic-resend-key";
+    delete process.env.SENDGRID_API_KEY;
     await prisma.seller.createMany({ data: [
       { id: sellerId, name: "Review Delivery Seller" },
       { id: buyerSellerId, name: "Review Delivery Buyer" },
@@ -165,6 +172,8 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     await pool.end();
     if (previousResendKey === undefined) delete process.env.RESEND_API_KEY;
     else process.env.RESEND_API_KEY = previousResendKey;
+    if (previousSendGridKey === undefined) delete process.env.SENDGRID_API_KEY;
+    else process.env.SENDGRID_API_KEY = previousSendGridKey;
   });
 
   it("rolls back the durable envelope without performing provider I/O", async () => {
@@ -230,12 +239,151 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
       .resolves.toBe(1);
     await expect(prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(
       tx,
-      params({ subject: "Conflicting review subject" }),
+      params({ eventTitle: "Conflicting event title" }),
     ))).rejects.toThrow("does not match the canonical envelope");
     await expect(prisma.transferProofReviewDeliveryIntent.update({
       where: { requestId },
       data: { textBody: "rewritten" },
     })).rejects.toThrow("Transfer-proof review delivery envelope is immutable");
+  });
+
+  it.each(["subject", "textBody", "htmlBody", "payloadJson"] as const)(
+    "rejects a directly forged %s under an otherwise canonical request identity",
+    async (field) => {
+      await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+      const template = await prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId },
+      });
+      await forceDeleteIntents();
+      const payload = template.payloadJson as Record<string, unknown>;
+      const forgedPayload = field === "payloadJson"
+        ? { ...payload, injectedInstruction: "Send this arbitrary content" }
+        : payload;
+      const subject = field === "subject" ? "Forged review subject" : template.subject;
+      const textBody = field === "textBody" ? "Forged review text" : template.textBody;
+      const htmlBody = field === "htmlBody" ? "<p>Forged review HTML</p>" : template.htmlBody;
+      const digestRows = await prisma.$queryRaw<Array<{ digest: string }>>`
+        SELECT transfer_proof_review_envelope_digest(
+          ${template.orderId}, ${template.requestId}, ${template.recipient},
+          ${template.requestedAt.toISOString()}, ${String(payload.sellerName)},
+          ${String(payload.sellerEmail)}, ${String(payload.eventTitle)},
+          ${String(payload.appOrigin)}, ${subject}, ${textBody}, ${htmlBody}
+        ) AS digest
+      `;
+      const idempotencyKey = `tft-human-review-${createHash("sha256")
+        .update(`${template.orderId}:${template.requestId}:${template.recipient}`)
+        .digest("hex")}`;
+
+      await expect(prisma.$executeRaw`
+        INSERT INTO "TransferProofReviewDeliveryIntent" (
+          id, "orderId", "requestId", recipient, subject, "textBody", "htmlBody",
+          "requestedAt", "idempotencyKey", "payloadJson", "envelopeDigest", "availableAt"
+        ) VALUES (
+          ${`forged-${field}-${requestId}`}, ${template.orderId}, ${template.requestId},
+          ${template.recipient}, ${subject}, ${textBody}, ${htmlBody}, ${template.requestedAt},
+          ${idempotencyKey}, CAST(${JSON.stringify(forgedPayload)} AS JSONB),
+          ${digestRows[0].digest}, ${template.requestedAt}
+        )
+      `).rejects.toThrow("Transfer-proof review delivery envelope must match the locked review snapshot");
+      await expect(prisma.transferProofReviewDeliveryIntent.count({ where: { orderId } }))
+        .resolves.toBe(0);
+    },
+  );
+
+  it("blocks the migration-94 predecessor when an identity-valid body cannot be authenticated", async () => {
+    const predecessorSchema = `review_envelope_predecessor_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${predecessorSchema}"`);
+      await client.query(`SET search_path TO "${predecessorSchema}"`);
+      await client.query(`
+        CREATE TABLE "Order" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "buyerConfirmationStatus" TEXT,
+          "transferVerificationStatus" TEXT,
+          "disputeWindowEndsAt" TIMESTAMP(3),
+          "transferProofData" TEXT,
+          "sellerId" TEXT NOT NULL
+        );
+        CREATE TABLE "User" (
+          id TEXT PRIMARY KEY,
+          email TEXT NOT NULL,
+          "firstName" TEXT NOT NULL,
+          "lastName" TEXT NOT NULL,
+          "sellerId" TEXT UNIQUE
+        );
+        CREATE TABLE "EmailDelivery" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL,
+          "emailType" TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          "sentAt" TIMESTAMP(3) NOT NULL,
+          provider TEXT NOT NULL,
+          status TEXT NOT NULL,
+          error TEXT
+        );
+      `);
+      const predecessorMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914130000_add_transfer_proof_review_delivery_outbox/migration.sql",
+      ), "utf8");
+      await client.query(predecessorMigration);
+      await client.query(`
+        INSERT INTO "User" (id, email, "firstName", "lastName", "sellerId")
+        VALUES ('seller-user-94', 'seller@example.test', 'Seller', 'Review', 'seller-94');
+        WITH origin AS (
+          SELECT statement_timestamp() AT TIME ZONE 'UTC' AS requested_at
+        )
+        INSERT INTO "Order" (
+          id, status, "buyerConfirmationStatus", "transferVerificationStatus",
+          "disputeWindowEndsAt", "transferProofData", "sellerId"
+        )
+        SELECT
+          'order-94', 'PAID', 'PENDING', 'MANUAL_REVIEW', NULL,
+          JSONB_BUILD_OBJECT(
+            'manualReviewRequestId', '00000000-0000-4000-8000-000000000095',
+            'manualReviewRequestedAt', TO_CHAR(requested_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+            'requestedByUserId', 'seller-user-94'
+          )::TEXT,
+          'seller-94'
+        FROM origin;
+        INSERT INTO "TransferProofReviewDeliveryIntent" (
+          id, "orderId", "requestId", recipient, subject, "textBody", "htmlBody",
+          "requestedAt", "idempotencyKey", "availableAt"
+        )
+        SELECT
+          'forged-predecessor-94', id,
+          "transferProofData"::JSONB ->> 'manualReviewRequestId',
+          'support@truefantix.com', 'Forged but nonempty subject',
+          'Forged but nonempty text', '<p>Forged but nonempty HTML</p>',
+          ("transferProofData"::JSONB ->> 'manualReviewRequestedAt')::TIMESTAMP,
+          'tft-human-review-' || ENCODE(SHA256(CONVERT_TO(
+            id || ':' || ("transferProofData"::JSONB ->> 'manualReviewRequestId')
+              || ':support@truefantix.com', 'UTF8'
+          )), 'hex'),
+          ("transferProofData"::JSONB ->> 'manualReviewRequestedAt')::TIMESTAMP
+        FROM "Order" WHERE id = 'order-94';
+      `);
+
+      const envelopeMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914140000_bind_transfer_proof_review_envelope/migration.sql",
+      ), "utf8");
+      await expect(client.query(envelopeMigration)).rejects.toThrow(
+        "Transfer-proof review envelope preflight requires an empty reconciled outbox",
+      );
+      await client.query("ROLLBACK");
+      await expect(client.query(`
+        SELECT subject FROM "TransferProofReviewDeliveryIntent"
+        WHERE id = 'forged-predecessor-94'
+      `)).resolves.toMatchObject({ rows: [{ subject: "Forged but nonempty subject" }] });
+    } finally {
+      await client.query("ROLLBACK");
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${predecessorSchema}" CASCADE`);
+      client.release();
+    }
   });
 
   it("rejects caller-forged claim, dispatch, retry, and completion clocks", async () => {
@@ -490,6 +638,82 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
       .resolves.toMatchObject({ claimed: 0, delivered: 0 });
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let an unavailable-provider prefix starve later deliverable work", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const databaseNow = await databaseUtcNow();
+    const expiredLease = new Date(databaseNow.getTime() - 60 * 1000);
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofReviewDeliveryIntent.update({
+        where: { requestId },
+        data: {
+          status: "PROCESSING",
+          provider: "SENDGRID",
+          processingAt: new Date(expiredLease.getTime() - 15 * 60 * 1000),
+          leaseExpiresAt: expiredLease,
+          claimToken: `unavailable-prefix-${requestId}`,
+          availableAt: new Date(databaseNow.getTime() - 60 * 60 * 1000),
+        },
+      });
+    });
+
+    const deliverableOrderId = `${orderId}-deliverable`;
+    const deliverableRequestId = randomUUID();
+    const deliverableRequestedAt = await databaseUtcNow();
+    await prisma.order.create({ data: {
+      id: deliverableOrderId,
+      sellerId,
+      buyerSellerId,
+      status: "PAID",
+      amountCents: 100,
+      adminFeeCents: 10,
+      totalCents: 110,
+      transferProofType: "Screenshot",
+      transferProofData: JSON.stringify({
+        sellerNote: "Synthetic deliverable review",
+        proofUpload: "synthetic-proof",
+        manualReviewRequestId: deliverableRequestId,
+        manualReviewRequestedAt: deliverableRequestedAt.toISOString(),
+        requestedByUserId: sellerUserId,
+      }),
+      transferVerificationStatus: "MANUAL_REVIEW",
+      buyerConfirmationStatus: "PENDING",
+    } });
+    try {
+      await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, {
+        orderId: deliverableOrderId,
+        requestId: deliverableRequestId,
+        recipient: "support@truefantix.com",
+        sellerName: "Seller Review",
+        sellerEmail: `review-delivery-${runId}@example.test`,
+        eventTitle: "Ticket order",
+        appOrigin: "http://localhost:3000",
+        requestedAt: deliverableRequestedAt,
+      }));
+
+      await expect(drainTransferProofReviewDeliveryIntents({ limit: 1 }, prisma))
+        .resolves.toMatchObject({ scanned: 1, claimed: 1, delivered: 1 });
+      expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+      await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId: deliverableRequestId },
+      })).resolves.toMatchObject({ status: "DELIVERED", provider: "RESEND" });
+      await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId },
+      })).resolves.toMatchObject({
+        status: "PROCESSING",
+        provider: "SENDGRID",
+        claimToken: `unavailable-prefix-${requestId}`,
+      });
+    } finally {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.transferProofReviewDeliveryIntent.deleteMany({ where: { orderId: deliverableOrderId } });
+      });
+      await prisma.emailDelivery.deleteMany({ where: { orderId: deliverableOrderId } });
+      await prisma.order.delete({ where: { id: deliverableOrderId } });
+    }
   });
 
   it.each([

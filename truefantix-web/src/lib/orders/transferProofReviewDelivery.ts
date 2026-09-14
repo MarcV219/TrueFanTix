@@ -26,13 +26,86 @@ function reviewDeliveryIdempotencyKey(orderId: string, requestId: string, recipi
   return `tft-human-review-${digest}`;
 }
 
+type ReviewEnvelopePayload = {
+  sellerName: string;
+  sellerEmail: string;
+  eventTitle: string;
+  appOrigin: string;
+};
+
+function reviewAppOrigin(value: string) {
+  const url = new URL(value);
+  if (url.origin !== value.replace(/\/$/, "") || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("Invalid transfer-proof review application origin");
+  }
+  return url.origin;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]
+    || character
+  ));
+}
+
+function renderReviewEnvelope(input: {
+  orderId: string;
+  requestedAt: Date;
+  payload: ReviewEnvelopePayload;
+}) {
+  const requestedAt = input.requestedAt.toISOString();
+  const reviewUrl = `${input.payload.appOrigin}/admin/orders/${encodeURIComponent(input.orderId)}`;
+  const subject = `ACTION REQUIRED: Human Review Requested for Transfer Proof — ${input.orderId}`;
+  const textBody = `${input.payload.sellerName} (${input.payload.sellerEmail}) requested a human review of transfer documentation.
+
+Order: ${input.orderId}
+Event: ${input.payload.eventTitle}
+Requested: ${requestedAt}
+
+Review the stored documentation:
+${reviewUrl}`;
+  const htmlBody = `<p><strong>${escapeHtml(input.payload.sellerName)}</strong> (${escapeHtml(input.payload.sellerEmail)}) requested a human review of transfer documentation.</p>
+<p><strong>Order:</strong> ${escapeHtml(input.orderId)}<br><strong>Event:</strong> ${escapeHtml(input.payload.eventTitle)}<br><strong>Requested:</strong> ${requestedAt}</p>
+<p><a href="${escapeHtml(reviewUrl)}">Review the order and documentation</a></p>`;
+  return { subject, textBody, htmlBody };
+}
+
+function reviewEnvelopeDigest(input: {
+  orderId: string;
+  requestId: string;
+  recipient: string;
+  requestedAt: Date;
+  payload: ReviewEnvelopePayload;
+  subject: string;
+  textBody: string;
+  htmlBody: string;
+}) {
+  const values = [
+    input.orderId,
+    input.requestId,
+    input.recipient,
+    input.requestedAt.toISOString(),
+    input.payload.sellerName,
+    input.payload.sellerEmail,
+    input.payload.eventTitle,
+    input.payload.appOrigin,
+    input.subject,
+    input.textBody,
+    input.htmlBody,
+  ];
+  return createHash("sha256")
+    .update(values.map((value) => `${Buffer.byteLength(value, "utf8")}:${value}`).join(""))
+    .digest("hex");
+}
+
 type StageParams = {
   orderId: string;
   requestId: string;
   recipient: string;
-  subject: string;
-  textBody: string;
-  htmlBody: string;
+  sellerName: string;
+  sellerEmail: string;
+  eventTitle: string;
+  appOrigin: string;
   requestedAt: Date;
 };
 
@@ -40,23 +113,60 @@ export async function stageTransferProofReviewDeliveryIntent(
   tx: Prisma.TransactionClient,
   params: StageParams,
 ) {
+  const payload: ReviewEnvelopePayload = {
+    sellerName: params.sellerName,
+    sellerEmail: params.sellerEmail,
+    eventTitle: params.eventTitle,
+    appOrigin: reviewAppOrigin(params.appOrigin),
+  };
+  const rendered = renderReviewEnvelope({
+    orderId: params.orderId,
+    requestedAt: params.requestedAt,
+    payload,
+  });
   const idempotencyKey = reviewDeliveryIdempotencyKey(
     params.orderId,
     params.requestId,
     params.recipient,
   );
+  const envelopeDigest = reviewEnvelopeDigest({
+    orderId: params.orderId,
+    requestId: params.requestId,
+    recipient: params.recipient,
+    requestedAt: params.requestedAt,
+    payload,
+    ...rendered,
+  });
   const staged = await tx.transferProofReviewDeliveryIntent.upsert({
     where: { requestId: params.requestId },
-    create: { ...params, idempotencyKey, availableAt: params.requestedAt },
+    create: {
+      orderId: params.orderId,
+      requestId: params.requestId,
+      recipient: params.recipient,
+      requestedAt: params.requestedAt,
+      ...rendered,
+      payloadJson: payload,
+      envelopeDigest,
+      idempotencyKey,
+      availableAt: params.requestedAt,
+    },
     update: {},
   });
   if (
     staged.orderId !== params.orderId
     || staged.requestId !== params.requestId
     || staged.recipient !== params.recipient
-    || staged.subject !== params.subject
-    || staged.textBody !== params.textBody
-    || staged.htmlBody !== params.htmlBody
+    || staged.subject !== rendered.subject
+    || staged.textBody !== rendered.textBody
+    || staged.htmlBody !== rendered.htmlBody
+    || !staged.payloadJson
+    || Array.isArray(staged.payloadJson)
+    || typeof staged.payloadJson !== "object"
+    || Object.keys(staged.payloadJson).length !== 4
+    || Object.entries(payload).some(([key, value]) => (
+      (staged.payloadJson as Record<string, unknown>)[key] !== value
+    ))
+    || staged.envelopeDigest !== envelopeDigest
     || staged.requestedAt.getTime() !== params.requestedAt.getTime()
     || staged.idempotencyKey !== idempotencyKey
   ) {
@@ -78,11 +188,44 @@ async function databaseUtcNow(db: Pick<typeof prisma, "$queryRaw">) {
 }
 
 function requireCanonicalEnvelope(row: TransferProofReviewDeliveryIntent) {
-  if (!row.recipient.trim() || !row.subject.trim() || !row.textBody.trim() || !row.htmlBody.trim()) {
+  if (
+    !row.payloadJson
+    || Array.isArray(row.payloadJson)
+    || typeof row.payloadJson !== "object"
+  ) {
     throw new Error("Invalid transfer-proof review delivery envelope");
   }
+  const rawPayload = row.payloadJson as Record<string, unknown>;
+  const payloadKeys = Object.keys(rawPayload).sort();
+  const expectedPayloadKeys = ["appOrigin", "eventTitle", "sellerEmail", "sellerName"];
+  if (
+    JSON.stringify(payloadKeys) !== JSON.stringify(expectedPayloadKeys)
+    || expectedPayloadKeys.some((key) => typeof rawPayload[key] !== "string" || !String(rawPayload[key]).trim())
+  ) {
+    throw new Error("Invalid transfer-proof review delivery envelope snapshot");
+  }
+  const payload = rawPayload as ReviewEnvelopePayload;
+  if (reviewAppOrigin(payload.appOrigin) !== payload.appOrigin) {
+    throw new Error("Invalid transfer-proof review delivery application origin");
+  }
+  const rendered = renderReviewEnvelope({ orderId: row.orderId, requestedAt: row.requestedAt, payload });
   const expectedKey = reviewDeliveryIdempotencyKey(row.orderId, row.requestId, row.recipient);
-  if (row.idempotencyKey !== expectedKey) {
+  const expectedDigest = reviewEnvelopeDigest({
+    orderId: row.orderId,
+    requestId: row.requestId,
+    recipient: row.recipient,
+    requestedAt: row.requestedAt,
+    payload,
+    ...rendered,
+  });
+  if (
+    !row.recipient.trim()
+    || row.subject !== rendered.subject
+    || row.textBody !== rendered.textBody
+    || row.htmlBody !== rendered.htmlBody
+    || row.idempotencyKey !== expectedKey
+    || row.envelopeDigest !== expectedDigest
+  ) {
     throw new Error("Transfer-proof review delivery identity does not match its envelope");
   }
 }
@@ -130,9 +273,15 @@ export async function drainTransferProofReviewDeliveryIntents(
       ${expiredOrderFilter}
   `);
   const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
+  const resendConfigured = providerIsConfigured("RESEND");
+  const sendGridConfigured = providerIsConfigured("SENDGRID");
+  const providerConfigured = resendConfigured || sendGridConfigured;
   let reconciliationRequired = exhausted.count + expiredProcessingCount;
   const acquisition = await db.$transaction(async (tx) => {
     const acquisitionNow = await databaseUtcNow(tx);
+    const acquisitionResendWindowStart = new Date(
+      acquisitionNow.getTime() - RESEND_IDEMPOTENCY_WINDOW_MS,
+    );
     const orderFilter = options.orderId
       ? Prisma.sql`AND "orderId" = ${options.orderId}`
       : Prisma.empty;
@@ -144,6 +293,22 @@ export async function drainTransferProofReviewDeliveryIntents(
         AND (
           (status IN ('PENDING', 'FAILED') AND "availableAt" <= ${acquisitionNow})
           OR (status = 'PROCESSING' AND "leaseExpiresAt" <= ${acquisitionNow})
+        )
+        AND (
+          (provider IS NULL AND (
+            ${providerConfigured} OR "attemptCount" > 0 OR status = 'PROCESSING'
+          ))
+          OR (provider = 'RESEND' AND (
+            ${resendConfigured}
+            OR ("attemptCount" > 0 AND (
+              "firstAttemptAt" IS NULL
+              OR "firstAttemptAt" <= ${acquisitionResendWindowStart}
+            ))
+          ))
+          OR (provider = 'SENDGRID' AND (
+            ${sendGridConfigured}
+            OR (status = 'PROCESSING' AND "dispatchStartedAt" IS NOT NULL)
+          ))
         )
       ORDER BY "availableAt" ASC, "createdAt" ASC, id ASC
       FOR UPDATE SKIP LOCKED

@@ -1706,6 +1706,8 @@ model TransferProofReviewDeliveryIntent {
   htmlBody       String
   requestedAt    DateTime
   idempotencyKey String   @unique
+  payloadJson    Json
+  envelopeDigest String
 
   status            String    @default("PENDING")
   provider          String?

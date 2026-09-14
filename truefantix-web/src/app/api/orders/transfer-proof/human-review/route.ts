@@ -15,13 +15,6 @@ import {
   stageTransferProofReviewDeliveryIntent,
 } from "@/lib/orders/transferProofReviewDelivery";
 
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]
-    || character
-  ));
-}
-
 export async function POST(req: Request) {
   try {
     const gate = await requireUser(req);
@@ -58,7 +51,11 @@ export async function POST(req: Request) {
           buyerConfirmationStatus: true,
           transferVerificationStatus: true,
           disputeWindowEndsAt: true,
-          items: { take: 1, select: { ticket: { select: { title: true } } } },
+          items: {
+            take: 1,
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+            select: { ticket: { select: { title: true } } },
+          },
           seller: { select: { name: true, user: { select: { email: true, firstName: true, lastName: true } } } },
         },
       });
@@ -97,25 +94,12 @@ export async function POST(req: Request) {
       const requestedAt = orderLock.now;
       const requestId = crypto.randomUUID();
       const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN || "https://truefantix-web.vercel.app").replace(/\/$/, "");
-      const reviewUrl = `${appUrl}/admin/orders/${encodeURIComponent(orderId)}`;
       const sellerName =
         [order.seller.user?.firstName, order.seller.user?.lastName].filter(Boolean).join(" ") ||
         order.seller.name ||
         "Seller";
       const eventTitle = order.items[0]?.ticket.title || "Ticket order";
-      const subject = `ACTION REQUIRED: Human Review Requested for Transfer Proof — ${orderId}`;
       const sellerEmail = order.seller.user?.email || "email unavailable";
-      const textBody = `${sellerName} (${order.seller.user?.email || "email unavailable"}) requested a human review of transfer documentation.
-
-Order: ${orderId}
-Event: ${eventTitle}
-Requested: ${requestedAt.toISOString()}
-
-Review the stored documentation:
-${reviewUrl}`;
-      const htmlBody = `<p><strong>${escapeHtml(sellerName)}</strong> (${escapeHtml(sellerEmail)}) requested a human review of transfer documentation.</p>
-<p><strong>Order:</strong> ${escapeHtml(orderId)}<br><strong>Event:</strong> ${escapeHtml(eventTitle)}<br><strong>Requested:</strong> ${requestedAt.toISOString()}</p>
-<p><a href="${escapeHtml(reviewUrl)}">Review the order and documentation</a></p>`;
       if (!alreadyRequested) {
         await tx.order.update({
           where: { id: orderId },
@@ -141,9 +125,10 @@ ${reviewUrl}`;
           orderId,
           requestId,
           recipient: DISPUTE_SUPPORT_EMAIL,
-          subject,
-          textBody,
-          htmlBody,
+          sellerName,
+          sellerEmail,
+          eventTitle,
+          appOrigin: appUrl,
           requestedAt,
         });
       }
