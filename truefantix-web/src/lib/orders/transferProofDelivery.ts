@@ -65,6 +65,25 @@ type StageParams = {
   now: Date;
 };
 
+function requireMatchingStagedIdentity(
+  row: TransferProofDeliveryIntent,
+  envelope: { orderId: string; kind: string; recipient: string; payloadJson: unknown },
+  idempotencyKey: string,
+) {
+  const digest = deliveryEnvelopeDigest(envelope);
+  if (
+    row.orderId !== envelope.orderId
+    || row.kind !== envelope.kind
+    || row.recipient !== envelope.recipient
+    || canonicalJson(row.payloadJson) !== canonicalJson(envelope.payloadJson)
+    || row.idempotencyKey !== idempotencyKey
+    || row.identityVersion !== 2
+    || row.envelopeDigest !== digest
+  ) {
+    throw new Error("Transfer-proof delivery idempotency collision does not match the canonical envelope");
+  }
+}
+
 export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionClient, params: StageParams) {
   const windowStart = reminderWindowStart(params.now);
   if (params.buyerUserId) {
@@ -87,7 +106,7 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
     };
     const envelope = { orderId: params.orderId, kind: BUYER_KIND, recipient: params.buyerEmail, payloadJson };
     const idempotencyKey = deliveryIdempotencyKey(params.orderId, windowStart, BUYER_KIND, params.buyerEmail);
-    await tx.transferProofDeliveryIntent.upsert({
+    const staged = await tx.transferProofDeliveryIntent.upsert({
       where: { idempotencyKey },
       create: {
         ...envelope, idempotencyKey, identityVersion: 2,
@@ -96,6 +115,7 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
       },
       update: {},
     });
+    requireMatchingStagedIdentity(staged, envelope, idempotencyKey);
   }
 
   const payloadJson = {
@@ -104,7 +124,7 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
   };
   const envelope = { orderId: params.orderId, kind: ADMIN_KIND, recipient: ADMIN_ACTIVITY_EMAIL, payloadJson };
   const idempotencyKey = deliveryIdempotencyKey(params.orderId, windowStart, ADMIN_KIND, ADMIN_ACTIVITY_EMAIL);
-  await tx.transferProofDeliveryIntent.upsert({
+  const staged = await tx.transferProofDeliveryIntent.upsert({
     where: { idempotencyKey },
     create: {
       ...envelope, idempotencyKey, identityVersion: 2,
@@ -113,6 +133,7 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
     },
     update: {},
   });
+  requireMatchingStagedIdentity(staged, envelope, idempotencyKey);
 }
 
 type DeliveryDb = Pick<
