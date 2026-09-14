@@ -1572,6 +1572,154 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     );
   });
 
+  it("preserves source evidence when escalating delivery to reconciliation", async () => {
+    const [fabricatedId, processingId, failedId] = await seedAdminBatch(
+      "reconciliation-evidence", 3,
+    );
+
+    for (const [id, token] of [
+      [fabricatedId, "fabricated-reconciliation-owner"],
+      [processingId, "valid-reconciliation-owner"],
+    ] as const) {
+      const pending = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+        where: { id },
+      });
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", provider: "RESEND", processingAt: pending.availableAt,
+          leaseExpiresAt: new Date(pending.availableAt.getTime() + 15 * 60 * 1000),
+          claimToken: token,
+        },
+      });
+    }
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: fabricatedId },
+      data: {
+        status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, deliveredAt: new Date("2026-12-01T08:00:00.000Z"),
+        lastError: "fabricated terminal delivery evidence",
+      },
+    })).rejects.toThrow(
+      "Transfer-proof reconciliation must preserve source attempt evidence",
+    );
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: processingId },
+      data: {
+        status: "RECONCILIATION_REQUIRED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, lastError: "synthetic pre-dispatch quarantine",
+      },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED", provider: "RESEND",
+      attemptCount: 0, deliveredAt: null,
+    });
+
+    const failedAvailableAt = new Date("2026-12-01T09:00:00.000Z");
+    await forceLegacyIntentState(
+      { id: failedId },
+      {
+        status: "FAILED", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T08:00:00.000Z"),
+        availableAt: failedAvailableAt, lastError: "synthetic retryable failure",
+      },
+    );
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: failedId },
+      data: {
+        status: "RECONCILIATION_REQUIRED",
+        availableAt: new Date("2026-12-01T08:30:00.000Z"),
+      },
+    })).rejects.toThrow(
+      "Transfer-proof reconciliation must preserve failed retry evidence",
+    );
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: failedId },
+      data: { status: "RECONCILIATION_REQUIRED" },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED", availableAt: failedAvailableAt,
+      lastError: "synthetic retryable failure",
+    });
+  });
+
+  it("installs reconciliation-evidence binding as a forward-only upgrade", async () => {
+    const reconciliationSchema = `transfer_proof_reconciliation_evidence_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${reconciliationSchema}"`);
+      await client.query(`SET search_path TO "${reconciliationSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "availableAt" TIMESTAMP(3) NOT NULL,
+          "lastError" TEXT
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "processingAt", "leaseExpiresAt",
+          "claimToken", "availableAt"
+        ) VALUES
+          ('permissive-73', 'RESEND', 'PROCESSING', 0,
+            TIMESTAMP '2026-12-01 07:00:00', TIMESTAMP '2026-12-01 07:15:00',
+            'permissive-owner', TIMESTAMP '2026-12-01 07:00:00'),
+          ('strict-74', 'RESEND', 'PROCESSING', 0,
+            TIMESTAMP '2026-12-01 08:00:00', TIMESTAMP '2026-12-01 08:15:00',
+            'strict-owner', TIMESTAMP '2026-12-01 08:00:00'),
+          ('valid-74', 'RESEND', 'PROCESSING', 0,
+            TIMESTAMP '2026-12-01 09:00:00', TIMESTAMP '2026-12-01 09:15:00',
+            'valid-owner', TIMESTAMP '2026-12-01 09:00:00')
+      `);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'RECONCILIATION_REQUIRED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "deliveredAt" = TIMESTAMP '2026-12-01 07:01:00',
+          "lastError" = 'fabricated delivery evidence'
+        WHERE id = 'permissive-73'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const reconciliationEvidenceMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914020000_bind_transfer_proof_reconciliation_evidence/migration.sql",
+      ), "utf8");
+      await client.query(reconciliationEvidenceMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'RECONCILIATION_REQUIRED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "deliveredAt" = TIMESTAMP '2026-12-01 08:01:00',
+          "lastError" = 'fabricated delivery evidence'
+        WHERE id = 'strict-74'
+      `)).rejects.toThrow(
+        "Transfer-proof reconciliation must preserve source attempt evidence",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'RECONCILIATION_REQUIRED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "lastError" = 'valid pre-dispatch quarantine'
+        WHERE id = 'valid-74'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${reconciliationSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("installs processing-evidence binding as a forward-only upgrade", async () => {
     const processingSchema = `transfer_proof_processing_evidence_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
