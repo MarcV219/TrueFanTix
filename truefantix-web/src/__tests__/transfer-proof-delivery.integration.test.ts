@@ -331,6 +331,16 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
   }
 
+  async function forceUpdateUser(
+    where: Prisma.UserWhereUniqueInput,
+    data: Prisma.UserUpdateInput,
+  ) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.user.update({ where, data });
+    });
+  }
+
   async function databaseUtcNow() {
     const [row] = await prisma.$queryRaw<Array<{ now: Date }>>`
       SELECT statement_timestamp() AT TIME ZONE 'UTC' AS now
@@ -378,7 +388,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
 
     await expect(prisma.order.delete({ where: { id: orderId } }))
-      .rejects.toThrow(/foreign key constraint|violates foreign key/i);
+      .rejects.toThrow(/foreign key constraint|violates foreign key|order item membership is immutable/i);
     await expect(prisma.order.update({
       where: { id: orderId },
       data: { id: `${orderId}-rekeyed` },
@@ -387,6 +397,76 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .resolves.toBeTruthy();
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
       .resolves.toBe(2);
+  });
+
+  it("prevents parent snapshot and item-membership drift after version-2 delivery staging", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
+
+    await expect(prisma.order.update({
+      where: { id: orderId },
+      data: { sellerId: buyerSellerId },
+    })).rejects.toThrow("Transfer-proof delivery order snapshot is immutable");
+    await expect(prisma.order.update({
+      where: { id: orderId },
+      data: { buyerSellerId: sellerId },
+    })).rejects.toThrow("Transfer-proof delivery order snapshot is immutable");
+    await expect(prisma.order.update({
+      where: { id: orderId },
+      data: { transferProofType: "OTHER" },
+    })).rejects.toThrow("Transfer-proof delivery order snapshot is immutable");
+    await expect(prisma.order.update({
+      where: { id: orderId },
+      data: { disputeWindowEndsAt: new Date("2026-12-03T01:00:00.000Z") },
+    })).rejects.toThrow("Transfer-proof delivery order snapshot is immutable");
+    await expect(prisma.user.update({
+      where: { id: sellerUserId },
+      data: { email: "changed-seller@example.test" },
+    })).rejects.toThrow("Active transfer-proof delivery participant email is immutable");
+    await expect(prisma.user.update({
+      where: { id: buyerUserId },
+      data: { email: `changed-${buyerEmail}` },
+    })).rejects.toThrow("Active transfer-proof delivery participant email is immutable");
+    await expect(prisma.user.update({
+      where: { id: buyerUserId },
+      data: { firstName: "Changed Buyer" },
+    })).rejects.toThrow("Active transfer-proof delivery buyer name is immutable");
+    await expect(prisma.user.update({
+      where: { id: buyerUserId },
+      data: { sellerId: null },
+    })).rejects.toThrow("Active transfer-proof delivery participant identity is immutable");
+
+    const existingItem = await prisma.orderItem.findFirstOrThrow({ where: { orderId } });
+    await expect(prisma.orderItem.create({ data: {
+      id: `${orderId}-forged-second-item`,
+      orderId,
+      ticketId: existingItem.ticketId,
+      priceCents: existingItem.priceCents,
+    } })).rejects.toThrow("Transfer-proof delivery order item membership is immutable");
+    await expect(prisma.orderItem.delete({ where: { id: existingItem.id } }))
+      .rejects.toThrow("Transfer-proof delivery order item membership is immutable");
+
+    // Lifecycle fields and non-membership item evidence remain outside this
+    // narrow reverse guard.
+    await expect(prisma.order.update({
+      where: { id: orderId },
+      data: { transferVerificationStatus: "MATCHED" },
+    })).resolves.toMatchObject({ transferVerificationStatus: "MATCHED" });
+    await expect(prisma.orderItem.update({
+      where: { id: existingItem.id },
+      data: { priceCents: existingItem.priceCents },
+    })).resolves.toMatchObject({ id: existingItem.id });
+    await expect(prisma.user.update({
+      where: { id: buyerUserId },
+      data: { lastName: "Lifecycle Change" },
+    })).resolves.toMatchObject({ lastName: "Lifecycle Change" });
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { transferVerificationStatus: "PENDING" },
+    });
+    await prisma.user.update({
+      where: { id: buyerUserId },
+      data: { lastName: "Boundary" },
+    });
   });
 
   it("binds new transfer-proof deliveries to the locked order state and buyer", async () => {
@@ -780,10 +860,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       };
       expect(buyerIntent.envelopeDigest).toBe(envelopeDigest(envelope));
     } finally {
-      await prisma.user.update({
-        where: { id: buyerUserId },
-        data: { firstName: "Buyer" },
-      });
+      await forceUpdateUser({ id: buyerUserId }, { firstName: "Buyer" });
     }
   });
 
@@ -823,6 +900,110 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await client.query("ROLLBACK").catch(() => undefined);
       client.release();
       await prisma.user.update({ where: { id: buyerUserId }, data: { email: buyerEmail } });
+    }
+  });
+
+  it("makes a concurrent parent drift wait for and lose to version-2 staging", async () => {
+    const client = await pool.connect();
+    const input = params("02");
+    const windowStart = authoritativeWindowStart(input.deadline).toISOString();
+    const payloadJson = {
+      buyerFirstName: "Buyer",
+      ticketCount: 1,
+      deadline: input.deadline.toISOString(),
+      windowStart,
+    };
+    const envelope = {
+      orderId,
+      kind: "BUYER_CONFIRMATION_EMAIL",
+      recipient: buyerEmail,
+      payloadJson,
+    };
+    try {
+      await client.query("BEGIN");
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, 2, $7)
+      `, [
+        `${orderId}-concurrent-parent-snapshot`,
+        orderId,
+        envelope.kind,
+        buyerEmail,
+        JSON.stringify(payloadJson),
+        `${orderId}:${windowStart}:BUYER_CONFIRMATION_EMAIL:${buyerEmail}`,
+        envelopeDigest(envelope),
+      ]);
+
+      let updateSettled = false;
+      const update = prisma.order.update({
+        where: { id: orderId },
+        data: { disputeWindowEndsAt: new Date("2026-12-03T01:00:00.000Z") },
+      }).finally(() => { updateSettled = true; });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(updateSettled).toBe(false);
+      await client.query("COMMIT");
+      await expect(update).rejects.toThrow("Transfer-proof delivery order snapshot is immutable");
+      await expect(prisma.order.findUniqueOrThrow({ where: { id: orderId } }))
+        .resolves.toMatchObject({ disputeWindowEndsAt: input.deadline });
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it("makes a concurrent participant drift wait for and lose to version-2 staging", async () => {
+    const client = await pool.connect();
+    const input = params("02");
+    const windowStart = authoritativeWindowStart(input.deadline).toISOString();
+    const payloadJson = {
+      buyerFirstName: "Buyer",
+      ticketCount: 1,
+      deadline: input.deadline.toISOString(),
+      windowStart,
+    };
+    const envelope = {
+      orderId,
+      kind: "BUYER_CONFIRMATION_EMAIL",
+      recipient: buyerEmail,
+      payloadJson,
+    };
+    try {
+      await client.query("BEGIN");
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, 2, $7)
+      `, [
+        `${orderId}-concurrent-participant-snapshot`,
+        orderId,
+        envelope.kind,
+        buyerEmail,
+        JSON.stringify(payloadJson),
+        `${orderId}:${windowStart}:BUYER_CONFIRMATION_EMAIL:${buyerEmail}`,
+        envelopeDigest(envelope),
+      ]);
+
+      let updateSettled = false;
+      const update = prisma.user.update({
+        where: { id: buyerUserId },
+        data: { email: `concurrent-${buyerEmail}` },
+      }).finally(() => { updateSettled = true; });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(updateSettled).toBe(false);
+      await client.query("COMMIT");
+      await expect(update).rejects.toThrow(
+        "Active transfer-proof delivery participant email is immutable",
+      );
+      await expect(prisma.user.findUniqueOrThrow({ where: { id: buyerUserId } }))
+        .resolves.toMatchObject({ email: buyerEmail });
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
     }
   });
 
@@ -1453,7 +1634,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         ...params("19"), buyerEmail: null,
       }));
     } finally {
-      await prisma.user.update({ where: { id: buyerUserId }, data: { sellerId: buyerSellerId } });
+      await forceUpdateUser({ id: buyerUserId }, { seller: { connect: { id: buyerSellerId } } });
     }
 
     await expect(prisma.notification.count({ where: { userId: buyerUserId } })).resolves.toBe(1);
@@ -5215,6 +5396,183 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await client.query("ROLLBACK").catch(() => undefined);
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${notificationSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs reverse order-snapshot binding as a forward-only upgrade", async () => {
+    const snapshotSchema = `transfer_proof_order_snapshot_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    const racingClient = await pool.connect();
+    const migration = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260914123000_bind_transfer_proof_order_snapshot/migration.sql",
+    ), "utf8");
+    try {
+      await client.query(`CREATE SCHEMA "${snapshotSchema}"`);
+      await client.query(`SET search_path TO "${snapshotSchema}"`);
+      await client.query(`
+        CREATE TABLE "Order" (
+          id TEXT PRIMARY KEY,
+          "sellerId" TEXT NOT NULL,
+          "buyerSellerId" TEXT NOT NULL,
+          "transferProofType" TEXT,
+          "disputeWindowEndsAt" TIMESTAMP(3)
+        );
+        CREATE TABLE "User" (
+          id TEXT PRIMARY KEY,
+          email TEXT NOT NULL,
+          "firstName" TEXT,
+          "sellerId" TEXT UNIQUE
+        );
+        CREATE TABLE "OrderItem" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL
+        );
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          "payloadJson" JSONB NOT NULL,
+          "identityVersion" INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'PENDING'
+        );
+
+        INSERT INTO "Order" (
+          id, "sellerId", "buyerSellerId", "transferProofType", "disputeWindowEndsAt"
+        ) VALUES
+          ('snapshot-v2-order', 'snapshot-seller', 'snapshot-buyer', 'EMAIL',
+            TIMESTAMP '2026-12-03 00:00:00'),
+          ('snapshot-v1-order', 'snapshot-seller', 'snapshot-buyer', 'LEGACY',
+            TIMESTAMP '2020-01-01 00:00:00'),
+          ('snapshot-route-order', 'snapshot-seller', 'snapshot-buyer', NULL, NULL);
+        INSERT INTO "User" (id, email, "firstName", "sellerId") VALUES
+          ('snapshot-seller-user', 'seller@example.test', 'Seller', 'snapshot-seller'),
+          ('snapshot-buyer-user', 'buyer@example.test', 'Buyer', 'snapshot-buyer');
+        INSERT INTO "OrderItem" (id, "orderId") VALUES
+          ('snapshot-v2-item', 'snapshot-v2-order'),
+          ('snapshot-v1-item', 'snapshot-v1-order'),
+          ('snapshot-route-item', 'snapshot-route-order');
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "identityVersion"
+        ) VALUES
+          ('snapshot-v2-intent', 'snapshot-v2-order', 'ADMIN_TRANSFER_ACTIVITY_EMAIL',
+            'admin@truefantix.com',
+            '{"sellerEmail":"seller@example.test","buyerEmail":"buyer@example.test","ticketCount":1,"transferProofType":"EMAIL","deadline":"2026-12-03T00:00:00.000Z","completedAt":"2026-12-02T00:00:00.000Z"}'::jsonb,
+            2),
+          ('snapshot-v2-z-buyer', 'snapshot-v2-order', 'BUYER_CONFIRMATION_EMAIL',
+            'buyer@example.test',
+            '{"buyerFirstName":"Buyer","ticketCount":1,"deadline":"2026-12-03T00:00:00.000Z","windowStart":"2026-12-02T00:00:00.000Z"}'::jsonb,
+            2),
+          ('snapshot-v1-intent', 'snapshot-v1-order', 'ADMIN_TRANSFER_ACTIVITY_EMAIL',
+            'legacy-admin@example.test', '{}'::jsonb, 1);
+      `);
+
+      await client.query(`
+        UPDATE "Order"
+        SET "disputeWindowEndsAt" = TIMESTAMP '2026-12-03 01:00:00'
+        WHERE id = 'snapshot-v2-order'
+      `);
+      await expect(client.query(migration)).rejects.toThrow(
+        "Transfer-proof order snapshot preflight failed for row snapshot-v2-intent",
+      );
+      await client.query("ROLLBACK");
+      await expect(client.query(`
+        SELECT to_regprocedure('protect_transfer_proof_order_snapshot()') AS helper
+      `)).resolves.toMatchObject({ rows: [{ helper: null }] });
+
+      await client.query(`
+        UPDATE "Order"
+        SET "disputeWindowEndsAt" = TIMESTAMP '2026-12-03 00:00:00'
+        WHERE id = 'snapshot-v2-order'
+      `);
+
+      await racingClient.query(`SET search_path TO "${snapshotSchema}"`);
+      await racingClient.query("BEGIN");
+      await racingClient.query(`
+        UPDATE "User" SET email = 'racing-buyer@example.test'
+        WHERE id = 'snapshot-buyer-user'
+      `);
+      let participantMigrationSettled = false;
+      const participantMigration = client.query(migration)
+        .finally(() => { participantMigrationSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(participantMigrationSettled).toBe(false);
+      await racingClient.query("COMMIT");
+      await expect(participantMigration).rejects.toThrow(
+        "Transfer-proof order snapshot preflight failed for row snapshot-v2-intent",
+      );
+      await client.query("ROLLBACK");
+      await racingClient.query(`
+        UPDATE "User" SET email = 'buyer@example.test'
+        WHERE id = 'snapshot-buyer-user'
+      `);
+
+      // Reproduce the application ordering: own/update Order first, then stage
+      // the intent while the migration is waiting on its parent-table lock.
+      // The route transaction must be able to complete without becoming the
+      // other half of a table/row lock cycle.
+      await racingClient.query("BEGIN");
+      await racingClient.query(`
+        UPDATE "Order"
+        SET "transferProofType" = 'EMAIL',
+          "disputeWindowEndsAt" = TIMESTAMP '2026-12-04 00:00:00'
+        WHERE id = 'snapshot-route-order'
+      `);
+      let migrationSettled = false;
+      const racingMigration = client.query(migration)
+        .finally(() => { migrationSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(migrationSettled).toBe(false);
+      await racingClient.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "identityVersion", status
+        ) VALUES (
+          'snapshot-route-intent', 'snapshot-route-order', 'ADMIN_TRANSFER_ACTIVITY_EMAIL',
+          'admin@truefantix.com',
+          '{"sellerEmail":"seller@example.test","buyerEmail":"buyer@example.test","ticketCount":1,"transferProofType":"EMAIL","deadline":"2026-12-04T00:00:00.000Z","completedAt":"2026-12-03T00:00:00.000Z"}'::jsonb,
+          2, 'PENDING'
+        )
+      `);
+      await racingClient.query("COMMIT");
+      await expect(racingMigration).resolves.toBeDefined();
+
+      await expect(client.query(`
+        UPDATE "Order" SET "transferProofType" = 'OTHER'
+        WHERE id = 'snapshot-v2-order'
+      `)).rejects.toThrow("Transfer-proof delivery order snapshot is immutable");
+      await expect(client.query(`
+        INSERT INTO "OrderItem" (id, "orderId")
+        VALUES ('snapshot-v2-extra', 'snapshot-v2-order')
+      `)).rejects.toThrow("Transfer-proof delivery order item membership is immutable");
+      await expect(client.query(`
+        UPDATE "User" SET email = 'changed-seller@example.test'
+        WHERE id = 'snapshot-seller-user'
+      `)).rejects.toThrow("Active transfer-proof delivery participant email is immutable");
+      await expect(client.query(`
+        UPDATE "User" SET "firstName" = 'Changed Buyer'
+        WHERE id = 'snapshot-buyer-user'
+      `)).rejects.toThrow("Active transfer-proof delivery buyer name is immutable");
+
+      await expect(client.query(`
+        UPDATE "Order" SET "transferProofType" = 'LEGACY-CHANGED'
+        WHERE id = 'snapshot-v1-order'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(`
+        INSERT INTO "OrderItem" (id, "orderId")
+        VALUES ('snapshot-v1-extra', 'snapshot-v1-order')
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(`
+        SELECT "transferProofType" FROM "Order" WHERE id = 'snapshot-v1-order'
+      `)).resolves.toMatchObject({ rows: [{ transferProofType: "LEGACY-CHANGED" }] });
+    } finally {
+      await racingClient.query("ROLLBACK").catch(() => undefined);
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${snapshotSchema}" CASCADE`);
+      await racingClient.query("SET search_path TO public");
+      racingClient.release();
       client.release();
     }
   });

@@ -42,6 +42,7 @@ export async function POST(req: Request) {
           sellerId: true,
           status: true,
           buyerConfirmationStatus: true,
+          disputeWindowEndsAt: true,
           items: {
             select: {
               id: true,
@@ -84,6 +85,21 @@ export async function POST(req: Request) {
             message: "Order is not in a valid state for transfer proof submission.",
           },
           { status: 409 }
+        );
+      }
+
+      // An accepted proof owns one immutable delivery generation. Refuse a
+      // second submission before provider analysis so it cannot replace the
+      // proof snapshot, reset the buyer deadline, or stage stale/duplicate
+      // delivery intents.
+      if (order.disputeWindowEndsAt !== null) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "TRANSFER_PROOF_ALREADY_SUBMITTED",
+            message: "Transfer proof has already been submitted for this order.",
+          },
+          { status: 409 },
         );
       }
 

@@ -70,6 +70,9 @@ const order = {
   sellerId: "seller-1",
   status: "PAID",
   buyerConfirmationStatus: "PENDING",
+  transferProofType: null,
+  transferProofData: null,
+  disputeWindowEndsAt: null,
   items: [{
     id: "item-1",
     ticket: {
@@ -215,6 +218,26 @@ describe("seller transfer-proof staging-persona race boundary", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ error: "INVALID_STATE" });
     expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(mockedAnalyzeTransferProof).not.toHaveBeenCalled();
+    expect(mockedPrisma.order.update).not.toHaveBeenCalled();
+    expect(mockedStageDelivery).not.toHaveBeenCalled();
+    expect(mockedDrainDelivery).not.toHaveBeenCalled();
+  });
+
+  it("refuses a repeated accepted proof before provider work or mutation", async () => {
+    mockedPrisma.order.findUnique.mockResolvedValue({
+      ...order,
+      transferProofType: "EMAIL",
+      transferProofData: "stored-proof",
+      disputeWindowEndsAt: new Date("2026-12-02T00:00:00.000Z"),
+    });
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "TRANSFER_PROOF_ALREADY_SUBMITTED",
+    });
     expect(mockedAnalyzeTransferProof).not.toHaveBeenCalled();
     expect(mockedPrisma.order.update).not.toHaveBeenCalled();
     expect(mockedStageDelivery).not.toHaveBeenCalled();
