@@ -8,6 +8,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { sendEmail } from "@/lib/email";
 import {
+  TRANSFER_PROOF_REVIEW_STAGING_ORIGIN,
+  TRANSFER_PROOF_REVIEW_TEST_ORIGIN,
   drainTransferProofReviewDeliveryIntents,
   stageTransferProofReviewDeliveryIntent,
 } from "@/lib/orders/transferProofReviewDelivery";
@@ -37,7 +39,6 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     sellerName: string;
     sellerEmail: string;
     eventTitle: string;
-    appOrigin: string;
   }> = {}) {
     return {
       orderId,
@@ -46,7 +47,6 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
       sellerName: overrides.sellerName ?? "Seller Review",
       sellerEmail: overrides.sellerEmail ?? `review-delivery-${runId}@example.test`,
       eventTitle: overrides.eventTitle ?? "Ticket order",
-      appOrigin: overrides.appOrigin ?? "http://localhost:3000",
       requestedAt,
     };
   }
@@ -245,6 +245,159 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
       where: { requestId },
       data: { textBody: "rewritten" },
     })).rejects.toThrow("Transfer-proof review delivery envelope is immutable");
+  });
+
+  it("binds an internally canonical envelope to the current database environment", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const template = await prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    });
+    const payload = template.payloadJson as {
+      sellerName: string;
+      sellerEmail: string;
+      eventTitle: string;
+      appOrigin: string;
+    };
+    expect(payload.appOrigin).toBe(TRANSFER_PROOF_REVIEW_TEST_ORIGIN);
+
+    for (const unknownDatabase of [
+      "ordinary_live",
+      "primary_production_preview_copy",
+      "preview_archive_primary_prod",
+      "truefantix_primary_test_backup",
+    ]) {
+      await expect(prisma.$queryRaw`
+        SELECT canonical_transfer_proof_review_origin_for_database(${unknownDatabase})
+      `).rejects.toThrow("Unrecognized transfer-proof review database environment");
+    }
+
+    await forceDeleteIntents();
+    const crossEnvironmentPayload = {
+      ...payload,
+      appOrigin: TRANSFER_PROOF_REVIEW_STAGING_ORIGIN,
+    };
+    const textBody = template.textBody.replace(
+      TRANSFER_PROOF_REVIEW_TEST_ORIGIN,
+      TRANSFER_PROOF_REVIEW_STAGING_ORIGIN,
+    );
+    const htmlBody = template.htmlBody.replace(
+      TRANSFER_PROOF_REVIEW_TEST_ORIGIN,
+      TRANSFER_PROOF_REVIEW_STAGING_ORIGIN,
+    );
+    const [digest] = await prisma.$queryRaw<Array<{ value: string }>>`
+      SELECT transfer_proof_review_envelope_digest(
+        ${template.orderId}, ${template.requestId}, ${template.recipient},
+        ${template.requestedAt.toISOString()}, ${crossEnvironmentPayload.sellerName},
+        ${crossEnvironmentPayload.sellerEmail}, ${crossEnvironmentPayload.eventTitle},
+        ${crossEnvironmentPayload.appOrigin}, ${template.subject}, ${textBody}, ${htmlBody}
+      ) AS value
+    `;
+
+    await expect(prisma.$executeRaw`
+      INSERT INTO "TransferProofReviewDeliveryIntent" (
+        id, "orderId", "requestId", recipient, subject, "textBody", "htmlBody",
+        "requestedAt", "idempotencyKey", "payloadJson", "envelopeDigest", "availableAt"
+      ) VALUES (
+        ${`cross-environment-${requestId}`}, ${template.orderId}, ${template.requestId},
+        ${template.recipient}, ${template.subject}, ${textBody}, ${htmlBody},
+        ${template.requestedAt}, ${template.idempotencyKey},
+        CAST(${JSON.stringify(crossEnvironmentPayload)} AS JSONB), ${digest.value},
+        ${template.requestedAt}
+      )
+    `).rejects.toThrow("origin does not match the database environment");
+    await expect(prisma.transferProofReviewDeliveryIntent.count({ where: { orderId } }))
+      .resolves.toBe(0);
+  });
+
+  it("makes the environment-binding preflight observe a concurrent predecessor insert", async () => {
+    const predecessorSchema = `review_environment_predecessor_${process.pid}_${Date.now()}`;
+    const writer = await pool.connect();
+    const migrator = await pool.connect();
+    let writerCommitted = false;
+    try {
+      await writer.query(`CREATE SCHEMA "${predecessorSchema}"`);
+      await writer.query(`SET search_path TO "${predecessorSchema}"`);
+      await migrator.query(`SET search_path TO "${predecessorSchema}"`);
+      await writer.query(`
+        CREATE TABLE "TransferProofReviewDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "payloadJson" JSONB NOT NULL
+        )
+      `);
+      await writer.query("BEGIN");
+      await writer.query(`
+        INSERT INTO "TransferProofReviewDeliveryIntent" (id, "payloadJson")
+        VALUES ('concurrent-cross-environment', $1::JSONB)
+      `, [JSON.stringify({ appOrigin: TRANSFER_PROOF_REVIEW_STAGING_ORIGIN })]);
+
+      const migration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914150000_bind_transfer_proof_review_environment/migration.sql",
+      ), "utf8");
+      const migratorPid = await migrator.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+      const applying = migrator.query(migration);
+      let waitingOnLock = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const activity = await pool.query<{ wait_event_type: string | null }>(`
+          SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1
+        `, [migratorPid.rows[0].pid]);
+        if (activity.rows[0]?.wait_event_type === "Lock") {
+          waitingOnLock = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waitingOnLock).toBe(true);
+
+      await writer.query("COMMIT");
+      writerCommitted = true;
+      await expect(applying).rejects.toThrow(
+        "Transfer-proof review origin preflight found cross-environment history",
+      );
+      await migrator.query("ROLLBACK");
+      await expect(migrator.query(`
+        SELECT id FROM "TransferProofReviewDeliveryIntent"
+      `)).resolves.toMatchObject({ rows: [{ id: "concurrent-cross-environment" }] });
+    } finally {
+      if (!writerCommitted) await writer.query("ROLLBACK");
+      await migrator.query("ROLLBACK");
+      await writer.query("SET search_path TO public");
+      await migrator.query("SET search_path TO public");
+      await pool.query(`DROP SCHEMA "${predecessorSchema}" CASCADE`);
+      writer.release();
+      migrator.release();
+    }
+  });
+
+  it("refuses to install the environment binding on an unknown empty database", async () => {
+    const unknownDatabase = `review_unknown_${process.pid}_${Date.now()}`;
+    const unknownUrl = new URL(databaseUrl);
+    unknownUrl.pathname = `/${unknownDatabase}`;
+    let unknownPool: Pool | null = null;
+    try {
+      await pool.query(`CREATE DATABASE "${unknownDatabase}" TEMPLATE template0`);
+      unknownPool = new Pool({ connectionString: unknownUrl.toString(), max: 1 });
+      await unknownPool.query(`
+        CREATE TABLE "TransferProofReviewDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "payloadJson" JSONB NOT NULL
+        )
+      `);
+      const migration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914150000_bind_transfer_proof_review_environment/migration.sql",
+      ), "utf8");
+      await expect(unknownPool.query(migration)).rejects.toThrow(
+        "Unrecognized transfer-proof review database environment",
+      );
+      await unknownPool.query("ROLLBACK");
+      await expect(unknownPool.query(`
+        SELECT to_regprocedure('canonical_transfer_proof_review_origin()') AS function
+      `)).resolves.toMatchObject({ rows: [{ function: null }] });
+    } finally {
+      if (unknownPool) await unknownPool.end();
+      await pool.query(`DROP DATABASE IF EXISTS "${unknownDatabase}" WITH (FORCE)`);
+    }
   });
 
   it.each(["subject", "textBody", "htmlBody", "payloadJson"] as const)(
@@ -689,7 +842,6 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
         sellerName: "Seller Review",
         sellerEmail: `review-delivery-${runId}@example.test`,
         eventTitle: "Ticket order",
-        appOrigin: "http://localhost:3000",
         requestedAt: deliverableRequestedAt,
       }));
 

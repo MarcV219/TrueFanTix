@@ -7,6 +7,8 @@ const LEASE_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const RESEND_IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const TRANSFER_PROOF_REVIEW_TEST_ORIGIN = "http://localhost:3000";
+export const TRANSFER_PROOF_REVIEW_STAGING_ORIGIN = "https://truefantix-staging-preview.vercel.app";
 
 function configuredEmailProvider(): EmailProvider | null {
   if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
@@ -39,6 +41,35 @@ function reviewAppOrigin(value: string) {
     throw new Error("Invalid transfer-proof review application origin");
   }
   return url.origin;
+}
+
+export function canonicalTransferProofReviewOrigin(env: NodeJS.ProcessEnv = process.env) {
+  const configuredOrigins = [env.NEXT_PUBLIC_APP_URL, env.APP_ORIGIN]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map((value) => reviewAppOrigin(value.trim().replace(/\/$/, "")));
+  const isolatedPreview = env.PRIMARY_TICKETING_ENVIRONMENT_ID === "isolated-preview"
+    || env.PRIMARY_TICKETING_DEPLOYMENT_ID === "isolated-preview"
+    || env.VERCEL_ENV === "preview";
+  const isolatedTest = env.PRIMARY_TICKETING_ENVIRONMENT_ID === "isolated-test"
+    || env.PRIMARY_TICKETING_DEPLOYMENT_ID === "isolated-test";
+
+  if (isolatedPreview) {
+    if (
+      configuredOrigins.length === 0
+      || configuredOrigins.some((origin) => origin !== TRANSFER_PROOF_REVIEW_STAGING_ORIGIN)
+    ) {
+      throw new Error("Transfer-proof review staging origin does not match the isolated-preview identity");
+    }
+    return TRANSFER_PROOF_REVIEW_STAGING_ORIGIN;
+  }
+  if (isolatedTest || env.NODE_ENV === "test") {
+    if (configuredOrigins.some((origin) => origin !== TRANSFER_PROOF_REVIEW_TEST_ORIGIN)) {
+      throw new Error("Transfer-proof review test origin does not match the isolated-test identity");
+    }
+    return TRANSFER_PROOF_REVIEW_TEST_ORIGIN;
+  }
+
+  throw new Error("Transfer-proof review origin requires a recognized database environment");
 }
 
 function escapeHtml(value: string) {
@@ -105,7 +136,6 @@ type StageParams = {
   sellerName: string;
   sellerEmail: string;
   eventTitle: string;
-  appOrigin: string;
   requestedAt: Date;
 };
 
@@ -117,7 +147,7 @@ export async function stageTransferProofReviewDeliveryIntent(
     sellerName: params.sellerName,
     sellerEmail: params.sellerEmail,
     eventTitle: params.eventTitle,
-    appOrigin: reviewAppOrigin(params.appOrigin),
+    appOrigin: canonicalTransferProofReviewOrigin(),
   };
   const rendered = renderReviewEnvelope({
     orderId: params.orderId,

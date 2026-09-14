@@ -93,7 +93,6 @@ export async function POST(req: Request) {
 
       const requestedAt = orderLock.now;
       const requestId = crypto.randomUUID();
-      const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN || "https://truefantix-web.vercel.app").replace(/\/$/, "");
       const sellerName =
         [order.seller.user?.firstName, order.seller.user?.lastName].filter(Boolean).join(" ") ||
         order.seller.name ||
@@ -128,7 +127,6 @@ export async function POST(req: Request) {
           sellerName,
           sellerEmail,
           eventTitle,
-          appOrigin: appUrl,
           requestedAt,
         });
       }
