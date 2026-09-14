@@ -1514,6 +1514,58 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
   });
 
+  it("preserves the source schedule while acquiring pending and retry claims", async () => {
+    const [pendingId, failedId, validId] = await seedAdminBatch("claim-schedule", 3);
+    const pending = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: pendingId }, select: { availableAt: true },
+    });
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: pendingId },
+      data: {
+        status: "PROCESSING", provider: "RESEND", processingAt: pending.availableAt,
+        leaseExpiresAt: new Date(pending.availableAt.getTime() + 15 * 60 * 1000),
+        claimToken: "rewritten-pending-claim",
+        availableAt: new Date(pending.availableAt.getTime() + 60 * 60 * 1000),
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery claim must preserve its source schedule",
+    );
+
+    const retryAt = new Date("2026-12-01T09:00:00.000Z");
+    await forceLegacyIntentState(
+      { id: { in: [failedId, validId] } },
+      {
+        status: "FAILED", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T08:00:00.000Z"),
+        availableAt: retryAt, lastError: "synthetic retryable failure",
+      },
+    );
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: failedId },
+      data: {
+        status: "PROCESSING", processingAt: retryAt,
+        leaseExpiresAt: new Date("2026-12-01T09:15:00.000Z"),
+        claimToken: "rewritten-retry-claim", lastError: null,
+        availableAt: new Date("2026-12-01T10:00:00.000Z"),
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery claim must preserve its source schedule",
+    );
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validId },
+      data: {
+        status: "PROCESSING", processingAt: retryAt,
+        leaseExpiresAt: new Date("2026-12-01T09:15:00.000Z"),
+        claimToken: "valid-retry-schedule-claim", lastError: null,
+      },
+    })).resolves.toMatchObject({
+      status: "PROCESSING", availableAt: retryAt,
+    });
+  });
+
   it("preserves active processing evidence outside replay-safe Resend recovery", async () => {
     const [sendGridId, resendId, activeId] = await seedAdminBatch("processing-evidence", 3);
 
@@ -1716,6 +1768,57 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${reconciliationSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs claim-schedule binding as a forward-only upgrade", async () => {
+    const claimSchema = `transfer_proof_claim_schedule_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${claimSchema}"`);
+      await client.query(`SET search_path TO "${claimSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (id, status, "availableAt") VALUES
+          ('permissive-74', 'PENDING', TIMESTAMP '2026-12-01 07:00:00'),
+          ('strict-75', 'PENDING', TIMESTAMP '2026-12-01 08:00:00'),
+          ('valid-75', 'FAILED', TIMESTAMP '2026-12-01 09:00:00')
+      `);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING', "availableAt" = TIMESTAMP '2026-12-01 07:30:00'
+        WHERE id = 'permissive-74'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const claimScheduleMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914023000_bind_transfer_proof_claim_schedule/migration.sql",
+      ), "utf8");
+      await client.query(claimScheduleMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING', "availableAt" = TIMESTAMP '2026-12-01 08:30:00'
+        WHERE id = 'strict-75'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery claim must preserve its source schedule",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING'
+        WHERE id = 'valid-75'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${claimSchema}" CASCADE`);
       client.release();
     }
   });
