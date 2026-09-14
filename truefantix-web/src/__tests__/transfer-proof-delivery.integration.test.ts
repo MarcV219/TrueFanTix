@@ -1945,6 +1945,77 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
   });
 
+  it("requires a live replay-safe lease when provider dispatch begins", async () => {
+    const [staleId, expiredResendId, validId] = await seedAdminBatch("dispatch-window", 3);
+    const databaseNow = new NativeDate();
+    const staleProcessingAt = new NativeDate(databaseNow.getTime() - 20 * 60 * 1000);
+    const currentProcessingAt = new NativeDate(databaseNow.getTime());
+
+    await forceLegacyIntentState(
+      { id: staleId },
+      {
+        status: "PROCESSING", provider: "RESEND", attemptCount: 0,
+        processingAt: staleProcessingAt,
+        leaseExpiresAt: new NativeDate(staleProcessingAt.getTime() + 15 * 60 * 1000),
+        claimToken: "stale-dispatch-owner",
+      },
+    );
+    await forceLegacyIntentState(
+      { id: expiredResendId },
+      {
+        status: "PROCESSING", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new NativeDate(databaseNow.getTime() - 24 * 60 * 60 * 1000),
+        processingAt: currentProcessingAt,
+        leaseExpiresAt: new NativeDate(currentProcessingAt.getTime() + 15 * 60 * 1000),
+        claimToken: "expired-resend-dispatch-owner",
+      },
+    );
+    await forceLegacyIntentState(
+      { id: validId },
+      {
+        status: "PROCESSING", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new NativeDate(databaseNow.getTime() - 60 * 60 * 1000),
+        processingAt: currentProcessingAt,
+        leaseExpiresAt: new NativeDate(currentProcessingAt.getTime() + 15 * 60 * 1000),
+        claimToken: "valid-dispatch-window-owner",
+      },
+    );
+
+    await useDatabaseClaimClock();
+    try {
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: staleId },
+        data: {
+          attemptCount: { increment: 1 }, firstAttemptAt: staleProcessingAt,
+          dispatchStartedAt: staleProcessingAt,
+        },
+      })).rejects.toThrow(
+        "Transfer-proof delivery dispatch requires a live replay-safe worker lease",
+      );
+
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: expiredResendId },
+        data: {
+          attemptCount: { increment: 1 }, dispatchStartedAt: currentProcessingAt,
+        },
+      })).rejects.toThrow(
+        "Transfer-proof delivery dispatch requires a live replay-safe worker lease",
+      );
+
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: validId },
+        data: {
+          attemptCount: { increment: 1 }, dispatchStartedAt: currentProcessingAt,
+        },
+      })).resolves.toMatchObject({
+        status: "PROCESSING", attemptCount: 2,
+        dispatchStartedAt: currentProcessingAt,
+      });
+    } finally {
+      await useHistoricalClaimClock();
+    }
+  });
+
   it("preserves active processing evidence outside replay-safe Resend recovery", async () => {
     const [sendGridId, resendId, activeId] = await seedAdminBatch("processing-evidence", 3);
 
@@ -2536,6 +2607,105 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await client.query("SET TIME ZONE 'UTC'");
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${claimClockSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs database-clock-bound dispatch windows as a forward-only upgrade", async () => {
+    const dispatchWindowSchema = `transfer_proof_dispatch_window_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${dispatchWindowSchema}"`);
+      await client.query(`SET search_path TO "${dispatchWindowSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "availableAt" TIMESTAMP(3) NOT NULL,
+          "lastError" TEXT
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt", "processingAt",
+          "leaseExpiresAt", "claimToken", "availableAt"
+        ) VALUES
+          ('permissive-79', 'RESEND', 'PROCESSING', 0, NULL,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 minutes',
+            'permissive-stale-owner', statement_timestamp() AT TIME ZONE 'UTC'),
+          ('strict-80', 'RESEND', 'PROCESSING', 0, NULL,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 minutes',
+            'strict-stale-owner', statement_timestamp() AT TIME ZONE 'UTC'),
+          ('expired-80', 'RESEND', 'PROCESSING', 1,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '24 hours',
+            statement_timestamp() AT TIME ZONE 'UTC',
+            (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '15 minutes',
+            'expired-resend-owner', statement_timestamp() AT TIME ZONE 'UTC'),
+          ('valid-80', 'RESEND', 'PROCESSING', 1,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '1 hour',
+            statement_timestamp() AT TIME ZONE 'UTC',
+            (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '15 minutes',
+            'valid-current-owner', statement_timestamp() AT TIME ZONE 'UTC')
+      `);
+
+      for (const migration of [
+        "20260914030000_bind_transfer_proof_claim_lease",
+        "20260914033000_bind_transfer_proof_dispatch_clock",
+        "20260914043000_bind_transfer_proof_claim_clock",
+      ]) {
+        const migrationSql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(migrationSql);
+      }
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 1, "firstAttemptAt" = "processingAt",
+          "dispatchStartedAt" = "processingAt"
+        WHERE id = 'permissive-79'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const dispatchWindowMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914050000_bind_transfer_proof_dispatch_window/migration.sql",
+      ), "utf8");
+      await client.query(dispatchWindowMigration);
+      await client.query("SET TIME ZONE 'America/Los_Angeles'");
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 1, "firstAttemptAt" = "processingAt",
+          "dispatchStartedAt" = "processingAt"
+        WHERE id = 'strict-80'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery dispatch requires a live replay-safe worker lease",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 2, "dispatchStartedAt" = "processingAt"
+        WHERE id = 'expired-80'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery dispatch requires a live replay-safe worker lease",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "attemptCount" = 2, "dispatchStartedAt" = "processingAt"
+        WHERE id = 'valid-80'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET TIME ZONE 'UTC'");
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${dispatchWindowSchema}" CASCADE`);
       client.release();
     }
   });
