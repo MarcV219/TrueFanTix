@@ -47,6 +47,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   const runId = `${Date.now()}-${process.pid}`;
   const orderId = `transfer-proof-${runId}`;
   const sellerId = `transfer-proof-seller-${runId}`;
+  const sellerUserId = `transfer-proof-seller-user-${runId}`;
   const buyerSellerId = `transfer-proof-buyer-seller-${runId}`;
   const buyerEmail = `transfer-proof-${runId}@example.test`;
   let buyerUserId = "";
@@ -113,6 +114,24 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       { id: sellerId, name: "Transfer Proof Seller" },
       { id: buyerSellerId, name: "Transfer Proof Buyer" },
     ] });
+    await prisma.user.update({
+      where: { id: buyerUserId },
+      data: { sellerId: buyerSellerId },
+    });
+    await prisma.user.create({ data: {
+      id: sellerUserId,
+      email: "seller@example.test",
+      passwordHash: "synthetic",
+      firstName: "Seller",
+      lastName: "Boundary",
+      phone: `+3${String(Date.now()).slice(-10)}`,
+      streetAddress1: "3 Test Street",
+      city: "Toronto",
+      region: "ON",
+      postalCode: "A1A1A1",
+      country: "CA",
+      sellerId,
+    } });
     await ensureSyntheticOrder(orderId);
   });
 
@@ -142,7 +161,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.order.deleteMany({ where: { id: { startsWith: `batch-order-${runId}-` } } });
     await prisma.order.deleteMany({ where: { id: { startsWith: `${orderId}-` } } });
     await prisma.order.delete({ where: { id: orderId } });
-    await prisma.user.deleteMany({ where: { id: buyerUserId } });
+    await prisma.user.deleteMany({ where: { id: { in: [buyerUserId, sellerUserId] } } });
     await prisma.seller.deleteMany({ where: { id: { in: [sellerId, buyerSellerId] } } });
     await useDatabaseClaimClock();
     await useDatabaseOriginClock();
@@ -162,7 +181,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       sellerEmail: "seller@example.test",
       ticketCount: 1,
       transferProofType: "EMAIL",
-      deadline: new Date(now.getTime() + 86_400_000),
+      deadline: new Date("2026-12-03T00:00:00.000Z"),
       now,
     };
   }
@@ -170,16 +189,51 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   async function ensureSyntheticOrder(id: string) {
     await prisma.order.upsert({
       where: { id },
-      update: {},
+      update: {
+        status: "PAID",
+        buyerConfirmationStatus: "PENDING",
+        transferProofType: "EMAIL",
+        transferProofData: "synthetic-transfer-proof",
+        transferVerificationStatus: "PENDING",
+        disputeWindowEndsAt: new Date("2026-12-03T00:00:00.000Z"),
+      },
       create: {
         id,
         sellerId,
         buyerSellerId,
+        status: "PAID",
         amountCents: 100,
         adminFeeCents: 10,
         totalCents: 110,
+        transferProofType: "EMAIL",
+        transferProofData: "synthetic-transfer-proof",
+        transferVerificationStatus: "PENDING",
+        disputeWindowEndsAt: new Date("2026-12-03T00:00:00.000Z"),
       },
     });
+    const ticketId = `${id}-ticket`;
+    await prisma.ticket.upsert({
+      where: { id: ticketId },
+      update: {},
+      create: {
+        id: ticketId,
+        title: "Synthetic Transfer Ticket",
+        priceCents: 100,
+        image: "/default.jpg",
+        venue: "Synthetic Venue",
+        date: "2026-12-10T00:00:00.000Z",
+        sellerId,
+      },
+    });
+    const item = await prisma.orderItem.findFirst({
+      where: { orderId: id, ticketId },
+      select: { id: true },
+    });
+    if (!item) await prisma.orderItem.create({ data: {
+      orderId: id,
+      ticketId,
+      priceCents: 100,
+    } });
   }
 
   async function seedAdminBatch(scope: string, count = 4) {
@@ -191,14 +245,18 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
         orderId: batchOrderId,
         buyerUserId: null,
-        buyerEmail: null,
-        buyerFirstName: null,
+        buyerEmail,
+        buyerFirstName: "Buyer",
         sellerEmail: "seller@example.test",
         ticketCount: 1,
         transferProofType: "EMAIL",
         deadline: new Date("2026-12-03T00:00:00.000Z"),
         now: availableAt,
       }));
+      await forceDeleteDeliveryIntents({
+        orderId: batchOrderId,
+        kind: "BUYER_CONFIRMATION_EMAIL",
+      });
       const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
         where: { orderId: batchOrderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
       });
@@ -282,13 +340,233 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .resolves.toBe(2);
   });
 
+  it("binds new transfer-proof deliveries to the locked order state and buyer", async () => {
+    const otherSellerId = `${buyerSellerId}-other`;
+    const otherUserId = `${buyerUserId}-other`;
+    const otherOrderId = `${orderId}-other-buyer`;
+    const otherEmail = `other-${buyerEmail}`;
+    await prisma.seller.create({ data: { id: otherSellerId, name: "Other Transfer Buyer" } });
+    await prisma.user.create({ data: {
+      id: otherUserId,
+      email: otherEmail,
+      passwordHash: "synthetic",
+      firstName: "Other",
+      lastName: "Buyer",
+      phone: `+2${String(Date.now()).slice(-10)}`,
+      streetAddress1: "2 Test Street",
+      city: "Toronto",
+      region: "ON",
+      postalCode: "A1A1A1",
+      country: "CA",
+      sellerId: otherSellerId,
+    } });
+    await prisma.order.create({ data: {
+      id: otherOrderId,
+      sellerId,
+      buyerSellerId: otherSellerId,
+      status: "PAID",
+      amountCents: 100,
+      adminFeeCents: 10,
+      totalCents: 110,
+      transferProofType: "EMAIL",
+      transferProofData: "synthetic-transfer-proof",
+      transferVerificationStatus: "PENDING",
+      disputeWindowEndsAt: new Date("2026-12-03T00:00:00.000Z"),
+    } });
+
+    try {
+      await expect(prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
+        ...params("02"), buyerEmail: otherEmail,
+      }))).rejects.toThrow(
+        "Transfer-proof buyer delivery recipient must match the order buyer",
+      );
+      await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
+        .resolves.toBe(0);
+
+      await expect(prisma.transferProofDeliveryIntent.create({ data: {
+        orderId,
+        kind: "BUYER_CONFIRMATION_EMAIL",
+        recipient: buyerEmail,
+        payloadJson: {
+          buyerFirstName: "Buyer",
+          ticketCount: 2,
+          deadline: params("02").deadline.toISOString(),
+          windowStart: "2026-12-01T00:00:00.000Z",
+        },
+        idempotencyKey: `${orderId}-wrong-ticket-count`,
+        identityVersion: 2,
+        envelopeDigest: "0".repeat(64),
+      } })).rejects.toThrow(
+        "Transfer-proof delivery payload must match the order ticket count and deadline",
+      );
+      await expect(prisma.transferProofDeliveryIntent.create({ data: {
+        orderId,
+        kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
+        recipient: "admin@truefantix.com",
+        payloadJson: {
+          sellerEmail: "unrelated-seller@example.test",
+          buyerEmail,
+          ticketCount: 1,
+          transferProofType: "EMAIL",
+          deadline: params("02").deadline.toISOString(),
+          completedAt: "2026-12-01T02:00:00.000Z",
+        },
+        idempotencyKey: `${orderId}-wrong-admin-subject`,
+        identityVersion: 2,
+        envelopeDigest: "0".repeat(64),
+      } })).rejects.toThrow(
+        "Transfer-proof administrator delivery payload must match the order participants and proof",
+      );
+      await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
+        .resolves.toBe(0);
+
+      await prisma.order.update({ where: { id: orderId }, data: { status: "PENDING" } });
+      await expect(prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("02"))))
+        .rejects.toThrow("Transfer-proof delivery requires an eligible paid transfer-proof order");
+      await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
+        .resolves.toBe(0);
+    } finally {
+      await ensureSyntheticOrder(orderId);
+      await prisma.order.delete({ where: { id: otherOrderId } });
+      await prisma.user.delete({ where: { id: otherUserId } });
+      await prisma.seller.delete({ where: { id: otherSellerId } });
+    }
+  });
+
+  it("serializes buyer-recipient authorization with participant changes", async () => {
+    const client = await pool.connect();
+    const changedEmail = `changed-${buyerEmail}`;
+    try {
+      await client.query("BEGIN");
+      await client.query('UPDATE "User" SET email = $1 WHERE id = $2', [changedEmail, buyerUserId]);
+      let insertSettled = false;
+      const insert = prisma.$executeRaw`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES (
+          ${`${orderId}-concurrent-subject`}, ${orderId}, 'BUYER_CONFIRMATION_EMAIL',
+          ${buyerEmail}, ${JSON.stringify({
+            buyerFirstName: "Buyer",
+            ticketCount: 1,
+            deadline: params("02").deadline.toISOString(),
+            windowStart: "2026-12-01T00:00:00.000Z",
+          })}::jsonb, ${`${orderId}-concurrent-subject-key`},
+          2, ${"0".repeat(64)}
+        )
+      `.finally(() => { insertSettled = true; });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(insertSettled).toBe(false);
+      await client.query("COMMIT");
+      await expect(insert).rejects.toThrow(
+        "Transfer-proof buyer delivery recipient must match the order buyer",
+      );
+      await expect(prisma.transferProofDeliveryIntent.count({
+        where: { id: `${orderId}-concurrent-subject` },
+      })).resolves.toBe(0);
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+      await prisma.user.update({ where: { id: buyerUserId }, data: { email: buyerEmail } });
+    }
+  });
+
+  it("serializes ticket-count authorization with concurrent item inserts and deletes", async () => {
+    const client = await pool.connect();
+    const secondTicketId = `${orderId}-concurrent-second-ticket`;
+    const secondItemId = `${orderId}-concurrent-second-item`;
+    const payloadJson = JSON.stringify({
+      buyerFirstName: "Buyer",
+      ticketCount: 1,
+      deadline: params("03").deadline.toISOString(),
+      windowStart: "2026-12-01T00:00:00.000Z",
+    });
+    let transactionOpen = false;
+    try {
+      await prisma.ticket.create({ data: {
+        id: secondTicketId,
+        title: "Concurrent Transfer Ticket",
+        priceCents: 100,
+        image: "/default.jpg",
+        venue: "Synthetic Venue",
+        date: "2026-12-10T00:00:00.000Z",
+        sellerId,
+      } });
+      await client.query("BEGIN");
+      transactionOpen = true;
+      await client.query(`
+        INSERT INTO "OrderItem" (id, "orderId", "ticketId", "priceCents")
+        VALUES ($1, $2, $3, 100)
+      `, [secondItemId, orderId, secondTicketId]);
+      let insertCheckSettled = false;
+      const insertCheck = prisma.$executeRaw`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES (
+          ${`${orderId}-item-insert-race`}, ${orderId}, 'BUYER_CONFIRMATION_EMAIL',
+          ${buyerEmail}, ${payloadJson}::jsonb, ${`${orderId}-item-insert-race-key`},
+          2, ${"0".repeat(64)}
+        )
+      `.finally(() => { insertCheckSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(insertCheckSettled).toBe(false);
+      await client.query("COMMIT");
+      transactionOpen = false;
+      await expect(insertCheck).rejects.toThrow(
+        "Transfer-proof delivery payload must match the order ticket count and deadline",
+      );
+      await prisma.orderItem.delete({ where: { id: secondItemId } });
+      await prisma.ticket.delete({ where: { id: secondTicketId } });
+
+      const existingItem = await prisma.orderItem.findFirstOrThrow({
+        where: { orderId },
+        select: { id: true },
+      });
+      await client.query("BEGIN");
+      transactionOpen = true;
+      await client.query('DELETE FROM "OrderItem" WHERE id = $1', [existingItem.id]);
+      let deleteCheckSettled = false;
+      const deleteCheck = prisma.$executeRaw`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES (
+          ${`${orderId}-item-delete-race`}, ${orderId}, 'BUYER_CONFIRMATION_EMAIL',
+          ${buyerEmail}, ${payloadJson}::jsonb, ${`${orderId}-item-delete-race-key`},
+          2, ${"0".repeat(64)}
+        )
+      `.finally(() => { deleteCheckSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(deleteCheckSettled).toBe(false);
+      await client.query("COMMIT");
+      transactionOpen = false;
+      await expect(deleteCheck).rejects.toThrow(
+        "Transfer-proof delivery requires at least one order ticket",
+      );
+      await expect(prisma.transferProofDeliveryIntent.count({
+        where: { id: { in: [
+          `${orderId}-item-insert-race`,
+          `${orderId}-item-delete-race`,
+        ] } },
+      })).resolves.toBe(0);
+    } finally {
+      if (transactionOpen) await client.query("ROLLBACK");
+      client.release();
+      await prisma.orderItem.deleteMany({ where: { id: secondItemId } });
+      await prisma.ticket.deleteMany({ where: { id: secondTicketId } });
+      await ensureSyntheticOrder(orderId);
+    }
+  });
+
   it("rejects canonical delivery history for a nonexistent order", async () => {
     const nonexistentOrderId = `${orderId}-missing-parent`;
     await expect(prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
       ...params("01"),
       orderId: nonexistentOrderId,
       buyerUserId: null,
-    }))).rejects.toThrow(/foreign key constraint|violates foreign key/i);
+    }))).rejects.toThrow("Transfer-proof delivery requires an eligible paid transfer-proof order");
 
     await expect(prisma.transferProofDeliveryIntent.count({
       where: { orderId: nonexistentOrderId },
@@ -536,17 +814,17 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     const competingPromise = new Promise<void>((resolve) => { competingCommitted = resolve; });
 
     const loser = prisma.$transaction(async (tx) => {
-      await tx.user.findUniqueOrThrow({ where: { id: buyerUserId } });
+      await tx.seller.findUniqueOrThrow({ where: { id: sellerId } });
       await stageTransferProofDeliveryIntent(tx, params("07"));
       staged();
       await competingPromise;
-      await tx.user.update({ where: { id: buyerUserId }, data: { lastName: "Losing transaction" } });
+      await tx.seller.update({ where: { id: sellerId }, data: { name: "Losing transaction" } });
     }, { isolationLevel: "Serializable" });
 
     await stagedPromise;
     await prisma.$transaction(async (tx) => {
-      await tx.user.findUniqueOrThrow({ where: { id: buyerUserId } });
-      await tx.user.update({ where: { id: buyerUserId }, data: { lastName: "Winning transaction" } });
+      await tx.seller.findUniqueOrThrow({ where: { id: sellerId } });
+      await tx.seller.update({ where: { id: sellerId }, data: { name: "Winning transaction" } });
     }, { isolationLevel: "Serializable" });
     competingCommitted();
 
@@ -812,7 +1090,14 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   });
 
   it("stages the buyer notification and Admin intent when buyer email is absent", async () => {
-    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, { ...params("19"), buyerEmail: null }));
+    await prisma.user.update({ where: { id: buyerUserId }, data: { sellerId: null } });
+    try {
+      await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
+        ...params("19"), buyerEmail: null,
+      }));
+    } finally {
+      await prisma.user.update({ where: { id: buyerUserId }, data: { sellerId: buyerSellerId } });
+    }
 
     await expect(prisma.notification.count({ where: { userId: buyerUserId } })).resolves.toBe(1);
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" } })).resolves.toBe(0);
@@ -1117,8 +1402,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         kind: "BUYER_CONFIRMATION_EMAIL",
         recipient: buyerEmail,
         payloadJson: {
-          buyerFirstName: "Buyer", ticketCount: 0,
-          deadline: "2026-12-02T20:00:00.000Z", windowStart: "2026-12-01T18:00:00.000Z",
+          buyerFirstName: "Buyer", ticketCount: 1,
+          deadline: params("20").deadline.toISOString(), windowStart: "2026-12-01T18:30:00.000Z",
         },
         idempotencyKey: "synthetic-malformed-buyer-envelope",
         identityVersion: 2,
@@ -1128,11 +1413,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       {
         orderId,
         kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
-        recipient: "unexpected-admin-recipient@example.test",
+        recipient: "admin@truefantix.com",
         payloadJson: {
           sellerEmail: "seller@example.test", buyerEmail,
           ticketCount: 1, transferProofType: "EMAIL",
-          deadline: "2026-12-02T20:00:00.000Z", completedAt: "2026-12-01T20:00:00.000Z",
+          deadline: params("20").deadline.toISOString(), completedAt: "not-a-date",
         },
         idempotencyKey: "synthetic-malformed-admin-envelope",
         identityVersion: 2,
@@ -1155,13 +1440,13 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         kind: "BUYER_CONFIRMATION_EMAIL",
         status: "RECONCILIATION_REQUIRED",
         attemptCount: 0,
-        lastError: "Pre-dispatch delivery failure: Invalid transfer-proof delivery payload field: ticketCount",
+        lastError: "Pre-dispatch delivery failure: Transfer-proof buyer delivery window is not normalized",
       },
       {
         kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
         status: "RECONCILIATION_REQUIRED",
         attemptCount: 0,
-        lastError: "Pre-dispatch delivery failure: Transfer-proof administrator recipient does not match the configured activity mailbox",
+        lastError: "Pre-dispatch delivery failure: Invalid transfer-proof delivery payload field: completedAt",
       },
     ]));
     await expect(prisma.reminderDelivery.count({ where: { orderId } })).resolves.toBe(0);
@@ -3899,6 +4184,144 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     }
   });
 
+  it("installs order-subject authorization without rewriting legacy delivery history", async () => {
+    const subjectSchema = `transfer_proof_order_subject_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${subjectSchema}"`);
+      await client.query(`SET search_path TO "${subjectSchema}"`);
+      await client.query(`
+        CREATE TABLE "Order" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "buyerConfirmationStatus" TEXT,
+          "transferProofType" TEXT,
+          "transferProofData" TEXT,
+          "transferVerificationStatus" TEXT,
+          "disputeWindowEndsAt" TIMESTAMP(3),
+          "sellerId" TEXT NOT NULL,
+          "buyerSellerId" TEXT NOT NULL
+        );
+        CREATE TABLE "User" (
+          id TEXT PRIMARY KEY,
+          email TEXT NOT NULL,
+          "firstName" TEXT NOT NULL,
+          "sellerId" TEXT UNIQUE
+        );
+        CREATE TABLE "OrderItem" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL
+        );
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          "payloadJson" JSONB NOT NULL
+        );
+        INSERT INTO "Order" (
+          id, status, "buyerConfirmationStatus", "transferProofType",
+          "transferProofData", "transferVerificationStatus",
+          "disputeWindowEndsAt", "sellerId", "buyerSellerId"
+        ) VALUES
+          ('eligible-order-87', 'PAID', 'PENDING', 'EMAIL', 'legacy-proof',
+            'PENDING', TIMESTAMP '2026-12-03 00:00:00', 'seller-87', 'buyer-seller-87'),
+          ('ineligible-order-87', 'PENDING', 'PENDING', 'EMAIL', 'legacy-proof',
+            'PENDING', TIMESTAMP '2026-12-03 00:00:00', 'seller-87', 'buyer-seller-87');
+        INSERT INTO "User" (id, email, "firstName", "sellerId") VALUES
+          ('seller-87', 'seller@example.test', 'Seller', 'seller-87'),
+          ('buyer-87', 'buyer@example.test', 'Buyer', 'buyer-seller-87');
+        INSERT INTO "OrderItem" (id, "orderId") VALUES
+          ('eligible-ticket-87', 'eligible-order-87'),
+          ('ineligible-ticket-87', 'ineligible-order-87');
+      `);
+
+      const orderBindingMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914083000_bind_transfer_proof_delivery_order/migration.sql",
+      ), "utf8");
+      await client.query(orderBindingMigration);
+
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson"
+        )
+        VALUES (
+          'permissive-wrong-buyer-87', 'eligible-order-87',
+          'BUYER_CONFIRMATION_EMAIL', 'unrelated@example.test',
+          '{"buyerFirstName":"Buyer","ticketCount":1,"deadline":"2026-12-03T00:00:00.000Z"}'::jsonb
+        )
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const subjectMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914090000_bind_transfer_proof_delivery_subject/migration.sql",
+      ), "utf8");
+      await client.query(subjectMigration);
+
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson"
+        )
+        VALUES (
+          'strict-wrong-buyer-88', 'eligible-order-87',
+          'BUYER_CONFIRMATION_EMAIL', 'unrelated@example.test',
+          '{"buyerFirstName":"Buyer","ticketCount":1,"deadline":"2026-12-03T00:00:00.000Z"}'::jsonb
+        )
+      `)).rejects.toThrow(
+        "Transfer-proof buyer delivery recipient must match the order buyer",
+      );
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson"
+        ) VALUES (
+          'strict-wrong-payload-88', 'eligible-order-87',
+          'BUYER_CONFIRMATION_EMAIL', 'buyer@example.test',
+          '{"buyerFirstName":"Buyer","ticketCount":2,"deadline":"2026-12-03T00:00:00.000Z"}'::jsonb
+        )
+      `)).rejects.toThrow(
+        "Transfer-proof delivery payload must match the order ticket count and deadline",
+      );
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson"
+        )
+        VALUES (
+          'strict-ineligible-order-88', 'ineligible-order-87',
+          'ADMIN_TRANSFER_ACTIVITY_EMAIL', 'admin@truefantix.com',
+          '{"sellerEmail":"seller@example.test","buyerEmail":"buyer@example.test","ticketCount":1,"transferProofType":"EMAIL","deadline":"2026-12-03T00:00:00.000Z"}'::jsonb
+        )
+      `)).rejects.toThrow(
+        "Transfer-proof delivery requires an eligible paid transfer-proof order",
+      );
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson"
+        )
+        VALUES
+          ('valid-buyer-88', 'eligible-order-87',
+            'BUYER_CONFIRMATION_EMAIL', 'buyer@example.test',
+            '{"buyerFirstName":"Buyer","ticketCount":1,"deadline":"2026-12-03T00:00:00.000Z"}'::jsonb),
+          ('valid-admin-88', 'eligible-order-87',
+            'ADMIN_TRANSFER_ACTIVITY_EMAIL', 'admin@truefantix.com',
+            '{"sellerEmail":"seller@example.test","buyerEmail":"buyer@example.test","ticketCount":1,"transferProofType":"EMAIL","deadline":"2026-12-03T00:00:00.000Z"}'::jsonb)
+      `)).resolves.toMatchObject({ rowCount: 2 });
+      await expect(client.query(`
+        SELECT id, recipient
+        FROM "TransferProofDeliveryIntent"
+        ORDER BY id
+      `)).resolves.toMatchObject({ rows: [
+        { id: "permissive-wrong-buyer-87", recipient: "unrelated@example.test" },
+        { id: "valid-admin-88", recipient: "admin@truefantix.com" },
+        { id: "valid-buyer-88", recipient: "buyer@example.test" },
+      ] });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${subjectSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("installs processing-evidence binding as a forward-only upgrade", async () => {
     const processingSchema = `transfer_proof_processing_evidence_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
@@ -4656,7 +5079,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       payloadJson: {
         sellerEmail: "seller@example.test", buyerEmail,
         ticketCount: 1, transferProofType: "EMAIL",
-        deadline: "2026-12-02T22:00:00.000Z",
+        deadline: params("22").deadline.toISOString(),
         completedAt: "2026-12-01T22:00:00.000Z",
       },
       idempotencyKey: `${orderId}:2026-12-01T18:00:00.000Z:ADMIN_TRANSFER_ACTIVITY_EMAIL:admin@truefantix.com`,
