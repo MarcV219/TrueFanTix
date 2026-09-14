@@ -2065,6 +2065,96 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     }
   });
 
+  it("requires the dispatching worker lease to remain live when recording a provider result", async () => {
+    const [deliveredId, failedId, recoveryId, reconciliationId, validId] = await seedAdminBatch(
+      "result-lease", 5,
+    );
+    const databaseNow = new NativeDate();
+    const expiredDispatch = new NativeDate(databaseNow.getTime() - 20 * 60 * 1000);
+    const liveDispatch = new NativeDate(databaseNow.getTime());
+
+    for (const [id, dispatch, token] of [
+      [deliveredId, expiredDispatch, "expired-delivery-owner"],
+      [failedId, expiredDispatch, "expired-failure-owner"],
+      [recoveryId, expiredDispatch, "expired-recovery-owner"],
+      [reconciliationId, expiredDispatch, "expired-reconciliation-owner"],
+      [validId, liveDispatch, "live-delivery-owner"],
+    ] as const) {
+      await forceLegacyIntentState(
+        { id },
+        {
+          status: "PROCESSING", provider: "RESEND", attemptCount: 1,
+          firstAttemptAt: dispatch, processingAt: dispatch,
+          leaseExpiresAt: new NativeDate(dispatch.getTime() + 15 * 60 * 1000),
+          claimToken: token, dispatchStartedAt: dispatch, availableAt: dispatch,
+        },
+      );
+    }
+
+    await useDatabaseClaimClock();
+    try {
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: deliveredId },
+        data: {
+          status: "DELIVERED", deliveredAt: expiredDispatch,
+          processingAt: null, leaseExpiresAt: null, claimToken: null,
+          dispatchStartedAt: null,
+        },
+      })).rejects.toThrow(
+        "Transfer-proof delivery result requires its live worker lease",
+      );
+
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: failedId },
+        data: {
+          status: "FAILED", processingAt: null, leaseExpiresAt: null,
+          claimToken: null, dispatchStartedAt: null,
+          lastError: "synthetic provider rejection",
+          availableAt: new NativeDate(expiredDispatch.getTime() + 5 * 60 * 1000),
+        },
+      })).rejects.toThrow(
+        "Transfer-proof delivery result requires its live worker lease",
+      );
+
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: recoveryId },
+        data: {
+          leaseExpiresAt: expiredDispatch,
+          lastError: "accepted delivery persistence lost ownership",
+          availableAt: new NativeDate(expiredDispatch.getTime() + 5 * 60 * 1000),
+        },
+      })).rejects.toThrow(
+        "Transfer-proof delivery result requires its live worker lease",
+      );
+
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: reconciliationId },
+        data: {
+          status: "RECONCILIATION_REQUIRED", processingAt: null,
+          leaseExpiresAt: null, claimToken: null, dispatchStartedAt: null,
+          lastError: "Ambiguous stale provider dispatch requires reconciliation",
+        },
+      })).resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED", provider: "RESEND",
+        attemptCount: 1, firstAttemptAt: expiredDispatch,
+        deliveredAt: null,
+      });
+
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: validId },
+        data: {
+          status: "DELIVERED", deliveredAt: liveDispatch,
+          processingAt: null, leaseExpiresAt: null, claimToken: null,
+          dispatchStartedAt: null,
+        },
+      })).resolves.toMatchObject({
+        status: "DELIVERED", deliveredAt: liveDispatch,
+      });
+    } finally {
+      await useHistoricalClaimClock();
+    }
+  });
+
   it("preserves active processing evidence outside replay-safe Resend recovery", async () => {
     const [sendGridId, resendId, activeId] = await seedAdminBatch("processing-evidence", 3);
 
@@ -2811,6 +2901,144 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${deliveryClockSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs live result leases as a forward-only upgrade", async () => {
+    const resultLeaseSchema = `transfer_proof_result_lease_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${resultLeaseSchema}"`);
+      await client.query(`SET search_path TO "${resultLeaseSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          provider TEXT,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "firstAttemptAt" TIMESTAMP(3),
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "availableAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, provider, status, "attemptCount", "firstAttemptAt",
+          "processingAt", "leaseExpiresAt", "claimToken",
+          "dispatchStartedAt", "availableAt"
+        ) VALUES
+          ('permissive-81', 'RESEND', 'PROCESSING', 1,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 minutes',
+            'permissive-owner',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            statement_timestamp() AT TIME ZONE 'UTC'),
+          ('strict-delivery-82', 'RESEND', 'PROCESSING', 1,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 minutes',
+            'strict-delivery-owner',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            statement_timestamp() AT TIME ZONE 'UTC'),
+          ('strict-failure-82', 'RESEND', 'PROCESSING', 1,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 minutes',
+            'strict-failure-owner',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            statement_timestamp() AT TIME ZONE 'UTC'),
+          ('strict-recovery-82', 'RESEND', 'PROCESSING', 1,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 minutes',
+            'strict-recovery-owner',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            statement_timestamp() AT TIME ZONE 'UTC'),
+          ('reconciliation-82', 'RESEND', 'PROCESSING', 1,
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 minutes',
+            'reconciliation-owner',
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '20 minutes',
+            statement_timestamp() AT TIME ZONE 'UTC'),
+          ('valid-82', 'RESEND', 'PROCESSING', 1,
+            statement_timestamp() AT TIME ZONE 'UTC',
+            statement_timestamp() AT TIME ZONE 'UTC',
+            (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '15 minutes',
+            'valid-owner', statement_timestamp() AT TIME ZONE 'UTC',
+            statement_timestamp() AT TIME ZONE 'UTC')
+      `);
+
+      for (const migration of [
+        "20260914043000_bind_transfer_proof_claim_clock",
+        "20260914050000_bind_transfer_proof_dispatch_window",
+        "20260914053000_bind_transfer_proof_delivery_clock",
+      ]) {
+        const migrationSql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(migrationSql);
+      }
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED', "deliveredAt" = "dispatchStartedAt"
+        WHERE id = 'permissive-81'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const resultLeaseMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914060000_bind_transfer_proof_result_lease/migration.sql",
+      ), "utf8");
+      await client.query(resultLeaseMigration);
+      await client.query("SET TIME ZONE 'America/Los_Angeles'");
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED', "deliveredAt" = "dispatchStartedAt"
+        WHERE id = 'strict-delivery-82'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery result requires its live worker lease",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'FAILED', "lastError" = 'synthetic provider rejection'
+        WHERE id = 'strict-failure-82'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery result requires its live worker lease",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "leaseExpiresAt" = "processingAt",
+          "lastError" = 'accepted delivery persistence recovery'
+        WHERE id = 'strict-recovery-82'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery result requires its live worker lease",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'RECONCILIATION_REQUIRED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "dispatchStartedAt" = NULL,
+          "lastError" = 'Ambiguous stale provider dispatch requires reconciliation'
+        WHERE id = 'reconciliation-82'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED', "deliveredAt" = "dispatchStartedAt"
+        WHERE id = 'valid-82'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET TIME ZONE 'UTC'");
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${resultLeaseSchema}" CASCADE`);
       client.release();
     }
   });
