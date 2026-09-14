@@ -4925,6 +4925,194 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     }
   });
 
+  it("atomically revalidates delivery identity missed by the migration-89 preflight", async () => {
+    const identitySchema = `transfer_proof_identity_revalidation_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    const racingClient = await pool.connect();
+    const payloadJson = {
+      buyerFirstName: "Buyer",
+      ticketCount: 1,
+      deadline: "2026-12-03T00:00:00.000Z",
+      windowStart: "2026-12-02T00:00:00.000Z",
+    };
+    const envelope = {
+      orderId: "eligible-order-90",
+      kind: "BUYER_CONFIRMATION_EMAIL",
+      recipient: "buyer@example.test",
+      payloadJson,
+    };
+    const idempotencyKey = "eligible-order-90:2026-12-02T00:00:00.000Z:BUYER_CONFIRMATION_EMAIL:buyer@example.test";
+    const subjectMigration = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260914090000_bind_transfer_proof_delivery_subject/migration.sql",
+    ), "utf8");
+    const identityMigration = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260914093000_bind_transfer_proof_delivery_identity/migration.sql",
+    ), "utf8");
+    const clockMigration = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260914100000_bind_transfer_proof_delivery_clocks/migration.sql",
+    ), "utf8");
+    const revalidationMigration = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260914110000_revalidate_transfer_proof_delivery_identity/migration.sql",
+    ), "utf8");
+    try {
+      await client.query(`CREATE SCHEMA "${identitySchema}"`);
+      await client.query(`SET search_path TO "${identitySchema}"`);
+      await client.query(`
+        CREATE TABLE "Order" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "buyerConfirmationStatus" TEXT,
+          "transferProofType" TEXT,
+          "transferProofData" TEXT,
+          "transferVerificationStatus" TEXT,
+          "disputeWindowEndsAt" TIMESTAMP(3),
+          "sellerId" TEXT NOT NULL,
+          "buyerSellerId" TEXT NOT NULL
+        );
+        CREATE TABLE "User" (
+          id TEXT PRIMARY KEY,
+          email TEXT NOT NULL,
+          "firstName" TEXT,
+          "sellerId" TEXT UNIQUE
+        );
+        CREATE TABLE "OrderItem" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL
+        );
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          "payloadJson" JSONB NOT NULL,
+          "idempotencyKey" TEXT NOT NULL UNIQUE,
+          "identityVersion" INTEGER NOT NULL,
+          "envelopeDigest" TEXT
+        );
+        INSERT INTO "Order" (
+          id, status, "buyerConfirmationStatus", "transferProofType",
+          "transferProofData", "transferVerificationStatus",
+          "disputeWindowEndsAt", "sellerId", "buyerSellerId"
+        ) VALUES (
+          'eligible-order-90', 'PAID', 'PENDING', 'EMAIL', 'legacy-proof',
+          'PENDING', TIMESTAMP '2026-12-03 00:00:00', 'seller-90', 'buyer-seller-90'
+        );
+        INSERT INTO "User" (id, email, "firstName", "sellerId") VALUES
+          ('seller-user-90', 'seller@example.test', 'Seller', 'seller-90'),
+          ('buyer-90', 'buyer@example.test', 'Buyer', 'buyer-seller-90');
+        INSERT INTO "OrderItem" (id, "orderId") VALUES
+          ('eligible-ticket-90', 'eligible-order-90');
+      `);
+      await client.query(subjectMigration);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES (
+          'legacy-v1-identity-90', 'eligible-order-90',
+          'BUYER_CONFIRMATION_EMAIL', 'buyer@example.test',
+          '{"buyerFirstName":"Buyer","ticketCount":1,"deadline":"2026-12-03T00:00:00.000Z","windowStart":"2020-01-01T00:00:00.000Z"}'::jsonb,
+          'legacy-provider-key-90', 1, NULL
+        )
+      `);
+
+      await racingClient.query(`SET search_path TO "${identitySchema}"`);
+      await racingClient.query("BEGIN");
+      await racingClient.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, 2, $7)
+      `, [
+        "missed-poisoned-identity-89",
+        envelope.orderId,
+        envelope.kind,
+        envelope.recipient,
+        JSON.stringify(payloadJson),
+        idempotencyKey,
+        "0".repeat(64),
+      ]);
+      let identityMigrationSettled = false;
+      const racingIdentityMigration = client.query(identityMigration)
+        .finally(() => { identityMigrationSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Migration 89 has no early table lock: it can finish from a snapshot
+      // that does not include this already-running permissive INSERT.
+      expect(identityMigrationSettled).toBe(true);
+      await expect(racingIdentityMigration).resolves.toBeDefined();
+      await racingClient.query("COMMIT");
+
+      await expect(client.query(clockMigration)).resolves.toBeDefined();
+      await expect(client.query(revalidationMigration)).rejects.toThrow(
+        "Transfer-proof delivery identity revalidation failed for row missed-poisoned-identity-89",
+      );
+      await client.query("ROLLBACK");
+      await expect(client.query(`
+        SELECT "envelopeDigest"
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'missed-poisoned-identity-89'
+      `)).resolves.toMatchObject({ rows: [{ envelopeDigest: "0".repeat(64) }] });
+
+      await client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "envelopeDigest" = $1
+        WHERE id = 'missed-poisoned-identity-89'
+      `, [envelopeDigest(envelope)]);
+
+      await racingClient.query("BEGIN");
+      await racingClient.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "envelopeDigest" = $1
+        WHERE id = 'missed-poisoned-identity-89'
+      `, ["1".repeat(64)]);
+      let revalidationSettled = false;
+      const racingRevalidation = client.query(revalidationMigration)
+        .finally(() => { revalidationSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(revalidationSettled).toBe(false);
+      await racingClient.query("COMMIT");
+      await expect(racingRevalidation).rejects.toThrow(
+        "Transfer-proof delivery identity revalidation failed for row missed-poisoned-identity-89",
+      );
+      await client.query("ROLLBACK");
+
+      await client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "envelopeDigest" = $1
+        WHERE id = 'missed-poisoned-identity-89'
+      `, [envelopeDigest(envelope)]);
+      await expect(client.query(revalidationMigration)).resolves.toBeDefined();
+      await expect(client.query(`
+        SELECT id, "idempotencyKey", "envelopeDigest"
+        FROM "TransferProofDeliveryIntent"
+        ORDER BY id
+      `)).resolves.toMatchObject({ rows: [
+        {
+          id: "legacy-v1-identity-90",
+          idempotencyKey: "legacy-provider-key-90",
+          envelopeDigest: null,
+        },
+        {
+          id: "missed-poisoned-identity-89",
+          idempotencyKey,
+          envelopeDigest: envelopeDigest(envelope),
+        },
+      ] });
+    } finally {
+      await racingClient.query("ROLLBACK").catch(() => undefined);
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${identitySchema}" CASCADE`);
+      await racingClient.query("SET search_path TO public");
+      racingClient.release();
+      client.release();
+    }
+  });
+
   it("installs processing-evidence binding as a forward-only upgrade", async () => {
     const processingSchema = `transfer_proof_processing_evidence_${process.pid}_${Date.now()}`;
     const client = await pool.connect();
