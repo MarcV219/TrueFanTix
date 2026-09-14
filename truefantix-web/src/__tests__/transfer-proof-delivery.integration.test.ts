@@ -1398,21 +1398,21 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).resolves.toMatchObject({ status: "DELIVERED", attemptCount: 2 });
   });
 
-  it("requires an owned dispatch boundary before recording a retryable failure", async () => {
-    const [undispatchedId, earlyRetryId, validId] = await seedAdminBatch(
-      "failure-dispatch-boundary", 3,
+  it("requires an owned dispatch boundary and deterministic schedule before retry", async () => {
+    const [undispatchedId, earlyRetryId, lateRetryId, validId] = await seedAdminBatch(
+      "failure-dispatch-boundary", 4,
     );
     const firstAttemptAt = new Date("2026-12-01T01:00:00.000Z");
     const availableAt = new Date("2026-12-01T03:00:00.000Z");
     const leaseExpiresAt = new Date("2026-12-01T03:15:00.000Z");
     await forceLegacyIntentState(
-      { id: { in: [undispatchedId, earlyRetryId, validId] } },
+      { id: { in: [undispatchedId, earlyRetryId, lateRetryId, validId] } },
       {
         status: "FAILED", provider: "RESEND", attemptCount: 1, firstAttemptAt,
         availableAt, lastError: "synthetic retryable rejection",
       },
     );
-    for (const id of [undispatchedId, earlyRetryId, validId]) {
+    for (const id of [undispatchedId, earlyRetryId, lateRetryId, validId]) {
       await prisma.transferProofDeliveryIntent.update({
         where: { id },
         data: {
@@ -1431,7 +1431,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       },
     })).rejects.toThrow("Transfer-proof delivery failure requires its owned dispatch boundary");
 
-    for (const id of [earlyRetryId, validId]) {
+    for (const id of [earlyRetryId, lateRetryId, validId]) {
       await prisma.transferProofDeliveryIntent.update({
         where: { id },
         data: { attemptCount: 2, dispatchStartedAt: availableAt },
@@ -1443,9 +1443,23 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         status: "FAILED", processingAt: null, leaseExpiresAt: null,
         claimToken: null, dispatchStartedAt: null,
         lastError: "synthetic rejected delivery",
-        availableAt: new Date("2026-12-01T03:00:00.000Z"),
+        availableAt: new Date("2026-12-01T03:05:00.000Z"),
       },
-    })).rejects.toThrow("Transfer-proof delivery failure requires its owned dispatch boundary");
+    })).rejects.toThrow(
+      "Transfer-proof delivery retry requires its deterministic dispatch schedule",
+    );
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: lateRetryId },
+      data: {
+        status: "FAILED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, dispatchStartedAt: null,
+        lastError: "synthetic rejected delivery",
+        availableAt: new Date("2026-12-01T03:11:00.000Z"),
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery retry requires its deterministic dispatch schedule",
+    );
 
     await expect(prisma.transferProofDeliveryIntent.update({
       where: { id: validId },
@@ -1453,11 +1467,88 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         status: "FAILED", processingAt: null, leaseExpiresAt: null,
         claimToken: null, dispatchStartedAt: null,
         lastError: "synthetic rejected delivery",
-        availableAt: new Date("2026-12-01T03:05:00.000Z"),
+        availableAt: new Date("2026-12-01T03:10:00.000Z"),
       },
     })).resolves.toMatchObject({
       status: "FAILED", attemptCount: 2,
-      availableAt: new Date("2026-12-01T03:05:00.000Z"),
+      availableAt: new Date("2026-12-01T03:10:00.000Z"),
+    });
+  });
+
+  it("binds accepted-Resend persistence recovery to the deterministic retry schedule", async () => {
+    const [forgedId, validId, validRetryId] = await seedAdminBatch(
+      "resend-recovery-schedule", 3,
+    );
+
+    async function claimAndDispatch(id: string, claimToken: string) {
+      const pending = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({ where: { id } });
+      const processingAt = pending.availableAt;
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", provider: "RESEND", processingAt,
+          leaseExpiresAt: new Date(processingAt.getTime() + 15 * 60 * 1000),
+          claimToken, lastError: null,
+        },
+      });
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          attemptCount: { increment: 1 }, firstAttemptAt: pending.firstAttemptAt ?? processingAt,
+          dispatchStartedAt: processingAt,
+        },
+      });
+      return processingAt;
+    }
+
+    const forgedDispatch = await claimAndDispatch(forgedId, "forged-recovery-schedule-owner");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: forgedId },
+      data: {
+        leaseExpiresAt: forgedDispatch,
+        availableAt: new Date(forgedDispatch.getTime() + 60 * 60 * 1000),
+        lastError: "accepted delivery persistence lost ownership",
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery retry requires its deterministic dispatch schedule",
+    );
+
+    const validDispatch = await claimAndDispatch(validId, "valid-recovery-schedule-owner");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validId },
+      data: {
+        leaseExpiresAt: validDispatch,
+        availableAt: new Date(validDispatch.getTime() + 5 * 60 * 1000),
+        lastError: "accepted delivery persistence lost ownership",
+      },
+    })).resolves.toMatchObject({
+      status: "PROCESSING", attemptCount: 1,
+      availableAt: new Date(validDispatch.getTime() + 5 * 60 * 1000),
+    });
+
+    const retryAt = new Date("2026-12-01T04:00:00.000Z");
+    await forceLegacyIntentState(
+      { id: validRetryId },
+      {
+        status: "FAILED", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T03:00:00.000Z"),
+        availableAt: retryAt, lastError: "synthetic first rejection",
+      },
+    );
+    const validRetryDispatch = await claimAndDispatch(
+      validRetryId,
+      "valid-second-recovery-schedule-owner",
+    );
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validRetryId },
+      data: {
+        leaseExpiresAt: validRetryDispatch,
+        availableAt: new Date(validRetryDispatch.getTime() + 10 * 60 * 1000),
+        lastError: "second accepted delivery persistence lost ownership",
+      },
+    })).resolves.toMatchObject({
+      status: "PROCESSING", attemptCount: 2,
+      availableAt: new Date(validRetryDispatch.getTime() + 10 * 60 * 1000),
     });
   });
 
@@ -2151,6 +2242,93 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${dispatchSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs deterministic retry scheduling as a forward-only upgrade", async () => {
+    const retrySchema = `transfer_proof_retry_schedule_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${retrySchema}"`);
+      await client.query(`SET search_path TO "${retrySchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "attemptCount" INTEGER NOT NULL,
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "availableAt" TIMESTAMP(3) NOT NULL,
+          "lastError" TEXT
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, status, "attemptCount", "processingAt", "leaseExpiresAt",
+          "claimToken", "dispatchStartedAt", "availableAt"
+        ) VALUES
+          ('permissive-77', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 07:00:00', TIMESTAMP '2026-12-01 07:15:00',
+            'permissive-owner', TIMESTAMP '2026-12-01 07:00:00',
+            TIMESTAMP '2026-12-01 07:00:00'),
+          ('strict-78', 'PROCESSING', 2,
+            TIMESTAMP '2026-12-01 08:00:00', TIMESTAMP '2026-12-01 08:15:00',
+            'strict-owner', TIMESTAMP '2026-12-01 08:00:00',
+            TIMESTAMP '2026-12-01 08:00:00'),
+          ('valid-78', 'PROCESSING', 1,
+            TIMESTAMP '2026-12-01 09:00:00', TIMESTAMP '2026-12-01 09:15:00',
+            'valid-owner', TIMESTAMP '2026-12-01 09:00:00',
+            TIMESTAMP '2026-12-01 09:00:00')
+      `);
+
+      const dispatchClockMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914033000_bind_transfer_proof_dispatch_clock/migration.sql",
+      ), "utf8");
+      await client.query(dispatchClockMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'FAILED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "dispatchStartedAt" = NULL,
+          "availableAt" = TIMESTAMP '2026-12-01 07:30:00',
+          "lastError" = 'permitted before migration 78'
+        WHERE id = 'permissive-77'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const retryScheduleMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914040000_bind_transfer_proof_retry_schedule/migration.sql",
+      ), "utf8");
+      await client.query(retryScheduleMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'FAILED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "dispatchStartedAt" = NULL,
+          "availableAt" = TIMESTAMP '2026-12-01 08:05:00',
+          "lastError" = 'forged retry schedule'
+        WHERE id = 'strict-78'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery retry requires its deterministic dispatch schedule",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'FAILED', "processingAt" = NULL,
+          "leaseExpiresAt" = NULL, "claimToken" = NULL,
+          "dispatchStartedAt" = NULL,
+          "availableAt" = TIMESTAMP '2026-12-01 09:05:00',
+          "lastError" = 'valid deterministic retry schedule'
+        WHERE id = 'valid-78'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${retrySchema}" CASCADE`);
       client.release();
     }
   });
