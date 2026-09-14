@@ -112,6 +112,19 @@ function requireOrderState(order: Prisma.PrimaryOrderGetPayload<{ include: { lin
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_ORDER_INVALID");
 }
 
+function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string) {
+  const pending = payment.status === "PENDING_PROVIDER" && payment.providerIntentId === null && payment.providerCreatedAt === null && payment.terminalAt === null;
+  const processing = payment.status === "PROCESSING" && payment.providerIntentId === `synthetic_${scope.base}` && payment.providerCreatedAt !== null && payment.terminalAt === null;
+  const succeeded = payment.status === "SUCCEEDED" && payment.providerIntentId === `synthetic_${scope.base}` && payment.providerCreatedAt !== null && payment.terminalAt !== null
+    && payment.terminalAt.getTime() >= payment.providerCreatedAt.getTime();
+  if (
+    payment.id !== scope.paymentId || payment.organizerId !== ORGANIZER_ID || payment.eventId !== scope.eventId
+    || payment.buyerUserId !== buyerId || payment.reservationId !== scope.reservationId || payment.orderId !== scope.orderId
+    || payment.expectedAmountMinor !== 3800 || payment.currency !== "CAD" || payment.createIdempotencyKey !== `${scope.base}:payment`
+    || (!pending && !processing && !succeeded)
+  ) throw new PrimaryStagingBuyerError("STAGING_BUYER_PAYMENT_INVALID");
+}
+
 async function generation(tx: Tx) {
   const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-buyer-g([0-9]+)-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
   return Number(rows[0]?.generation ?? 0);
@@ -159,6 +172,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       await tx.primaryPaymentAttempt.create({ data: { id: scope.paymentId, organizerId: ORGANIZER_ID, eventId: scope.eventId, buyerUserId: buyer.id, reservationId: scope.reservationId, orderId: scope.orderId, expectedAmountMinor: 3800, currency: "CAD", createIdempotencyKey: `${scope.base}:payment` } });
       return { step: "PAYMENT_PROCESSING" };
     }
+    requirePaymentState(payment, scope, buyer.id);
     if (payment.status === "PENDING_PROVIDER") {
       await tx.primaryPaymentAttempt.update({ where: { id: payment.id }, data: { status: "PROCESSING", providerIntentId: `synthetic_${scope.base}`, providerCreatedAt: now } });
       return { step: "PROCESSING" };
