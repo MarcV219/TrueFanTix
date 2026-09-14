@@ -160,4 +160,23 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: `${base}-ticket` } })).resolves.toMatchObject({ status: "ISSUED" });
     await expect(db.primaryAdmissionScan.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
   });
+
+  it("rejects admission issuance that predates the authoritative paid lifecycle", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING", "PROCESSING", "PAID", "ISSUED"]) {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
+    }
+    const order = await db.primaryOrder.findUniqueOrThrow({ where: { id: `${base}-order` } });
+    expect(order.paidAt).not.toBeNull();
+    await db.$executeRawUnsafe(`ALTER TABLE "PrimaryAdmissionTicket" DISABLE TRIGGER "PrimaryAdmissionTicket_protected"`);
+    try {
+      await db.primaryAdmissionTicket.update({ where: { id: `${base}-ticket` }, data: { issuedAt: new Date(order.paidAt!.getTime() - 1) } });
+    } finally {
+      await db.$executeRawUnsafe(`ALTER TABLE "PrimaryAdmissionTicket" ENABLE TRIGGER "PrimaryAdmissionTicket_protected"`);
+    }
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_ADMISSION_INVALID" });
+    await expect(db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: `${base}-ticket` } })).resolves.toMatchObject({ status: "ISSUED" });
+    await expect(db.primaryAdmissionScan.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+  });
 });
