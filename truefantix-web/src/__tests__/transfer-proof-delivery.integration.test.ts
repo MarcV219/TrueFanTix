@@ -68,6 +68,24 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     `);
   }
 
+  async function useHistoricalOriginClock() {
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION transfer_proof_delivery_origin_clock(TIMESTAMP(3))
+      RETURNS TIMESTAMP(3) AS $$
+        SELECT LEAST($1, clock_timestamp() AT TIME ZONE 'UTC');
+      $$ LANGUAGE SQL VOLATILE
+    `);
+  }
+
+  async function useDatabaseOriginClock() {
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION transfer_proof_delivery_origin_clock(TIMESTAMP(3))
+      RETURNS TIMESTAMP(3) AS $$
+        SELECT clock_timestamp() AT TIME ZONE 'UTC';
+      $$ LANGUAGE SQL VOLATILE
+    `);
+  }
+
   beforeAll(async () => {
     previousResendKey = process.env.RESEND_API_KEY;
     process.env.RESEND_API_KEY = "synthetic-resend-key";
@@ -75,6 +93,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     // waiting for real leases. Dedicated clock-boundary cases restore the
     // deployed database clock implementation explicitly.
     await useHistoricalClaimClock();
+    await useHistoricalOriginClock();
     const buyer = await prisma.user.create({ data: {
       email: buyerEmail,
       passwordHash: "synthetic",
@@ -91,6 +110,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   });
 
   beforeEach(async () => {
+    await useHistoricalClaimClock();
+    await useHistoricalOriginClock();
     await prisma.notification.deleteMany({ where: { userId: buyerUserId } });
     await forceDeleteDeliveryIntents({ orderId });
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
@@ -111,6 +132,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await forceDeleteDeliveryIntents({ orderId: { startsWith: `batch-order-${runId}-` } });
     await prisma.user.deleteMany({ where: { id: buyerUserId } });
     await useDatabaseClaimClock();
+    await useDatabaseOriginClock();
     await prisma.$disconnect();
     await pool.end();
     if (previousResendKey === undefined) delete process.env.RESEND_API_KEY;
@@ -217,6 +239,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   });
 
   it("owns transfer-proof delivery history timestamps at the database clock", async () => {
+    await useDatabaseOriginClock();
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
     const source = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
       where: { orderId },
@@ -330,6 +353,64 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.count({
       where: { id: { startsWith: originId } },
     })).resolves.toBe(0);
+  });
+
+  it("owns the initial pending schedule at the database clock", async () => {
+    await useDatabaseOriginClock();
+    await useDatabaseClaimClock();
+    const futureOrderId = `${orderId}-future-origin`;
+    const pastOrderId = `${orderId}-past-origin`;
+    try {
+      const source = params("01");
+      const forgedFuture = new NativeDate("2099-01-01T00:00:00.000Z");
+      const forgedPast = new NativeDate("2001-01-01T00:00:00.000Z");
+      const beforeInsert = await databaseUtcNow();
+      await prisma.$transaction(async (tx) => {
+        await stageTransferProofDeliveryIntent(tx, {
+          ...source,
+          orderId: futureOrderId,
+          now: forgedFuture,
+        });
+        await stageTransferProofDeliveryIntent(tx, {
+          ...source,
+          orderId: pastOrderId,
+          now: forgedPast,
+        });
+      });
+      const afterInsert = await databaseUtcNow();
+      const rows = await prisma.transferProofDeliveryIntent.findMany({
+        where: { orderId: { in: [futureOrderId, pastOrderId] } },
+        select: { id: true, availableAt: true, createdAt: true, updatedAt: true },
+      });
+
+      expect(rows).toHaveLength(4);
+      for (const row of rows) {
+        expect(row.availableAt.getTime()).toBeGreaterThanOrEqual(beforeInsert.getTime());
+        expect(row.availableAt.getTime()).toBeLessThanOrEqual(afterInsert.getTime());
+        expect(row.availableAt).toEqual(row.createdAt);
+        expect(row.availableAt).toEqual(row.updatedAt);
+      }
+
+      const claimed = rows[0];
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id: claimed.id },
+        data: {
+          status: "PROCESSING",
+          provider: "RESEND",
+          processingAt: claimed.availableAt,
+          leaseExpiresAt: new NativeDate(claimed.availableAt.getTime() + 15 * 60 * 1000),
+          claimToken: "database-origin-clock-claim",
+        },
+      })).resolves.toMatchObject({
+        status: "PROCESSING",
+        availableAt: claimed.availableAt,
+        processingAt: claimed.availableAt,
+      });
+    } finally {
+      await forceDeleteDeliveryIntents({ orderId: { in: [futureOrderId, pastOrderId] } });
+      await useHistoricalClaimClock();
+      await useHistoricalOriginClock();
+    }
   });
 
   it("advances history time after a concurrent row-lock wait", async () => {
@@ -3558,6 +3639,120 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${pendingOriginSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs a database-owned pending origin schedule after canonical origin enforcement", async () => {
+    const originClockSchema = `transfer_proof_origin_clock_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${originClockSchema}"`);
+      await client.query(`SET search_path TO "${originClockSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          "payloadJson" JSONB NOT NULL,
+          provider TEXT,
+          status TEXT NOT NULL DEFAULT 'PENDING',
+          "attemptCount" INTEGER NOT NULL DEFAULT 0,
+          "firstAttemptAt" TIMESTAMP(3),
+          "availableAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "idempotencyKey" TEXT NOT NULL UNIQUE,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+
+      for (const migration of [
+        "20260913184000_protect_transfer_proof_delivery_envelopes",
+        "20260913190500_enforce_transfer_proof_delivery_lifecycle",
+        "20260914063000_protect_transfer_proof_delivery_history",
+        "20260914070000_protect_transfer_proof_delivery_history_metadata",
+        "20260914073000_require_transfer_proof_pending_origin",
+      ]) {
+        const migrationSql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(migrationSql);
+      }
+
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "availableAt",
+          "idempotencyKey", "identityVersion", "envelopeDigest"
+        ) VALUES (
+          'permissive-schedule-85', 'order-85', 'BUYER_CONFIRMATION_EMAIL',
+          'buyer@example.test', '{}'::jsonb, TIMESTAMP '2099-01-01 00:00:00',
+          'permissive-schedule-85', 2, repeat('0', 64)
+        )
+      `);
+      await expect(client.query(`
+        SELECT "availableAt" = TIMESTAMP '2099-01-01 00:00:00' AS caller_owned
+        FROM "TransferProofDeliveryIntent" WHERE id = 'permissive-schedule-85'
+      `)).resolves.toMatchObject({ rows: [{ caller_owned: true }] });
+      const legacyBefore = (await client.query<{
+        availableAt: Date;
+        createdAt: Date;
+        updatedAt: Date;
+      }>(`
+        SELECT "availableAt", "createdAt", "updatedAt"
+        FROM "TransferProofDeliveryIntent" WHERE id = 'permissive-schedule-85'
+      `)).rows[0];
+
+      const originClockMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914080000_bind_transfer_proof_pending_origin_clock/migration.sql",
+      ), "utf8");
+      await client.query(originClockMigration);
+      await client.query("SET TIME ZONE 'America/Los_Angeles'");
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", "availableAt",
+          "idempotencyKey", "identityVersion", "envelopeDigest"
+        ) VALUES
+          (
+            'strict-future-schedule-86', 'order-86-future', 'BUYER_CONFIRMATION_EMAIL',
+            'buyer@example.test', '{}'::jsonb, TIMESTAMP '2099-01-01 00:00:00',
+            'strict-future-schedule-86', 2, repeat('0', 64)
+          ),
+          (
+            'strict-past-schedule-86', 'order-86-past', 'BUYER_CONFIRMATION_EMAIL',
+            'buyer@example.test', '{}'::jsonb, TIMESTAMP '2001-01-01 00:00:00',
+            'strict-past-schedule-86', 2, repeat('0', 64)
+          )
+      `);
+
+      await expect(client.query(`
+        SELECT
+          "availableAt" BETWEEN
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 seconds'
+            AND statement_timestamp() AT TIME ZONE 'UTC' AS database_owned,
+          "availableAt" = "createdAt" AND "availableAt" = "updatedAt" AS clocks_match
+        FROM "TransferProofDeliveryIntent"
+        WHERE id IN ('strict-future-schedule-86', 'strict-past-schedule-86')
+        ORDER BY id
+      `)).resolves.toMatchObject({ rows: [
+        { database_owned: true, clocks_match: true },
+        { database_owned: true, clocks_match: true },
+      ] });
+      await expect(client.query(`
+        SELECT "availableAt", "createdAt", "updatedAt"
+        FROM "TransferProofDeliveryIntent" WHERE id = 'permissive-schedule-85'
+      `)).resolves.toMatchObject({ rows: [legacyBefore] });
+    } finally {
+      await client.query("SET TIME ZONE 'UTC'");
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${originClockSchema}" CASCADE`);
       client.release();
     }
   });
