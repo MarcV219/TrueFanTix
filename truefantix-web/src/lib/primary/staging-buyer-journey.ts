@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Prisma, PrismaClient, UserRole } from "@prisma/client";
 import { STAGING_ADMIN_EMAIL, STAGING_ORGANIZER_EMAIL } from "./staging-console";
 
@@ -20,7 +20,7 @@ export class PrimaryStagingBuyerError extends Error {
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function ids(generation: number) {
   const base = `${EVENT_PREFIX}${generation}`;
-  return { generation, base, eventId: `${base}-event`, ticketTypeId: `${base}-type`, reservationId: `${base}-reservation`, orderId: `${base}-order`, lineId: `${base}-line`, paymentId: `${base}-payment`, ticketId: `${base}-ticket`, credentialId: randomUUID() };
+  return { generation, base, eventId: `${base}-event`, ticketTypeId: `${base}-type`, reservationId: `${base}-reservation`, orderId: `${base}-order`, lineId: `${base}-line`, paymentId: `${base}-payment`, ticketId: `${base}-ticket`, credentialId: `${base}-credential` };
 }
 function requireAdmin(actor: Actor) {
   if (actor.email !== STAGING_ADMIN_EMAIL || actor.role !== "ADMIN") throw new PrimaryStagingBuyerError("STAGING_ADMIN_REQUIRED");
@@ -132,6 +132,25 @@ function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<obj
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_PAYMENT_INVALID");
 }
 
+function requireAdmissionState(ticket: Prisma.PrimaryAdmissionTicketGetPayload<{ include: { credential: true; scans: true } }>, scope: ReturnType<typeof ids>, buyerId: string, actorId: string) {
+  const credential = ticket.credential;
+  const scan = ticket.scans[0];
+  const issued = ticket.status === "ISSUED" && ticket.scans.length === 0;
+  const checkedIn = ticket.status === "CHECKED_IN" && ticket.scans.length === 1 && scan
+    && scan.requestId === `${scope.base}:scan` && scan.commandDigest === digest([scope.base, "scan"])
+    && scan.organizerId === ORGANIZER_ID && scan.eventId === scope.eventId && scan.admissionTicketId === scope.ticketId
+    && scan.credentialId === scope.credentialId && scan.operatorUserId === actorId && scan.result === "ACCEPTED"
+    && scan.deviceId === "synthetic-console" && scan.scannedAt.getTime() >= ticket.issuedAt.getTime();
+  if (
+    ticket.id !== scope.ticketId || ticket.organizerId !== ORGANIZER_ID || ticket.eventId !== scope.eventId || ticket.buyerUserId !== buyerId
+    || ticket.reservationId !== scope.reservationId || ticket.orderId !== scope.orderId || ticket.orderLineId !== scope.lineId || ticket.ticketTypeId !== scope.ticketTypeId
+    || ticket.unitNumber !== 1 || ticket.issuanceIdempotencyKey !== `${scope.base}:issue` || ticket.voidedAt !== null || ticket.voidReason !== null
+    || !credential || credential.id !== scope.credentialId || credential.admissionTicketId !== scope.ticketId || credential.eventId !== scope.eventId
+    || credential.payloadVersion !== 1 || credential.keyId !== "synthetic-staging-only" || credential.payloadDigest !== digest([scope.base, "credential"])
+    || credential.issuedAt.getTime() !== ticket.issuedAt.getTime() || (!issued && !checkedIn)
+  ) throw new PrimaryStagingBuyerError("STAGING_BUYER_ADMISSION_INVALID");
+}
+
 async function generation(tx: Tx) {
   const rows = await tx.$queryRawUnsafe<Array<{ generation: number }>>(`SELECT COALESCE(MAX((regexp_match(id, '^staging-buyer-g([0-9]+)-event$'))[1]::int),0)::int AS generation FROM "PrimaryEvent" WHERE "organizerId"=$1`, ORGANIZER_ID);
   return Number(rows[0]?.generation ?? 0);
@@ -189,11 +208,12 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       await tx.primaryOrder.update({ where: { id: scope.orderId }, data: { status: "PAID", paidAt: now } });
       return { step: "PAID" };
     }
-    const ticket = await tx.primaryAdmissionTicket.findUnique({ where: { id: scope.ticketId }, include: { credential: true } });
+    const ticket = await tx.primaryAdmissionTicket.findFirst({ where: { orderLineId: scope.lineId, unitNumber: 1 }, include: { credential: true, scans: true } });
     if (!ticket) {
       await tx.primaryAdmissionTicket.create({ data: { id: scope.ticketId, organizerId: ORGANIZER_ID, eventId: scope.eventId, buyerUserId: buyer.id, reservationId: scope.reservationId, orderId: scope.orderId, orderLineId: scope.lineId, ticketTypeId: scope.ticketTypeId, unitNumber: 1, issuanceIdempotencyKey: `${scope.base}:issue`, issuedAt: now, credential: { create: { id: scope.credentialId, payloadVersion: 1, keyId: "synthetic-staging-only", payloadDigest: digest([scope.base, "credential"]), issuedAt: now } } } });
       return { step: "ISSUED" };
     }
+    requireAdmissionState(ticket, scope, buyer.id, actor.id);
     if (ticket.status === "ISSUED") {
       await tx.primaryAdmissionTicket.update({ where: { id: ticket.id }, data: { status: "CHECKED_IN" } });
       await tx.primaryAdmissionScan.create({ data: { requestId: `${scope.base}:scan`, commandDigest: digest([scope.base, "scan"]), organizerId: ORGANIZER_ID, eventId: scope.eventId, admissionTicketId: ticket.id, credentialId: ticket.credential!.id, operatorUserId: actor.id, result: "ACCEPTED", deviceId: "synthetic-console", scannedAt: now } });

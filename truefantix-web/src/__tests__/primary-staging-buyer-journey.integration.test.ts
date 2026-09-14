@@ -143,4 +143,21 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: `${lifecycleBase}-payment` } })).resolves.toMatchObject({ status: "SUCCEEDED", terminalAt });
     await expect(db.primaryAdmissionTicket.count({ where: { eventId: `${lifecycleBase}-event` } })).resolves.toBe(0);
   });
+
+  it("rejects admission credential drift before check-in mutation", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING", "PROCESSING", "PAID", "ISSUED"]) {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
+    }
+    await db.$executeRawUnsafe(`ALTER TABLE "PrimaryAdmissionCredential" DISABLE TRIGGER "PrimaryAdmissionCredential_immutable"`);
+    try {
+      await db.primaryAdmissionCredential.update({ where: { id: `${base}-credential` }, data: { payloadDigest: "0".repeat(64) } });
+    } finally {
+      await db.$executeRawUnsafe(`ALTER TABLE "PrimaryAdmissionCredential" ENABLE TRIGGER "PrimaryAdmissionCredential_immutable"`);
+    }
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_ADMISSION_INVALID" });
+    await expect(db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: `${base}-ticket` } })).resolves.toMatchObject({ status: "ISSUED" });
+    await expect(db.primaryAdmissionScan.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+  });
 });
