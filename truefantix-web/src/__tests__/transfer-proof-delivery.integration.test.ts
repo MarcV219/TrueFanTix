@@ -46,6 +46,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   const runId = `${Date.now()}-${process.pid}`;
   const orderId = `transfer-proof-${runId}`;
+  const sellerId = `transfer-proof-seller-${runId}`;
+  const buyerSellerId = `transfer-proof-buyer-seller-${runId}`;
   const buyerEmail = `transfer-proof-${runId}@example.test`;
   let buyerUserId = "";
   let previousResendKey: string | undefined;
@@ -107,6 +109,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       country: "CA",
     } });
     buyerUserId = buyer.id;
+    await prisma.seller.createMany({ data: [
+      { id: sellerId, name: "Transfer Proof Seller" },
+      { id: buyerSellerId, name: "Transfer Proof Buyer" },
+    ] });
+    await ensureSyntheticOrder(orderId);
   });
 
   beforeEach(async () => {
@@ -118,6 +125,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
     await forceDeleteDeliveryIntents({ orderId: { startsWith: `batch-order-${runId}-` } });
+    await prisma.order.deleteMany({ where: { id: { startsWith: `batch-order-${runId}-` } } });
+    await prisma.order.deleteMany({ where: { id: { startsWith: `${orderId}-` } } });
     jest.clearAllMocks();
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "RESEND", providerResult: "ACCEPTED" });
     mockedSendAdmin.mockResolvedValue({ ok: true, provider: "RESEND" });
@@ -130,7 +139,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId: { startsWith: `batch-order-${runId}-` } } });
     await forceDeleteDeliveryIntents({ orderId: { startsWith: `batch-order-${runId}-` } });
+    await prisma.order.deleteMany({ where: { id: { startsWith: `batch-order-${runId}-` } } });
+    await prisma.order.deleteMany({ where: { id: { startsWith: `${orderId}-` } } });
+    await prisma.order.delete({ where: { id: orderId } });
     await prisma.user.deleteMany({ where: { id: buyerUserId } });
+    await prisma.seller.deleteMany({ where: { id: { in: [sellerId, buyerSellerId] } } });
     await useDatabaseClaimClock();
     await useDatabaseOriginClock();
     await prisma.$disconnect();
@@ -154,11 +167,27 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     };
   }
 
+  async function ensureSyntheticOrder(id: string) {
+    await prisma.order.upsert({
+      where: { id },
+      update: {},
+      create: {
+        id,
+        sellerId,
+        buyerSellerId,
+        amountCents: 100,
+        adminFeeCents: 10,
+        totalCents: 110,
+      },
+    });
+  }
+
   async function seedAdminBatch(scope: string, count = 4) {
     const ids: string[] = [];
     for (let index = 0; index < count; index += 1) {
       const batchOrderId = `batch-order-${runId}-${scope}-${index}`;
       const availableAt = new Date(`2026-12-01T00:0${index}:00.000Z`);
+      await ensureSyntheticOrder(batchOrderId);
       await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
         orderId: batchOrderId,
         buyerUserId: null,
@@ -238,6 +267,34 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .resolves.toBe(2);
   });
 
+  it("anchors transfer-proof delivery history to its immutable parent order", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
+
+    await expect(prisma.order.delete({ where: { id: orderId } }))
+      .rejects.toThrow(/foreign key constraint|violates foreign key/i);
+    await expect(prisma.order.update({
+      where: { id: orderId },
+      data: { id: `${orderId}-rekeyed` },
+    })).rejects.toThrow(/foreign key constraint|violates foreign key/i);
+    await expect(prisma.order.findUnique({ where: { id: orderId } }))
+      .resolves.toBeTruthy();
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
+      .resolves.toBe(2);
+  });
+
+  it("rejects canonical delivery history for a nonexistent order", async () => {
+    const nonexistentOrderId = `${orderId}-missing-parent`;
+    await expect(prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
+      ...params("01"),
+      orderId: nonexistentOrderId,
+      buyerUserId: null,
+    }))).rejects.toThrow(/foreign key constraint|violates foreign key/i);
+
+    await expect(prisma.transferProofDeliveryIntent.count({
+      where: { orderId: nonexistentOrderId },
+    })).resolves.toBe(0);
+  });
+
   it("owns transfer-proof delivery history timestamps at the database clock", async () => {
     await useDatabaseOriginClock();
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
@@ -298,7 +355,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       identityVersion: 2,
       envelopeDigest: "0".repeat(64),
     };
-    const forgedOrigins: Prisma.TransferProofDeliveryIntentCreateInput[] = [
+    const forgedOrigins: Prisma.TransferProofDeliveryIntentUncheckedCreateInput[] = [
       {
         ...origin,
         id: `${originId}-pending-evidence`,
@@ -364,6 +421,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       const source = params("01");
       const forgedFuture = new NativeDate("2099-01-01T00:00:00.000Z");
       const forgedPast = new NativeDate("2001-01-01T00:00:00.000Z");
+      await ensureSyntheticOrder(futureOrderId);
+      await ensureSyntheticOrder(pastOrderId);
       const beforeInsert = await databaseUtcNow();
       await prisma.$transaction(async (tx) => {
         await stageTransferProofDeliveryIntent(tx, {
@@ -408,6 +467,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       });
     } finally {
       await forceDeleteDeliveryIntents({ orderId: { in: [futureOrderId, pastOrderId] } });
+      await prisma.order.deleteMany({ where: { id: { in: [futureOrderId, pastOrderId] } } });
       await useHistoricalClaimClock();
       await useHistoricalOriginClock();
     }
@@ -3753,6 +3813,88 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await client.query("SET TIME ZONE 'UTC'");
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${originClockSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs order provenance without erasing immutable legacy orphans", async () => {
+    const orderBindingSchema = `transfer_proof_order_binding_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${orderBindingSchema}"`);
+      await client.query(`SET search_path TO "${orderBindingSchema}"`);
+      await client.query(`
+        CREATE TABLE "Order" (
+          id TEXT PRIMARY KEY
+        );
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL
+        );
+        INSERT INTO "Order" (id) VALUES ('existing-order-86');
+        INSERT INTO "TransferProofDeliveryIntent" (id, "orderId") VALUES
+          ('legacy-valid-86', 'existing-order-86'),
+          ('legacy-orphan-86', 'missing-order-86');
+      `);
+
+      const orderBindingMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914083000_bind_transfer_proof_delivery_order/migration.sql",
+      ), "utf8");
+      await client.query(orderBindingMigration);
+
+      await expect(client.query(`
+        SELECT convalidated
+        FROM pg_constraint
+        WHERE conname = 'TransferProofDeliveryIntent_orderId_fkey'
+          AND conrelid = '"TransferProofDeliveryIntent"'::regclass
+      `)).resolves.toMatchObject({ rows: [{ convalidated: false }] });
+      await expect(client.query(`
+        SELECT id, "orderId"
+        FROM "TransferProofDeliveryIntent"
+        ORDER BY id
+      `)).resolves.toMatchObject({ rows: [
+        { id: "legacy-orphan-86", orderId: "missing-order-86" },
+        { id: "legacy-valid-86", orderId: "existing-order-86" },
+      ] });
+
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (id, "orderId")
+        VALUES ('new-orphan-87', 'missing-order-87')
+      `)).rejects.toThrow(/foreign key constraint|violates foreign key/i);
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (id, "orderId")
+        VALUES ('new-valid-87', 'existing-order-86')
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(`
+        DELETE FROM "Order" WHERE id = 'existing-order-86'
+      `)).rejects.toThrow(/foreign key constraint|violates foreign key/i);
+
+      // A reviewed legacy orphan is resolved by restoring its missing parent,
+      // never by erasing append-only delivery history. PostgreSQL can then
+      // validate the same forward constraint with the evidence row intact.
+      await client.query(`
+        INSERT INTO "Order" (id) VALUES ('missing-order-86');
+        ALTER TABLE "TransferProofDeliveryIntent"
+        VALIDATE CONSTRAINT "TransferProofDeliveryIntent_orderId_fkey";
+      `);
+      await expect(client.query(`
+        SELECT convalidated
+        FROM pg_constraint
+        WHERE conname = 'TransferProofDeliveryIntent_orderId_fkey'
+          AND conrelid = '"TransferProofDeliveryIntent"'::regclass
+      `)).resolves.toMatchObject({ rows: [{ convalidated: true }] });
+      await expect(client.query(`
+        SELECT id, "orderId"
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'legacy-orphan-86'
+      `)).resolves.toMatchObject({ rows: [{
+        id: "legacy-orphan-86",
+        orderId: "missing-order-86",
+      }] });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${orderBindingSchema}" CASCADE`);
       client.release();
     }
   });

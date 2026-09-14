@@ -1465,8 +1465,9 @@ model Order {
   items   OrderItem[]
   payment Payment?
 
-  ticketEscrows           TicketEscrow[]
-  accessTokenTransactions AccessTokenTransaction[]
+  ticketEscrows                TicketEscrow[]
+  accessTokenTransactions      AccessTokenTransaction[]
+  transferProofDeliveryIntents TransferProofDeliveryIntent[]
 
   // Conversation for this order
   conversation Conversation?
@@ -1688,6 +1689,7 @@ model TransferProofDeliveryIntent {
   envelopeDigest    String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "TransferProofDeliveryIntent_orderId_fkey")
 
   @@index([status, availableAt])
   @@index([status, leaseExpiresAt])
