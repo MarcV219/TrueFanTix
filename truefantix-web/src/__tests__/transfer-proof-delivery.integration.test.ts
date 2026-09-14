@@ -1416,9 +1416,58 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       data: {
         status: "DELIVERED", processingAt: null, leaseExpiresAt: null,
         claimToken: null, dispatchStartedAt: null,
-        deliveredAt: new Date("2026-12-01T03:01:00.000Z"),
+        deliveredAt: availableAt,
       },
     })).resolves.toMatchObject({ status: "DELIVERED", attemptCount: 2 });
+  });
+
+  it("binds successful delivery evidence to the owned dispatch clock", async () => {
+    const [forgedId, validId] = await seedAdminBatch("delivery-clock", 2);
+
+    async function claimAndDispatch(id: string, claimToken: string) {
+      const pending = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+        where: { id }, select: { availableAt: true },
+      });
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", provider: "RESEND", processingAt: pending.availableAt,
+          leaseExpiresAt: new Date(pending.availableAt.getTime() + 15 * 60 * 1000),
+          claimToken,
+        },
+      });
+      await prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          attemptCount: { increment: 1 }, firstAttemptAt: pending.availableAt,
+          dispatchStartedAt: pending.availableAt,
+        },
+      });
+      return pending.availableAt;
+    }
+
+    const forgedDispatchAt = await claimAndDispatch(forgedId, "forged-delivery-clock-owner");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: forgedId },
+      data: {
+        status: "DELIVERED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, dispatchStartedAt: null,
+        deliveredAt: new Date(forgedDispatchAt.getTime() + 60 * 1000),
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery completion must use its owned dispatch clock",
+    );
+
+    const validDispatchAt = await claimAndDispatch(validId, "valid-delivery-clock-owner");
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: validId },
+      data: {
+        status: "DELIVERED", processingAt: null, leaseExpiresAt: null,
+        claimToken: null, dispatchStartedAt: null, deliveredAt: validDispatchAt,
+      },
+    })).resolves.toMatchObject({
+      status: "DELIVERED", attemptCount: 1, deliveredAt: validDispatchAt,
+    });
   });
 
   it("requires an owned dispatch boundary and deterministic schedule before retry", async () => {
@@ -2706,6 +2755,62 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await client.query("SET TIME ZONE 'UTC'");
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${dispatchWindowSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs dispatch-clock-bound delivery evidence as a forward-only upgrade", async () => {
+    const deliveryClockSchema = `transfer_proof_delivery_clock_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${deliveryClockSchema}"`);
+      await client.query(`SET search_path TO "${deliveryClockSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3)
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, status, "dispatchStartedAt"
+        ) VALUES
+          ('permissive-80', 'PROCESSING', TIMESTAMP '2026-12-01 12:00:00'),
+          ('strict-81', 'PROCESSING', TIMESTAMP '2026-12-01 12:00:00'),
+          ('valid-81', 'PROCESSING', TIMESTAMP '2026-12-01 13:00:00')
+      `);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED',
+          "deliveredAt" = "dispatchStartedAt" + INTERVAL '1 minute'
+        WHERE id = 'permissive-80'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const deliveryClockMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914053000_bind_transfer_proof_delivery_clock/migration.sql",
+      ), "utf8");
+      await client.query(deliveryClockMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED',
+          "deliveredAt" = "dispatchStartedAt" + INTERVAL '1 minute'
+        WHERE id = 'strict-81'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery completion must use its owned dispatch clock",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'DELIVERED', "deliveredAt" = "dispatchStartedAt"
+        WHERE id = 'valid-81'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${deliveryClockSchema}" CASCADE`);
       client.release();
     }
   });
