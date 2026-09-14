@@ -345,6 +345,8 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     const otherUserId = `${buyerUserId}-other`;
     const otherOrderId = `${orderId}-other-buyer`;
     const otherEmail = `other-${buyerEmail}`;
+    const sameBuyerOrderId = `${orderId}-same-buyer`;
+    const sameBuyerSecondTicketId = `${sameBuyerOrderId}-second-ticket`;
     await prisma.seller.create({ data: { id: otherSellerId, name: "Other Transfer Buyer" } });
     await prisma.user.create({ data: {
       id: otherUserId,
@@ -373,6 +375,25 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       transferVerificationStatus: "PENDING",
       disputeWindowEndsAt: new Date("2026-12-03T00:00:00.000Z"),
     } });
+    await ensureSyntheticOrder(sameBuyerOrderId);
+    await prisma.order.update({
+      where: { id: sameBuyerOrderId },
+      data: { disputeWindowEndsAt: new Date("2026-12-04T00:00:00.000Z") },
+    });
+    await prisma.ticket.create({ data: {
+      id: sameBuyerSecondTicketId,
+      title: "Second Same-Buyer Transfer Ticket",
+      priceCents: 100,
+      image: "/default.jpg",
+      venue: "Synthetic Venue",
+      date: "2026-12-10T00:00:00.000Z",
+      sellerId,
+    } });
+    await prisma.orderItem.create({ data: {
+      orderId: sameBuyerOrderId,
+      ticketId: sameBuyerSecondTicketId,
+      priceCents: 100,
+    } });
 
     try {
       await expect(prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
@@ -400,6 +421,22 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         "Transfer-proof delivery payload must match the order ticket count and deadline",
       );
       await expect(prisma.transferProofDeliveryIntent.create({ data: {
+        orderId: sameBuyerOrderId,
+        kind: "BUYER_CONFIRMATION_EMAIL",
+        recipient: buyerEmail,
+        payloadJson: {
+          buyerFirstName: "Buyer",
+          ticketCount: 1,
+          deadline: params("02").deadline.toISOString(),
+          windowStart: "2026-12-01T00:00:00.000Z",
+        },
+        idempotencyKey: `${sameBuyerOrderId}-copied-order-payload`,
+        identityVersion: 2,
+        envelopeDigest: "0".repeat(64),
+      } })).rejects.toThrow(
+        "Transfer-proof delivery payload must match the order ticket count and deadline",
+      );
+      await expect(prisma.transferProofDeliveryIntent.create({ data: {
         orderId,
         kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
         recipient: "admin@truefantix.com",
@@ -417,6 +454,24 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       } })).rejects.toThrow(
         "Transfer-proof administrator delivery payload must match the order participants and proof",
       );
+      await expect(prisma.transferProofDeliveryIntent.create({ data: {
+        orderId,
+        kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
+        recipient: "admin@truefantix.com",
+        payloadJson: {
+          sellerEmail: "seller@example.test",
+          buyerEmail: otherEmail,
+          ticketCount: 1,
+          transferProofType: "EMAIL",
+          deadline: params("02").deadline.toISOString(),
+          completedAt: "2026-12-01T02:00:00.000Z",
+        },
+        idempotencyKey: `${orderId}-wrong-admin-buyer`,
+        identityVersion: 2,
+        envelopeDigest: "0".repeat(64),
+      } })).rejects.toThrow(
+        "Transfer-proof administrator delivery payload must match the order participants and proof",
+      );
       await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
         .resolves.toBe(0);
 
@@ -427,6 +482,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         .resolves.toBe(0);
     } finally {
       await ensureSyntheticOrder(orderId);
+      await prisma.orderItem.deleteMany({ where: { orderId: sameBuyerOrderId } });
+      await prisma.order.delete({ where: { id: sameBuyerOrderId } });
+      await prisma.ticket.deleteMany({ where: {
+        id: { in: [`${sameBuyerOrderId}-ticket`, sameBuyerSecondTicketId] },
+      } });
       await prisma.order.delete({ where: { id: otherOrderId } });
       await prisma.user.delete({ where: { id: otherUserId } });
       await prisma.seller.delete({ where: { id: otherSellerId } });
