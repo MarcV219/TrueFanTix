@@ -55,6 +55,20 @@ function envelopeDigest(envelope: Record<string, unknown>) {
   return createHash("sha256").update(canonicalJson(envelope)).digest("hex");
 }
 
+function authoritativeCompletedAt(deadline: Date) {
+  return new NativeDate(deadline.getTime() - 24 * 60 * 60 * 1000);
+}
+
+function normalizedWindowStart(clock: Date) {
+  return new NativeDate(
+    Math.floor(clock.getTime() / (6 * 60 * 60 * 1000)) * 6 * 60 * 60 * 1000,
+  );
+}
+
+function authoritativeWindowStart(deadline: Date) {
+  return normalizedWindowStart(authoritativeCompletedAt(deadline));
+}
+
 if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", () => {
   it("requires an isolated database", () => undefined);
 }); else describe("transfer-proof delivery PostgreSQL boundary", () => {
@@ -437,7 +451,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
           buyerFirstName: "Buyer",
           ticketCount: 2,
           deadline: params("02").deadline.toISOString(),
-          windowStart: "2026-12-01T00:00:00.000Z",
+          windowStart: authoritativeWindowStart(params("02").deadline).toISOString(),
         },
         idempotencyKey: `${orderId}-wrong-ticket-count`,
         identityVersion: 2,
@@ -471,7 +485,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
           ticketCount: 1,
           transferProofType: "EMAIL",
           deadline: params("02").deadline.toISOString(),
-          completedAt: "2026-12-01T02:00:00.000Z",
+          completedAt: authoritativeCompletedAt(params("02").deadline).toISOString(),
         },
         idempotencyKey: `${orderId}-wrong-admin-subject`,
         identityVersion: 2,
@@ -489,7 +503,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
           ticketCount: 1,
           transferProofType: "EMAIL",
           deadline: params("02").deadline.toISOString(),
-          completedAt: "2026-12-01T02:00:00.000Z",
+          completedAt: authoritativeCompletedAt(params("02").deadline).toISOString(),
         },
         idempotencyKey: `${orderId}-wrong-admin-buyer`,
         identityVersion: 2,
@@ -520,9 +534,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
   it("binds the canonical delivery key and digest before a forged row can reserve them", async () => {
     const input = params("02");
-    const windowStart = new NativeDate(
-      Math.floor(input.now.getTime() / (6 * 60 * 60 * 1000)) * 6 * 60 * 60 * 1000,
-    ).toISOString();
+    const windowStart = authoritativeWindowStart(input.deadline).toISOString();
     const payloadJson = {
       buyerFirstName: "Buyer",
       ticketCount: 1,
@@ -570,11 +582,64 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .resolves.toBe(2);
   });
 
+  it("rejects self-consistent delivery identities with caller-selected clocks", async () => {
+    const input = params("02");
+    const forgedWindow = new NativeDate(
+      authoritativeWindowStart(input.deadline).getTime() + 6 * 60 * 60 * 1000,
+    ).toISOString();
+    const buyerPayload = {
+      buyerFirstName: "Buyer",
+      ticketCount: 1,
+      deadline: input.deadline.toISOString(),
+      windowStart: forgedWindow,
+    };
+    const buyerEnvelope = {
+      orderId,
+      kind: "BUYER_CONFIRMATION_EMAIL",
+      recipient: buyerEmail,
+      payloadJson: buyerPayload,
+    };
+    await expect(prisma.transferProofDeliveryIntent.create({ data: {
+      ...buyerEnvelope,
+      idempotencyKey: `${orderId}:${forgedWindow}:BUYER_CONFIRMATION_EMAIL:${buyerEmail}`,
+      identityVersion: 2,
+      envelopeDigest: envelopeDigest(buyerEnvelope),
+    } })).rejects.toThrow(
+      "Transfer-proof buyer delivery window must match the order transfer clock",
+    );
+
+    const forgedCompletedAt = new NativeDate(
+      authoritativeCompletedAt(input.deadline).getTime() + 60 * 60 * 1000,
+    ).toISOString();
+    const adminPayload = {
+      sellerEmail: "seller@example.test",
+      buyerEmail,
+      ticketCount: 1,
+      transferProofType: "EMAIL",
+      deadline: input.deadline.toISOString(),
+      completedAt: forgedCompletedAt,
+    };
+    const adminEnvelope = {
+      orderId,
+      kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL",
+      recipient: "admin@truefantix.com",
+      payloadJson: adminPayload,
+    };
+    await expect(prisma.transferProofDeliveryIntent.create({ data: {
+      ...adminEnvelope,
+      idempotencyKey: `${orderId}:${normalizedWindowStart(new NativeDate(forgedCompletedAt)).toISOString()}:ADMIN_TRANSFER_ACTIVITY_EMAIL:admin@truefantix.com`,
+      identityVersion: 2,
+      envelopeDigest: envelopeDigest(adminEnvelope),
+    } })).rejects.toThrow(
+      "Transfer-proof administrator delivery completion must match the order transfer clock",
+    );
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
+      .resolves.toBe(0);
+  });
+
   it("fails loudly when surviving legacy history owns a canonical key with another envelope", async () => {
     const input = params("02");
-    const windowStart = new NativeDate(
-      Math.floor(input.now.getTime() / (6 * 60 * 60 * 1000)) * 6 * 60 * 60 * 1000,
-    ).toISOString();
+    const windowStart = authoritativeWindowStart(input.deadline).toISOString();
     const poisonedPayload = {
       buyerFirstName: "Buyer",
       ticketCount: 1,
@@ -602,7 +667,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .resolves.toBe(1);
   });
 
-  it("allows one canonical envelope to win a concurrent same-window identity race", async () => {
+  it("collapses caller clocks and idempotently retries concurrent staging", async () => {
     const deadline = params("02").deadline;
     const windowStartMs = Math.floor(NativeDate.now() / (6 * 60 * 60 * 1000)) * 6 * 60 * 60 * 1000;
     const first = { ...params("02"), deadline, now: new NativeDate(windowStartMs + 60 * 60 * 1000) };
@@ -615,13 +680,24 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
 
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    expect(String(rejected?.reason?.message)).toMatch(
-      /Transfer-proof delivery idempotency collision does not match the canonical envelope|Unique constraint failed/,
-    );
+    expect(String(rejected?.reason?.message)).toMatch(/unique constraint|write conflict|deadlock|serialize|P2034/i);
+    await expect(prisma.$transaction(
+      (tx) => stageTransferProofDeliveryIntent(tx, second),
+    )).resolves.toBeUndefined();
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
       .resolves.toBe(2);
     await expect(prisma.notification.count({ where: { userId: buyerUserId } }))
       .resolves.toBe(1);
+    const rows = await prisma.transferProofDeliveryIntent.findMany({
+      where: { orderId },
+      orderBy: { kind: "asc" },
+      select: { kind: true, payloadJson: true },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.kind === "BUYER_CONFIRMATION_EMAIL")?.payloadJson)
+      .toMatchObject({ windowStart: authoritativeWindowStart(deadline).toISOString() });
+    expect(rows.find((row) => row.kind === "ADMIN_TRANSFER_ACTIVITY_EMAIL")?.payloadJson)
+      .toMatchObject({ completedAt: authoritativeCompletedAt(deadline).toISOString() });
   });
 
   it("matches the database digest for canonical JSON escaping and Unicode", async () => {
@@ -670,7 +746,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
             buyerFirstName: "Buyer",
             ticketCount: 1,
             deadline: params("02").deadline.toISOString(),
-            windowStart: "2026-12-01T00:00:00.000Z",
+            windowStart: authoritativeWindowStart(params("02").deadline).toISOString(),
           })}::jsonb, ${`${orderId}-concurrent-subject-key`},
           2, ${"0".repeat(64)}
         )
@@ -700,7 +776,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       buyerFirstName: "Buyer",
       ticketCount: 1,
       deadline: params("03").deadline.toISOString(),
-      windowStart: "2026-12-01T00:00:00.000Z",
+      windowStart: authoritativeWindowStart(params("03").deadline).toISOString(),
     });
     let transactionOpen = false;
     try {
@@ -801,23 +877,20 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
     const forgedId = `${source.id}-forged-clock`;
     const forgedTimestamp = new Date("2001-01-01T00:00:00.000Z");
-    const sourcePayload = source.payloadJson as Record<string, unknown>;
-    const windowStart = new NativeDate(
-      new NativeDate(String(sourcePayload.windowStart)).getTime() + 6 * 60 * 60 * 1000,
-    ).toISOString();
-    const payloadJson = { ...sourcePayload, windowStart };
+    const payloadJson = source.payloadJson as Prisma.InputJsonObject;
     const envelope = {
       orderId,
       kind: source.kind,
       recipient: source.recipient,
       payloadJson,
     };
+    await forceDeleteDeliveryIntents({ orderId });
     const beforeInsert = await databaseUtcNow();
     const inserted = await prisma.transferProofDeliveryIntent.create({
       data: {
         id: forgedId,
         ...envelope,
-        idempotencyKey: `${orderId}:${windowStart}:${source.kind}:${source.recipient}`,
+        idempotencyKey: source.idempotencyKey,
         identityVersion: 2,
         envelopeDigest: envelopeDigest(envelope),
         availableAt: forgedTimestamp,
@@ -1077,7 +1150,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendEmail.mock.calls[0][0].idempotencyKey!.length).toBeLessThanOrEqual(256);
     expect(mockedSendAdmin.mock.calls[0][0]).toMatchObject({
       idempotencyKey: expect.stringMatching(/^tft-transfer-proof-[a-f0-9]{64}$/),
-      completedAt: params("13").now.toISOString(),
+      completedAt: new Date(params("13").deadline.getTime() - 24 * 60 * 60 * 1000).toISOString(),
     });
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "DELIVERED" } })).resolves.toBe(2);
     await expect(prisma.reminderDelivery.count({ where: { orderId, status: "SENT" } })).resolves.toBe(1);
@@ -4732,6 +4805,122 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${identitySchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs authoritative delivery clocks as an atomic forward-only upgrade", async () => {
+    const clockSchema = `transfer_proof_authoritative_clock_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    const racingClient = await pool.connect();
+    const migration = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260914100000_bind_transfer_proof_delivery_clocks/migration.sql",
+    ), "utf8");
+    try {
+      await client.query(`CREATE SCHEMA "${clockSchema}"`);
+      await client.query(`SET search_path TO "${clockSchema}"`);
+      await client.query(`
+        CREATE TABLE "Order" (
+          id TEXT PRIMARY KEY,
+          "disputeWindowEndsAt" TIMESTAMP(3)
+        );
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          "payloadJson" JSONB NOT NULL,
+          "identityVersion" INTEGER NOT NULL
+        );
+        INSERT INTO "Order" (id, "disputeWindowEndsAt") VALUES
+          ('clock-order-89', TIMESTAMP '2026-12-03 00:00:00');
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, "payloadJson", "identityVersion"
+        ) VALUES
+          ('forged-buyer-clock-89', 'clock-order-89', 'BUYER_CONFIRMATION_EMAIL',
+            '{"windowStart":"2026-12-02T00:00:00.000Z"}'::jsonb, 2),
+          ('forged-admin-clock-89', 'clock-order-89', 'ADMIN_TRANSFER_ACTIVITY_EMAIL',
+            '{"completedAt":"2026-12-02T00:00:00.000Z"}'::jsonb, 2),
+          ('legacy-clock-89', 'clock-order-89', 'ADMIN_TRANSFER_ACTIVITY_EMAIL',
+            '{"completedAt":"2020-01-01T00:00:00.000Z"}'::jsonb, 1);
+      `);
+
+      await racingClient.query(`SET search_path TO "${clockSchema}"`);
+      await racingClient.query("BEGIN");
+      await racingClient.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, "payloadJson", "identityVersion"
+        ) VALUES (
+          'concurrent-forged-clock-89', 'clock-order-89', 'BUYER_CONFIRMATION_EMAIL',
+          '{"windowStart":"2026-12-02T06:00:00.000Z"}'::jsonb, 2
+        )
+      `);
+      let migrationSettled = false;
+      const racingMigration = client.query(migration)
+        .finally(() => { migrationSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(migrationSettled).toBe(false);
+      await racingClient.query("COMMIT");
+      await expect(racingMigration).rejects.toThrow(
+        "Transfer-proof delivery clock preflight failed for row concurrent-forged-clock-89",
+      );
+      await client.query("ROLLBACK");
+      await expect(client.query(`
+        SELECT to_regprocedure('transfer_proof_delivery_authoritative_completed_at(timestamp without time zone)') AS helper
+      `)).resolves.toMatchObject({ rows: [{ helper: null }] });
+
+      await client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "payloadJson" = '{"windowStart":"2026-12-02T00:00:00.000Z"}'::jsonb
+        WHERE id = 'concurrent-forged-clock-89';
+        UPDATE "TransferProofDeliveryIntent"
+        SET "payloadJson" = '{"completedAt":"2026-12-02T01:00:00.000Z"}'::jsonb
+        WHERE id = 'forged-admin-clock-89';
+      `);
+      await expect(client.query(migration)).rejects.toThrow(
+        "Transfer-proof delivery clock preflight failed for row forged-admin-clock-89",
+      );
+      await client.query("ROLLBACK");
+      await client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "payloadJson" = '{"completedAt":"2026-12-02T00:00:00.000Z"}'::jsonb
+        WHERE id = 'forged-admin-clock-89'
+      `);
+      await client.query(migration);
+
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, "payloadJson", "identityVersion"
+        ) VALUES (
+          'strict-forged-clock-90', 'clock-order-89', 'BUYER_CONFIRMATION_EMAIL',
+          '{"windowStart":"2026-12-02T06:00:00.000Z"}'::jsonb, 2
+        )
+      `)).rejects.toThrow(
+        "Transfer-proof buyer delivery window must match the order transfer clock",
+      );
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, "payloadJson", "identityVersion"
+        ) VALUES (
+          'strict-valid-clock-90', 'clock-order-89', 'BUYER_CONFIRMATION_EMAIL',
+          '{"windowStart":"2026-12-02T00:00:00.000Z"}'::jsonb, 2
+        )
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(`
+        SELECT id, "payloadJson"
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'legacy-clock-89'
+      `)).resolves.toMatchObject({ rows: [{
+        id: "legacy-clock-89",
+        payloadJson: { completedAt: "2020-01-01T00:00:00.000Z" },
+      }] });
+    } finally {
+      await racingClient.query("ROLLBACK").catch(() => undefined);
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${clockSchema}" CASCADE`);
+      await racingClient.query("SET search_path TO public");
+      racingClient.release();
       client.release();
     }
   });

@@ -11,6 +11,7 @@ const LEASE_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const RESEND_IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const BUYER_CONFIRMATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function providerIdempotencyKey(durableKey: string) {
   return `tft-transfer-proof-${createHash("sha256").update(durableKey).digest("hex")}`;
@@ -85,20 +86,10 @@ function requireMatchingStagedIdentity(
 }
 
 export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionClient, params: StageParams) {
-  const windowStart = reminderWindowStart(params.now);
-  if (params.buyerUserId) {
-    const ticketWord = params.ticketCount === 1 ? "ticket" : "tickets";
-    const message = `Confirm you received ${params.ticketCount} transferred ${ticketWord} by ${params.deadline.toLocaleString("en-CA")}. If you do not confirm within 24 hours, the seller payout will be released.`;
-    const existing = await tx.notification.findFirst({
-      where: { userId: params.buyerUserId, type: "TRANSFER_CONFIRMATION_REQUIRED", link: "/account/tickets/holding", createdAt: { gte: windowStart } },
-      select: { id: true },
-    });
-    if (!existing) await tx.notification.create({ data: {
-      userId: params.buyerUserId, type: "TRANSFER_CONFIRMATION_REQUIRED", message,
-      link: "/account/tickets/holding", isRead: false,
-    } });
-  }
-
+  // The order deadline is the durable transfer-proof clock. Do not let a
+  // caller choose a second delivery identity for the same accepted proof.
+  const completedAt = new Date(params.deadline.getTime() - BUYER_CONFIRMATION_WINDOW_MS);
+  const windowStart = reminderWindowStart(completedAt);
   if (params.buyerEmail) {
     const payloadJson = {
       buyerFirstName: params.buyerFirstName, ticketCount: params.ticketCount,
@@ -120,7 +111,7 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
 
   const payloadJson = {
     sellerEmail: params.sellerEmail, buyerEmail: params.buyerEmail, ticketCount: params.ticketCount,
-    transferProofType: params.transferProofType, deadline: params.deadline.toISOString(), completedAt: params.now.toISOString(),
+    transferProofType: params.transferProofType, deadline: params.deadline.toISOString(), completedAt: completedAt.toISOString(),
   };
   const envelope = { orderId: params.orderId, kind: ADMIN_KIND, recipient: ADMIN_ACTIVITY_EMAIL, payloadJson };
   const idempotencyKey = deliveryIdempotencyKey(params.orderId, windowStart, ADMIN_KIND, ADMIN_ACTIVITY_EMAIL);
@@ -134,6 +125,22 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
     update: {},
   });
   requireMatchingStagedIdentity(staged, envelope, idempotencyKey);
+
+  // The canonical intent upserts above serialize repeated staging for the
+  // same accepted proof. Create the in-app notification only after that
+  // boundary so concurrent idempotent callers cannot both observe it absent.
+  if (params.buyerUserId) {
+    const ticketWord = params.ticketCount === 1 ? "ticket" : "tickets";
+    const message = `Confirm you received ${params.ticketCount} transferred ${ticketWord} by ${params.deadline.toLocaleString("en-CA")}. If you do not confirm within 24 hours, the seller payout will be released.`;
+    const existing = await tx.notification.findFirst({
+      where: { userId: params.buyerUserId, type: "TRANSFER_CONFIRMATION_REQUIRED", link: "/account/tickets/holding", createdAt: { gte: windowStart } },
+      select: { id: true },
+    });
+    if (!existing) await tx.notification.create({ data: {
+      userId: params.buyerUserId, type: "TRANSFER_CONFIRMATION_REQUIRED", message,
+      link: "/account/tickets/holding", isRead: false,
+    } });
+  }
 }
 
 type DeliveryDb = Pick<
