@@ -263,6 +263,75 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(updated.updatedAt.getTime()).toBeLessThanOrEqual(afterUpdate.getTime() + 1);
   });
 
+  it("requires every new delivery history row to originate pending", async () => {
+    const terminalClock = await databaseUtcNow();
+    const originId = `fabricated-origin-${runId}`;
+    const origin = {
+      orderId,
+      kind: "BUYER_CONFIRMATION_EMAIL",
+      recipient: buyerEmail,
+      payloadJson: {},
+      availableAt: terminalClock,
+      identityVersion: 2,
+      envelopeDigest: "0".repeat(64),
+    };
+    const forgedOrigins: Prisma.TransferProofDeliveryIntentCreateInput[] = [
+      {
+        ...origin,
+        id: `${originId}-pending-evidence`,
+        idempotencyKey: `${originId}-pending-evidence`,
+        status: "PENDING",
+        lastError: "fabricated pending evidence",
+      },
+      {
+        ...origin,
+        id: `${originId}-processing`,
+        idempotencyKey: `${originId}-processing`,
+        provider: "RESEND",
+        status: "PROCESSING",
+        processingAt: terminalClock,
+        leaseExpiresAt: new Date(terminalClock.getTime() + 15 * 60 * 1000),
+        claimToken: "fabricated-claim",
+      },
+      {
+        ...origin,
+        id: `${originId}-failed`,
+        idempotencyKey: `${originId}-failed`,
+        provider: "RESEND",
+        status: "FAILED",
+        attemptCount: 1,
+        firstAttemptAt: terminalClock,
+        lastError: "fabricated failure",
+      },
+      {
+        ...origin,
+        id: `${originId}-delivered`,
+        idempotencyKey: `${originId}-delivered`,
+        provider: "RESEND",
+        status: "DELIVERED",
+        attemptCount: 1,
+        firstAttemptAt: terminalClock,
+        deliveredAt: terminalClock,
+      },
+      {
+        ...origin,
+        id: `${originId}-reconciliation`,
+        idempotencyKey: `${originId}-reconciliation`,
+        status: "RECONCILIATION_REQUIRED",
+        lastError: "fabricated reconciliation",
+      },
+    ];
+
+    for (const data of forgedOrigins) {
+      await expect(prisma.transferProofDeliveryIntent.create({ data }))
+        .rejects.toThrow("New transfer-proof delivery intents must originate pending");
+    }
+
+    await expect(prisma.transferProofDeliveryIntent.count({
+      where: { id: { startsWith: originId } },
+    })).resolves.toBe(0);
+  });
+
   it("advances history time after a concurrent row-lock wait", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
     const intent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
@@ -3374,6 +3443,121 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await client.query("SET TIME ZONE 'UTC'");
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${historyMetadataSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs canonical pending origin after protected history metadata", async () => {
+    const pendingOriginSchema = `transfer_proof_pending_origin_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${pendingOriginSchema}"`);
+      await client.query(`SET search_path TO "${pendingOriginSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "orderId" TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          "payloadJson" JSONB NOT NULL,
+          provider TEXT,
+          status TEXT NOT NULL DEFAULT 'PENDING',
+          "attemptCount" INTEGER NOT NULL DEFAULT 0,
+          "firstAttemptAt" TIMESTAMP(3),
+          "availableAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT,
+          "dispatchStartedAt" TIMESTAMP(3),
+          "deliveredAt" TIMESTAMP(3),
+          "lastError" TEXT,
+          "idempotencyKey" TEXT NOT NULL UNIQUE,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+
+      for (const migration of [
+        "20260913184000_protect_transfer_proof_delivery_envelopes",
+        "20260913190500_enforce_transfer_proof_delivery_lifecycle",
+        "20260914063000_protect_transfer_proof_delivery_history",
+        "20260914070000_protect_transfer_proof_delivery_history_metadata",
+      ]) {
+        const migrationSql = await readFile(join(
+          process.cwd(), `prisma/migrations/${migration}/migration.sql`,
+        ), "utf8");
+        await client.query(migrationSql);
+      }
+
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", provider, status,
+          "attemptCount", "firstAttemptAt", "availableAt", "deliveredAt",
+          "idempotencyKey", "identityVersion", "envelopeDigest"
+        ) VALUES (
+          'permissive-terminal-84', 'order-84', 'BUYER_CONFIRMATION_EMAIL',
+          'buyer@example.test', '{}'::jsonb, 'RESEND', 'DELIVERED', 1,
+          TIMESTAMP '2026-09-14 05:45:00', TIMESTAMP '2026-09-14 05:45:00',
+          TIMESTAMP '2026-09-14 05:45:00', 'permissive-terminal-84', 2,
+          repeat('0', 64)
+        )
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const pendingOriginMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914073000_require_transfer_proof_pending_origin/migration.sql",
+      ), "utf8");
+      await client.query(pendingOriginMigration);
+
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", provider, status,
+          "attemptCount", "firstAttemptAt", "availableAt", "deliveredAt",
+          "idempotencyKey", "identityVersion", "envelopeDigest"
+        ) VALUES (
+          'strict-terminal-85', 'order-85', 'BUYER_CONFIRMATION_EMAIL',
+          'buyer@example.test', '{}'::jsonb, 'RESEND', 'DELIVERED', 1,
+          TIMESTAMP '2026-09-14 05:45:00', TIMESTAMP '2026-09-14 05:45:00',
+          TIMESTAMP '2026-09-14 05:45:00', 'strict-terminal-85', 2,
+          repeat('0', 64)
+        )
+      `)).rejects.toThrow("New transfer-proof delivery intents must originate pending");
+
+      await expect(client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (
+          id, "orderId", kind, recipient, "payloadJson", status,
+          "attemptCount", "availableAt", "idempotencyKey",
+          "identityVersion", "envelopeDigest"
+        ) VALUES (
+          'strict-pending-85', 'order-85', 'BUYER_CONFIRMATION_EMAIL',
+          'buyer@example.test', '{}'::jsonb, 'PENDING', 0,
+          TIMESTAMP '2026-09-14 05:45:00', 'strict-pending-85', 2,
+          repeat('0', 64)
+        )
+      `)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(`
+        SELECT status, provider, "attemptCount", "firstAttemptAt", "processingAt",
+          "leaseExpiresAt", "claimToken", "dispatchStartedAt", "deliveredAt", "lastError"
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'strict-pending-85'
+      `)).resolves.toMatchObject({ rows: [{
+        status: "PENDING",
+        provider: null,
+        attemptCount: 0,
+        firstAttemptAt: null,
+        processingAt: null,
+        leaseExpiresAt: null,
+        claimToken: null,
+        dispatchStartedAt: null,
+        deliveredAt: null,
+        lastError: null,
+      }] });
+      await expect(client.query(`
+        SELECT status FROM "TransferProofDeliveryIntent" WHERE id = 'permissive-terminal-84'
+      `)).resolves.toMatchObject({ rows: [{ status: "DELIVERED" }] });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${pendingOriginSchema}" CASCADE`);
       client.release();
     }
   });
