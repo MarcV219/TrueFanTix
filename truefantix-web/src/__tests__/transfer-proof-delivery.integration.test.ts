@@ -173,6 +173,13 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
   }
 
+  async function databaseUtcNow() {
+    const [row] = await prisma.$queryRaw<Array<{ now: Date }>>`
+      SELECT statement_timestamp() AT TIME ZONE 'UTC' AS now
+    `;
+    return row.now;
+  }
+
   it("rolls back all durable intents and performs zero external sends", async () => {
     await expect(prisma.$transaction(async (tx) => {
       await stageTransferProofDeliveryIntent(tx, params("01"));
@@ -185,15 +192,131 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendAdmin).not.toHaveBeenCalled();
   });
 
-  it("preserves transfer-proof delivery history against deletion", async () => {
+  it("preserves transfer-proof delivery identity and history", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
+    const intent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId },
+      select: { id: true },
+    });
+    const replacementId = `${intent.id}-replacement`;
 
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: intent.id },
+      data: { id: replacementId },
+    })).rejects.toThrow("Transfer-proof delivery row identity is immutable");
     await expect(prisma.transferProofDeliveryIntent.deleteMany({ where: { orderId } }))
       .rejects.toThrow("Transfer-proof delivery intents are append-only");
     await expect(prisma.$executeRawUnsafe('TRUNCATE TABLE "TransferProofDeliveryIntent"'))
       .rejects.toThrow("Transfer-proof delivery intents are append-only");
+    await expect(prisma.transferProofDeliveryIntent.findUnique({ where: { id: intent.id } }))
+      .resolves.toBeTruthy();
+    await expect(prisma.transferProofDeliveryIntent.findUnique({ where: { id: replacementId } }))
+      .resolves.toBeNull();
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
       .resolves.toBe(2);
+  });
+
+  it("owns transfer-proof delivery history timestamps at the database clock", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
+    const source = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId },
+    });
+    const forgedId = `${source.id}-forged-clock`;
+    const forgedTimestamp = new Date("2001-01-01T00:00:00.000Z");
+    const beforeInsert = await databaseUtcNow();
+    const [inserted] = await prisma.$queryRaw<Array<{ createdAt: Date; updatedAt: Date }>>`
+      INSERT INTO "TransferProofDeliveryIntent" (
+        id, "orderId", kind, recipient, "payloadJson", provider, status,
+        "attemptCount", "firstAttemptAt", "availableAt", "processingAt",
+        "leaseExpiresAt", "claimToken", "dispatchStartedAt", "deliveredAt",
+        "lastError", "idempotencyKey", "identityVersion", "envelopeDigest",
+        "createdAt", "updatedAt"
+      )
+      SELECT
+        ${forgedId}, "orderId", kind, recipient, "payloadJson", provider, status,
+        "attemptCount", "firstAttemptAt", "availableAt", "processingAt",
+        "leaseExpiresAt", "claimToken", "dispatchStartedAt", "deliveredAt",
+        "lastError", ${`${source.idempotencyKey}:forged-clock`}, "identityVersion",
+        "envelopeDigest", ${forgedTimestamp}, ${forgedTimestamp}
+      FROM "TransferProofDeliveryIntent"
+      WHERE id = ${source.id}
+      RETURNING "createdAt", "updatedAt"
+    `;
+    const afterInsert = await databaseUtcNow();
+
+    expect(inserted.createdAt.getTime()).toBeGreaterThanOrEqual(beforeInsert.getTime());
+    expect(inserted.createdAt.getTime()).toBeLessThanOrEqual(afterInsert.getTime());
+    expect(inserted.updatedAt).toEqual(inserted.createdAt);
+
+    const beforeUpdate = await databaseUtcNow();
+    const [updated] = await prisma.$queryRaw<Array<{ createdAt: Date; updatedAt: Date }>>`
+      UPDATE "TransferProofDeliveryIntent"
+      SET "updatedAt" = ${forgedTimestamp}
+      WHERE id = ${forgedId}
+      RETURNING "createdAt", "updatedAt"
+    `;
+    const afterUpdate = await databaseUtcNow();
+
+    expect(updated.createdAt).toEqual(inserted.createdAt);
+    expect(updated.updatedAt.getTime()).toBeGreaterThan(inserted.updatedAt.getTime());
+    expect(updated.updatedAt.getTime()).toBeGreaterThanOrEqual(beforeUpdate.getTime());
+    expect(updated.updatedAt.getTime()).toBeLessThanOrEqual(afterUpdate.getTime() + 1);
+  });
+
+  it("advances history time after a concurrent row-lock wait", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
+    const intent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId },
+      select: { id: true },
+    });
+    const first = await pool.connect();
+    const second = await pool.connect();
+    let firstCommitted = false;
+    try {
+      await first.query("BEGIN");
+      await first.query(`
+        SELECT id FROM "TransferProofDeliveryIntent" WHERE id = $1 FOR UPDATE
+      `, [intent.id]);
+      const secondPid = await second.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+      const waitingUpdate = second.query<{ updatedAt: Date }>(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "updatedAt" = TIMESTAMP '2001-01-01 00:00:00'
+        WHERE id = $1
+        RETURNING "updatedAt"
+      `, [intent.id]);
+
+      let waitingOnLock = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const activity = await pool.query<{ wait_event_type: string | null }>(`
+          SELECT wait_event_type
+          FROM pg_stat_activity
+          WHERE pid = $1
+        `, [secondPid.rows[0].pid]);
+        if (activity.rows[0]?.wait_event_type === "Lock") {
+          waitingOnLock = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waitingOnLock).toBe(true);
+
+      const firstUpdate = await first.query<{ updatedAt: Date }>(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "updatedAt" = TIMESTAMP '2001-01-01 00:00:00'
+        WHERE id = $1
+        RETURNING "updatedAt"
+      `, [intent.id]);
+      await first.query("COMMIT");
+      firstCommitted = true;
+      const secondUpdate = await waitingUpdate;
+
+      expect(secondUpdate.rows[0].updatedAt.getTime())
+        .toBeGreaterThanOrEqual(firstUpdate.rows[0].updatedAt.getTime());
+    } finally {
+      if (!firstCommitted) await first.query("ROLLBACK");
+      first.release();
+      second.release();
+    }
   });
 
   it("loses a real Serializable race without intent residue or pre-commit sends", async () => {
@@ -3125,6 +3248,132 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${appendOnlySchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs database-owned history metadata after append-only delivery history", async () => {
+    const historyMetadataSchema = `transfer_proof_history_metadata_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${historyMetadataSchema}"`);
+      await client.query(`SET search_path TO "${historyMetadataSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          "createdAt" TIMESTAMP(3) NOT NULL,
+          "updatedAt" TIMESTAMP(3) NOT NULL
+        )
+      `);
+
+      const appendOnlyMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914063000_protect_transfer_proof_delivery_history/migration.sql",
+      ), "utf8");
+      await client.query(appendOnlyMigration);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (id, "createdAt", "updatedAt")
+        VALUES (
+          'permissive-identity-83',
+          TIMESTAMP '2099-01-01 00:00:00',
+          TIMESTAMP '2001-01-01 00:00:00'
+        )
+      `);
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET id = 'strict-identity-84'
+        WHERE id = 'permissive-identity-83'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const historyMetadataMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914070000_protect_transfer_proof_delivery_history_metadata/migration.sql",
+      ), "utf8");
+      await client.query(historyMetadataMigration);
+      await client.query("SET TIME ZONE 'America/Los_Angeles'");
+
+      await expect(client.query(`
+        SELECT
+          "createdAt" = TIMESTAMP '2099-01-01 00:00:00' AS created_preserved,
+          "updatedAt" = TIMESTAMP '2001-01-01 00:00:00' AS updated_preserved
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'strict-identity-84'
+      `)).resolves.toMatchObject({ rows: [{
+        created_preserved: true,
+        updated_preserved: true,
+      }] });
+
+      await client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "updatedAt" = TIMESTAMP '2001-01-01 00:00:00'
+        WHERE id = 'strict-identity-84'
+      `);
+      await expect(client.query(`
+        SELECT
+          "createdAt" = TIMESTAMP '2099-01-01 00:00:00' AS created_preserved,
+          "updatedAt" = TIMESTAMP '2099-01-01 00:00:00' AS updated_monotonic
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'strict-identity-84'
+      `)).resolves.toMatchObject({ rows: [{
+        created_preserved: true,
+        updated_monotonic: true,
+      }] });
+
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (id, "createdAt", "updatedAt")
+        VALUES (
+          'strict-clock-84',
+          TIMESTAMP '2001-01-01 00:00:00',
+          TIMESTAMP '2001-01-01 00:00:00'
+        )
+      `);
+      await expect(client.query(`
+        SELECT
+          "createdAt" BETWEEN
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 seconds'
+            AND statement_timestamp() AT TIME ZONE 'UTC' AS created_owned,
+          "updatedAt" = "createdAt" AS timestamps_match
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'strict-clock-84'
+      `)).resolves.toMatchObject({ rows: [{ created_owned: true, timestamps_match: true }] });
+
+      await client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET "updatedAt" = TIMESTAMP '2001-01-01 00:00:00'
+        WHERE id = 'strict-clock-84'
+      `);
+      await expect(client.query(`
+        SELECT
+          "createdAt" <= "updatedAt" AS chronology_preserved,
+          "updatedAt" BETWEEN
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 seconds'
+            AND (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 millisecond'
+            AS updated_owned
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'strict-clock-84'
+      `)).resolves.toMatchObject({ rows: [{ chronology_preserved: true, updated_owned: true }] });
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET id = 'forged-identity-84'
+        WHERE id = 'strict-identity-84'
+      `)).rejects.toThrow("Transfer-proof delivery row identity is immutable");
+      await expect(client.query(`
+        SELECT
+          id,
+          "createdAt" = TIMESTAMP '2099-01-01 00:00:00' AS created_preserved,
+          "updatedAt" = TIMESTAMP '2099-01-01 00:00:00' AS updated_preserved
+        FROM "TransferProofDeliveryIntent"
+        WHERE id = 'strict-identity-84'
+      `)).resolves.toMatchObject({ rows: [{
+        id: "strict-identity-84",
+        created_preserved: true,
+        updated_preserved: true,
+      }] });
+    } finally {
+      await client.query("SET TIME ZONE 'UTC'");
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${historyMetadataSchema}" CASCADE`);
       client.release();
     }
   });
