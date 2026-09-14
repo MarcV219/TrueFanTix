@@ -17,18 +17,58 @@ export async function POST(req: Request) {
   const startedAt = new Date();
 
   try {
-    const transferProofDeliveries = await drainTransferProofDeliveryIntents({ now: startedAt });
-    const transferProofReviewDeliveries = await drainTransferProofReviewDeliveryIntents({ now: startedAt });
-    const result = {
-      ...(await runTransferReminderWorkflow(startedAt)),
+    // These are independent recovery domains. Always attempt all three so a
+    // poisoned row or transient failure in one outbox cannot indefinitely
+    // starve unrelated committed work in another.
+    const transferProofDeliveries = await runSchedulerComponent(
+      "transferProofDeliveries",
+      () => drainTransferProofDeliveryIntents({ now: startedAt }),
+    );
+    const transferProofReviewDeliveries = await runSchedulerComponent(
+      "transferProofReviewDeliveries",
+      () => drainTransferProofReviewDeliveryIntents({ now: startedAt }),
+    );
+    const transferReminders = await runSchedulerComponent(
+      "transferReminders",
+      () => runTransferReminderWorkflow(startedAt),
+    );
+    const components = {
+      transferProofDeliveries: schedulerComponentEvidence(transferProofDeliveries),
+      transferProofReviewDeliveries: schedulerComponentEvidence(transferProofReviewDeliveries),
+      transferReminders: schedulerComponentEvidence(transferReminders),
+    };
+    const failures = [
       transferProofDeliveries,
       transferProofReviewDeliveries,
+      transferReminders,
+    ].filter((component): component is SchedulerComponentFailure => !component.ok);
+    if (
+      !transferProofDeliveries.ok
+      || !transferProofReviewDeliveries.ok
+      || !transferReminders.ok
+    ) {
+      throw new AggregateError(
+        failures.map((failure) => failure.cause),
+        `Transfer reminder scheduler components failed: ${failures.map((failure) => failure.name).join(", ")}`,
+        { cause: components },
+      );
+    }
+    const result = {
+      ...transferReminders.value,
+      transferProofDeliveries: transferProofDeliveries.value,
+      transferProofReviewDeliveries: transferProofReviewDeliveries.value,
     };
     await recordSchedulerRun("SUCCESS", startedAt, result);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
+    const componentEvidence = error instanceof AggregateError
+      && error.cause
+      && typeof error.cause === "object"
+      ? { components: error.cause }
+      : {};
     await recordSchedulerRun("FAILED", startedAt, {
       error: error instanceof Error ? error.message : "Unknown scheduler failure",
+      ...componentEvidence,
     }).catch(() => undefined);
     await reportProductionIncident({
       category: "REMINDER_SCHEDULER",
@@ -39,6 +79,43 @@ export async function POST(req: Request) {
     });
     throw error;
   }
+}
+
+type SchedulerComponentSuccess<T> = {
+  name: string;
+  ok: true;
+  value: T;
+};
+
+type SchedulerComponentFailure = {
+  name: string;
+  ok: false;
+  error: string;
+  cause: unknown;
+};
+
+type SchedulerComponentResult<T> = SchedulerComponentSuccess<T> | SchedulerComponentFailure;
+
+async function runSchedulerComponent<T>(
+  name: string,
+  run: () => Promise<T>,
+): Promise<SchedulerComponentResult<T>> {
+  try {
+    return { name, ok: true, value: await run() };
+  } catch (cause) {
+    return {
+      name,
+      ok: false,
+      error: cause instanceof Error ? cause.message : "Unknown scheduler component failure",
+      cause,
+    };
+  }
+}
+
+function schedulerComponentEvidence<T>(component: SchedulerComponentResult<T>) {
+  return component.ok
+    ? { status: "SUCCESS" as const, result: component.value }
+    : { status: "FAILED" as const, error: component.error };
 }
 
 export async function GET(req: Request) {
