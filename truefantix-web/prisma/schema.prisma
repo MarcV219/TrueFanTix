@@ -1696,6 +1696,37 @@ model TransferProofDeliveryIntent {
   @@index([orderId, createdAt])
 }
 
+model TransferProofReviewDeliveryIntent {
+  id             String   @id @default(cuid())
+  orderId        String
+  requestId      String   @unique
+  recipient      String
+  subject        String
+  textBody       String
+  htmlBody       String
+  requestedAt    DateTime
+  idempotencyKey String   @unique
+
+  status            String    @default("PENDING")
+  provider          String?
+  attemptCount      Int       @default(0)
+  availableAt       DateTime  @default(now())
+  firstAttemptAt    DateTime?
+  processingAt      DateTime?
+  leaseExpiresAt    DateTime?
+  claimToken        String?
+  dispatchStartedAt DateTime?
+  providerResult    String?
+  lastError         String?
+  deliveredAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([orderId, createdAt])
+  @@index([status, availableAt, createdAt])
+  @@index([status, leaseExpiresAt])
+}
+
 model ProductionIncident {
   id              String    @id @default(cuid())
   fingerprint     String    @unique

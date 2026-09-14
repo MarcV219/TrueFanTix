@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { hasInternalCronAuth } from "@/lib/auth/guards";
 import { runTransferReminderWorkflow } from "@/lib/orders/transferWorkflow";
 import { drainTransferProofDeliveryIntents } from "@/lib/orders/transferProofDelivery";
+import { drainTransferProofReviewDeliveryIntents } from "@/lib/orders/transferProofReviewDelivery";
 import { prisma } from "@/lib/prisma";
 import { reportProductionIncident } from "@/lib/productionIncidents";
 
@@ -17,7 +18,12 @@ export async function POST(req: Request) {
 
   try {
     const transferProofDeliveries = await drainTransferProofDeliveryIntents({ now: startedAt });
-    const result = { ...(await runTransferReminderWorkflow(startedAt)), transferProofDeliveries };
+    const transferProofReviewDeliveries = await drainTransferProofReviewDeliveryIntents({ now: startedAt });
+    const result = {
+      ...(await runTransferReminderWorkflow(startedAt)),
+      transferProofDeliveries,
+      transferProofReviewDeliveries,
+    };
     await recordSchedulerRun("SUCCESS", startedAt, result);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {

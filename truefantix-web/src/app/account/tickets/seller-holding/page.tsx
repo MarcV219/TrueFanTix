@@ -203,7 +203,7 @@ function OrderCard({
       setCanRequestHumanReview(false);
       setOk(data?.alreadyRequested
         ? "Human review has already been requested. This order is in the Admin Queue."
-        : "Human review requested. Support has been emailed and this order is now in the Admin Queue.");
+        : "Human review requested and queued for Support. This order is now in the Admin Queue.");
       onSubmitted();
     } catch (err: any) {
       setError(err.message || "Could not request human review.");

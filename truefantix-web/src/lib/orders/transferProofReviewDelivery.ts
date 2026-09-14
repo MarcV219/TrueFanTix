@@ -1,0 +1,427 @@
+import { createHash, randomUUID } from "node:crypto";
+import { Prisma, type TransferProofReviewDeliveryIntent } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { sendEmail, type EmailProvider } from "@/lib/email";
+
+const LEASE_MS = 15 * 60 * 1000;
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_MS = 5 * 60 * 1000;
+const RESEND_IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function configuredEmailProvider(): EmailProvider | null {
+  if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
+  if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
+  return null;
+}
+
+function providerIsConfigured(provider: EmailProvider) {
+  if (provider === "RESEND") return Boolean(process.env.RESEND_API_KEY?.trim());
+  return Boolean(process.env.SENDGRID_API_KEY?.trim());
+}
+
+function reviewDeliveryIdempotencyKey(orderId: string, requestId: string, recipient: string) {
+  const digest = createHash("sha256")
+    .update(`${orderId}:${requestId}:${recipient}`)
+    .digest("hex");
+  return `tft-human-review-${digest}`;
+}
+
+type StageParams = {
+  orderId: string;
+  requestId: string;
+  recipient: string;
+  subject: string;
+  textBody: string;
+  htmlBody: string;
+  requestedAt: Date;
+};
+
+export async function stageTransferProofReviewDeliveryIntent(
+  tx: Prisma.TransactionClient,
+  params: StageParams,
+) {
+  const idempotencyKey = reviewDeliveryIdempotencyKey(
+    params.orderId,
+    params.requestId,
+    params.recipient,
+  );
+  const staged = await tx.transferProofReviewDeliveryIntent.upsert({
+    where: { requestId: params.requestId },
+    create: { ...params, idempotencyKey, availableAt: params.requestedAt },
+    update: {},
+  });
+  if (
+    staged.orderId !== params.orderId
+    || staged.requestId !== params.requestId
+    || staged.recipient !== params.recipient
+    || staged.subject !== params.subject
+    || staged.textBody !== params.textBody
+    || staged.htmlBody !== params.htmlBody
+    || staged.requestedAt.getTime() !== params.requestedAt.getTime()
+    || staged.idempotencyKey !== idempotencyKey
+  ) {
+    throw new Error("Transfer-proof review delivery identity collision does not match the canonical envelope");
+  }
+  return staged;
+}
+
+type DeliveryDb = Pick<
+  typeof prisma,
+  "$executeRaw" | "$queryRaw" | "$transaction" | "transferProofReviewDeliveryIntent" | "emailDelivery"
+>;
+
+async function databaseUtcNow(db: Pick<typeof prisma, "$queryRaw">) {
+  const [row] = await db.$queryRaw<Array<{ now: Date }>>`
+    SELECT statement_timestamp() AT TIME ZONE 'UTC' AS now
+  `;
+  return row.now;
+}
+
+function requireCanonicalEnvelope(row: TransferProofReviewDeliveryIntent) {
+  if (!row.recipient.trim() || !row.subject.trim() || !row.textBody.trim() || !row.htmlBody.trim()) {
+    throw new Error("Invalid transfer-proof review delivery envelope");
+  }
+  const expectedKey = reviewDeliveryIdempotencyKey(row.orderId, row.requestId, row.recipient);
+  if (row.idempotencyKey !== expectedKey) {
+    throw new Error("Transfer-proof review delivery identity does not match its envelope");
+  }
+}
+
+export async function drainTransferProofReviewDeliveryIntents(
+  options: { orderId?: string; now?: Date; limit?: number } = {},
+  db: DeliveryDb = prisma,
+) {
+  // Worker transition evidence is database-clock owned. The optional clock is
+  // retained only for call-site compatibility and must never advance a claim.
+  void options.now;
+  const exhausted = await db.transferProofReviewDeliveryIntent.updateMany({
+    where: {
+      orderId: options.orderId,
+      status: "FAILED",
+      attemptCount: { gte: MAX_ATTEMPTS },
+    },
+    data: {
+      status: "RECONCILIATION_REQUIRED",
+      processingAt: null,
+      leaseExpiresAt: null,
+      claimToken: null,
+      dispatchStartedAt: null,
+    },
+  });
+  // A worker can die after recording its final dispatch boundary but before
+  // recording the provider result. Once that lease expires, the row is no
+  // longer eligible for another attempt and must become explicit
+  // reconciliation work instead of remaining PROCESSING forever.
+  const expiredOrderFilter = options.orderId
+    ? Prisma.sql`AND "orderId" = ${options.orderId}`
+    : Prisma.empty;
+  const expiredProcessingCount = await db.$executeRaw(Prisma.sql`
+    UPDATE "TransferProofReviewDeliveryIntent"
+    SET status = 'RECONCILIATION_REQUIRED',
+      "processingAt" = NULL,
+      "leaseExpiresAt" = NULL,
+      "claimToken" = NULL,
+      "dispatchStartedAt" = NULL,
+      "lastError" = 'Expired final review delivery claim requires provider reconciliation',
+      "updatedAt" = statement_timestamp() AT TIME ZONE 'UTC'
+    WHERE status = 'PROCESSING'
+      AND "attemptCount" >= ${MAX_ATTEMPTS}
+      AND "leaseExpiresAt" <= statement_timestamp() AT TIME ZONE 'UTC'
+      ${expiredOrderFilter}
+  `);
+  const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
+  let reconciliationRequired = exhausted.count + expiredProcessingCount;
+  const acquisition = await db.$transaction(async (tx) => {
+    const acquisitionNow = await databaseUtcNow(tx);
+    const orderFilter = options.orderId
+      ? Prisma.sql`AND "orderId" = ${options.orderId}`
+      : Prisma.empty;
+    const candidates = await tx.$queryRaw<TransferProofReviewDeliveryIntent[]>(Prisma.sql`
+      SELECT *
+      FROM "TransferProofReviewDeliveryIntent"
+      WHERE "attemptCount" < ${MAX_ATTEMPTS}
+        ${orderFilter}
+        AND (
+          (status IN ('PENDING', 'FAILED') AND "availableAt" <= ${acquisitionNow})
+          OR (status = 'PROCESSING' AND "leaseExpiresAt" <= ${acquisitionNow})
+        )
+      ORDER BY "availableAt" ASC, "createdAt" ASC, id ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${limit}
+    `);
+    const acquired: Array<{
+      row: TransferProofReviewDeliveryIntent;
+      provider: EmailProvider;
+      leaseExpiresAt: Date;
+      claimToken: string;
+    }> = [];
+    let quarantinedCount = 0;
+    for (const row of candidates) {
+      const claimNow = await databaseUtcNow(tx);
+      const resendWindowStart = new Date(claimNow.getTime() - RESEND_IDEMPOTENCY_WINDOW_MS);
+      const staleClaim = row.status === "PROCESSING";
+      const recordedProvider = row.provider === "RESEND" || row.provider === "SENDGRID"
+        ? row.provider
+        : null;
+      const provider = recordedProvider ?? configuredEmailProvider();
+      const attemptedProviderMissing = row.attemptCount > 0 && !recordedProvider;
+      const staleProviderMissing = staleClaim && !recordedProvider;
+      const resendAttemptTimeMissing = recordedProvider === "RESEND"
+        && row.attemptCount > 0 && !row.firstAttemptAt;
+      const resendWindowExpired = recordedProvider === "RESEND" && row.firstAttemptAt
+        && row.firstAttemptAt <= resendWindowStart;
+      const ambiguousStaleClaim = staleClaim && Boolean(row.dispatchStartedAt)
+        && recordedProvider !== "RESEND";
+      if (
+        attemptedProviderMissing
+        || staleProviderMissing
+        || resendAttemptTimeMissing
+        || resendWindowExpired
+        || ambiguousStaleClaim
+      ) {
+        const quarantined = await tx.transferProofReviewDeliveryIntent.updateMany({
+          where: { id: row.id, status: row.status, claimToken: row.claimToken },
+          data: {
+            status: "RECONCILIATION_REQUIRED",
+            processingAt: null,
+            leaseExpiresAt: null,
+            claimToken: null,
+            dispatchStartedAt: null,
+            lastError: attemptedProviderMissing
+              ? "Attempted review delivery has no recorded provider; reconciliation required"
+              : staleProviderMissing
+                ? "Expired review delivery claim has no recorded provider; reconciliation required"
+                : resendAttemptTimeMissing
+                  ? "Resend review delivery first-attempt time is missing; reconciliation required"
+                  : resendWindowExpired
+                    ? "Resend review delivery idempotency window expired; reconciliation required"
+                    : "Ambiguous prior review delivery requires reconciliation",
+          },
+        });
+        quarantinedCount += quarantined.count;
+        continue;
+      }
+      if (!provider || !providerIsConfigured(provider)) continue;
+      const leaseExpiresAt = new Date(claimNow.getTime() + LEASE_MS);
+      const claimToken = randomUUID();
+      const claim = await tx.transferProofReviewDeliveryIntent.updateMany({
+        where: {
+          id: row.id,
+          status: row.status,
+          claimToken: row.claimToken,
+          attemptCount: row.attemptCount,
+        },
+        data: {
+          status: "PROCESSING",
+          provider,
+          processingAt: claimNow,
+          leaseExpiresAt,
+          claimToken,
+          dispatchStartedAt: null,
+          lastError: null,
+        },
+      });
+      if (claim.count === 1) acquired.push({ row, provider, leaseExpiresAt, claimToken });
+    }
+    return { candidates: candidates.length, acquired, quarantinedCount };
+  });
+
+  const claimed = acquisition.acquired.length;
+  let delivered = 0;
+  let failed = 0;
+  reconciliationRequired += acquisition.quarantinedCount;
+  for (const { row, provider, leaseExpiresAt, claimToken } of acquisition.acquired) {
+    let attemptCount = row.attemptCount;
+    let dispatchStarted = false;
+    let providerAccepted = false;
+    let providerIdentityMismatch = false;
+    let providerResult: string | null = null;
+    let providerFailure: string | null = null;
+    try {
+      requireCanonicalEnvelope(row);
+      const dispatchNow = await databaseUtcNow(db);
+      const dispatch = await db.transferProofReviewDeliveryIntent.updateMany({
+        where: {
+          id: row.id,
+          status: "PROCESSING",
+          provider,
+          leaseExpiresAt,
+          claimToken,
+          attemptCount: row.attemptCount,
+          dispatchStartedAt: null,
+        },
+        data: {
+          attemptCount: { increment: 1 },
+          firstAttemptAt: row.firstAttemptAt ?? dispatchNow,
+          dispatchStartedAt: dispatchNow,
+        },
+      });
+      if (dispatch.count !== 1) continue;
+      dispatchStarted = true;
+      attemptCount = row.attemptCount + 1;
+
+      const result = await sendEmail({
+        to: row.recipient,
+        subject: row.subject,
+        text: row.textBody,
+        html: row.htmlBody,
+        idempotencyKey: row.idempotencyKey,
+        provider,
+      });
+      providerAccepted = result.ok;
+      providerResult = result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED");
+      providerFailure = result.ok ? null : result.error || "Unknown provider error";
+      providerIdentityMismatch = result.ok && result.provider !== provider;
+      if (providerIdentityMismatch) {
+        throw new Error(`Transfer-proof review delivery provider changed from ${provider} to ${result.provider ?? "UNKNOWN"}`);
+      }
+      if (!result.ok) throw new Error(result.error || "Review email provider rejected delivery");
+
+      const recorded = await db.$transaction(async (tx) => {
+        const recordedAt = await databaseUtcNow(tx);
+        const owned = await tx.transferProofReviewDeliveryIntent.updateMany({
+          where: {
+            id: row.id,
+            status: "PROCESSING",
+            provider,
+            leaseExpiresAt,
+            claimToken,
+            attemptCount,
+          },
+          data: {
+            status: "DELIVERED",
+            deliveredAt: recordedAt,
+            processingAt: null,
+            leaseExpiresAt: null,
+            claimToken: null,
+            dispatchStartedAt: null,
+            providerResult,
+            lastError: null,
+          },
+        });
+        if (owned.count !== 1) return owned;
+        await tx.emailDelivery.upsert({
+          where: { orderId_emailType_recipient: {
+            orderId: row.orderId,
+            emailType: `TRANSFER_PROOF_HUMAN_REVIEW_${row.requestId}`,
+            recipient: row.recipient,
+          } },
+          create: {
+            orderId: row.orderId,
+            emailType: `TRANSFER_PROOF_HUMAN_REVIEW_${row.requestId}`,
+            recipient: row.recipient,
+            provider,
+            status: "SENT",
+            error: null,
+            sentAt: recordedAt,
+          },
+          update: { provider, status: "SENT", error: null, sentAt: recordedAt },
+        });
+        return owned;
+      });
+      if (recorded.count !== 1) {
+        throw new Error("Review provider accepted delivery but claim ownership was lost");
+      }
+      delivered += 1;
+    } catch (error) {
+      const lastError = error instanceof Error ? error.message : "Unknown review delivery error";
+      if (!dispatchStarted) {
+        const quarantinedAt = await databaseUtcNow(db);
+        const quarantined = await db.transferProofReviewDeliveryIntent.updateMany({
+          where: {
+            id: row.id,
+            status: "PROCESSING",
+            provider,
+            leaseExpiresAt,
+            claimToken,
+            attemptCount: row.attemptCount,
+            dispatchStartedAt: null,
+          },
+          data: {
+            status: "RECONCILIATION_REQUIRED",
+            processingAt: null,
+            leaseExpiresAt: null,
+            claimToken: null,
+            dispatchStartedAt: null,
+            lastError: `Pre-dispatch review delivery failure: ${lastError}`.slice(0, 2000),
+            availableAt: new Date(quarantinedAt.getTime() + RETRY_BASE_MS),
+          },
+        });
+        reconciliationRequired += quarantined.count;
+        failed += quarantined.count;
+        continue;
+      }
+
+      const retryAcceptedResend = providerAccepted && !providerIdentityMismatch
+        && provider === "RESEND" && attemptCount < MAX_ATTEMPTS;
+      const requiresReconciliation = (providerIdentityMismatch || providerAccepted)
+        ? !retryAcceptedResend
+        : provider === "SENDGRID" || attemptCount >= MAX_ATTEMPTS;
+      const recovered = await db.$transaction(async (tx) => {
+        const recoveredAt = await databaseUtcNow(tx);
+        const owned = await tx.transferProofReviewDeliveryIntent.updateMany({
+          where: {
+            id: row.id,
+            status: "PROCESSING",
+            provider,
+            leaseExpiresAt,
+            claimToken,
+            attemptCount,
+          },
+          data: {
+            status: retryAcceptedResend
+              ? "PROCESSING"
+              : requiresReconciliation ? "RECONCILIATION_REQUIRED" : "FAILED",
+            ...(retryAcceptedResend
+              ? { leaseExpiresAt: recoveredAt }
+              : {
+                processingAt: null,
+                leaseExpiresAt: null,
+                claimToken: null,
+                dispatchStartedAt: null,
+              }),
+            providerResult,
+            lastError: lastError.slice(0, 2000),
+            availableAt: attemptCount < MAX_ATTEMPTS
+              ? new Date(recoveredAt.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
+              : recoveredAt,
+          },
+        });
+        if (owned.count !== 1 || providerAccepted) return owned;
+        await tx.emailDelivery.upsert({
+          where: { orderId_emailType_recipient: {
+            orderId: row.orderId,
+            emailType: `TRANSFER_PROOF_HUMAN_REVIEW_${row.requestId}`,
+            recipient: row.recipient,
+          } },
+          create: {
+            orderId: row.orderId,
+            emailType: `TRANSFER_PROOF_HUMAN_REVIEW_${row.requestId}`,
+            recipient: row.recipient,
+            provider,
+            status: "FAILED",
+            error: providerFailure || lastError,
+            sentAt: recoveredAt,
+          },
+          update: {
+            provider,
+            status: "FAILED",
+            error: providerFailure || lastError,
+            sentAt: recoveredAt,
+          },
+        });
+        return owned;
+      });
+      if (requiresReconciliation) reconciliationRequired += recovered.count;
+      failed += recovered.count;
+    }
+  }
+
+  return {
+    scanned: acquisition.candidates,
+    claimed,
+    delivered,
+    failed,
+    reconciliationRequired,
+  };
+}

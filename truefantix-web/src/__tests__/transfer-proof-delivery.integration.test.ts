@@ -360,6 +360,129 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendAdmin).not.toHaveBeenCalled();
   });
 
+  it("rolls back accepted proof state, delivery intents, and notification together", async () => {
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        transferProofType: null,
+        transferProofData: null,
+        transferVerificationStatus: null,
+        transferVerificationReason: null,
+        disputeWindowEndsAt: null,
+      },
+    });
+    const accepted = params("01");
+
+    await expect(prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          transferProofType: accepted.transferProofType,
+          transferProofData: "synthetic-accepted-proof",
+          transferVerificationStatus: "PENDING",
+          transferVerificationReason: "synthetic-accepted-review",
+          disputeWindowEndsAt: accepted.deadline,
+        },
+      });
+      await stageTransferProofDeliveryIntent(tx, accepted);
+      throw new Error("force accepted-proof rollback");
+    }, { isolationLevel: "Serializable" })).rejects.toThrow("force accepted-proof rollback");
+
+    await expect(prisma.order.findUniqueOrThrow({ where: { id: orderId } }))
+      .resolves.toMatchObject({
+        transferProofType: null,
+        transferProofData: null,
+        transferVerificationStatus: null,
+        transferVerificationReason: null,
+        disputeWindowEndsAt: null,
+      });
+    await expect(prisma.notification.count({ where: { userId: buyerUserId } })).resolves.toBe(0);
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } })).resolves.toBe(0);
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+  });
+
+  it("makes a waiting human-review boundary observe and refuse committed acceptance", async () => {
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        transferProofType: null,
+        transferProofData: null,
+        transferVerificationStatus: null,
+        transferVerificationReason: null,
+        disputeWindowEndsAt: null,
+      },
+    });
+    const accepted = params("01");
+    let releaseAcceptance: () => void = () => undefined;
+    const acceptanceHeld = new Promise<void>((resolve) => { releaseAcceptance = resolve; });
+    let acceptanceLocked: () => void = () => undefined;
+    const acceptanceReady = new Promise<void>((resolve) => { acceptanceLocked = resolve; });
+    const acceptance = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          transferProofType: accepted.transferProofType,
+          transferProofData: "synthetic-accepted-proof",
+          transferVerificationStatus: "PENDING",
+          transferVerificationReason: "synthetic-accepted-review",
+          disputeWindowEndsAt: accepted.deadline,
+        },
+      });
+      await stageTransferProofDeliveryIntent(tx, accepted);
+      acceptanceLocked();
+      await acceptanceHeld;
+    }, { isolationLevel: "Serializable" });
+
+    await acceptanceReady;
+    const humanReviewClient = await pool.connect();
+    try {
+      await humanReviewClient.query("BEGIN");
+      let humanReviewSettled = false;
+      const humanReviewRead = humanReviewClient.query<{
+        transferProofData: string | null;
+        acceptedProof: boolean;
+      }>(`
+        SELECT "transferProofData", "disputeWindowEndsAt" IS NOT NULL AS "acceptedProof"
+        FROM "Order"
+        WHERE id = $1
+        FOR UPDATE
+      `, [orderId]).finally(() => { humanReviewSettled = true; });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(humanReviewSettled).toBe(false);
+      releaseAcceptance();
+      await acceptance;
+
+      const lockedOrder = (await humanReviewRead).rows[0];
+      expect(lockedOrder.transferProofData).toBe("synthetic-accepted-proof");
+      expect(lockedOrder.acceptedProof).toBe(true);
+      // The route's locked-state branch returns its 409 here, before any
+      // review mutation or delivery. Roll back the synthetic reader exactly
+      // as that refusal leaves the database unchanged.
+      await humanReviewClient.query("ROLLBACK");
+
+      await expect(prisma.order.findUniqueOrThrow({ where: { id: orderId } }))
+        .resolves.toMatchObject({
+          transferProofData: "synthetic-accepted-proof",
+          disputeWindowEndsAt: accepted.deadline,
+          transferVerificationStatus: "PENDING",
+        });
+      await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } })).resolves.toBe(2);
+      await expect(prisma.notification.count({ where: { userId: buyerUserId } })).resolves.toBe(1);
+      await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+      expect(mockedSendEmail).not.toHaveBeenCalled();
+      expect(mockedSendAdmin).not.toHaveBeenCalled();
+    } finally {
+      releaseAcceptance();
+      await acceptance.catch(() => undefined);
+      await humanReviewClient.query("ROLLBACK").catch(() => undefined);
+      humanReviewClient.release();
+    }
+  });
+
   it("preserves transfer-proof delivery identity and history", async () => {
     await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
     const intent = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
