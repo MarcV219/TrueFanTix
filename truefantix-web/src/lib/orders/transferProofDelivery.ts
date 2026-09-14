@@ -92,6 +92,7 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
       create: {
         ...envelope, idempotencyKey, identityVersion: 2,
         envelopeDigest: deliveryEnvelopeDigest(envelope),
+        availableAt: params.now,
       },
       update: {},
     });
@@ -108,6 +109,7 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
     create: {
       ...envelope, idempotencyKey, identityVersion: 2,
       envelopeDigest: deliveryEnvelopeDigest(envelope),
+      availableAt: params.now,
     },
     update: {},
   });

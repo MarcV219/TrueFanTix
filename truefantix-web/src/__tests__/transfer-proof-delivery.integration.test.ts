@@ -25,6 +25,19 @@ jest.mock("@/lib/adminActivityEmail", () => ({
 const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
 const mockedSendEmail = sendEmail as jest.MockedFunction<typeof sendEmail>;
 const mockedSendAdmin = sendAdminActivityEmail as jest.MockedFunction<typeof sendAdminActivityEmail>;
+const NativeDate = globalThis.Date;
+const shiftedDateOffset = NativeDate.now()
+  - NativeDate.parse("2026-12-03T01:00:00.000Z");
+// Keep the suite's historical deterministic timeline behind the database
+// clock. Clock-boundary cases use NativeDate explicitly.
+const Date = new Proxy(NativeDate, {
+  construct(target, args) {
+    if (args.length === 1 && typeof args[0] === "string" && args[0].startsWith("2026-12-")) {
+      return new target(target.parse(args[0]) + shiftedDateOffset);
+    }
+    return Reflect.construct(target, args);
+  },
+}) as DateConstructor;
 
 if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", () => {
   it("requires an isolated database", () => undefined);
@@ -186,7 +199,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendEmail.mock.calls[0][0].idempotencyKey!.length).toBeLessThanOrEqual(256);
     expect(mockedSendAdmin.mock.calls[0][0]).toMatchObject({
       idempotencyKey: expect.stringMatching(/^tft-transfer-proof-[a-f0-9]{64}$/),
-      completedAt: "2026-12-01T13:00:00.000Z",
+      completedAt: params("13").now.toISOString(),
     });
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId, status: "DELIVERED" } })).resolves.toBe(2);
     await expect(prisma.reminderDelivery.count({ where: { orderId, status: "SENT" } })).resolves.toBe(1);
@@ -742,6 +755,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         idempotencyKey: "synthetic-malformed-buyer-envelope",
         identityVersion: 2,
         envelopeDigest: "0".repeat(64),
+        availableAt: new Date("2026-12-01T20:00:00.000Z"),
       },
       {
         orderId,
@@ -755,6 +769,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         idempotencyKey: "synthetic-malformed-admin-envelope",
         identityVersion: 2,
         envelopeDigest: "0".repeat(64),
+        availableAt: new Date("2026-12-01T20:00:00.000Z"),
       },
     ] });
 
@@ -1566,6 +1581,112 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
   });
 
+  it("binds claim acquisition and handoff to the bounded worker lease", async () => {
+    const [pendingId, failedId, handoffId, futurePendingId, futureFailedId]
+      = await seedAdminBatch("claim-lease", 5);
+    const pending = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: pendingId }, select: { availableAt: true },
+    });
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: pendingId },
+      data: {
+        status: "PROCESSING", provider: "RESEND", processingAt: pending.availableAt,
+        leaseExpiresAt: new Date(pending.availableAt.getTime() + 60 * 60 * 1000),
+        claimToken: "unbounded-pending-claim",
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery claim requires the bounded worker lease",
+    );
+
+    const retryAt = new Date("2026-12-01T10:00:00.000Z");
+    await forceLegacyIntentState(
+      { id: failedId },
+      {
+        status: "FAILED", provider: "RESEND", attemptCount: 1,
+        firstAttemptAt: new Date("2026-12-01T09:00:00.000Z"),
+        availableAt: retryAt, lastError: "synthetic retryable failure",
+      },
+    );
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: failedId },
+      data: {
+        status: "PROCESSING", processingAt: retryAt,
+        leaseExpiresAt: new Date("2026-12-01T10:14:00.000Z"),
+        claimToken: "short-retry-claim", lastError: null,
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery claim requires the bounded worker lease",
+    );
+
+    const handoff = await prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: handoffId }, select: { availableAt: true },
+    });
+    const firstLeaseExpiresAt = new Date(handoff.availableAt.getTime() + 15 * 60 * 1000);
+    await prisma.transferProofDeliveryIntent.update({
+      where: { id: handoffId },
+      data: {
+        status: "PROCESSING", provider: "RESEND", processingAt: handoff.availableAt,
+        leaseExpiresAt: firstLeaseExpiresAt, claimToken: "initial-bounded-owner",
+      },
+    });
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: handoffId },
+      data: {
+        processingAt: firstLeaseExpiresAt,
+        leaseExpiresAt: new Date(firstLeaseExpiresAt.getTime() + 20 * 60 * 1000),
+        claimToken: "unbounded-successor-owner",
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery claim requires the bounded worker lease",
+    );
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: handoffId },
+      data: {
+        processingAt: firstLeaseExpiresAt,
+        leaseExpiresAt: new Date(firstLeaseExpiresAt.getTime() + 15 * 60 * 1000),
+        claimToken: "bounded-successor-owner",
+      },
+    })).resolves.toMatchObject({
+      status: "PROCESSING", claimToken: "bounded-successor-owner",
+    });
+
+    const forgedProcessingAt = new NativeDate(NativeDate.now() + 365 * 24 * 60 * 60 * 1000);
+    const forgedLeaseExpiresAt = new NativeDate(forgedProcessingAt.getTime() + 15 * 60 * 1000);
+    for (const id of [futurePendingId, futureFailedId]) {
+      if (id === futureFailedId) {
+        await forceLegacyIntentState(
+          { id },
+          {
+            status: "FAILED", provider: "RESEND", attemptCount: 1,
+            firstAttemptAt: new NativeDate(),
+            availableAt: new NativeDate(), lastError: "synthetic retryable failure",
+          },
+        );
+      }
+      await expect(prisma.transferProofDeliveryIntent.update({
+        where: { id },
+        data: {
+          status: "PROCESSING", provider: "RESEND", processingAt: forgedProcessingAt,
+          leaseExpiresAt: forgedLeaseExpiresAt,
+          claimToken: `future-claim-${id}`, lastError: null,
+        },
+      })).rejects.toThrow(
+        "Transfer-proof delivery claim requires the bounded worker lease",
+      );
+    }
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: handoffId },
+      data: {
+        processingAt: forgedProcessingAt, leaseExpiresAt: forgedLeaseExpiresAt,
+        claimToken: "future-successor-owner",
+      },
+    })).rejects.toThrow(
+      "Transfer-proof delivery claim requires the bounded worker lease",
+    );
+  });
+
   it("preserves active processing evidence outside replay-safe Resend recovery", async () => {
     const [sendGridId, resendId, activeId] = await seedAdminBatch("processing-evidence", 3);
 
@@ -1817,6 +1938,77 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
         WHERE id = 'valid-75'
       `)).resolves.toMatchObject({ rowCount: 1 });
     } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${claimSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
+  it("installs bounded claim leases as a forward-only upgrade", async () => {
+    const claimSchema = `transfer_proof_claim_lease_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE SCHEMA "${claimSchema}"`);
+      await client.query(`SET search_path TO "${claimSchema}"`);
+      await client.query(`
+        CREATE TABLE "TransferProofDeliveryIntent" (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          "availableAt" TIMESTAMP(3) NOT NULL,
+          "processingAt" TIMESTAMP(3),
+          "leaseExpiresAt" TIMESTAMP(3),
+          "claimToken" TEXT
+        )
+      `);
+      await client.query(`
+        INSERT INTO "TransferProofDeliveryIntent" (id, status, "availableAt") VALUES
+          ('permissive-75', 'PENDING', NOW() - INTERVAL '1 day'),
+          ('strict-76', 'PENDING', NOW() - INTERVAL '1 day'),
+          ('valid-76', 'FAILED', NOW() - INTERVAL '1 day')
+      `);
+
+      const claimScheduleMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914023000_bind_transfer_proof_claim_schedule/migration.sql",
+      ), "utf8");
+      await client.query(claimScheduleMigration);
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING',
+          "processingAt" = NOW() + INTERVAL '1 year',
+          "leaseExpiresAt" = NOW() + INTERVAL '1 year 15 minutes',
+          "claimToken" = 'permissive-long-lease'
+        WHERE id = 'permissive-75'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+
+      const claimLeaseMigration = await readFile(join(
+        process.cwd(),
+        "prisma/migrations/20260914030000_bind_transfer_proof_claim_lease/migration.sql",
+      ), "utf8");
+      await client.query(claimLeaseMigration);
+      await client.query("SET TIME ZONE 'Asia/Tokyo'");
+
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING',
+          "processingAt" = (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 year',
+          "leaseExpiresAt" = (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 year 15 minutes',
+          "claimToken" = 'strict-long-lease'
+        WHERE id = 'strict-76'
+      `)).rejects.toThrow(
+        "Transfer-proof delivery claim requires the bounded worker lease",
+      );
+      await expect(client.query(`
+        UPDATE "TransferProofDeliveryIntent"
+        SET status = 'PROCESSING',
+          "processingAt" = statement_timestamp() AT TIME ZONE 'UTC',
+          "leaseExpiresAt" = (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '15 minutes',
+          "claimToken" = 'valid-bounded-lease'
+        WHERE id = 'valid-76'
+      `)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await client.query("SET TIME ZONE 'UTC'");
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA "${claimSchema}" CASCADE`);
       client.release();
@@ -2586,6 +2778,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       idempotencyKey: `${orderId}:2026-12-01T18:00:00.000Z:ADMIN_TRANSFER_ACTIVITY_EMAIL:admin@truefantix.com`,
       identityVersion: 2,
       envelopeDigest: "0".repeat(64),
+      availableAt: new Date("2026-12-01T22:00:00.000Z"),
     } });
 
     await expect(drainTransferProofDeliveryIntents(
@@ -2692,6 +2885,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
           },
           idempotencyKey: buyerKey,
           identityVersion: 1,
+          availableAt: new Date("2026-12-01T23:00:00.000Z"),
         },
         {
           orderId,
