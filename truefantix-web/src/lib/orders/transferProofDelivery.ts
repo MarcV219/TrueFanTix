@@ -42,6 +42,16 @@ function deliveryIdempotencyKey(orderId: string, windowStart: Date, kind: string
   return `${orderId}:${windowStart.toISOString()}:${kind}:${recipient}`;
 }
 
+function buyerNotificationIdempotencyKey(orderId: string, buyerUserId: string, windowStart: Date) {
+  const canonicalIdentity = [
+    "transfer-proof-confirmation",
+    orderId,
+    buyerUserId,
+    windowStart.toISOString(),
+  ].join(":");
+  return `tft-notification-${createHash("sha256").update(canonicalIdentity).digest("hex")}`;
+}
+
 function configuredEmailProvider(): EmailProvider | null {
   if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
   if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
@@ -132,14 +142,30 @@ export async function stageTransferProofDeliveryIntent(tx: Prisma.TransactionCli
   if (params.buyerUserId) {
     const ticketWord = params.ticketCount === 1 ? "ticket" : "tickets";
     const message = `Confirm you received ${params.ticketCount} transferred ${ticketWord} by ${params.deadline.toLocaleString("en-CA")}. If you do not confirm within 24 hours, the seller payout will be released.`;
-    const existing = await tx.notification.findFirst({
-      where: { userId: params.buyerUserId, type: "TRANSFER_CONFIRMATION_REQUIRED", link: "/account/tickets/holding", createdAt: { gte: windowStart } },
-      select: { id: true },
+    const type = "TRANSFER_CONFIRMATION_REQUIRED";
+    const link = "/account/tickets/holding";
+    const notificationIdempotencyKey = buyerNotificationIdempotencyKey(
+      params.orderId,
+      params.buyerUserId,
+      windowStart,
+    );
+    const notification = await tx.notification.upsert({
+      where: { idempotencyKey: notificationIdempotencyKey },
+      create: {
+        userId: params.buyerUserId, type, message, link, isRead: false,
+        idempotencyKey: notificationIdempotencyKey,
+      },
+      update: {},
     });
-    if (!existing) await tx.notification.create({ data: {
-      userId: params.buyerUserId, type: "TRANSFER_CONFIRMATION_REQUIRED", message,
-      link: "/account/tickets/holding", isRead: false,
-    } });
+    if (
+      notification.userId !== params.buyerUserId
+      || notification.type !== type
+      || notification.link !== link
+      || notification.message !== message
+      || notification.idempotencyKey !== notificationIdempotencyKey
+    ) {
+      throw new Error("Transfer-proof notification idempotency collision does not match the canonical content");
+    }
   }
 }
 

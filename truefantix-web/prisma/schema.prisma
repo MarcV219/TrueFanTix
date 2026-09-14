@@ -2031,8 +2031,9 @@ model ConnectedAccount {
 }
 
 model Notification {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  idempotencyKey String?  @unique
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)

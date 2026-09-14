@@ -69,6 +69,16 @@ function authoritativeWindowStart(deadline: Date) {
   return normalizedWindowStart(authoritativeCompletedAt(deadline));
 }
 
+function buyerNotificationKey(targetOrderId: string, targetBuyerUserId: string, windowStart: Date) {
+  const identity = [
+    "transfer-proof-confirmation",
+    targetOrderId,
+    targetBuyerUserId,
+    windowStart.toISOString(),
+  ].join(":");
+  return `tft-notification-${createHash("sha256").update(identity).digest("hex")}`;
+}
+
 if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", () => {
   it("requires an isolated database", () => undefined);
 }); else describe("transfer-proof delivery PostgreSQL boundary", () => {
@@ -698,6 +708,54 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       .toMatchObject({ windowStart: authoritativeWindowStart(deadline).toISOString() });
     expect(rows.find((row) => row.kind === "ADMIN_TRANSFER_ACTIVITY_EMAIL")?.payloadJson)
       .toMatchObject({ completedAt: authoritativeCompletedAt(deadline).toISOString() });
+  });
+
+  it("creates distinct buyer notifications for two orders in the same authoritative window", async () => {
+    const secondOrderId = `${orderId}-same-window-notification`;
+    await ensureSyntheticOrder(secondOrderId);
+    try {
+      await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("02")));
+      await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, {
+        ...params("03"), orderId: secondOrderId,
+      }));
+
+      const notifications = await prisma.notification.findMany({
+        where: { userId: buyerUserId, type: "TRANSFER_CONFIRMATION_REQUIRED" },
+        select: { idempotencyKey: true },
+      });
+      expect(notifications).toHaveLength(2);
+      expect(new Set(notifications.map((row) => row.idempotencyKey)).size).toBe(2);
+    } finally {
+      await forceDeleteDeliveryIntents({ orderId: secondOrderId });
+      await prisma.orderItem.deleteMany({ where: { orderId: secondOrderId } });
+      await prisma.order.delete({ where: { id: secondOrderId } });
+      await prisma.ticket.deleteMany({ where: { id: `${secondOrderId}-ticket` } });
+    }
+  });
+
+  it("fails atomically when a canonical notification key owns different content", async () => {
+    const input = params("02");
+    const idempotencyKey = buyerNotificationKey(
+      input.orderId,
+      buyerUserId,
+      authoritativeWindowStart(input.deadline),
+    );
+    await prisma.notification.create({ data: {
+      userId: buyerUserId,
+      type: "TRANSFER_CONFIRMATION_REQUIRED",
+      message: "poisoned legacy content",
+      link: "/account/tickets/holding",
+      idempotencyKey,
+    } });
+
+    await expect(prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, input)))
+      .rejects.toThrow(
+        "Transfer-proof notification idempotency collision does not match the canonical content",
+      );
+    await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } }))
+      .resolves.toBe(0);
+    await expect(prisma.notification.findUnique({ where: { idempotencyKey } }))
+      .resolves.toMatchObject({ message: "poisoned legacy content" });
   });
 
   it("matches the database digest for canonical JSON escaping and Unicode", async () => {
@@ -5109,6 +5167,54 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       await client.query(`DROP SCHEMA "${identitySchema}" CASCADE`);
       await racingClient.query("SET search_path TO public");
       racingClient.release();
+      client.release();
+    }
+  });
+
+  it("adds nullable notification idempotency without inventing legacy history", async () => {
+    const notificationSchema = `notification_idempotency_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    const migration = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260914120000_add_notification_idempotency_key/migration.sql",
+    ), "utf8");
+    try {
+      await client.query(`CREATE SCHEMA "${notificationSchema}"`);
+      await client.query(`SET search_path TO "${notificationSchema}"`);
+      await client.query(`
+        CREATE TABLE "Notification" (
+          id TEXT PRIMARY KEY,
+          "userId" TEXT NOT NULL,
+          type TEXT NOT NULL,
+          message TEXT NOT NULL,
+          link TEXT
+        );
+        INSERT INTO "Notification" (id, "userId", type, message, link) VALUES
+          ('legacy-notification-1', 'buyer', 'LEGACY', 'first', NULL),
+          ('legacy-notification-2', 'buyer', 'LEGACY', 'second', NULL);
+      `);
+
+      await expect(client.query(migration)).resolves.toBeDefined();
+      await expect(client.query(`
+        SELECT id, "idempotencyKey"
+        FROM "Notification"
+        ORDER BY id
+      `)).resolves.toMatchObject({ rows: [
+        { id: "legacy-notification-1", idempotencyKey: null },
+        { id: "legacy-notification-2", idempotencyKey: null },
+      ] });
+      await client.query(`
+        INSERT INTO "Notification" (id, "userId", type, message, "idempotencyKey") VALUES
+          ('keyed-notification', 'buyer', 'CURRENT', 'canonical', 'canonical-key')
+      `);
+      await expect(client.query(`
+        INSERT INTO "Notification" (id, "userId", type, message, "idempotencyKey") VALUES
+          ('duplicate-notification', 'buyer', 'CURRENT', 'duplicate', 'canonical-key')
+      `)).rejects.toThrow(/unique constraint|duplicate key/i);
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA "${notificationSchema}" CASCADE`);
       client.release();
     }
   });
