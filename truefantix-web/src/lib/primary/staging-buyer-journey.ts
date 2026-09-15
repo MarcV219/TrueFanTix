@@ -83,11 +83,13 @@ async function requireScenarioRoot(tx: Tx, scope: ReturnType<typeof ids>, actor:
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_SCENARIO_INVALID");
 }
 
-function requireReservationState(reservation: Prisma.PrimaryInventoryReservationGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string) {
+function requireReservationState(reservation: Prisma.PrimaryInventoryReservationGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string, now: Date) {
   const holdLifetimeMs = reservation.expiresAt.getTime() - reservation.createdAt.getTime();
-  const heldState = reservation.status === "HELD" && reservation.paymentCommittedAt === null && reservation.reconciliationAfter === null && reservation.commitIdempotencyKey === null;
+  const heldState = reservation.status === "HELD" && reservation.expiresAt.getTime() > now.getTime()
+    && reservation.paymentCommittedAt === null && reservation.reconciliationAfter === null && reservation.commitIdempotencyKey === null;
   const committedState = reservation.status === "PAYMENT_COMMITTED" && reservation.paymentCommittedAt !== null && reservation.reconciliationAfter !== null
     && reservation.paymentCommittedAt.getTime() >= reservation.createdAt.getTime()
+    && reservation.paymentCommittedAt.getTime() <= reservation.expiresAt.getTime()
     && reservation.reconciliationAfter.getTime() - reservation.paymentCommittedAt.getTime() === 120_000
     && reservation.commitIdempotencyKey === `${scope.base}:commit`;
   if (
@@ -188,7 +190,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       await tx.primaryInventoryReservation.create({ data: { id: scope.reservationId, organizerId: ORGANIZER_ID, eventId: scope.eventId, ticketTypeId: scope.ticketTypeId, buyerUserId: buyer.id, quantity: 1, expiresAt: new Date(now.getTime() + 600_000), createIdempotencyKey: `${scope.base}:hold` } });
       return { step: "HELD" };
     }
-    requireReservationState(reservation, scope, buyer.id);
+    requireReservationState(reservation, scope, buyer.id, now);
     const order = await tx.primaryOrder.findUnique({ where: { id: scope.orderId }, include: { lines: true, components: true } });
     if (!order) {
       await tx.primaryOrder.create({ data: { id: scope.orderId, organizerId: ORGANIZER_ID, eventId: scope.eventId, buyerUserId: buyer.id, reservationId: scope.reservationId, currency: "CAD", faceValueSubtotalMinor: 3500, grossTotalMinor: 3800, createIdempotencyKey: `${scope.base}:order` } });
