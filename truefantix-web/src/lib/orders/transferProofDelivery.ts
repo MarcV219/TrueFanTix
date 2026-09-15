@@ -9,6 +9,19 @@ import { canonicalTransferProofReviewOrigin } from "@/lib/orders/transferProofRe
 const BUYER_KIND = "BUYER_CONFIRMATION_EMAIL";
 const ADMIN_KIND = "ADMIN_TRANSFER_ACTIVITY_EMAIL";
 const SELLER_DECISION_KIND = "SELLER_REVIEW_DECISION_EMAIL";
+const SELLER_DECISION_PAYLOAD_KEYS = [
+  "action",
+  "appOrigin",
+  "decidedAt",
+  "decidedByUserId",
+  "decisionId",
+  "htmlBody",
+  "note",
+  "sellerFirstName",
+  "sellerUserId",
+  "subject",
+  "textBody",
+] as const;
 const LEASE_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 const RETRY_BASE_MS = 5 * 60 * 1000;
@@ -388,6 +401,13 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
     return;
   }
   if (row.kind === SELLER_DECISION_KIND) {
+    const keys = Object.keys(data).sort();
+    if (
+      keys.length !== SELLER_DECISION_PAYLOAD_KEYS.length
+      || keys.some((key, index) => key !== SELLER_DECISION_PAYLOAD_KEYS[index])
+    ) {
+      throw new Error("Transfer-proof review-decision payload must have the canonical shape");
+    }
     requireNonEmptyString(data, "action");
     if (!["APPROVE", "REJECT", "REQUEST_INFORMATION"].includes(String(data.action))) {
       throw new Error("Invalid transfer-proof review-decision action");

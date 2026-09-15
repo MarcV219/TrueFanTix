@@ -612,6 +612,52 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await ensureSyntheticOrder(orderId);
   });
 
+  it.each([
+    ["extra", (source: Prisma.JsonObject) => ({ ...source, injected: true })],
+    ["missing sellerFirstName", (source: Prisma.JsonObject) => {
+      const missing = { ...source };
+      delete missing.sellerFirstName;
+      return missing;
+    }],
+  ])("quarantines a seller decision with an %s runtime payload shape", async (_label, poison) => {
+    const decisionId = `decision-runtime-shape-${_label.replaceAll(" ", "-")}-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL", idempotencyKey: { contains: decisionId } },
+    });
+    const payloadJson = poison(row.payloadJson as Prisma.JsonObject);
+    const envelope = { orderId, kind: row.kind, recipient: row.recipient, payloadJson };
+    await forceLegacyIntentState({ id: row.id }, {
+      payloadJson,
+      envelopeDigest: envelopeDigest(envelope),
+    });
+
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: decidedAt }, prisma))
+      .resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1, reconciliationRequired: 1 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: row.id },
+      select: { status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: "Pre-dispatch delivery failure: Transfer-proof review-decision payload must have the canonical shape",
+    });
+    await forceDeleteDeliveryIntents({ id: row.id });
+    await ensureSyntheticOrder(orderId);
+  });
+
   it("rolls back accepted proof state, delivery intents, and notification together", async () => {
     await prisma.order.update({
       where: { id: orderId },
