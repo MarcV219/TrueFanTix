@@ -613,13 +613,13 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   });
 
   it.each([
-    ["extra", (source: Prisma.JsonObject) => ({ ...source, injected: true })],
-    ["missing sellerFirstName", (source: Prisma.JsonObject) => {
+    ["an extra field", (source: Prisma.JsonObject) => ({ ...source, injected: true })],
+    ["a missing sellerFirstName field", (source: Prisma.JsonObject) => {
       const missing = { ...source };
       delete missing.sellerFirstName;
       return missing;
     }],
-  ])("quarantines a seller decision with an %s runtime payload shape", async (_label, poison) => {
+  ])("quarantines a seller decision with %s in its runtime payload shape", async (_label, poison) => {
     const decisionId = `decision-runtime-shape-${_label.replaceAll(" ", "-")}-${runId}`;
     const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
     await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
