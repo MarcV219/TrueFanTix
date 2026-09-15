@@ -73,9 +73,14 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult>
 
       const response = await res.json().catch(() => null) as { id?: string } | null;
       return { ok: true, provider: "RESEND", providerResult: response?.id || `HTTP ${res.status}` };
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[EMAIL] Resend network error:", err);
-      return { ok: false, error: err?.message || "Resend request failed", provider: "RESEND", providerResult: "NETWORK_ERROR" };
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Resend request failed",
+        provider: "RESEND",
+        providerResult: "NETWORK_ERROR",
+      };
     }
   }
 
@@ -84,9 +89,8 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult>
   }
 
   if ((!payload.provider || payload.provider === "SENDGRID") && sendgridApiKey) {
-    sgMail.setApiKey(sendgridApiKey);
-
     try {
+      sgMail.setApiKey(sendgridApiKey);
       const [response] = await sgMail.send({
         to: payload.to,
         from: fromEmail,
@@ -96,9 +100,14 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult>
       });
       const messageId = response?.headers?.["x-message-id"];
       return { ok: true, provider: "SENDGRID", providerResult: String(messageId || response?.statusCode || "ACCEPTED") };
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[EMAIL] SendGrid error:", err);
-      return { ok: false, error: err.message, provider: "SENDGRID", providerResult: "PROVIDER_ERROR" };
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "SendGrid request failed",
+        provider: "SENDGRID",
+        providerResult: "PROVIDER_ERROR",
+      };
     }
   }
 
