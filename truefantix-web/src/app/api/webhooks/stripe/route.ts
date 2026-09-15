@@ -3,7 +3,13 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { releaseOrderAccessTokenHolds } from "@/lib/accessTokenHolds";
-import { sendEmail, generatePurchaseConfirmationEmail, generateSaleNotificationEmail } from "@/lib/email";
+import {
+  sendEmail,
+  generatePurchaseConfirmationEmail,
+  generateSaleNotificationEmail,
+  type EmailPayload,
+  type EmailSendResult,
+} from "@/lib/email";
 import { notifyTicketSold, notifyPurchaseConfirmed } from "@/lib/notifications/service";
 import { notifySellerTransferRequired, sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
@@ -40,6 +46,20 @@ function getOrderIdFromEvent(event: any): string | undefined {
     return typeof raw === "string" ? raw.trim() : undefined;
   }
   return undefined;
+}
+
+async function sendEmailWithProviderEvidence(payload: EmailPayload): Promise<EmailSendResult> {
+  try {
+    return await sendEmail(payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown email error";
+    return {
+      ok: false,
+      provider: "CONSOLE",
+      providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+      error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+    };
+  }
 }
 
 async function claimEventDelivery(event: any) {
@@ -156,7 +176,7 @@ export async function POST(req: Request) {
 
             const emailContent = generatePurchaseConfirmationEmail(updatedOrder.id, buyer.firstName, tickets, total);
 
-            const emailResult = await sendEmail({
+            const emailResult = await sendEmailWithProviderEvidence({
               to: buyer.email,
               subject: emailContent.subject,
               text: emailContent.text,
@@ -199,7 +219,7 @@ export async function POST(req: Request) {
               amount
             );
 
-            const emailResult = await sendEmail({
+            const emailResult = await sendEmailWithProviderEvidence({
               to: seller.email,
               subject: emailContent.subject,
               text: emailContent.text,
