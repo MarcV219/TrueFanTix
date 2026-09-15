@@ -60,6 +60,14 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
+enum LegacyDisputeRefundStatus {
+  NOT_SENT
+  ATTEMPTING
+  RECONCILIATION_REQUIRED
+  SUCCEEDED
+  FAILED
+}
+
 enum EventSelloutStatus {
   NOT_SOLD_OUT
   SOLD_OUT
@@ -410,6 +418,7 @@ model User {
   primaryRevocationsCreated        PrimaryAdmissionRevocation[]      @relation("PrimaryRevocationActor")
   primaryCheckedInRefundApprovals  PrimaryCheckedInRefundApproval[]  @relation("PrimaryCheckedInRefundApprover")
   primaryObligationWaiverApprovals PrimaryObligationWaiverApproval[] @relation("PrimaryObligationWaiverApprover")
+  legacyDisputeRefundsAuthorized   LegacyDisputeRefundIntent[]       @relation("LegacyDisputeRefundAuthorizer")
 
   @@index([role])
   @@index([createdAt])
@@ -1468,6 +1477,7 @@ model Order {
   ticketEscrows                TicketEscrow[]
   accessTokenTransactions      AccessTokenTransaction[]
   transferProofDeliveryIntents TransferProofDeliveryIntent[]
+  legacyDisputeRefundIntent    LegacyDisputeRefundIntent?
 
   // Conversation for this order
   conversation Conversation?
@@ -1762,6 +1772,40 @@ model Payment {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  legacyDisputeRefundIntent LegacyDisputeRefundIntent?
+}
+
+model LegacyDisputeRefundIntent {
+  id                     String                    @id @default(cuid())
+  orderId                String                    @unique
+  paymentId              String                    @unique
+  authorizedByUserId     String
+  provider               String
+  providerPaymentRef     String
+  expectedAmountCents    Int
+  currency               String
+  authorizationReason    String
+  authorizationIpAddress String?
+  authorizationUserAgent String?
+  commandDigest          String
+  idempotencyKey         String                    @unique
+  status                 LegacyDisputeRefundStatus @default(NOT_SENT)
+  dispatchStartedAt      DateTime?
+  providerRefundId       String?                   @unique
+  providerStatus         String?
+  failureReason          String?
+  authorizedAt           DateTime                  @default(now())
+  completedAt            DateTime?
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+
+  order        Order   @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  payment      Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  authorizedBy User    @relation("LegacyDisputeRefundAuthorizer", fields: [authorizedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, authorizedAt])
+  @@index([authorizedByUserId, authorizedAt])
 }
 
 model Event {

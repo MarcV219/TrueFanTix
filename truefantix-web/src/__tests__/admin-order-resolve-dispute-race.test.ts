@@ -6,8 +6,14 @@ import { auditLog } from "@/lib/audit";
 import { createNotification } from "@/lib/notifications/service";
 import { sendDisputeEmails } from "@/lib/disputes";
 import { awardLaunchSale } from "@/lib/launchPromotion";
-import { refundOrderAccessTokens } from "@/lib/accessTokenHolds";
 import { validateRequest } from "@/lib/validation";
+import {
+  claimLegacyDisputeRefundIntent,
+  finalizeLegacyDisputeRefund,
+  LegacyDisputeRefundAuthorizationChangedError,
+  markLegacyDisputeRefundReconciliationRequired,
+  stageLegacyDisputeRefundIntent,
+} from "@/lib/orders/legacyDisputeRefund";
 import { POST } from "@/app/api/admin/orders/[id]/resolve-dispute/route";
 
 const mockedRefundCreate = jest.fn();
@@ -24,6 +30,7 @@ jest.mock("@/lib/prisma", () => ({
     payout: { findFirst: jest.fn(), create: jest.fn(), updateMany: jest.fn() },
     payment: { update: jest.fn() },
     ticketEscrow: { updateMany: jest.fn() },
+    legacyDisputeRefundIntent: { findUnique: jest.fn() },
     $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   },
@@ -37,7 +44,15 @@ jest.mock("@/lib/disputes", () => ({
   sendDisputeEmails: jest.fn(),
 }));
 jest.mock("@/lib/launchPromotion", () => ({ awardLaunchSale: jest.fn() }));
-jest.mock("@/lib/accessTokenHolds", () => ({ refundOrderAccessTokens: jest.fn() }));
+jest.mock("@/lib/orders/legacyDisputeRefund", () => ({
+  LegacyDisputeRefundAuthorizationChangedError: class extends Error {},
+  assertLegacyDisputeRefundProviderEvidence: jest.fn(),
+  claimLegacyDisputeRefundIntent: jest.fn(),
+  finalizeLegacyDisputeRefund: jest.fn(),
+  markLegacyDisputeRefundFailed: jest.fn(),
+  markLegacyDisputeRefundReconciliationRequired: jest.fn(),
+  stageLegacyDisputeRefundIntent: jest.fn(),
+}));
 jest.mock("@/lib/validation", () => ({
   schemas: { adminResolveDispute: { kind: "admin-resolve-dispute" } },
   validateRequest: jest.fn(),
@@ -51,6 +66,7 @@ const mockedPrisma = prisma as unknown as {
   payout: { findFirst: jest.Mock; create: jest.Mock; updateMany: jest.Mock };
   payment: { update: jest.Mock };
   ticketEscrow: { updateMany: jest.Mock };
+  legacyDisputeRefundIntent: { findUnique: jest.Mock };
   $queryRaw: jest.Mock;
   $transaction: jest.Mock;
 };
@@ -59,7 +75,10 @@ const mockedAuditLog = auditLog as jest.MockedFunction<typeof auditLog>;
 const mockedCreateNotification = createNotification as jest.MockedFunction<typeof createNotification>;
 const mockedSendDisputeEmails = sendDisputeEmails as jest.MockedFunction<typeof sendDisputeEmails>;
 const mockedAwardLaunchSale = awardLaunchSale as jest.MockedFunction<typeof awardLaunchSale>;
-const mockedRefundOrderAccessTokens = refundOrderAccessTokens as jest.MockedFunction<typeof refundOrderAccessTokens>;
+const mockedStageRefund = stageLegacyDisputeRefundIntent as jest.MockedFunction<typeof stageLegacyDisputeRefundIntent>;
+const mockedClaimRefund = claimLegacyDisputeRefundIntent as jest.MockedFunction<typeof claimLegacyDisputeRefundIntent>;
+const mockedFinalizeRefund = finalizeLegacyDisputeRefund as jest.MockedFunction<typeof finalizeLegacyDisputeRefund>;
+const mockedMarkRefundReconciliation = markLegacyDisputeRefundReconciliationRequired as jest.MockedFunction<typeof markLegacyDisputeRefundReconciliationRequired>;
 const mockedValidateRequest = validateRequest as jest.Mock;
 
 const orderId = "cm1234567890abcdefghijkl";
@@ -121,6 +140,8 @@ describe("admin dispute-resolution staging-persona boundary", () => {
       transferVerificationReason: JSON.stringify({ type: "BUYER_DISPUTE", ticketIds: ["ticket-1"] }),
       sellerId: "seller-1",
       amountCents: 12500,
+      totalCents: 12500,
+      currency: "CAD",
       items: [{
         ticketId: "ticket-1",
         ticket: {
@@ -131,7 +152,7 @@ describe("admin dispute-resolution staging-persona boundary", () => {
           seat: "1",
         },
       }],
-      payment: { status: "SUCCEEDED", provider: "STRIPE", providerRef: "pi_synthetic" },
+      payment: { id: "payment-1", amountCents: 12500, currency: "CAD", status: "SUCCEEDED", provider: "STRIPE", providerRef: "pi_synthetic" },
       seller: { user: { id: "seller-user-1", email: "seller@example.test", firstName: "Seller" } },
       buyerSeller: { user: { id: "buyer-user-1", email: "buyer@example.test", firstName: "Buyer" } },
     });
@@ -142,12 +163,37 @@ describe("admin dispute-resolution staging-persona boundary", () => {
       transferVerificationStatus: "MATCHED",
     });
     mockedPrisma.payout.findFirst.mockResolvedValue(null);
-    mockedRefundCreate.mockResolvedValue({ id: "re_synthetic", status: "succeeded" });
+    mockedRefundCreate.mockResolvedValue({ id: "re_synthetic", status: "succeeded", payment_intent: "pi_synthetic", amount: 12500, currency: "cad" });
     mockedAuditLog.mockResolvedValue(undefined);
     mockedCreateNotification.mockResolvedValue({ ok: true } as never);
     mockedSendDisputeEmails.mockResolvedValue(undefined);
     mockedAwardLaunchSale.mockResolvedValue(undefined as never);
-    mockedRefundOrderAccessTokens.mockResolvedValue(undefined as never);
+    const intent = {
+      id: "refund-intent-1",
+      orderId,
+      paymentId: "payment-1",
+      authorizedByUserId: "admin-1",
+      provider: "STRIPE",
+      providerPaymentRef: "pi_synthetic",
+      expectedAmountCents: 12500,
+      currency: "CAD",
+      authorizationReason: "Synthetic resolution.",
+      authorizationIpAddress: null,
+      authorizationUserAgent: null,
+      commandDigest: "a".repeat(64),
+      idempotencyKey: `dispute-refund:${orderId}`,
+      status: "NOT_SENT",
+    } as unknown as Awaited<ReturnType<typeof stageLegacyDisputeRefundIntent>>;
+    mockedStageRefund.mockResolvedValue(intent);
+    mockedClaimRefund.mockResolvedValue({ ...intent, status: "ATTEMPTING" } as never);
+    mockedFinalizeRefund.mockResolvedValue({
+      updatedOrder: {
+        id: orderId,
+        status: "REFUNDED",
+        buyerConfirmationStatus: "REFUNDED",
+        transferVerificationStatus: "REFUNDED",
+      },
+    } as never);
   });
 
   afterEach(() => {
@@ -300,7 +346,7 @@ describe("admin dispute-resolution staging-persona boundary", () => {
     expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
   });
 
-  it("issues a synthetic refund only after current-admin and dispute locks", async () => {
+  it("authorizes and commits a synthetic refund intent before provider I/O", async () => {
     action = "MARK_REFUND_REQUIRED";
     mockedPrisma.order.update.mockResolvedValue({
       id: orderId,
@@ -312,20 +358,131 @@ describe("admin dispute-resolution staging-persona boundary", () => {
     const response = await POST(request());
 
     expect(response.status).toBe(200);
-    expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(4);
     expect(mockedRefundCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ payment_intent: "pi_synthetic" }),
+      expect.objectContaining({ payment_intent: "pi_synthetic", amount: 12500 }),
       { idempotencyKey: `dispute-refund:${orderId}` },
     );
-    expect(mockedPrisma.payment.update).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.payout.updateMany).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.ticketEscrow.updateMany).toHaveBeenCalledTimes(1);
-    expect(mockedRefundOrderAccessTokens).toHaveBeenCalledWith(mockedPrisma, orderId);
+    expect(mockedStageRefund).toHaveBeenCalledWith(mockedPrisma, expect.objectContaining({
+      orderId,
+      paymentId: "payment-1",
+      expectedAmountCents: 12500,
+    }));
+    expect(mockedClaimRefund).toHaveBeenCalledTimes(1);
+    expect(mockedFinalizeRefund).toHaveBeenCalledTimes(1);
+    expect(mockedStageRefund.mock.invocationCallOrder[0]).toBeLessThan(mockedClaimRefund.mock.invocationCallOrder[0]);
+    expect(mockedClaimRefund.mock.invocationCallOrder[0]).toBeLessThan(mockedRefundCreate.mock.invocationCallOrder[0]);
+    expect(mockedRefundCreate.mock.invocationCallOrder[0]).toBeLessThan(mockedFinalizeRefund.mock.invocationCallOrder[0]);
+    expect(mockedFinalizeRefund.mock.invocationCallOrder[0]).toBeLessThan(mockedCreateNotification.mock.invocationCallOrder[0]);
+    expect(mockedFinalizeRefund.mock.invocationCallOrder[0]).toBeLessThan(mockedSendDisputeEmails.mock.invocationCallOrder[0]);
     expect(mockedSendDisputeEmails).toHaveBeenCalledWith(expect.objectContaining({
       kind: "REFUNDED",
       idempotencyKeyPrefix: `dispute-refunded:${orderId}`,
       comments: expect.stringContaining("Stripe refund reference: re_synthetic"),
     }));
+  });
+
+  it("performs no provider call when refund authorization does not commit", async () => {
+    action = "MARK_REFUND_REQUIRED";
+    mockedPrisma.$transaction.mockImplementationOnce(
+      async (work: (tx: typeof mockedPrisma) => unknown) => {
+        await work(mockedPrisma);
+        throw Object.assign(new Error("synthetic authorization commit failure"), { code: "P2034" });
+      },
+    );
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "REFUND_AUTHORIZATION_FAILED",
+      retrySafe: true,
+    });
+    expect(mockedStageRefund).toHaveBeenCalledTimes(1);
+    expect(mockedClaimRefund).not.toHaveBeenCalled();
+    expect(mockedRefundCreate).not.toHaveBeenCalled();
+    expect(mockedFinalizeRefund).not.toHaveBeenCalled();
+    expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
+  });
+
+  it("refuses changed persisted authorization before claim or provider I/O", async () => {
+    action = "MARK_REFUND_REQUIRED";
+    mockedStageRefund.mockRejectedValueOnce(
+      new LegacyDisputeRefundAuthorizationChangedError("Synthetic authorization mismatch."),
+    );
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "REFUND_AUTHORIZATION_CHANGED",
+      retrySafe: false,
+    });
+    expect(mockedClaimRefund).not.toHaveBeenCalled();
+    expect(mockedRefundCreate).not.toHaveBeenCalled();
+    expect(mockedFinalizeRefund).not.toHaveBeenCalled();
+    expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
+  });
+
+  it("does not let a concurrent claim loser call the provider", async () => {
+    action = "MARK_REFUND_REQUIRED";
+    mockedClaimRefund.mockResolvedValueOnce(null);
+    mockedPrisma.legacyDisputeRefundIntent.findUnique.mockResolvedValueOnce({ status: "ATTEMPTING" });
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "REFUND_RECONCILIATION_REQUIRED",
+      retrySafe: false,
+    });
+    expect(mockedRefundCreate).not.toHaveBeenCalled();
+    expect(mockedFinalizeRefund).not.toHaveBeenCalled();
+    expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
+  });
+
+  it("quarantines an unknown provider outcome without refund-success side effects", async () => {
+    action = "MARK_REFUND_REQUIRED";
+    mockedRefundCreate.mockRejectedValueOnce(new Error("synthetic timeout"));
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "REFUND_RECONCILIATION_REQUIRED",
+      retrySafe: false,
+    });
+    expect(mockedMarkRefundReconciliation).toHaveBeenCalledWith(
+      mockedPrisma,
+      "refund-intent-1",
+      "PROVIDER_OUTCOME_UNKNOWN: synthetic timeout",
+    );
+    expect(mockedFinalizeRefund).not.toHaveBeenCalled();
+    expect(mockedCreateNotification).not.toHaveBeenCalled();
+    expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
+  });
+
+  it("quarantines provider success when local finalization does not commit", async () => {
+    action = "MARK_REFUND_REQUIRED";
+    mockedFinalizeRefund.mockRejectedValueOnce(
+      Object.assign(new Error("synthetic Tx2 rollback"), { code: "P2034" }),
+    );
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "REFUND_RECONCILIATION_REQUIRED",
+      retrySafe: false,
+    });
+    expect(mockedMarkRefundReconciliation).toHaveBeenCalledWith(
+      mockedPrisma,
+      "refund-intent-1",
+      "PROVIDER_SUCCEEDED_LOCAL_FINALIZE_FAILED: synthetic Tx2 rollback",
+      expect.objectContaining({ id: "re_synthetic", status: "succeeded" }),
+    );
+    expect(mockedCreateNotification).not.toHaveBeenCalled();
+    expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
   });
 
   it("keeps an under-review decision local and sends no closure email", async () => {
