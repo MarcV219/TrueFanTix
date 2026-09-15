@@ -231,6 +231,40 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
       .resolves.toBe(1);
   });
 
+  it("delivers the immutable review snapshot after ordinary seller profile changes", async () => {
+    const originalEmail = `review-delivery-${runId}@example.test`;
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    await prisma.user.update({
+      where: { id: sellerUserId },
+      data: {
+        email: `review-delivery-updated-${runId}@example.test`,
+        firstName: "Updated",
+      },
+    });
+    await prisma.seller.update({
+      where: { id: sellerId },
+      data: { name: "Updated Review Delivery Seller" },
+    });
+
+    try {
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+        .resolves.toMatchObject({ claimed: 1, delivered: 1, reconciliationRequired: 0 });
+      expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+        to: "support@truefantix.com",
+        text: expect.stringContaining(originalEmail),
+      }));
+    } finally {
+      await prisma.user.update({
+        where: { id: sellerUserId },
+        data: { email: originalEmail, firstName: "Seller" },
+      });
+      await prisma.seller.update({
+        where: { id: sellerId },
+        data: { name: "Review Delivery Seller" },
+      });
+    }
+  });
+
   it("reuses one immutable request identity and rejects conflicting content", async () => {
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
@@ -716,6 +750,53 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     });
   });
 
+  it("quarantines a redigested review envelope whose recipient is not the support mailbox", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const template = await prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    });
+    const payload = template.payloadJson as {
+      sellerName: string;
+      sellerEmail: string;
+      eventTitle: string;
+      appOrigin: string;
+    };
+    const poisonedRecipient = "attacker@example.test";
+    const poisonedIdempotencyKey = `tft-human-review-${createHash("sha256")
+      .update(`${template.orderId}:${template.requestId}:${poisonedRecipient}`)
+      .digest("hex")}`;
+    const [digest] = await prisma.$queryRaw<Array<{ value: string }>>`
+      SELECT transfer_proof_review_envelope_digest(
+        ${template.orderId}, ${template.requestId}, ${poisonedRecipient},
+        ${template.requestedAt.toISOString()}, ${payload.sellerName},
+        ${payload.sellerEmail}, ${payload.eventTitle}, ${payload.appOrigin},
+        ${template.subject}, ${template.textBody}, ${template.htmlBody}
+      ) AS value
+    `;
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofReviewDeliveryIntent.update({
+        where: { requestId },
+        data: {
+          recipient: poisonedRecipient,
+          idempotencyKey: poisonedIdempotencyKey,
+          envelopeDigest: digest.value,
+        },
+      });
+    });
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 1, failed: 1, reconciliationRequired: 1 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: "Pre-dispatch review delivery failure: Transfer-proof review delivery recipient does not match the support mailbox",
+    });
+  });
+
   it("quarantines an expired Resend claim whose replay window elapsed before dispatch", async () => {
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
     const databaseNow = await databaseUtcNow();
@@ -766,7 +847,7 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
       $queryRaw: prisma.$queryRaw.bind(prisma),
       $transaction: async (work: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
         transactionCall += 1;
-        if (transactionCall === 2) throw new Error("synthetic persistence failure");
+        if (transactionCall === 3) throw new Error("synthetic persistence failure");
         return prisma.$transaction(work);
       },
     } as unknown as ReviewDeliveryDb;

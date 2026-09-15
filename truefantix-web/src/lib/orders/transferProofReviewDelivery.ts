@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type TransferProofReviewDeliveryIntent } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail, type EmailProvider } from "@/lib/email";
+import { DISPUTE_SUPPORT_EMAIL } from "@/lib/disputes";
 
 const LEASE_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
@@ -263,6 +264,61 @@ function requireCanonicalEnvelope(row: TransferProofReviewDeliveryIntent) {
   }
 }
 
+type RuntimeReviewOrder = {
+  transferProofData: string | null;
+};
+
+type RuntimeReviewSeller = {
+  id: string;
+};
+
+async function requireRuntimeReviewSubject(
+  tx: Prisma.TransactionClient,
+  row: TransferProofReviewDeliveryIntent,
+) {
+  if (row.recipient !== DISPUTE_SUPPORT_EMAIL) {
+    throw new Error("Transfer-proof review delivery recipient does not match the support mailbox");
+  }
+
+  const [order] = await tx.$queryRaw<RuntimeReviewOrder[]>(Prisma.sql`
+    SELECT parent_order."transferProofData" AS "transferProofData"
+    FROM "Order" parent_order
+    WHERE parent_order.id = ${row.orderId}
+    FOR SHARE OF parent_order
+  `);
+  if (!order?.transferProofData) {
+    throw new Error("Transfer-proof review delivery parent order is unavailable at dispatch");
+  }
+
+  let proof: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(order.transferProofData) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    proof = parsed as Record<string, unknown>;
+  } catch {
+    throw new Error("Transfer-proof review delivery does not match durable review history");
+  }
+
+  const [seller] = await tx.$queryRaw<RuntimeReviewSeller[]>(Prisma.sql`
+    SELECT seller_user.id
+    FROM "Order" parent_order
+    JOIN "User" seller_user ON seller_user."sellerId" = parent_order."sellerId"
+    WHERE parent_order.id = ${row.orderId}
+    FOR SHARE OF seller_user
+  `);
+  if (!seller) {
+    throw new Error("Transfer-proof review delivery seller is unavailable at dispatch");
+  }
+
+  if (
+    proof.manualReviewRequestId !== row.requestId
+    || proof.manualReviewRequestedAt !== row.requestedAt.toISOString()
+    || proof.requestedByUserId !== seller.id
+  ) {
+    throw new Error("Transfer-proof review delivery does not match the current durable review request");
+  }
+}
+
 export async function drainTransferProofReviewDeliveryIntents(
   options: { orderId?: string; now?: Date; limit?: number } = {},
   db: DeliveryDb = prisma,
@@ -437,22 +493,25 @@ export async function drainTransferProofReviewDeliveryIntents(
     let providerFailure: string | null = null;
     try {
       requireCanonicalEnvelope(row);
-      const dispatchNow = await databaseUtcNow(db);
-      const dispatch = await db.transferProofReviewDeliveryIntent.updateMany({
-        where: {
-          id: row.id,
-          status: "PROCESSING",
-          provider,
-          leaseExpiresAt,
-          claimToken,
-          attemptCount: row.attemptCount,
-          dispatchStartedAt: null,
-        },
-        data: {
-          attemptCount: { increment: 1 },
-          firstAttemptAt: row.firstAttemptAt ?? dispatchNow,
-          dispatchStartedAt: dispatchNow,
-        },
+      const dispatch = await db.$transaction(async (tx) => {
+        await requireRuntimeReviewSubject(tx, row);
+        const dispatchNow = await databaseUtcNow(tx);
+        return tx.transferProofReviewDeliveryIntent.updateMany({
+          where: {
+            id: row.id,
+            status: "PROCESSING",
+            provider,
+            leaseExpiresAt,
+            claimToken,
+            attemptCount: row.attemptCount,
+            dispatchStartedAt: null,
+          },
+          data: {
+            attemptCount: { increment: 1 },
+            firstAttemptAt: row.firstAttemptAt ?? dispatchNow,
+            dispatchStartedAt: dispatchNow,
+          },
+        });
       });
       if (dispatch.count !== 1) continue;
       dispatchStarted = true;
