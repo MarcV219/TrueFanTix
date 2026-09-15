@@ -662,6 +662,63 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await ensureSyntheticOrder(orderId);
   });
 
+  it("quarantines a redigested seller decision whose link origin differs from the current environment", async () => {
+    const decisionId = `decision-runtime-origin-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL", idempotencyKey: { contains: decisionId } },
+    });
+    const source = row.payloadJson as Prisma.JsonObject;
+    const canonicalOrigin = String(source.appOrigin);
+    const poisonedOrigin = "https://attacker.example";
+    const payloadJson = {
+      ...source,
+      appOrigin: poisonedOrigin,
+      textBody: String(source.textBody).replaceAll(canonicalOrigin, poisonedOrigin),
+      htmlBody: String(source.htmlBody).replaceAll(canonicalOrigin, poisonedOrigin),
+    };
+    const envelope = {
+      orderId: row.orderId,
+      kind: row.kind,
+      recipient: row.recipient,
+      payloadJson,
+    };
+    await forceLegacyIntentState({ id: row.id }, {
+      payloadJson,
+      envelopeDigest: envelopeDigest(envelope),
+    });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date(decidedAt.getTime() + 60_000),
+    }, prisma)).resolves.toMatchObject({
+      claimed: 1,
+      delivered: 0,
+      failed: 1,
+      reconciliationRequired: 1,
+    });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({ where: { id: row.id } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        attemptCount: 0,
+        lastError: "Pre-dispatch delivery failure: Transfer-proof review-decision origin does not match the current environment",
+      });
+    await forceDeleteDeliveryIntents({ id: row.id });
+    await ensureSyntheticOrder(orderId);
+  });
+
   it("rejects a seller decision whose initial schedule differs from its authenticated decision clock", async () => {
     const decisionId = `decision-schedule-${runId}`;
     const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);

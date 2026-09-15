@@ -423,6 +423,9 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
       throw new Error("Invalid transfer-proof review-decision action");
     }
     requireNonEmptyString(data, "appOrigin");
+    if (data.appOrigin !== canonicalTransferProofReviewOrigin()) {
+      throw new Error("Transfer-proof review-decision origin does not match the current environment");
+    }
     requireIsoDate(data, "decidedAt");
     requireNonEmptyString(data, "decidedByUserId");
     requireNonEmptyString(data, "decisionId");
