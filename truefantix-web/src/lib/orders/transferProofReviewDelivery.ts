@@ -265,6 +265,9 @@ function requireCanonicalEnvelope(row: TransferProofReviewDeliveryIntent) {
 }
 
 type RuntimeReviewOrder = {
+  status: string;
+  buyerConfirmationStatus: string | null;
+  transferVerificationStatus: string | null;
   transferProofData: string | null;
 };
 
@@ -281,13 +284,23 @@ async function requireRuntimeReviewSubject(
   }
 
   const [order] = await tx.$queryRaw<RuntimeReviewOrder[]>(Prisma.sql`
-    SELECT parent_order."transferProofData" AS "transferProofData"
+    SELECT parent_order.status,
+      parent_order."buyerConfirmationStatus" AS "buyerConfirmationStatus",
+      parent_order."transferVerificationStatus" AS "transferVerificationStatus",
+      parent_order."transferProofData" AS "transferProofData"
     FROM "Order" parent_order
     WHERE parent_order.id = ${row.orderId}
     FOR SHARE OF parent_order
   `);
   if (!order?.transferProofData) {
     throw new Error("Transfer-proof review delivery parent order is unavailable at dispatch");
+  }
+  if (
+    order.status !== "PAID"
+    || order.buyerConfirmationStatus !== "PENDING"
+    || order.transferVerificationStatus !== "MANUAL_REVIEW"
+  ) {
+    throw new Error("Transfer-proof review delivery is no longer awaiting human review");
   }
 
   let proof: Record<string, unknown>;

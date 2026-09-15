@@ -797,6 +797,39 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     });
   });
 
+  it.each([
+    ["approved", "PENDING"],
+    ["rejected", "MISMATCHED"],
+  ])("quarantines an obsolete review request after it is %s", async (
+    _decision,
+    transferVerificationStatus,
+  ) => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { transferVerificationStatus },
+    });
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 1, failed: 1, reconciliationRequired: 1 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      processingAt: null,
+      leaseExpiresAt: null,
+      claimToken: null,
+      dispatchStartedAt: null,
+      lastError: "Pre-dispatch review delivery failure: Transfer-proof review delivery is no longer awaiting human review",
+    });
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 0, reconciliationRequired: 0 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+  });
+
   it("quarantines an expired Resend claim whose replay window elapsed before dispatch", async () => {
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
     const databaseNow = await databaseUtcNow();
