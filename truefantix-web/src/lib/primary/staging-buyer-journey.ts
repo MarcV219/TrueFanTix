@@ -121,9 +121,10 @@ function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<{ i
     && order.prepareReconciliationDelayMs === 120000 && order.paymentProcessingAt !== null && order.paidAt === null && order.paymentFailedAt === null;
   const paidOrder = order.status === "PAID" && order.prepareIdempotencyKey === `${scope.base}:prepare`
     && order.prepareReconciliationDelayMs === 120000 && order.paymentProcessingAt !== null && order.paidAt !== null && order.paymentFailedAt === null;
-  const lifecycleMatches = (pending && paymentProcessingOrder)
-    || (processing && paymentProcessingOrder && payment.providerCreatedAt!.getTime() >= order.paymentProcessingAt!.getTime())
-    || (succeeded && paidOrder && payment.providerCreatedAt!.getTime() >= order.paymentProcessingAt!.getTime() && payment.terminalAt!.getTime() === order.paidAt!.getTime());
+  const preparedAfterOrder = order.paymentProcessingAt !== null && payment.createdAt.getTime() >= order.paymentProcessingAt.getTime();
+  const lifecycleMatches = (pending && paymentProcessingOrder && preparedAfterOrder)
+    || (processing && paymentProcessingOrder && preparedAfterOrder && payment.providerCreatedAt!.getTime() >= payment.createdAt.getTime())
+    || (succeeded && paidOrder && preparedAfterOrder && payment.providerCreatedAt!.getTime() >= payment.createdAt.getTime() && payment.terminalAt!.getTime() === order.paidAt!.getTime());
   if (
     payment.id !== scope.paymentId || payment.organizerId !== ORGANIZER_ID || payment.eventId !== scope.eventId
     || payment.buyerUserId !== buyerId || payment.reservationId !== scope.reservationId || payment.orderId !== scope.orderId
