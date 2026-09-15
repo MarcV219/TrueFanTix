@@ -21,7 +21,7 @@ export type DisputeCase = {
     requestedByUserId: string;
     recipient: "BUYER" | "SELLER" | "BOTH";
     message: string;
-    deliveries: Array<{ role: "BUYER" | "SELLER"; email: string; status: "SENT" | "FAILED" }>;
+    deliveries: Array<{ role: "BUYER" | "SELLER"; email: string; status: "ATTEMPTING" | "SENT" | "FAILED" }>;
   }>;
   cancellation?: {
     cancelledAt: string;

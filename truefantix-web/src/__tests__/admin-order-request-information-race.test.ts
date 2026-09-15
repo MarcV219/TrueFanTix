@@ -13,7 +13,7 @@ jest.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: jest.fn() },
     order: { findUnique: jest.fn(), update: jest.fn() },
-    emailDelivery: { create: jest.fn() },
+    emailDelivery: { create: jest.fn(), updateMany: jest.fn() },
     $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   },
@@ -34,7 +34,7 @@ jest.mock("@/lib/validation", () => ({
 const mockedPrisma = prisma as unknown as {
   user: { findUnique: jest.Mock };
   order: { findUnique: jest.Mock; update: jest.Mock };
-  emailDelivery: { create: jest.Mock };
+  emailDelivery: { create: jest.Mock; updateMany: jest.Mock };
   $queryRaw: jest.Mock;
   $transaction: jest.Mock;
 };
@@ -76,6 +76,8 @@ function request() {
 }
 
 describe("admin dispute-information staging-persona boundary", () => {
+  let storedReason: string;
+
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, "error").mockImplementation(() => undefined);
@@ -94,16 +96,21 @@ describe("admin dispute-information staging-persona boundary", () => {
       async (work: (tx: typeof mockedPrisma) => unknown) => work(mockedPrisma),
     );
     mockedPrisma.user.findUnique.mockResolvedValue(ordinaryAdmin);
-    mockedPrisma.order.findUnique.mockResolvedValue({
+    storedReason = JSON.stringify({ type: "BUYER_DISPUTE", adminRequests: [] });
+    mockedPrisma.order.findUnique.mockImplementation(async () => ({
       id: orderId,
       buyerConfirmationStatus: "DISPUTED",
-      transferVerificationReason: JSON.stringify({ type: "DISPUTE", adminRequests: [] }),
+      transferVerificationReason: storedReason,
       seller: { user: { id: "seller-user-1", email: "seller@example.test", firstName: "Seller" } },
       buyerSeller: { user: { id: "buyer-user-1", email: "buyer@example.test", firstName: "Buyer" } },
+    }));
+    mockedPrisma.order.update.mockImplementation(async ({ data }: { data: { transferVerificationReason?: string } }) => {
+      if (data.transferVerificationReason) storedReason = data.transferVerificationReason;
+      return { id: orderId };
     });
-    mockedPrisma.order.update.mockResolvedValue({ id: orderId });
     mockedPrisma.emailDelivery.create.mockResolvedValue({ id: "delivery-1" });
-    mockedParseDisputeCase.mockReturnValue({ type: "DISPUTE", adminRequests: [] } as never);
+    mockedPrisma.emailDelivery.updateMany.mockResolvedValue({ count: 1 });
+    mockedParseDisputeCase.mockImplementation((value) => JSON.parse(value || "null"));
     mockedGenerateEmail.mockReturnValue({ subject: "Synthetic request", text: "Synthetic request" } as never);
     mockedSendEmail.mockResolvedValue({ ok: true, provider: "SENDGRID" });
     mockedCreateNotification.mockResolvedValue({ ok: true } as never);
@@ -152,26 +159,54 @@ describe("admin dispute-information staging-persona boundary", () => {
     expect(mockedSendEmail).not.toHaveBeenCalled();
   });
 
-  it("records and dispatches through one serializable current-admin boundary", async () => {
+  it("commits the request before dispatch and then finalizes delivery evidence", async () => {
     const response = await POST(request());
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true, warning: false });
-    expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+    expect(mockedPrisma.$transaction).toHaveBeenNthCalledWith(1, expect.any(Function), {
       isolationLevel: "Serializable",
       timeout: 120_000,
     });
-    expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(2);
-    expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.$transaction).toHaveBeenNthCalledWith(2, expect.any(Function), {
+      isolationLevel: "Serializable",
+      timeout: 120_000,
+    });
+    expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(3);
+    expect(mockedPrisma.order.update).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.emailDelivery.create).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.emailDelivery.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ provider: "SENDGRID" }),
+      data: expect.objectContaining({ provider: "CONSOLE", status: "ATTEMPTING" }),
     });
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: expect.stringMatching(/^dispute-info-request:/),
+    }));
+    expect(mockedPrisma.order.update.mock.invocationCallOrder[0])
+      .toBeLessThan(mockedSendEmail.mock.invocationCallOrder[0]);
+    expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: "ATTEMPTING" }),
+      data: expect.objectContaining({ provider: "SENDGRID", status: "SENT" }),
+    }));
     expect(mockedCreateNotification).toHaveBeenCalledTimes(1);
     expect(mockedCreateNotification).toHaveBeenCalledWith(expect.any(Object), mockedPrisma);
     expect(mockedAuditLog).toHaveBeenCalledTimes(1);
     expect(mockedAuditLog).toHaveBeenCalledWith(expect.any(Object), mockedPrisma);
+  });
+
+  it("performs no email send when the request transaction does not commit", async () => {
+    mockedPrisma.$transaction.mockImplementationOnce(
+      async (work: (tx: typeof mockedPrisma) => unknown) => {
+        await work(mockedPrisma);
+        throw Object.assign(new Error("synthetic commit failure"), { code: "P2034" });
+      },
+    );
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(500);
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedPrisma.emailDelivery.updateMany).not.toHaveBeenCalled();
   });
 
   it("records neutral evidence when the sender rejects without provider identity", async () => {
@@ -185,13 +220,16 @@ describe("admin dispute-information staging-persona boundary", () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({ ok: true, warning: true });
       expect(mockedPrisma.emailDelivery.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ provider: "CONSOLE", status: "ATTEMPTING" }),
+      });
+      expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({
           provider: "CONSOLE",
           status: "FAILED",
           error: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic providerless failure",
         }),
-      });
-      expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
+      }));
+      expect(mockedPrisma.order.update).toHaveBeenCalledTimes(2);
       expect(mockedCreateNotification).toHaveBeenCalledTimes(1);
       expect(mockedAuditLog).toHaveBeenCalledTimes(1);
     } finally {

@@ -11,6 +11,7 @@ import {
 import { emailProviderEvidence } from "@/lib/emailProviderConfig";
 import { parseDisputeCase } from "@/lib/disputes";
 import { createNotification } from "@/lib/notifications/service";
+import { prisma } from "@/lib/prisma";
 import { schemas, validateRequest } from "@/lib/validation";
 import {
   AdminOperationAccessChangedError,
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
     if (!validation.success) return validation.response;
     const { recipient, message } = validation.data;
 
-    return await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
+    const committed = await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
       // Serialize requests for the same dispute so their append-only history and
       // delivery evidence cannot overwrite one another.
       await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
@@ -98,27 +99,14 @@ export async function POST(req: Request) {
           requestMessage: message,
           responseUrl: target.link,
         });
-        let result: EmailSendResult;
-        try {
-          result = await sendEmail({ to: target.email, ...email });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "Unknown email error";
-          result = {
-            ok: false,
-            provider: "CONSOLE",
-            providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
-            error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${errorMessage}`,
-          };
-        }
-        const status = result.ok ? "SENT" as const : "FAILED" as const;
         await tx.emailDelivery.create({
           data: {
             orderId: order.id,
             emailType: `DISPUTE_INFO_REQUEST_${requestId}_${target.role}`,
             recipient: target.email,
-            provider: emailProviderEvidence(result),
-            status,
-            error: result.error || null,
+            provider: "CONSOLE",
+            status: "ATTEMPTING",
+            error: null,
           },
         });
         await createNotification({
@@ -127,7 +115,7 @@ export async function POST(req: Request) {
           message: `TrueFanTix Support requested more information for dispute ${order.id}.`,
           link: target.role === "BUYER" ? "/account/tickets/holding" : "/account/tickets/seller-holding",
         }, tx);
-        return { role: target.role, email: target.email, status };
+        return { role: target.role, email: target.email, status: "ATTEMPTING" as const, emailContent: email };
       }));
 
       const adminRequest = {
@@ -136,7 +124,7 @@ export async function POST(req: Request) {
         requestedByUserId: gate.user.id,
         recipient,
         message,
-        deliveries,
+        deliveries: deliveries.map(({ role, email, status }) => ({ role, email, status })),
       };
       const updatedDispute = {
         ...dispute,
@@ -158,14 +146,94 @@ export async function POST(req: Request) {
         ...createAuditContext(req),
       }, tx);
 
-      const failed = deliveries.filter((delivery) => delivery.status === "FAILED").length;
-      return NextResponse.json({
-        ok: true,
-        message: failed
+      return { orderId: order.id, requestId, requestedAt, recipient, deliveries };
+    });
+
+    if (committed instanceof NextResponse) return committed;
+
+    const completedDeliveries = await Promise.all(committed.deliveries.map(async (delivery) => {
+      let result: EmailSendResult;
+      try {
+        result = await sendEmail({
+          to: delivery.email,
+          ...delivery.emailContent,
+          idempotencyKey: `dispute-info-request:${committed.orderId}:${committed.requestId}:${delivery.role}`,
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown email error";
+        result = {
+          ok: false,
+          provider: "CONSOLE",
+          providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+          error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${errorMessage}`,
+        };
+      }
+      return {
+        role: delivery.role,
+        email: delivery.email,
+        status: result.ok ? "SENT" as const : "FAILED" as const,
+        result,
+      };
+    }));
+
+    let evidenceFinalized = true;
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${committed.orderId} FOR UPDATE`;
+        const current = await tx.order.findUnique({
+          where: { id: committed.orderId },
+          select: { transferVerificationReason: true },
+        });
+        const dispute = parseDisputeCase(current?.transferVerificationReason ?? null);
+        const requestIndex = dispute?.adminRequests?.findIndex((item) => (
+          item.id === committed.requestId
+          && item.requestedAt === committed.requestedAt
+          && item.requestedByUserId === gate.user.id
+          && item.recipient === committed.recipient
+        )) ?? -1;
+        if (!dispute || requestIndex < 0) throw new Error("DISPUTE_INFO_REQUEST_EVIDENCE_CHANGED");
+
+        for (const delivery of completedDeliveries) {
+          const updated = await tx.emailDelivery.updateMany({
+            where: {
+              orderId: committed.orderId,
+              emailType: `DISPUTE_INFO_REQUEST_${committed.requestId}_${delivery.role}`,
+              recipient: delivery.email,
+              status: "ATTEMPTING",
+            },
+            data: {
+              sentAt: new Date(),
+              provider: emailProviderEvidence(delivery.result),
+              status: delivery.status,
+              error: delivery.result.error || null,
+            },
+          });
+          if (updated.count !== 1) throw new Error("DISPUTE_INFO_REQUEST_DELIVERY_EVIDENCE_CHANGED");
+        }
+
+        dispute.adminRequests![requestIndex] = {
+          ...dispute.adminRequests![requestIndex],
+          deliveries: completedDeliveries.map(({ role, email, status }) => ({ role, email, status })),
+        };
+        await tx.order.update({
+          where: { id: committed.orderId },
+          data: { transferVerificationReason: JSON.stringify(dispute) },
+        });
+      }, { isolationLevel: "Serializable", timeout: 120_000 });
+    } catch (error) {
+      evidenceFinalized = false;
+      console.error("Dispute information-request delivery evidence finalization failed:", error);
+    }
+
+    const failed = completedDeliveries.filter((delivery) => delivery.status === "FAILED").length;
+    return NextResponse.json({
+      ok: true,
+      message: !evidenceFinalized
+        ? "Request recorded and delivery attempted, but delivery evidence needs Admin review."
+        : failed
           ? `Request recorded, but ${failed} email${failed === 1 ? "" : "s"} failed to send.`
-          : `Information request sent to ${recipient === "BOTH" ? "the buyer and seller" : `the ${recipient.toLowerCase()}`}.`,
-        warning: failed > 0,
-      });
+          : `Information request sent to ${committed.recipient === "BOTH" ? "the buyer and seller" : `the ${committed.recipient.toLowerCase()}`}.`,
+      warning: failed > 0 || !evidenceFinalized,
     });
   } catch (err) {
     if (err instanceof ManagedAccountAdminOperationError) {
