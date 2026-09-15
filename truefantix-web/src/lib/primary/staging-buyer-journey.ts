@@ -140,7 +140,7 @@ function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<{ i
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_PAYMENT_INVALID");
 }
 
-function requireAdmissionState(ticket: Prisma.PrimaryAdmissionTicketGetPayload<{ include: { credential: true; scans: true } }>, scope: ReturnType<typeof ids>, buyerId: string, actorId: string, paidAt: Date) {
+function requireAdmissionState(ticket: Prisma.PrimaryAdmissionTicketGetPayload<{ include: { credential: true; scans: true } }>, scope: ReturnType<typeof ids>, buyerId: string, actorId: string, paidAt: Date, now: Date) {
   const credential = ticket.credential;
   const scan = ticket.scans[0];
   const issued = ticket.status === "ISSUED" && ticket.scans.length === 0;
@@ -148,11 +148,13 @@ function requireAdmissionState(ticket: Prisma.PrimaryAdmissionTicketGetPayload<{
     && scan.requestId === `${scope.base}:scan` && scan.commandDigest === digest([scope.base, "scan"])
     && scan.organizerId === ORGANIZER_ID && scan.eventId === scope.eventId && scan.admissionTicketId === scope.ticketId
     && scan.credentialId === scope.credentialId && scan.operatorUserId === actorId && scan.result === "ACCEPTED"
-    && scan.deviceId === "synthetic-console" && scan.scannedAt.getTime() >= ticket.issuedAt.getTime();
+    && scan.deviceId === "synthetic-console" && scan.scannedAt.getTime() >= ticket.issuedAt.getTime()
+    && scan.scannedAt.getTime() <= now.getTime();
   if (
     ticket.id !== scope.ticketId || ticket.organizerId !== ORGANIZER_ID || ticket.eventId !== scope.eventId || ticket.buyerUserId !== buyerId
     || ticket.reservationId !== scope.reservationId || ticket.orderId !== scope.orderId || ticket.orderLineId !== scope.lineId || ticket.ticketTypeId !== scope.ticketTypeId
-    || ticket.unitNumber !== 1 || ticket.issuanceIdempotencyKey !== `${scope.base}:issue` || ticket.issuedAt.getTime() < paidAt.getTime()
+    || ticket.unitNumber !== 1 || ticket.issuanceIdempotencyKey !== `${scope.base}:issue`
+    || ticket.issuedAt.getTime() < paidAt.getTime() || ticket.issuedAt.getTime() > now.getTime()
     || ticket.voidedAt !== null || ticket.voidReason !== null
     || !credential || credential.id !== scope.credentialId || credential.admissionTicketId !== scope.ticketId || credential.eventId !== scope.eventId
     || credential.payloadVersion !== 1 || credential.keyId !== "synthetic-staging-only" || credential.payloadDigest !== digest([scope.base, "credential"])
@@ -222,7 +224,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       await tx.primaryAdmissionTicket.create({ data: { id: scope.ticketId, organizerId: ORGANIZER_ID, eventId: scope.eventId, buyerUserId: buyer.id, reservationId: scope.reservationId, orderId: scope.orderId, orderLineId: scope.lineId, ticketTypeId: scope.ticketTypeId, unitNumber: 1, issuanceIdempotencyKey: `${scope.base}:issue`, issuedAt: now, credential: { create: { id: scope.credentialId, payloadVersion: 1, keyId: "synthetic-staging-only", payloadDigest: digest([scope.base, "credential"]), issuedAt: now } } } });
       return { step: "ISSUED" };
     }
-    requireAdmissionState(ticket, scope, buyer.id, actor.id, order.paidAt!);
+    requireAdmissionState(ticket, scope, buyer.id, actor.id, order.paidAt!, now);
     if (ticket.status === "ISSUED") {
       await tx.primaryAdmissionTicket.update({ where: { id: ticket.id }, data: { status: "CHECKED_IN" } });
       await tx.primaryAdmissionScan.create({ data: { requestId: `${scope.base}:scan`, commandDigest: digest([scope.base, "scan"]), organizerId: ORGANIZER_ID, eventId: scope.eventId, admissionTicketId: ticket.id, credentialId: ticket.credential!.id, operatorUserId: actor.id, result: "ACCEPTED", deviceId: "synthetic-console", scannedAt: now } });

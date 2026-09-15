@@ -269,7 +269,7 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - An uncommitted synthetic hold must still be live, and commitment must occur no later than its immutable expiry. Expired-hold advancement or late commitment fails before provider attachment.
 - The reservation commitment and order payment-processing timestamps must remain identical evidence of their single atomic preparation transition. Cross-record clock divergence fails before provider attachment.
 - Once an order exists, its tenant/buyer/reservation bindings, lifecycle, totals, currency, idempotency key, sole line snapshot, and exact face-value/organizer-fee components are revalidated before payment preparation. Snapshot drift fails closed without committing the hold or creating a payment attempt.
-- Admission validation binds the deterministic ticket and credential to the authoritative paid lifecycle. Issuance evidence that predates the order's paid timestamp fails closed before any accepted scan or check-in mutation.
+- Admission validation binds the deterministic ticket and credential to the authoritative paid lifecycle and current transaction clock. Issuance before payment or in the future, and future-dated accepted scans, fail closed before any new scan or check-in mutation.
 - The synthetic payment chain requires an empty provider-event and exception history. Unexpected webhook-like provenance or payment-exception evidence fails closed before admission issuance or check-in.
 - Payment-attempt creation must follow the order's authoritative preparation timestamp, and synthetic provider attachment must follow attempt creation. Chronology drift fails before provider or admission mutation.
 

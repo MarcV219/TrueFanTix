@@ -180,6 +180,27 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(db.primaryAdmissionScan.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
   });
 
+  it("rejects future-dated admission issuance before check-in mutation", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING", "PROCESSING", "PAID", "ISSUED"]) {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
+    }
+    const futureIssuedAt = new Date(Date.now() + 60_000);
+    await db.$executeRawUnsafe(`ALTER TABLE "PrimaryAdmissionTicket" DISABLE TRIGGER "PrimaryAdmissionTicket_protected"`);
+    await db.$executeRawUnsafe(`ALTER TABLE "PrimaryAdmissionCredential" DISABLE TRIGGER "PrimaryAdmissionCredential_immutable"`);
+    try {
+      await db.primaryAdmissionTicket.update({ where: { id: `${base}-ticket` }, data: { issuedAt: futureIssuedAt } });
+      await db.primaryAdmissionCredential.update({ where: { id: `${base}-credential` }, data: { issuedAt: futureIssuedAt } });
+    } finally {
+      await db.$executeRawUnsafe(`ALTER TABLE "PrimaryAdmissionCredential" ENABLE TRIGGER "PrimaryAdmissionCredential_immutable"`);
+      await db.$executeRawUnsafe(`ALTER TABLE "PrimaryAdmissionTicket" ENABLE TRIGGER "PrimaryAdmissionTicket_protected"`);
+    }
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_ADMISSION_INVALID" });
+    await expect(db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: `${base}-ticket` } })).resolves.toMatchObject({ status: "ISSUED", issuedAt: futureIssuedAt });
+    await expect(db.primaryAdmissionScan.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+  });
+
   it("rejects unexpected payment provenance before admission mutation", async () => {
     const eventSeed = await reseedPrimaryStagingBuyerJourney(db, admin);
     const eventBase = `staging-buyer-g${eventSeed.generation}`;
