@@ -9,6 +9,20 @@ import { canonicalTransferProofReviewOrigin } from "@/lib/orders/transferProofRe
 const BUYER_KIND = "BUYER_CONFIRMATION_EMAIL";
 const ADMIN_KIND = "ADMIN_TRANSFER_ACTIVITY_EMAIL";
 const SELLER_DECISION_KIND = "SELLER_REVIEW_DECISION_EMAIL";
+const BUYER_PAYLOAD_KEYS = [
+  "buyerFirstName",
+  "deadline",
+  "ticketCount",
+  "windowStart",
+] as const;
+const ADMIN_PAYLOAD_KEYS = [
+  "buyerEmail",
+  "completedAt",
+  "deadline",
+  "sellerEmail",
+  "ticketCount",
+  "transferProofType",
+] as const;
 const SELLER_DECISION_PAYLOAD_KEYS = [
   "action",
   "appOrigin",
@@ -363,6 +377,20 @@ function requireIsoDate(data: Payload, field: string) {
   }
 }
 
+function requireCanonicalPayloadShape(
+  data: Payload,
+  expectedKeys: readonly string[],
+  label: string,
+) {
+  const keys = Object.keys(data).sort();
+  if (
+    keys.length !== expectedKeys.length
+    || keys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error(`Transfer-proof ${label} payload must have the canonical shape`);
+  }
+}
+
 function requireDeliveryIdentity(row: TransferProofDeliveryIntent, data: Payload, windowStart: Date) {
   const expectedKey = deliveryIdempotencyKey(row.orderId, windowStart, row.kind, row.recipient);
   if (row.idempotencyKey !== expectedKey) {
@@ -386,6 +414,7 @@ function requireDeliveryIdentity(row: TransferProofDeliveryIntent, data: Payload
 function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Payload) {
   if (!row.recipient.trim()) throw new Error("Invalid transfer-proof delivery recipient");
   if (row.kind === BUYER_KIND) {
+    requireCanonicalPayloadShape(data, BUYER_PAYLOAD_KEYS, "buyer delivery");
     requireOptionalString(data, "buyerFirstName");
     requirePositiveInteger(data, "ticketCount");
     requireIsoDate(data, "deadline");
@@ -398,6 +427,7 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
     return;
   }
   if (row.kind === ADMIN_KIND) {
+    requireCanonicalPayloadShape(data, ADMIN_PAYLOAD_KEYS, "administrator delivery");
     if (row.recipient !== ADMIN_ACTIVITY_EMAIL) {
       throw new Error("Transfer-proof administrator recipient does not match the configured activity mailbox");
     }
@@ -411,13 +441,7 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
     return;
   }
   if (row.kind === SELLER_DECISION_KIND) {
-    const keys = Object.keys(data).sort();
-    if (
-      keys.length !== SELLER_DECISION_PAYLOAD_KEYS.length
-      || keys.some((key, index) => key !== SELLER_DECISION_PAYLOAD_KEYS[index])
-    ) {
-      throw new Error("Transfer-proof review-decision payload must have the canonical shape");
-    }
+    requireCanonicalPayloadShape(data, SELLER_DECISION_PAYLOAD_KEYS, "review-decision");
     requireNonEmptyString(data, "action");
     if (!["APPROVE", "REJECT", "REQUEST_INFORMATION"].includes(String(data.action))) {
       throw new Error("Invalid transfer-proof review-decision action");

@@ -387,6 +387,55 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     expect(mockedSendAdmin).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["buyer", "BUYER_CONFIRMATION_EMAIL", "Transfer-proof buyer delivery payload must have the canonical shape"],
+    ["administrator", "ADMIN_TRANSFER_ACTIVITY_EMAIL", "Transfer-proof administrator delivery payload must have the canonical shape"],
+  ] as const)("quarantines a redigested %s delivery with an injected runtime field", async (
+    _label,
+    kind,
+    expectedError,
+  ) => {
+    const input = params("01");
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, input));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind },
+    });
+    const payloadJson = {
+      ...(row.payloadJson as Prisma.JsonObject),
+      injected: "must-not-reach-provider",
+    };
+    const envelope = { orderId: row.orderId, kind: row.kind, recipient: row.recipient, payloadJson };
+    await forceLegacyIntentState({ id: row.id }, {
+      payloadJson,
+      envelopeDigest: envelopeDigest(envelope),
+    });
+    await forceDeleteDeliveryIntents({ orderId, id: { not: row.id } });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T01:01:00.000Z"),
+    }, prisma)).resolves.toMatchObject({
+      claimed: 1,
+      delivered: 0,
+      failed: 1,
+      reconciliationRequired: 1,
+    });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: row.id },
+      select: { status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: `Pre-dispatch delivery failure: ${expectedError}`,
+    });
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T01:02:00.000Z"),
+    }, prisma)).resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0 });
+  });
+
   it.each(["APPROVE", "REJECT", "REQUEST_INFORMATION"] as const)(
     "binds and delivers the canonical %s seller review decision",
     async (action) => {
