@@ -951,6 +951,70 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     expect(mockedSendEmail).not.toHaveBeenCalled();
   });
 
+  it("quarantines an unsupported recorded provider instead of stranding the review delivery", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    // Simulate a restored legacy table whose provider allowlist constraint was
+    // absent. Current writes remain protected by that constraint; the worker
+    // must still make historical unsupported evidence explicit rather than
+    // silently leaving it outside every provider-specific candidate branch.
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "TransferProofReviewDeliveryIntent"
+      DROP CONSTRAINT "TransferProofReviewDeliveryIntent_provider_check"
+    `);
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.transferProofReviewDeliveryIntent.update({
+          where: { requestId },
+          data: {
+            status: "PROCESSING",
+            provider: "CONSOLE",
+            attemptCount: 1,
+            firstAttemptAt: requestedAt,
+            processingAt: requestedAt,
+            leaseExpiresAt: new Date(requestedAt.getTime() - 1),
+            claimToken: `unsupported-provider-${requestId}`,
+            dispatchStartedAt: null,
+            lastError: null,
+          },
+        });
+      });
+
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+        .resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 1 });
+      expect(mockedSendEmail).not.toHaveBeenCalled();
+      await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId },
+      })).resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        provider: "CONSOLE",
+        attemptCount: 1,
+        processingAt: null,
+        leaseExpiresAt: null,
+        claimToken: null,
+        dispatchStartedAt: null,
+        lastError: "Unsupported recorded review delivery provider CONSOLE; reconciliation required",
+      });
+
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+        .resolves.toMatchObject({ scanned: 0, claimed: 0, reconciliationRequired: 0 });
+      expect(mockedSendEmail).not.toHaveBeenCalled();
+    } finally {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.transferProofReviewDeliveryIntent.update({
+          where: { requestId },
+          data: { provider: "RESEND" },
+        });
+      });
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "TransferProofReviewDeliveryIntent"
+        ADD CONSTRAINT "TransferProofReviewDeliveryIntent_provider_check"
+        CHECK (provider IS NULL OR provider IN ('RESEND', 'SENDGRID'))
+      `);
+    }
+  });
+
   it("replays accepted Resend persistence ambiguity only with the same provider key", async () => {
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
     let transactionCall = 0;

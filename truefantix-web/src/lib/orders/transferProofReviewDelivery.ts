@@ -397,7 +397,8 @@ export async function drainTransferProofReviewDeliveryIntents(
           OR (status = 'PROCESSING' AND "leaseExpiresAt" <= ${acquisitionNow})
         )
         AND (
-          (provider IS NULL AND (
+          (provider IS NOT NULL AND provider NOT IN ('RESEND', 'SENDGRID'))
+          OR (provider IS NULL AND (
             ${providerConfigured} OR "attemptCount" > 0 OR status = 'PROCESSING'
           ))
           OR (provider = 'RESEND' AND (
@@ -430,7 +431,10 @@ export async function drainTransferProofReviewDeliveryIntents(
       const recordedProvider = row.provider === "RESEND" || row.provider === "SENDGRID"
         ? row.provider
         : null;
-      const provider = recordedProvider ?? configuredEmailProvider();
+      const recordedProviderInvalid = Boolean(row.provider && !recordedProvider);
+      const provider = recordedProviderInvalid
+        ? null
+        : recordedProvider ?? configuredEmailProvider();
       const attemptedProviderMissing = row.attemptCount > 0 && !recordedProvider;
       const staleProviderMissing = staleClaim && !recordedProvider;
       const resendAttemptTimeMissing = recordedProvider === "RESEND"
@@ -440,7 +444,8 @@ export async function drainTransferProofReviewDeliveryIntents(
       const ambiguousStaleClaim = staleClaim && Boolean(row.dispatchStartedAt)
         && recordedProvider !== "RESEND";
       if (
-        attemptedProviderMissing
+        recordedProviderInvalid
+        || attemptedProviderMissing
         || staleProviderMissing
         || resendAttemptTimeMissing
         || resendWindowExpired
@@ -454,8 +459,10 @@ export async function drainTransferProofReviewDeliveryIntents(
             leaseExpiresAt: null,
             claimToken: null,
             dispatchStartedAt: null,
-            lastError: attemptedProviderMissing
-              ? "Attempted review delivery has no recorded provider; reconciliation required"
+            lastError: recordedProviderInvalid
+              ? `Unsupported recorded review delivery provider ${row.provider}; reconciliation required`
+              : attemptedProviderMissing
+                ? "Attempted review delivery has no recorded provider; reconciliation required"
               : staleProviderMissing
                 ? "Expired review delivery claim has no recorded provider; reconciliation required"
                 : resendAttemptTimeMissing
