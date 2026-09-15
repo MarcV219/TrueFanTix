@@ -870,7 +870,7 @@ export async function drainTransferProofDeliveryIntents(
         providerAccepted = result.ok;
         providerResult = result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED");
         providerFailure = result.ok ? null : result.error || "Unknown provider error";
-        providerIdentityMismatch = result.ok && result.provider !== provider;
+        providerIdentityMismatch = result.provider !== provider;
         if (providerIdentityMismatch) {
           throw new Error(`Transfer-proof delivery provider changed from ${provider} to ${result.provider ?? "UNKNOWN"}`);
         }
@@ -905,7 +905,7 @@ export async function drainTransferProofDeliveryIntents(
         } });
         providerAccepted = result.ok;
         providerFailure = result.ok ? null : result.error || "Unknown provider error";
-        providerIdentityMismatch = result.ok && result.provider !== provider;
+        providerIdentityMismatch = result.provider !== provider;
         if (providerIdentityMismatch) {
           throw new Error(`Transfer-proof delivery provider changed from ${provider} to ${result.provider ?? "UNKNOWN"}`);
         }
@@ -945,7 +945,7 @@ export async function drainTransferProofDeliveryIntents(
         providerAccepted = result.ok;
         providerResult = result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED");
         providerFailure = result.ok ? null : result.error || "Unknown provider error";
-        providerIdentityMismatch = result.ok && result.provider !== provider;
+        providerIdentityMismatch = result.provider !== provider;
         if (providerIdentityMismatch) {
           throw new Error(`Transfer-proof review-decision provider changed from ${provider} to ${result.provider ?? "UNKNOWN"}`);
         }
@@ -1012,7 +1012,7 @@ export async function drainTransferProofDeliveryIntents(
               : workerClock,
           },
         });
-        if (owned.count !== 1 || providerAccepted) return owned;
+        if (owned.count !== 1 || providerAccepted || providerIdentityMismatch) return owned;
         if (row.kind === BUYER_KIND) {
           const deadline = new Date(String(data.deadline));
           const windowStart = new Date(String(data.windowStart));

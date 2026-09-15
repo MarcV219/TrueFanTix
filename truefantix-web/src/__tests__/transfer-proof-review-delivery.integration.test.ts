@@ -940,6 +940,36 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
   });
 
+  it("quarantines a rejected result attributed to a different provider", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    mockedSendEmail.mockResolvedValueOnce({
+      ok: false,
+      provider: "SENDGRID",
+      providerResult: "REJECTED_BY_OTHER_PROVIDER",
+      error: "Synthetic mismatched-provider rejection",
+    });
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1, reconciliationRequired: 1 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED",
+      provider: "RESEND",
+      attemptCount: 1,
+      providerResult: "REJECTED_BY_OTHER_PROVIDER",
+      deliveredAt: null,
+      dispatchStartedAt: null,
+      lastError: "Transfer-proof review delivery provider changed from RESEND to SENDGRID",
+    });
+    await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 0 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["approved", "PENDING"],
     ["rejected", "MISMATCHED"],

@@ -637,7 +637,7 @@ export async function drainTransferProofReviewDeliveryIntents(
       providerAccepted = result.ok;
       providerResult = result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED");
       providerFailure = result.ok ? null : result.error || "Unknown provider error";
-      providerIdentityMismatch = result.ok && result.provider !== provider;
+      providerIdentityMismatch = result.provider !== provider;
       if (providerIdentityMismatch) {
         throw new Error(`Transfer-proof review delivery provider changed from ${provider} to ${result.provider ?? "UNKNOWN"}`);
       }
@@ -807,7 +807,9 @@ export async function drainTransferProofReviewDeliveryIntents(
           });
           return { owned, envelopeMismatch };
         }
-        if (providerAccepted) return { owned, envelopeMismatch: { count: 0 } };
+        if (providerAccepted || providerIdentityMismatch) {
+          return { owned, envelopeMismatch: { count: 0 } };
+        }
         await tx.emailDelivery.upsert({
           where: { orderId_emailType_recipient: {
             orderId: row.orderId,
