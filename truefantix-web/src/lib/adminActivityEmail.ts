@@ -1,4 +1,4 @@
-import { sendEmail, type EmailProvider } from "@/lib/email";
+import { sendEmail, type EmailProvider, type EmailSendResult } from "@/lib/email";
 
 export const ADMIN_ACTIVITY_EMAIL = "admin@truefantix.com";
 
@@ -22,7 +22,7 @@ export async function sendAdminActivityEmail(params: {
   idempotencyKey?: string;
   completedAt?: string;
   provider?: EmailProvider;
-}) {
+}): Promise<EmailSendResult> {
   const completedAt = params.completedAt ?? new Date().toISOString();
   const detailLines = Object.entries(params.details)
     .filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "")
@@ -44,6 +44,11 @@ export async function sendAdminActivityEmail(params: {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown admin email error";
     console.error(`[EMAIL] Admin activity notification failed (${params.activity}):`, message);
-    return { ok: false, error: message };
+    return {
+      ok: false,
+      error: message,
+      provider: "CONSOLE",
+      providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+    };
   }
 }

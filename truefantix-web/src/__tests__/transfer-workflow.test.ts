@@ -47,7 +47,7 @@ describe("seller transfer reminder email", () => {
     delete process.env.RESEND_API_KEY;
     delete process.env.SENDGRID_API_KEY;
     findUser.mockResolvedValue({ email: "seller@example.com", firstName: "Pam" });
-    sendEmail.mockResolvedValue({ ok: true });
+    sendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "LOGGED" });
     upsertReminderDelivery.mockResolvedValue({ id: "delivery-1" });
     updateReminderDelivery.mockResolvedValue({ id: "delivery-1" });
   });
@@ -135,7 +135,7 @@ describe("buyer transfer confirmation reminder email", () => {
     delete process.env.RESEND_API_KEY;
     delete process.env.SENDGRID_API_KEY;
     findUser.mockResolvedValue({ email: "buyer@example.com", firstName: "Alex" });
-    sendEmail.mockResolvedValue({ ok: true });
+    sendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "LOGGED" });
     upsertReminderDelivery.mockResolvedValue({ id: "delivery-2" });
     updateReminderDelivery.mockResolvedValue({ id: "delivery-2" });
   });

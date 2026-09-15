@@ -36,7 +36,7 @@ function resendErrorMessage(status: number, body: string) {
 export type EmailSendResult = {
   ok: boolean;
   error?: string;
-  provider?: EmailProvider;
+  provider: EmailProvider;
   providerResult?: string;
 };
 

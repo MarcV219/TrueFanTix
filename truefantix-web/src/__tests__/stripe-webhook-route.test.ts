@@ -69,7 +69,7 @@ describe("Stripe webhook route", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockSendEmail.mockResolvedValue({ ok: true });
+    mockSendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "LOGGED" });
     process.env = {
       ...originalEnv,
       STRIPE_SECRET_KEY: "sk_test_webhook",
@@ -173,5 +173,60 @@ describe("Stripe webhook route", () => {
     expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(2, {
       data: expect.objectContaining({ emailType: "ADMIN_PURCHASE_COMPLETED", provider: "RESEND" }),
     });
+  });
+
+  it("does not infer external provider evidence after an unexpected providerless rejection", async () => {
+    const event = {
+      id: "evt_providerless_failure",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_providerless_failure",
+          amount: 12500,
+          currency: "cad",
+          metadata: { orderId: "order_providerless_failure" },
+        },
+      },
+    };
+    process.env.RESEND_API_KEY = "synthetic-configured-but-unattempted-key";
+    mockConstructEvent.mockReturnValue(event);
+    mockedPrisma.eventDelivery.create.mockResolvedValue({ id: "delivery-providerless-failure" });
+    mockedPrisma.emailDelivery.findUnique.mockResolvedValue(null);
+    mockSendEmail
+      .mockResolvedValueOnce({ ok: true, provider: "SENDGRID", providerResult: "accepted-buyer" })
+      .mockRejectedValueOnce(new Error("synthetic providerless failure"));
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const tx = {
+      payment: { upsert: jest.fn().mockResolvedValue({}) },
+      order: {
+        update: jest.fn().mockResolvedValue({
+          id: "order_providerless_failure",
+          amountCents: 10000,
+          totalCents: 12500,
+          payment: { currency: "CAD" },
+          items: [{ ticket: { title: "Synthetic Event", venue: "Synthetic Venue", date: "2030-01-01" } }],
+          buyerSeller: { user: { id: "buyer-providerless-failure", email: "buyer@example.test", firstName: "Buyer" } },
+          seller: null,
+        }),
+      },
+    };
+    mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
+
+    try {
+      const response = await POST(makeWebhookRequest(JSON.stringify(event)));
+
+      expect(response.status).toBe(200);
+      expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(2, {
+        data: expect.objectContaining({
+          emailType: "ADMIN_PURCHASE_COMPLETED",
+          provider: "CONSOLE",
+          status: "FAILED",
+          error: "synthetic providerless failure",
+        }),
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

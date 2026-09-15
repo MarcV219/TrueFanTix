@@ -33,8 +33,10 @@ export function emailProviderIsConfigured(
 }
 
 export function emailProviderEvidence(
-  result: { provider?: EmailProvider },
-  env: EmailProviderEnvironment = processEmailProviderEnvironment(),
+  result: { provider: EmailProvider },
 ): EmailProvider {
-  return result.provider ?? configuredEmailProvider(env) ?? "CONSOLE";
+  if (result.provider === "RESEND" || result.provider === "SENDGRID") {
+    return result.provider;
+  }
+  return "CONSOLE";
 }

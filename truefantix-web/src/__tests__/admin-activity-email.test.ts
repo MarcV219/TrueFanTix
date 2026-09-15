@@ -9,7 +9,7 @@ import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivit
 describe("admin activity email", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    sendEmail.mockResolvedValue({ ok: true });
+    sendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "LOGGED" });
   });
 
   it("sends activity details to the fixed admin inbox and escapes HTML", async () => {
@@ -26,5 +26,25 @@ describe("admin activity email", () => {
       html: expect.stringContaining("Show &lt;One&gt;"),
     }));
     expect(sendEmail.mock.calls[0][0].text).not.toContain("Empty:");
+  });
+
+  it("returns explicit no-provider evidence when the sender rejects unexpectedly", async () => {
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    sendEmail.mockRejectedValueOnce(new Error("synthetic providerless failure"));
+
+    try {
+      await expect(sendAdminActivityEmail({
+        activity: "TICKETS_PURCHASED",
+        summary: "Synthetic purchase",
+        details: { "Order ID": "order-1" },
+      })).resolves.toEqual({
+        ok: false,
+        error: "synthetic providerless failure",
+        provider: "CONSOLE",
+        providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

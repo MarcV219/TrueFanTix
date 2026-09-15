@@ -106,7 +106,7 @@ describe("catalog-request staging-persona race boundary", () => {
       async (work: (tx: typeof mockedPrisma) => unknown) => work(mockedPrisma),
     );
     mockedResolveCatalogRequest.mockResolvedValue({ status: "NOT_FOUND" });
-    mockedSendEmail.mockResolvedValue({ ok: true });
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "LOGGED" });
   });
 
   afterEach(() => jest.restoreAllMocks());

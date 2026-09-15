@@ -117,7 +117,7 @@ describe("verification staging-persona race boundary", () => {
     mockedPrisma.$transaction.mockImplementation(
       async (work: (tx: typeof mockedPrisma) => unknown) => work(mockedPrisma),
     );
-    mockedSendEmail.mockResolvedValue({ ok: true });
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "LOGGED" });
     mockedSendSms.mockResolvedValue({ ok: true });
   });
 

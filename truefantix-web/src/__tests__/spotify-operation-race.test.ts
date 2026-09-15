@@ -103,7 +103,7 @@ describe("Spotify staging-persona operation boundary", () => {
       displayName: "Listener",
       email: "listener@example.test",
     });
-    mockedSendEmail.mockResolvedValue({ ok: true });
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "CONSOLE", providerResult: "LOGGED" });
     mockedCookies.mockResolvedValue({
       get: jest.fn().mockReturnValue({ value: "expected-state" }),
     } as never);
