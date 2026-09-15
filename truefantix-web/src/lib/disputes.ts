@@ -21,6 +21,10 @@ function escapeHtml(value: string) {
   ));
 }
 
+function isUniqueConstraintError(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
+
 export async function sendDisputeEmails(params: {
   orderId: string;
   kind: "OPENED" | "UPDATED" | "CANCELLED" | "RESOLVED" | "REFUNDED";
@@ -30,6 +34,7 @@ export async function sendDisputeEmails(params: {
   ticketCount: number;
   tickets?: string[];
   fileNames: string[];
+  idempotencyKeyPrefix?: string;
 }, db: Pick<Prisma.TransactionClient, "emailDelivery"> = prisma) {
   const buyerLink = `${appOrigin()}/account/tickets/holding`;
   const sellerLink = `${appOrigin()}/account/tickets/seller-holding`;
@@ -89,9 +94,39 @@ TrueFanTix Support`;
 <pre style="white-space:pre-wrap;font-family:Arial,sans-serif">${escapeHtml(details)}</pre>
 <p><a href="${link}" style="display:inline-block;padding:12px 18px;background:#064a93;color:white;text-decoration:none;border-radius:8px;font-weight:bold">${params.kind === "CANCELLED" || params.kind === "RESOLVED" || params.kind === "REFUNDED" ? "View resolved case" : party.role === "TrueFanTix Support" ? "Review dispute case" : "View or add dispute information"}</a></p>
 <p>${params.kind === "REFUNDED" ? "The buyer’s full payment has been refunded. No seller payout will be issued for this order." : params.kind === "CANCELLED" || params.kind === "RESOLVED" ? "The order has returned to the normal completed-order payout process." : "Seller payout remains paused while this case is reviewed."}</p>`;
+
+      // Stable callers reserve the unique delivery identity before provider
+      // I/O. Existing SENT, FAILED, or abandoned ATTEMPTING evidence is
+      // terminal here: retry needs a durable attempt model, not a blind send.
+      if (params.idempotencyKeyPrefix) {
+        try {
+          await db.emailDelivery.create({
+            data: {
+              orderId: params.orderId,
+              emailType,
+              recipient: party.email,
+              provider: "CONSOLE",
+              status: "ATTEMPTING",
+              error: null,
+            },
+          });
+        } catch (error) {
+          if (isUniqueConstraintError(error)) return;
+          throw error;
+        }
+      }
+
       let result: EmailSendResult;
       try {
-        result = await sendEmail({ to: party.email, subject, text, html });
+        result = await sendEmail({
+          to: party.email,
+          subject,
+          text,
+          html,
+          idempotencyKey: params.idempotencyKeyPrefix
+            ? `${params.idempotencyKeyPrefix}:${roleKey}`
+            : undefined,
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown email error";
         result = {
@@ -101,6 +136,29 @@ TrueFanTix Support`;
           error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${errorMessage}`,
         };
       }
+      if (params.idempotencyKeyPrefix) {
+        const completed = await db.emailDelivery.updateMany({
+          where: {
+            orderId: params.orderId,
+            emailType,
+            recipient: party.email,
+            status: "ATTEMPTING",
+          },
+          data: {
+            sentAt: new Date(),
+            provider: emailProviderEvidence(result),
+            status: result.ok ? "SENT" : "FAILED",
+            error: result.error || null,
+          },
+        });
+        if (completed.count !== 1) {
+          console.error(
+            `Could not finalize owned dispute email delivery for ${party.email}: delivery evidence changed`,
+          );
+        }
+        return;
+      }
+
       await db.emailDelivery.upsert({
         where: {
           orderId_emailType_recipient: {

@@ -22,7 +22,7 @@ export async function POST(req: Request) {
 
     const { orderId, ticketIds, reason, evidence, evidenceFiles } = validation.data;
 
-    return await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
+    const result = await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
       // Serialize competing buyer/admin transitions for this order. Every
       // participant must re-read the current dispute state after this lock.
       await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
@@ -163,26 +163,41 @@ export async function POST(req: Request) {
             .join(", ");
           return `${item.ticket.title} — ${item.ticket.venue} — ${item.ticket.date}${location ? ` — ${location}` : ""} (ticket ${item.ticketId})`;
         });
-      await sendDisputeEmails({
-        orderId: order.id,
-        kind: "OPENED",
-        submittedBy: "Buyer",
-        comments: reason,
-        ticketCount: ticketIds.length,
-        tickets: disputedTicketDetails,
-        fileNames: evidenceFiles.map((file) => file.fileName),
-        parties: [
-          ...(buyer?.email ? [{ email: buyer.email, firstName: buyer.firstName, role: "Buyer" as const }] : []),
-          ...(seller?.email ? [{ email: seller.email, firstName: seller.firstName, role: "Seller" as const }] : []),
-          { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
-        ],
-      }, tx);
-
-      return NextResponse.json(
-        { ok: true, order: updatedOrder, message: "Dispute opened. Seller payout is paused for admin review." },
-        { status: 200 }
-      );
+      return {
+        response: NextResponse.json(
+          { ok: true, order: updatedOrder, message: "Dispute opened. Seller payout is paused for admin review." },
+          { status: 200 }
+        ),
+        postCommitEmail: {
+          orderId: order.id,
+          kind: "OPENED" as const,
+          submittedBy: "Buyer",
+          comments: reason,
+          ticketCount: ticketIds.length,
+          tickets: disputedTicketDetails,
+          fileNames: evidenceFiles.map((file) => file.fileName),
+          parties: [
+            ...(buyer?.email ? [{ email: buyer.email, firstName: buyer.firstName, role: "Buyer" as const }] : []),
+            ...(seller?.email ? [{ email: seller.email, firstName: seller.firstName, role: "Seller" as const }] : []),
+            { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" as const },
+          ],
+          idempotencyKeyPrefix: `dispute-opened:${order.id}`,
+        },
+      };
     });
+
+    if (result instanceof NextResponse) return result;
+
+    try {
+      await sendDisputeEmails(result.postCommitEmail);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown dispute email error";
+      console.error(
+        "[EMAIL] Dispute-opened notifications failed after commit:",
+        `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+      );
+    }
+    return result.response;
   } catch (err) {
     if (err instanceof ManagedAccountOrderOperationError) {
       return NextResponse.json(
