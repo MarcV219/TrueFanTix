@@ -804,9 +804,11 @@ export async function drainTransferProofDeliveryIntents(
         } };
         const dispatch = await db.$transaction(async (tx) => {
           await requireRuntimeDeliverySubject(tx, row, data);
+          const dispatchNow = await databaseUtcNow(tx, compatibilityClock);
           const owned = await tx.transferProofDeliveryIntent.updateMany({
             where: {
-              id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
+              id: row.id, status: "PROCESSING", provider,
+              leaseExpiresAt: { equals: leaseExpiresAt, gt: dispatchNow }, claimToken,
               attemptCount: row.attemptCount, dispatchStartedAt: null,
             },
             data: {
@@ -835,9 +837,11 @@ export async function drainTransferProofDeliveryIntents(
       } else {
         const dispatch = await db.$transaction(async (tx) => {
           await requireRuntimeDeliverySubject(tx, row, data);
+          const dispatchNow = await databaseUtcNow(tx, compatibilityClock);
           return tx.transferProofDeliveryIntent.updateMany({
             where: {
-              id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
+              id: row.id, status: "PROCESSING", provider,
+              leaseExpiresAt: { equals: leaseExpiresAt, gt: dispatchNow }, claimToken,
               attemptCount: row.attemptCount, dispatchStartedAt: null,
             },
             data: {

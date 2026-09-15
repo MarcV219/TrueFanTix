@@ -112,6 +112,15 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     `);
   }
 
+  async function useAdvancedDatabaseClaimClock() {
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION transfer_proof_delivery_claim_clock(TIMESTAMP(3))
+      RETURNS TIMESTAMP(3) AS $$
+        SELECT (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 hour';
+      $$ LANGUAGE SQL STABLE
+    `);
+  }
+
   async function useHistoricalOriginClock() {
     await prisma.$executeRawUnsafe(`
       CREATE OR REPLACE FUNCTION transfer_proof_delivery_origin_clock(TIMESTAMP(3))
@@ -2116,6 +2125,92 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(drain).resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
     await expect(prisma.user.findUniqueOrThrow({ where: { id: buyerUserId } }))
       .resolves.toMatchObject({ email: buyerEmail });
+  });
+
+  it("does not dispatch after runtime subject locking outlives the worker lease", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("02")));
+    const locker = await pool.connect();
+    let acquisitionCommitted!: () => void;
+    const acquisitionCommittedPromise = new Promise<void>((resolve) => {
+      acquisitionCommitted = resolve;
+    });
+    let transactionCalls = 0;
+    const acquisitionObservingDb = {
+      $transaction: async <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => {
+        transactionCalls += 1;
+        const call = transactionCalls;
+        const result = await prisma.$transaction(fn);
+        if (call === 1) acquisitionCommitted();
+        return result;
+      },
+      transferProofDeliveryIntent: prisma.transferProofDeliveryIntent,
+      reminderDelivery: prisma.reminderDelivery,
+      emailDelivery: prisma.emailDelivery,
+    } as unknown as NonNullable<Parameters<typeof drainTransferProofDeliveryIntents>[1]>;
+
+    try {
+      await locker.query("BEGIN");
+      await locker.query('SELECT id FROM "Order" WHERE id = $1 FOR UPDATE', [orderId]);
+      const drain = drainTransferProofDeliveryIntents({ orderId }, acquisitionObservingDb);
+      await acquisitionCommittedPromise;
+
+      await useAdvancedDatabaseClaimClock();
+      await locker.query("COMMIT");
+
+      await expect(drain).resolves.toMatchObject({
+        claimed: 2,
+        delivered: 0,
+        failed: 0,
+        reconciliationRequired: 0,
+      });
+      expect(mockedSendEmail).not.toHaveBeenCalled();
+      expect(mockedSendAdmin).not.toHaveBeenCalled();
+      await expect(prisma.transferProofDeliveryIntent.findMany({
+        where: { orderId },
+        orderBy: { kind: "asc" },
+        select: { status: true, attemptCount: true, dispatchStartedAt: true },
+      })).resolves.toEqual([
+        { status: "PROCESSING", attemptCount: 0, dispatchStartedAt: null },
+        { status: "PROCESSING", attemptCount: 0, dispatchStartedAt: null },
+      ]);
+      await expect(prisma.reminderDelivery.count({ where: { orderId } })).resolves.toBe(0);
+      await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+
+      await expect(drainTransferProofDeliveryIntents({ orderId }, prisma)).resolves.toMatchObject({
+        claimed: 2,
+        delivered: 2,
+        failed: 0,
+        reconciliationRequired: 0,
+      });
+      expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+      expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
+      await expect(prisma.transferProofDeliveryIntent.findMany({
+        where: { orderId },
+        orderBy: { kind: "asc" },
+        select: { status: true, attemptCount: true },
+      })).resolves.toEqual([
+        { status: "DELIVERED", attemptCount: 1 },
+        { status: "DELIVERED", attemptCount: 1 },
+      ]);
+      await expect(prisma.reminderDelivery.findFirstOrThrow({ where: { orderId } }))
+        .resolves.toMatchObject({ status: "SENT", provider: "RESEND" });
+      await expect(prisma.emailDelivery.findFirstOrThrow({ where: { orderId } }))
+        .resolves.toMatchObject({ status: "SENT", provider: "RESEND" });
+
+      await expect(drainTransferProofDeliveryIntents({ orderId }, prisma)).resolves.toMatchObject({
+        scanned: 0,
+        claimed: 0,
+        delivered: 0,
+        failed: 0,
+        reconciliationRequired: 0,
+      });
+      expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+      expect(mockedSendAdmin).toHaveBeenCalledTimes(1);
+    } finally {
+      await locker.query("ROLLBACK").catch(() => undefined);
+      locker.release();
+      await useHistoricalClaimClock();
+    }
   });
 
   it("makes a concurrent parent drift wait for and lose to version-2 staging", async () => {
