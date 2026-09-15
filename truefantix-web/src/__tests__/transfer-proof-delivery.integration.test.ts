@@ -658,6 +658,156 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await ensureSyntheticOrder(orderId);
   });
 
+  it("does not let a caller clock reclaim or quarantine a live seller-decision claim", async () => {
+    await useDatabaseClaimClock();
+    const decisionId = `decision-live-clock-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL", idempotencyKey: { contains: decisionId } },
+    });
+    const databaseNow = await databaseUtcNow();
+    const liveLeaseExpiresAt = new NativeDate(databaseNow.getTime() + 60 * 60 * 1000);
+    await forceLegacyIntentState({ id: row.id }, {
+      status: "PROCESSING",
+      provider: "RESEND",
+      attemptCount: 3,
+      firstAttemptAt: databaseNow,
+      processingAt: databaseNow,
+      leaseExpiresAt: liveLeaseExpiresAt,
+      claimToken: `live-seller-decision-${decisionId}`,
+      dispatchStartedAt: databaseNow,
+    });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new NativeDate(liveLeaseExpiresAt.getTime() + 60 * 60 * 1000),
+    }, prisma)).resolves.toMatchObject({ scanned: 0, claimed: 0, delivered: 0, reconciliationRequired: 0 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({ where: { id: row.id } }))
+      .resolves.toMatchObject({
+        status: "PROCESSING",
+        provider: "RESEND",
+        attemptCount: 3,
+        leaseExpiresAt: liveLeaseExpiresAt,
+        claimToken: `live-seller-decision-${decisionId}`,
+        dispatchStartedAt: databaseNow,
+      });
+    await forceDeleteDeliveryIntents({ id: row.id });
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("terminalizes an expired final seller-decision claim exactly once without another send", async () => {
+    await useDatabaseClaimClock();
+    const decisionId = `decision-expired-final-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL", idempotencyKey: { contains: decisionId } },
+    });
+    const databaseNow = await databaseUtcNow();
+    const firstAttemptAt = new NativeDate(databaseNow.getTime() - 30 * 60 * 1000);
+    const processingAt = new NativeDate(databaseNow.getTime() - 16 * 60 * 1000);
+    const expiredLeaseExpiresAt = new NativeDate(databaseNow.getTime() - 60 * 1000);
+    await forceLegacyIntentState({ id: row.id }, {
+      status: "PROCESSING",
+      provider: "RESEND",
+      attemptCount: 3,
+      firstAttemptAt,
+      processingAt,
+      leaseExpiresAt: expiredLeaseExpiresAt,
+      claimToken: `expired-final-${decisionId}`,
+      dispatchStartedAt: processingAt,
+    });
+
+    await expect(prisma.transferProofDeliveryIntent.update({
+      where: { id: row.id },
+      data: {
+        status: "RECONCILIATION_REQUIRED",
+        lastError: "synthetic uncleared terminal",
+      },
+    })).rejects.toThrow("Invalid transfer-proof delivery lifecycle state");
+
+    const forgedFuture = new NativeDate(databaseNow.getTime() + 365 * 24 * 60 * 60 * 1000);
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: forgedFuture }, prisma))
+      .resolves.toMatchObject({ scanned: 0, claimed: 0, delivered: 0, reconciliationRequired: 1 });
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: forgedFuture }, prisma))
+      .resolves.toMatchObject({ scanned: 0, claimed: 0, delivered: 0, reconciliationRequired: 0 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({ where: { id: row.id } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        provider: "RESEND",
+        attemptCount: 3,
+        firstAttemptAt,
+        processingAt: null,
+        leaseExpiresAt: null,
+        claimToken: null,
+        dispatchStartedAt: null,
+        lastError: "Expired final transfer-proof delivery claim requires provider reconciliation",
+      });
+    await forceDeleteDeliveryIntents({ id: row.id });
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("records seller-decision lifecycle evidence at the database clock", async () => {
+    await useDatabaseClaimClock();
+    const decisionId = `decision-evidence-clock-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    const beforeDrain = await databaseUtcNow();
+    const forgedFuture = new NativeDate(beforeDrain.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+    await expect(drainTransferProofDeliveryIntents({ orderId, now: forgedFuture }, prisma))
+      .resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    const afterDrain = await databaseUtcNow();
+    const delivered = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL", idempotencyKey: { contains: decisionId } },
+    });
+    const email = await prisma.emailDelivery.findFirstOrThrow({
+      where: { orderId, emailType: `TRANSFER_PROOF_ADMIN_REJECT_${decisionId}` },
+    });
+    for (const timestamp of [delivered.firstAttemptAt, delivered.deliveredAt, email.sentAt]) {
+      expect(timestamp).not.toBeNull();
+      expect(timestamp!.getTime()).toBeGreaterThanOrEqual(beforeDrain.getTime());
+      expect(timestamp!.getTime()).toBeLessThanOrEqual(afterDrain.getTime());
+      expect(timestamp).not.toEqual(forgedFuture);
+    }
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    await forceDeleteDeliveryIntents({ id: delivered.id });
+    await ensureSyntheticOrder(orderId);
+  });
+
   it("rolls back accepted proof state, delivery intents, and notification together", async () => {
     await prisma.order.update({
       where: { id: orderId },

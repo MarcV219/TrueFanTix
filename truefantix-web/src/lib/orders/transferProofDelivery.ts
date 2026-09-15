@@ -319,6 +319,16 @@ type DeliveryDb = Pick<
 >;
 type Payload = Record<string, unknown>;
 
+async function databaseUtcNow(
+  db: Pick<typeof prisma, "$queryRaw">,
+  compatibilityClock: Date,
+) {
+  const [row] = await db.$queryRaw<Array<{ now: Date }>>(Prisma.sql`
+    SELECT transfer_proof_delivery_claim_clock(${compatibilityClock}) AS now
+  `);
+  return row.now;
+}
+
 function payload(value: Prisma.JsonValue): Payload {
   if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("Invalid transfer-proof delivery payload");
   return value as Payload;
@@ -452,7 +462,10 @@ export async function drainTransferProofDeliveryIntents(
   options: { orderId?: string; now?: Date; limit?: number } = {},
   db: DeliveryDb = prisma,
 ) {
-  const now = options.now ?? new Date();
+  // Production's transfer_proof_delivery_claim_clock ignores this value and
+  // returns PostgreSQL's statement clock. The argument remains only so the
+  // disposable integration database can keep its historical test timeline.
+  const compatibilityClock = options.now ?? new Date();
   const exhausted = await db.transferProofDeliveryIntent.updateMany({
     where: {
       orderId: options.orderId,
@@ -471,20 +484,39 @@ export async function drainTransferProofDeliveryIntents(
   const resendConfigured = providerIsConfigured("RESEND");
   const sendGridConfigured = providerIsConfigured("SENDGRID");
   const providerConfigured = resendConfigured || sendGridConfigured;
-  const resendWindowStart = new Date(now.getTime() - RESEND_IDEMPOTENCY_WINDOW_MS);
   let reconciliationRequired = exhausted.count;
   const acquisition = await db.$transaction(async (tx) => {
+    const acquisitionNow = await databaseUtcNow(tx, compatibilityClock);
+    const acquisitionResendWindowStart = new Date(
+      acquisitionNow.getTime() - RESEND_IDEMPOTENCY_WINDOW_MS,
+    );
     const orderFilter = options.orderId
       ? Prisma.sql`AND "orderId" = ${options.orderId}`
       : Prisma.empty;
+    // A worker can die after its final dispatch but before it records the
+    // provider result. That expired max-attempt claim cannot be selected for
+    // a fourth dispatch, so make the ambiguity explicit at the database clock.
+    const expiredFinalClaims = await tx.$executeRaw(Prisma.sql`
+      UPDATE "TransferProofDeliveryIntent"
+      SET status = 'RECONCILIATION_REQUIRED',
+        "processingAt" = NULL,
+        "leaseExpiresAt" = NULL,
+        "claimToken" = NULL,
+        "dispatchStartedAt" = NULL,
+        "lastError" = 'Expired final transfer-proof delivery claim requires provider reconciliation'
+      WHERE status = 'PROCESSING'
+        AND "attemptCount" >= ${MAX_ATTEMPTS}
+        AND "leaseExpiresAt" <= ${acquisitionNow}
+        ${orderFilter}
+    `);
     const candidates = await tx.$queryRaw<TransferProofDeliveryIntent[]>(Prisma.sql`
       SELECT candidate.*
       FROM "TransferProofDeliveryIntent" candidate
       WHERE candidate."attemptCount" < ${MAX_ATTEMPTS}
         ${orderFilter}
         AND (
-          ("status" IN ('PENDING', 'FAILED') AND "availableAt" <= ${now})
-          OR ("status" = 'PROCESSING' AND "leaseExpiresAt" <= ${now})
+          ("status" IN ('PENDING', 'FAILED') AND "availableAt" <= ${acquisitionNow})
+          OR ("status" = 'PROCESSING' AND "leaseExpiresAt" <= ${acquisitionNow})
         )
         AND (
           ("provider" IS NOT NULL AND "provider" NOT IN ('RESEND', 'SENDGRID'))
@@ -494,7 +526,7 @@ export async function drainTransferProofDeliveryIntents(
           OR ("provider" = 'RESEND' AND (
             ${resendConfigured}
             OR ("attemptCount" > 0 AND (
-              "firstAttemptAt" IS NULL OR "firstAttemptAt" <= ${resendWindowStart}
+              "firstAttemptAt" IS NULL OR "firstAttemptAt" <= ${acquisitionResendWindowStart}
             ))
           ))
           OR ("provider" = 'SENDGRID' AND (
@@ -528,11 +560,13 @@ export async function drainTransferProofDeliveryIntents(
     const acquired: Array<{
       row: TransferProofDeliveryIntent;
       provider: EmailProvider;
+      workerClock: Date;
       leaseExpiresAt: Date;
       claimToken: string;
     }> = [];
     let quarantinedCount = 0;
     for (const row of candidates) {
+      const claimNow = await databaseUtcNow(tx, compatibilityClock);
       const staleClaim = row.status === "PROCESSING";
       const recordedProvider = row.provider === "RESEND" || row.provider === "SENDGRID"
         ? row.provider
@@ -544,7 +578,7 @@ export async function drainTransferProofDeliveryIntents(
         ?? (staleClaim || row.attemptCount > 0 ? null : configuredEmailProvider());
       const resendAttemptTimeMissing = provider === "RESEND" && row.attemptCount > 0 && !row.firstAttemptAt;
       const resendWindowExpired = provider === "RESEND" && row.firstAttemptAt
-        && now.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
+        && claimNow.getTime() - row.firstAttemptAt.getTime() >= RESEND_IDEMPOTENCY_WINDOW_MS;
       const ambiguousStaleClaim = staleClaim && Boolean(row.dispatchStartedAt) && provider !== "RESEND";
       if (attemptedProviderMissing || staleProviderMissing || recordedProviderInvalid || ambiguousStaleClaim || resendAttemptTimeMissing || resendWindowExpired) {
         const quarantined = await tx.transferProofDeliveryIntent.updateMany({
@@ -571,25 +605,36 @@ export async function drainTransferProofDeliveryIntents(
         continue;
       }
       if (!provider || !providerIsConfigured(provider)) continue;
-      const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
+      const leaseExpiresAt = new Date(claimNow.getTime() + LEASE_MS);
       const claimToken = randomUUID();
       const claim = await tx.transferProofDeliveryIntent.updateMany({
         where: { id: row.id, status: row.status, claimToken: row.claimToken, attemptCount: row.attemptCount },
         data: {
-          status: "PROCESSING", provider, processingAt: now, leaseExpiresAt,
+          status: "PROCESSING", provider, processingAt: claimNow, leaseExpiresAt,
           claimToken, dispatchStartedAt: null, lastError: null,
         },
       });
-      if (claim.count === 1) acquired.push({ row, provider, leaseExpiresAt, claimToken });
+      if (claim.count === 1) acquired.push({
+        row,
+        provider,
+        workerClock: claimNow,
+        leaseExpiresAt,
+        claimToken,
+      });
     }
-    return { candidates: candidates.length, acquired, quarantinedCount };
+    return {
+      candidates: candidates.length,
+      acquired,
+      quarantinedCount,
+      expiredFinalClaims,
+    };
   });
 
   const claimed = acquisition.acquired.length;
   let delivered = 0;
   let failed = 0;
-  reconciliationRequired += acquisition.quarantinedCount;
-  for (const { row, provider, leaseExpiresAt, claimToken } of acquisition.acquired) {
+  reconciliationRequired += acquisition.quarantinedCount + acquisition.expiredFinalClaims;
+  for (const { row, provider, workerClock, leaseExpiresAt, claimToken } of acquisition.acquired) {
 
     let attemptCount = row.attemptCount;
     let dispatchStarted = false;
@@ -615,8 +660,8 @@ export async function drainTransferProofDeliveryIntents(
             },
             data: {
               attemptCount: { increment: 1 },
-              firstAttemptAt: row.firstAttemptAt ?? now,
-              dispatchStartedAt: now,
+              firstAttemptAt: row.firstAttemptAt ?? workerClock,
+              dispatchStartedAt: workerClock,
             },
           });
           if (owned.count !== 1) return owned;
@@ -624,11 +669,11 @@ export async function drainTransferProofDeliveryIntents(
             where: key,
             create: {
               orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient,
-              windowStart, deadline, provider, status: "ATTEMPTING", attemptedAt: now,
+              windowStart, deadline, provider, status: "ATTEMPTING", attemptedAt: workerClock,
             },
             update: {
               deadline, provider, status: "ATTEMPTING", providerResult: null,
-              failureReason: null, attemptedAt: now, completedAt: null,
+              failureReason: null, attemptedAt: workerClock, completedAt: null,
             },
           });
           return owned;
@@ -637,16 +682,18 @@ export async function drainTransferProofDeliveryIntents(
         dispatchStarted = true;
         attemptCount = row.attemptCount + 1;
       } else {
-        const dispatch = await db.transferProofDeliveryIntent.updateMany({
-          where: {
-            id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
-            attemptCount: row.attemptCount, dispatchStartedAt: null,
-          },
-          data: {
-            attemptCount: { increment: 1 },
-            firstAttemptAt: row.firstAttemptAt ?? now,
-            dispatchStartedAt: now,
-          },
+        const dispatch = await db.$transaction(async (tx) => {
+          return tx.transferProofDeliveryIntent.updateMany({
+            where: {
+              id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
+              attemptCount: row.attemptCount, dispatchStartedAt: null,
+            },
+            data: {
+              attemptCount: { increment: 1 },
+              firstAttemptAt: row.firstAttemptAt ?? workerClock,
+              dispatchStartedAt: workerClock,
+            },
+          });
         });
         if (dispatch.count !== 1) continue;
         dispatchStarted = true;
@@ -676,7 +723,7 @@ export async function drainTransferProofDeliveryIntents(
           const owned = await tx.transferProofDeliveryIntent.updateMany({
             where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
             data: {
-              status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null,
+              status: "DELIVERED", deliveredAt: workerClock, processingAt: null, leaseExpiresAt: null,
               claimToken: null, dispatchStartedAt: null, lastError: null,
             },
           });
@@ -685,7 +732,7 @@ export async function drainTransferProofDeliveryIntents(
             where: key,
             data: {
               provider: result.provider || provider, status: "SENT",
-              providerResult, failureReason: null, completedAt: now,
+              providerResult, failureReason: null, completedAt: workerClock,
             },
           });
           return owned;
@@ -712,7 +759,7 @@ export async function drainTransferProofDeliveryIntents(
           const owned = await tx.transferProofDeliveryIntent.updateMany({
             where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
             data: {
-              status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null,
+              status: "DELIVERED", deliveredAt: workerClock, processingAt: null, leaseExpiresAt: null,
               claimToken: null, dispatchStartedAt: null, lastError: null,
             },
           });
@@ -723,9 +770,9 @@ export async function drainTransferProofDeliveryIntents(
             } },
             create: {
               orderId: row.orderId, emailType, recipient: row.recipient,
-              provider, status: "SENT", error: null, sentAt: now,
+              provider, status: "SENT", error: null, sentAt: workerClock,
             },
-            update: { provider, status: "SENT", error: null, sentAt: now },
+            update: { provider, status: "SENT", error: null, sentAt: workerClock },
           });
           return owned;
         });
@@ -752,7 +799,7 @@ export async function drainTransferProofDeliveryIntents(
           const owned = await tx.transferProofDeliveryIntent.updateMany({
             where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
             data: {
-              status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null,
+              status: "DELIVERED", deliveredAt: workerClock, processingAt: null, leaseExpiresAt: null,
               claimToken: null, dispatchStartedAt: null, lastError: null,
             },
           });
@@ -763,9 +810,9 @@ export async function drainTransferProofDeliveryIntents(
             } },
             create: {
               orderId: row.orderId, emailType, recipient: row.recipient,
-              provider, status: "SENT", error: null, sentAt: now,
+              provider, status: "SENT", error: null, sentAt: workerClock,
             },
-            update: { provider, status: "SENT", error: null, sentAt: now },
+            update: { provider, status: "SENT", error: null, sentAt: workerClock },
           });
           return owned;
         });
@@ -799,14 +846,14 @@ export async function drainTransferProofDeliveryIntents(
           where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
           data: {
             status: retryAcceptedResend ? "PROCESSING" : requiresReconciliation ? "RECONCILIATION_REQUIRED" : "FAILED",
-            processingAt: retryAcceptedResend ? now : null,
-            leaseExpiresAt: retryAcceptedResend ? now : null,
+            processingAt: retryAcceptedResend ? workerClock : null,
+            leaseExpiresAt: retryAcceptedResend ? workerClock : null,
             claimToken: retryAcceptedResend ? claimToken : null,
-            dispatchStartedAt: retryAcceptedResend ? now : null,
+            dispatchStartedAt: retryAcceptedResend ? workerClock : null,
             lastError: lastError.slice(0, 2000),
             availableAt: attemptCount < MAX_ATTEMPTS
-              ? new Date(now.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
-              : now,
+              ? new Date(workerClock.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
+              : workerClock,
           },
         });
         if (owned.count !== 1 || providerAccepted) return owned;
@@ -822,11 +869,11 @@ export async function drainTransferProofDeliveryIntents(
                 orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient,
                 windowStart, deadline, provider, status: "FAILED",
                 providerResult: providerResult || "EXCEPTION",
-                failureReason: providerFailure || lastError, attemptedAt: now, completedAt: now,
+                failureReason: providerFailure || lastError, attemptedAt: workerClock, completedAt: workerClock,
               },
               update: {
                 status: "FAILED", providerResult: providerResult || "EXCEPTION",
-                failureReason: providerFailure || lastError, completedAt: now,
+                failureReason: providerFailure || lastError, completedAt: workerClock,
               },
             });
           }
@@ -836,9 +883,9 @@ export async function drainTransferProofDeliveryIntents(
             where: { orderId_emailType_recipient: { orderId: row.orderId, emailType, recipient: row.recipient } },
             create: {
               orderId: row.orderId, emailType, recipient: row.recipient,
-              provider, status: "FAILED", error: providerFailure || lastError, sentAt: now,
+              provider, status: "FAILED", error: providerFailure || lastError, sentAt: workerClock,
             },
-            update: { provider, status: "FAILED", error: providerFailure || lastError, sentAt: now },
+            update: { provider, status: "FAILED", error: providerFailure || lastError, sentAt: workerClock },
           });
         } else if (row.kind === SELLER_DECISION_KIND) {
           const emailType = `TRANSFER_PROOF_ADMIN_${String(data.action)}_${String(data.decisionId)}`;
@@ -846,9 +893,9 @@ export async function drainTransferProofDeliveryIntents(
             where: { orderId_emailType_recipient: { orderId: row.orderId, emailType, recipient: row.recipient } },
             create: {
               orderId: row.orderId, emailType, recipient: row.recipient,
-              provider, status: "FAILED", error: providerFailure || lastError, sentAt: now,
+              provider, status: "FAILED", error: providerFailure || lastError, sentAt: workerClock,
             },
-            update: { provider, status: "FAILED", error: providerFailure || lastError, sentAt: now },
+            update: { provider, status: "FAILED", error: providerFailure || lastError, sentAt: workerClock },
           });
         }
         return owned;
