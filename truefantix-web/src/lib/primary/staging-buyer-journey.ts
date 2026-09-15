@@ -112,7 +112,7 @@ function requireOrderState(order: Prisma.PrimaryOrderGetPayload<{ include: { lin
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_ORDER_INVALID");
 }
 
-function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<object>, order: Prisma.PrimaryOrderGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string) {
+function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<{ include: { providerEvents: true; exceptions: true } }>, order: Prisma.PrimaryOrderGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string) {
   const pending = payment.status === "PENDING_PROVIDER" && payment.providerIntentId === null && payment.providerCreatedAt === null && payment.terminalAt === null;
   const processing = payment.status === "PROCESSING" && payment.providerIntentId === `synthetic_${scope.base}` && payment.providerCreatedAt !== null && payment.terminalAt === null;
   const succeeded = payment.status === "SUCCEEDED" && payment.providerIntentId === `synthetic_${scope.base}` && payment.providerCreatedAt !== null && payment.terminalAt !== null
@@ -128,6 +128,7 @@ function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<obj
     payment.id !== scope.paymentId || payment.organizerId !== ORGANIZER_ID || payment.eventId !== scope.eventId
     || payment.buyerUserId !== buyerId || payment.reservationId !== scope.reservationId || payment.orderId !== scope.orderId
     || payment.expectedAmountMinor !== 3800 || payment.currency !== "CAD" || payment.createIdempotencyKey !== `${scope.base}:payment`
+    || payment.providerEvents.length !== 0 || payment.exceptions.length !== 0
     || !lifecycleMatches
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_PAYMENT_INVALID");
 }
@@ -191,7 +192,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       await tx.primaryOrderPriceComponent.createMany({ data: [{ id: `${scope.base}-face`, orderId: scope.orderId, orderLineId: scope.lineId, code: "FACE_VALUE", label: "Face value", kind: "FACE_VALUE", amountMinor: 3500, currency: "CAD", allocationBaseMinor: 3500, allocationRemainderUnits: 0, position: 0 }, { id: `${scope.base}-fee`, orderId: scope.orderId, orderLineId: scope.lineId, code: "ORGANIZER_FEE", label: "Synthetic organizer fee", kind: "MANDATORY_FEE", amountMinor: 300, currency: "CAD", allocationBaseMinor: 300, allocationRemainderUnits: 0, position: 1 }] });
       return { step: "ORDER_CREATED" };
     }
-    const payment = await tx.primaryPaymentAttempt.findUnique({ where: { orderId: scope.orderId } });
+    const payment = await tx.primaryPaymentAttempt.findUnique({ where: { orderId: scope.orderId }, include: { providerEvents: true, exceptions: true } });
     requireOrderState(order, scope, buyer.id, Boolean(payment));
     if (!payment) {
       await tx.primaryInventoryReservation.update({ where: { id: scope.reservationId }, data: { status: "PAYMENT_COMMITTED", paymentCommittedAt: now, reconciliationAfter: new Date(now.getTime() + 120_000), commitIdempotencyKey: `${scope.base}:commit` } });

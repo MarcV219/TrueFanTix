@@ -179,4 +179,26 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: `${base}-ticket` } })).resolves.toMatchObject({ status: "ISSUED" });
     await expect(db.primaryAdmissionScan.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
   });
+
+  it("rejects unexpected payment provenance before admission mutation", async () => {
+    const eventSeed = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const eventBase = `staging-buyer-g${eventSeed.generation}`;
+    for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING", "PROCESSING", "PAID"]) {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
+    }
+    const eventPayment = await db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: `${eventBase}-payment` } });
+    await db.primaryPaymentProviderEvent.create({ data: { providerEventId: `${eventBase}:unexpected-event`, attemptId: eventPayment.id, orderId: eventPayment.orderId, organizerId: eventPayment.organizerId, eventId: eventPayment.eventId, buyerUserId: eventPayment.buyerUserId, reservationId: eventPayment.reservationId, eventType: "synthetic.unexpected", payloadDigest: "0".repeat(64), providerCreatedAt: eventPayment.terminalAt! } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_PAYMENT_INVALID" });
+    await expect(db.primaryAdmissionTicket.count({ where: { eventId: `${eventBase}-event` } })).resolves.toBe(0);
+
+    const exceptionSeed = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const exceptionBase = `staging-buyer-g${exceptionSeed.generation}`;
+    for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING", "PROCESSING", "PAID", "ISSUED"]) {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
+    }
+    await db.primaryPaymentException.create({ data: { attemptId: `${exceptionBase}-payment`, kind: "PROVIDER_MISMATCH", providerEventId: `${exceptionBase}:unexpected-exception` } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_PAYMENT_INVALID" });
+    await expect(db.primaryAdmissionTicket.findUniqueOrThrow({ where: { id: `${exceptionBase}-ticket` } })).resolves.toMatchObject({ status: "ISSUED" });
+    await expect(db.primaryAdmissionScan.count({ where: { eventId: `${exceptionBase}-event` } })).resolves.toBe(0);
+  });
 });
