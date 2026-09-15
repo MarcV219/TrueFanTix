@@ -223,6 +223,79 @@ describe("dispute email transaction client", () => {
     expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      kind: "RESOLVED" as const,
+      prefix: "dispute-resolved:order-stable-resolution",
+      emailType: "DISPUTE_RESOLVED",
+    },
+    {
+      kind: "REFUNDED" as const,
+      prefix: "dispute-refunded:order-stable-resolution",
+      emailType: "DISPUTE_REFUNDED",
+    },
+  ])("reserves stable $kind identities before sending", async ({ kind, prefix, emailType }) => {
+    await sendDisputeEmails({
+      orderId: "order-stable-resolution",
+      kind,
+      parties: [
+        { email: "buyer@example.test", role: "Buyer" },
+        { email: "seller@example.test", role: "Seller" },
+        { email: "support@example.test", role: "TrueFanTix Support" },
+      ],
+      submittedBy: "Synthetic Support",
+      comments: "Synthetic resolution.",
+      ticketCount: 1,
+      fileNames: [],
+      idempotencyKeyPrefix: prefix,
+    });
+
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({ emailType: `${emailType}_BUYER` }),
+    });
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(2, {
+      data: expect.objectContaining({ emailType: `${emailType}_SELLER` }),
+    });
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(3, {
+      data: expect.objectContaining({ emailType: `${emailType}_TRUEFANTIX_SUPPORT` }),
+    });
+    expect(mockedSendEmail).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      idempotencyKey: `${prefix}:BUYER`,
+    }));
+    expect(mockedSendEmail).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      idempotencyKey: `${prefix}:SELLER`,
+    }));
+    expect(mockedSendEmail).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      idempotencyKey: `${prefix}:TRUEFANTIX_SUPPORT`,
+    }));
+    expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenCalledTimes(3);
+    expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
+  });
+
+  it("treats replay of the same committed resolution envelope as no-send and no-overwrite", async () => {
+    const envelope = {
+      orderId: "order-resolution-replay",
+      kind: "RESOLVED" as const,
+      parties: [{ email: "buyer@example.test", role: "Buyer" as const }],
+      submittedBy: "Synthetic Support",
+      comments: "Synthetic resolution.",
+      ticketCount: 1,
+      fileNames: [],
+      idempotencyKeyPrefix: "dispute-resolved:order-resolution-replay",
+    };
+    mockedPrisma.emailDelivery.create
+      .mockResolvedValueOnce({ id: "resolution-delivery" })
+      .mockRejectedValueOnce({ code: "P2002" });
+
+    await sendDisputeEmails(envelope);
+    await sendDisputeEmails(envelope);
+
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenCalledTimes(2);
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
+  });
+
   it("treats pre-existing terminal delivery evidence as no-send and no-overwrite", async () => {
     mockedPrisma.emailDelivery.create.mockRejectedValueOnce({ code: "P2002" });
 

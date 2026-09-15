@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     if (!validation.success) return validation.response;
 
     const { action, note } = validation.data;
-    return await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
+    const result = await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
       // Serialize resolution for one dispute before any irreversible provider
       // call or customer delivery. A competing administrator must re-read the
       // closed state instead of repeating the resolution.
@@ -299,26 +299,6 @@ export async function POST(req: Request) {
             }, tx)
           ),
       ];
-      if (action === "RELEASE_PAYOUT" || action === "MARK_REFUND_REQUIRED") {
-        followUps.push(
-          sendDisputeEmails({
-            orderId: order.id,
-            kind: action === "MARK_REFUND_REQUIRED" ? "REFUNDED" : "RESOLVED",
-            submittedBy: "TrueFanTix Support",
-            comments: action === "MARK_REFUND_REQUIRED" && refundId
-              ? `${note}\nStripe refund reference: ${refundId}`
-              : note,
-            ticketCount: dispute?.ticketCount || dispute?.ticketIds?.length || order.items.length,
-            tickets: disputedTicketDetails,
-            fileNames: [],
-            parties: [
-              ...(order.buyerSeller.user?.email ? [{ email: order.buyerSeller.user.email, firstName: order.buyerSeller.user.firstName, role: "Buyer" as const }] : []),
-              ...(order.seller.user?.email ? [{ email: order.seller.user.email, firstName: order.seller.user.firstName, role: "Seller" as const }] : []),
-              { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
-            ],
-          }, tx)
-        );
-      }
       const followUpResults = await Promise.allSettled(followUps);
       followUpResults.forEach((result, index) => {
         if (result.status === "rejected") {
@@ -326,8 +306,50 @@ export async function POST(req: Request) {
         }
       });
 
-      return NextResponse.json({ ok: true, order: updatedOrder, message }, { status: 200 });
+      const resolutionEmailKind = action === "MARK_REFUND_REQUIRED"
+        ? "REFUNDED" as const
+        : action === "RELEASE_PAYOUT"
+          ? "RESOLVED" as const
+          : null;
+      const response = NextResponse.json({ ok: true, order: updatedOrder, message }, { status: 200 });
+      if (!resolutionEmailKind) return { response };
+
+      return {
+        response,
+        postCommitEmail: {
+          orderId: order.id,
+          kind: resolutionEmailKind,
+          submittedBy: "TrueFanTix Support",
+          comments: action === "MARK_REFUND_REQUIRED" && refundId
+            ? `${note}\nStripe refund reference: ${refundId}`
+            : note,
+          ticketCount: dispute?.ticketCount || dispute?.ticketIds?.length || order.items.length,
+          tickets: disputedTicketDetails,
+          fileNames: [],
+          parties: [
+            ...(order.buyerSeller.user?.email ? [{ email: order.buyerSeller.user.email, firstName: order.buyerSeller.user.firstName, role: "Buyer" as const }] : []),
+            ...(order.seller.user?.email ? [{ email: order.seller.user.email, firstName: order.seller.user.firstName, role: "Seller" as const }] : []),
+            { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" as const },
+          ],
+          idempotencyKeyPrefix: `${resolutionEmailKind === "REFUNDED" ? "dispute-refunded" : "dispute-resolved"}:${order.id}`,
+        },
+      };
     });
+
+    if (result instanceof NextResponse) return result;
+
+    if ("postCommitEmail" in result && result.postCommitEmail) {
+      try {
+        await sendDisputeEmails(result.postCommitEmail);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown dispute email error";
+        console.error(
+          "[EMAIL] Dispute-resolution notifications failed after commit:",
+          `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+        );
+      }
+    }
+    return result.response;
   } catch (err) {
     if (err instanceof ManagedAccountAdminOperationError) {
       return NextResponse.json(
