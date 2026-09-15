@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { DEFAULT_FROM_EMAIL } from "@/lib/email";
+import { cleanEmailProviderCredential } from "@/lib/emailProviderConfig";
 
 function isNonEmpty(v: string | undefined | null) {
   return !!v && v.trim().length > 0;
@@ -13,8 +14,8 @@ function isE164(v: string | undefined | null) {
 }
 
 export async function GET() {
-  const sendgridApiKey = process.env.SENDGRID_API_KEY;
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const sendgridApiKey = cleanEmailProviderCredential(process.env.SENDGRID_API_KEY);
+  const resendApiKey = cleanEmailProviderCredential(process.env.RESEND_API_KEY);
   const configuredFromEmail = process.env.FROM_EMAIL;
   const fromEmail = configuredFromEmail || DEFAULT_FROM_EMAIL;
 

@@ -44,6 +44,8 @@ import {
 describe("seller transfer reminder email", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.RESEND_API_KEY;
+    delete process.env.SENDGRID_API_KEY;
     findUser.mockResolvedValue({ email: "seller@example.com", firstName: "Pam" });
     sendEmail.mockResolvedValue({ ok: true });
     upsertReminderDelivery.mockResolvedValue({ id: "delivery-1" });
@@ -69,7 +71,28 @@ describe("seller transfer reminder email", () => {
       subject: "Transfer reminder",
       text: "Transfer now",
       html: "<p>Transfer now</p>",
+      provider: "CONSOLE",
     });
+  });
+
+  it("pins the same normalized provider recorded for a malformed Resend credential", async () => {
+    process.env.RESEND_API_KEY = "  '\"\"'  ";
+    process.env.SENDGRID_API_KEY = "  'synthetic-sendgrid-key'  ";
+    createNotificationOncePerWindow.mockResolvedValue({ ok: true, notification: { id: "notice-provider" } });
+
+    await notifySellerTransferRequired({
+      sellerUserId: "seller-user",
+      orderId: "order-provider",
+      ticketCount: 1,
+      deadline: new Date("2026-07-30T16:00:00.000Z"),
+      sendEmail: true,
+      now: new Date("2026-07-30T12:00:00.000Z"),
+    });
+
+    expect(upsertReminderDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ provider: "SENDGRID" }),
+    }));
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ provider: "SENDGRID" }));
   });
 
   it("does not email again when the reminder window was already handled", async () => {
@@ -109,6 +132,8 @@ describe("seller transfer reminder email", () => {
 describe("buyer transfer confirmation reminder email", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.RESEND_API_KEY;
+    delete process.env.SENDGRID_API_KEY;
     findUser.mockResolvedValue({ email: "buyer@example.com", firstName: "Alex" });
     sendEmail.mockResolvedValue({ ok: true });
     upsertReminderDelivery.mockResolvedValue({ id: "delivery-2" });
@@ -139,6 +164,7 @@ describe("buyer transfer confirmation reminder email", () => {
       subject: "Confirm receipt",
       text: "Confirm receipt now",
       html: "<p>Confirm receipt now</p>",
+      provider: "CONSOLE",
     });
   });
 

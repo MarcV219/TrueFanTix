@@ -8,6 +8,7 @@ import { notifyTicketSold, notifyPurchaseConfirmed } from "@/lib/notifications/s
 import { notifySellerTransferRequired, sellerTransferDeadline } from "@/lib/orders/transferWorkflow";
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import { reportProductionIncident } from "@/lib/productionIncidents";
+import { emailProviderEvidence } from "@/lib/emailProviderConfig";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -167,7 +168,7 @@ export async function POST(req: Request) {
                 orderId: updatedOrder.id,
                 emailType: "PURCHASE_CONFIRMATION",
                 recipient: buyer.email,
-                provider: process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE",
+                provider: emailProviderEvidence(emailResult),
                 status: emailResult.ok ? "SENT" : "FAILED",
                 error: emailResult.error ?? null,
               },
@@ -210,7 +211,7 @@ export async function POST(req: Request) {
                 orderId: updatedOrder.id,
                 emailType: "SALE_NOTIFICATION",
                 recipient: seller.email,
-                provider: process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE",
+                provider: emailProviderEvidence(emailResult),
                 status: emailResult.ok ? "SENT" : "FAILED",
                 error: emailResult.error ?? null,
               },
@@ -245,7 +246,7 @@ export async function POST(req: Request) {
               orderId: updatedOrder.id,
               emailType: "ADMIN_PURCHASE_COMPLETED",
               recipient: ADMIN_ACTIVITY_EMAIL,
-              provider: process.env.RESEND_API_KEY ? "RESEND" : process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE",
+              provider: emailProviderEvidence(adminEmailResult),
               status: adminEmailResult.ok ? "SENT" : "FAILED",
               error: adminEmailResult.error ?? null,
             },

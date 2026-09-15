@@ -187,7 +187,7 @@ export async function POST(req: Request) {
         {
           ok: true,
           delivered: true,
-          dev: !process.env.RESEND_API_KEY && !process.env.SENDGRID_API_KEY,
+          dev: emailResult.provider === "CONSOLE",
           expiresInMinutes: CODE_TTL_MINUTES,
         },
         { status: 200 },

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { generateDisputeInformationRequestEmail, sendEmail } from "@/lib/email";
+import { emailProviderEvidence } from "@/lib/emailProviderConfig";
 import { parseDisputeCase } from "@/lib/disputes";
 import { createNotification } from "@/lib/notifications/service";
 import { schemas, validateRequest } from "@/lib/validation";
@@ -100,7 +101,7 @@ export async function POST(req: Request) {
             orderId: order.id,
             emailType: `DISPUTE_INFO_REQUEST_${requestId}_${target.role}`,
             recipient: target.email,
-            provider: process.env.RESEND_API_KEY ? "RESEND" : process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE",
+            provider: emailProviderEvidence(result),
             status,
             error: result.error || null,
           },

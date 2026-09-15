@@ -31,3 +31,10 @@ export function emailProviderIsConfigured(
   if (provider === "SENDGRID") return Boolean(cleanEmailProviderCredential(env.SENDGRID_API_KEY));
   return false;
 }
+
+export function emailProviderEvidence(
+  result: { provider?: EmailProvider },
+  env: EmailProviderEnvironment = processEmailProviderEnvironment(),
+): EmailProvider {
+  return result.provider ?? configuredEmailProvider(env) ?? "CONSOLE";
+}

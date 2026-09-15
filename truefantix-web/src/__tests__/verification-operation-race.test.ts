@@ -231,4 +231,31 @@ describe("verification staging-persona race boundary", () => {
     });
     expect(mockedSendEmail).not.toHaveBeenCalled();
   });
+
+  it("reports the successful delivery path instead of re-reading changed provider configuration", async () => {
+    const originalResend = process.env.RESEND_API_KEY;
+    const originalSendGrid = process.env.SENDGRID_API_KEY;
+    process.env.RESEND_API_KEY = "synthetic-resend-key";
+    delete process.env.SENDGRID_API_KEY;
+    mockedSendEmail.mockImplementation(async () => {
+      delete process.env.RESEND_API_KEY;
+      return { ok: true, provider: "SENDGRID" };
+    });
+
+    try {
+      const response = await sendEmailCode(request("/api/verify/email/send"));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        delivered: true,
+        dev: false,
+      });
+    } finally {
+      if (originalResend === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResend;
+      if (originalSendGrid === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = originalSendGrid;
+    }
+  });
 });

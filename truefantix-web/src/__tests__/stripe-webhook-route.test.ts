@@ -127,4 +127,51 @@ describe("Stripe webhook route", () => {
     expect(tx.payment.upsert).toHaveBeenCalledTimes(1);
     expect(tx.order.update).toHaveBeenCalledTimes(1);
   });
+
+  it("records each returned email provider instead of inferring it from configuration", async () => {
+    const event = {
+      id: "evt_provider_evidence",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_provider_evidence",
+          amount: 12500,
+          currency: "cad",
+          metadata: { orderId: "order_provider_evidence" },
+        },
+      },
+    };
+    mockConstructEvent.mockReturnValue(event);
+    mockedPrisma.eventDelivery.create.mockResolvedValue({ id: "delivery-provider-evidence" });
+    mockedPrisma.emailDelivery.findUnique.mockResolvedValue(null);
+    mockSendEmail
+      .mockResolvedValueOnce({ ok: true, provider: "SENDGRID" })
+      .mockResolvedValueOnce({ ok: true, provider: "RESEND" });
+
+    const tx = {
+      payment: { upsert: jest.fn().mockResolvedValue({}) },
+      order: {
+        update: jest.fn().mockResolvedValue({
+          id: "order_provider_evidence",
+          amountCents: 10000,
+          totalCents: 12500,
+          payment: { currency: "CAD" },
+          items: [{ ticket: { title: "Synthetic Event", venue: "Synthetic Venue", date: "2030-01-01" } }],
+          buyerSeller: { user: { id: "buyer-provider-evidence", email: "buyer@example.test", firstName: "Buyer" } },
+          seller: null,
+        }),
+      },
+    };
+    mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
+
+    const response = await POST(makeWebhookRequest(JSON.stringify(event)));
+
+    expect(response.status).toBe(200);
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({ emailType: "PURCHASE_CONFIRMATION", provider: "SENDGRID" }),
+    });
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(2, {
+      data: expect.objectContaining({ emailType: "ADMIN_PURCHASE_COMPLETED", provider: "RESEND" }),
+    });
+  });
 });

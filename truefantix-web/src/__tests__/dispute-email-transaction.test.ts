@@ -17,7 +17,7 @@ const mockedSendEmail = sendEmail as jest.MockedFunction<typeof sendEmail>;
 describe("dispute email transaction client", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedSendEmail.mockResolvedValue({ ok: true });
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "SENDGRID" });
   });
 
   it("records delivery through the supplied transaction client", async () => {
@@ -35,6 +35,10 @@ describe("dispute email transaction client", () => {
 
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
     expect(transaction.emailDelivery.upsert).toHaveBeenCalledTimes(1);
+    expect(transaction.emailDelivery.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ provider: "SENDGRID" }),
+      update: expect.objectContaining({ provider: "SENDGRID" }),
+    }));
     expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
+import { emailProviderEvidence } from "@/lib/emailProviderConfig";
 
 export const DISPUTE_SUPPORT_EMAIL = "support@truefantix.com";
 
@@ -101,12 +102,13 @@ TrueFanTix Support`;
           orderId: params.orderId,
           emailType,
           recipient: party.email,
-          provider: process.env.RESEND_API_KEY ? "RESEND" : process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE",
+          provider: emailProviderEvidence(result),
           status: result.ok ? "SENT" : "FAILED",
           error: result.error || null,
         },
         update: {
           sentAt: new Date(),
+          provider: emailProviderEvidence(result),
           status: result.ok ? "SENT" : "FAILED",
           error: result.error || null,
         },

@@ -1,6 +1,7 @@
 import { Resend } from "resend";
+import { cleanEmailProviderCredential } from "@/lib/emailProviderConfig";
 
-const apiKey = process.env.RESEND_API_KEY;
+const apiKey = cleanEmailProviderCredential(process.env.RESEND_API_KEY);
 
 if (!apiKey) {
   throw new Error("Missing RESEND_API_KEY environment variable");

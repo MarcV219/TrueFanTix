@@ -105,7 +105,7 @@ describe("admin dispute-information staging-persona boundary", () => {
     mockedPrisma.emailDelivery.create.mockResolvedValue({ id: "delivery-1" });
     mockedParseDisputeCase.mockReturnValue({ type: "DISPUTE", adminRequests: [] } as never);
     mockedGenerateEmail.mockReturnValue({ subject: "Synthetic request", text: "Synthetic request" } as never);
-    mockedSendEmail.mockResolvedValue({ ok: true });
+    mockedSendEmail.mockResolvedValue({ ok: true, provider: "SENDGRID" });
     mockedCreateNotification.mockResolvedValue({ ok: true } as never);
     mockedAuditLog.mockResolvedValue(undefined);
   });
@@ -164,6 +164,9 @@ describe("admin dispute-information staging-persona boundary", () => {
     expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.emailDelivery.create).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ provider: "SENDGRID" }),
+    });
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
     expect(mockedCreateNotification).toHaveBeenCalledTimes(1);
     expect(mockedCreateNotification).toHaveBeenCalledWith(expect.any(Object), mockedPrisma);

@@ -7,6 +7,7 @@ import {
 } from "@/lib/email";
 import { createNotification, createNotificationOncePerWindow } from "@/lib/notifications/service";
 import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
+import { configuredEmailProvider } from "@/lib/emailProviderConfig";
 
 export const SELLER_TRANSFER_DEADLINE_HOURS = 24;
 export const BUYER_CONFIRMATION_DEADLINE_HOURS = 24;
@@ -39,12 +40,6 @@ export function reminderWindowStart(now = new Date()) {
   return new Date(Math.floor(now.getTime() / intervalMs) * intervalMs);
 }
 
-function configuredEmailProvider() {
-  if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
-  if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
-  return "CONSOLE";
-}
-
 async function sendLoggedReminder(params: {
   orderId: string;
   reminderType: "SELLER_TRANSFER" | "BUYER_CONFIRMATION";
@@ -61,7 +56,7 @@ async function sendLoggedReminder(params: {
       windowStart: params.windowStart,
     },
   };
-  const provider = configuredEmailProvider();
+  const provider = configuredEmailProvider() ?? "CONSOLE";
   await prisma.reminderDelivery.upsert({
     where: key,
     create: {
@@ -85,7 +80,7 @@ async function sendLoggedReminder(params: {
   });
 
   try {
-    const result = await sendEmail({ to: params.recipient, ...params.email });
+    const result = await sendEmail({ to: params.recipient, ...params.email, provider });
     await prisma.reminderDelivery.update({
       where: key,
       data: {
