@@ -41,4 +41,39 @@ describe("dispute email transaction client", () => {
     }));
     expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
   });
+
+  it("records neutral evidence when the sender rejects without provider identity", async () => {
+    const previousResendApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = "synthetic-configured-but-unattributed-key";
+    mockedSendEmail.mockRejectedValueOnce(new Error("synthetic providerless failure"));
+    const transaction = { emailDelivery: { upsert: jest.fn().mockResolvedValue({ id: "delivery-2" }) } };
+
+    try {
+      await sendDisputeEmails({
+        orderId: "order-providerless",
+        kind: "OPENED",
+        parties: [{ email: "buyer@example.test", role: "Buyer" }],
+        submittedBy: "Synthetic Buyer",
+        comments: "Synthetic dispute.",
+        ticketCount: 1,
+        fileNames: [],
+      }, transaction as never);
+
+      expect(transaction.emailDelivery.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        create: expect.objectContaining({
+          provider: "CONSOLE",
+          status: "FAILED",
+          error: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic providerless failure",
+        }),
+        update: expect.objectContaining({
+          provider: "CONSOLE",
+          status: "FAILED",
+          error: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic providerless failure",
+        }),
+      }));
+    } finally {
+      if (previousResendApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousResendApiKey;
+    }
+  });
 });
