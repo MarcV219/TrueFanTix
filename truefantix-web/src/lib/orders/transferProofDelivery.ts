@@ -687,20 +687,18 @@ export async function drainTransferProofDeliveryIntents(
         AND (
           candidate.kind <> ${SELLER_DECISION_KIND}
           OR NOT EXISTS (
+            -- Payload clocks remain part of envelope validation, but only
+            -- PostgreSQL-owned immutable history may authorize FIFO order.
             SELECT 1
             FROM "TransferProofDeliveryIntent" predecessor
             WHERE predecessor."orderId" = candidate."orderId"
               AND predecessor.kind = ${SELLER_DECISION_KIND}
               AND predecessor.status IN ('PENDING', 'PROCESSING', 'FAILED', 'RECONCILIATION_REQUIRED')
               AND (
-                transfer_proof_seller_decision_fifo_clock(
-                  predecessor."payloadJson", predecessor."createdAt"
-                ),
+                predecessor."createdAt",
                 predecessor.id
               ) < (
-                transfer_proof_seller_decision_fifo_clock(
-                  candidate."payloadJson", candidate."createdAt"
-                ),
+                candidate."createdAt",
                 candidate.id
               )
           )

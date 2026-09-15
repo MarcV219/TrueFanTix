@@ -913,6 +913,107 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await ensureSyntheticOrder(orderId);
   });
 
+  it("does not let a valid forged seller clock skip an earlier-created poisoned decision", async () => {
+    const poisonedId = `decision-fifo-forged-${runId}`;
+    const poisoned = await prepareAdminDecision(
+      "REQUEST_INFORMATION",
+      poisonedId,
+      "Earlier poisoned decision with a parseable clock.",
+      new Date("2026-12-01T00:44:00.000Z"),
+    );
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId: poisonedId,
+      action: "REQUEST_INFORMATION",
+      note: poisoned.note,
+      decidedAt: poisoned.decidedAt,
+      decidedByUserId: poisoned.decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+
+    const successorId = `decision-fifo-forged-successor-${runId}`;
+    const successor = await prepareAdminDecision(
+      "REJECT",
+      successorId,
+      "Later valid decision must remain gated.",
+      new Date("2026-12-01T00:45:00.000Z"),
+    );
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId: successorId,
+      action: "REJECT",
+      note: successor.note,
+      decidedAt: successor.decidedAt,
+      decidedByUserId: successor.decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+
+    const [poisonedRow, successorRow] = await Promise.all([
+      prisma.transferProofDeliveryIntent.findFirstOrThrow({
+        where: {
+          orderId,
+          kind: "SELLER_REVIEW_DECISION_EMAIL",
+          idempotencyKey: { contains: poisonedId },
+        },
+      }),
+      prisma.transferProofDeliveryIntent.findFirstOrThrow({
+        where: {
+          orderId,
+          kind: "SELLER_REVIEW_DECISION_EMAIL",
+          idempotencyKey: { contains: successorId },
+        },
+      }),
+    ]);
+    expect(poisonedRow.createdAt.getTime()).toBeLessThan(successorRow.createdAt.getTime());
+
+    const poisonedPayload = {
+      ...(poisonedRow.payloadJson as Prisma.JsonObject),
+      decidedAt: "2099-12-31T23:59:59.999Z",
+    };
+    await forceLegacyIntentState({ id: poisonedRow.id }, {
+      payloadJson: poisonedPayload,
+      envelopeDigest: envelopeDigest({
+        orderId,
+        kind: poisonedRow.kind,
+        recipient: poisonedRow.recipient,
+        payloadJson: poisonedPayload,
+      }),
+    });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T00:46:00.000Z"),
+      limit: 1,
+    }, prisma)).resolves.toMatchObject({
+      scanned: 1,
+      claimed: 1,
+      delivered: 0,
+      failed: 1,
+      reconciliationRequired: 1,
+    });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: poisonedRow.id },
+      select: { status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: "Pre-dispatch delivery failure: Transfer-proof review-decision delivery does not match durable decision history",
+    });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T00:47:00.000Z"),
+      limit: 1,
+    }, prisma)).resolves.toMatchObject({ scanned: 0, claimed: 0, delivered: 0, failed: 0 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await ensureSyntheticOrder(orderId);
+  });
+
   it("rolls back the decision intent and seller notification without provider work", async () => {
     const decisionId = `decision-rollback-${runId}`;
     const { decidedAt, decision, note } = await prepareAdminDecision("REQUEST_INFORMATION", decisionId);
