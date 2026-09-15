@@ -27,6 +27,55 @@ import {
   SellerListingAccessChangedError,
 } from "@/lib/tickets/ordinary-seller";
 
+type TicketListingPostCommitNotifications = {
+  listingId: string;
+  manualReviewEmail: {
+    to: string;
+    subject: string;
+    text: string;
+  } | null;
+  adminActivity: {
+    summary: string;
+    details: Record<string, string | number | null | undefined>;
+  };
+};
+
+async function sendTicketListingPostCommitNotifications(
+  notifications: TicketListingPostCommitNotifications,
+) {
+  if (notifications.manualReviewEmail) {
+    try {
+      const result = await sendEmail({
+        ...notifications.manualReviewEmail,
+        idempotencyKey: `ticket-listing-review:${notifications.listingId}`,
+      });
+      if (!result.ok) {
+        console.error("[EMAIL] Seller listing review notification failed:", result.error);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown seller listing review email error";
+      console.error(
+        "[EMAIL] Seller listing review notification failed:",
+        `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+      );
+    }
+  }
+
+  try {
+    await sendAdminActivityEmail({
+      activity: "TICKETS_LISTED",
+      ...notifications.adminActivity,
+      idempotencyKey: `ticket-listing-activity:${notifications.listingId}`,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown ticket listing activity email error";
+    console.error(
+      "[EMAIL] Ticket listing activity notification failed:",
+      `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+    );
+  }
+}
+
 function safeInt(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
@@ -758,7 +807,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    return await runOrdinaryListingMutation(gate.user.id, async (tx, currentUser) => {
+    const result = await runOrdinaryListingMutation(gate.user.id, async (tx, currentUser) => {
     // Prevent impersonation and stale-session reuse: the seller relationship is
     // reloaded under the managed-account lock before any provider or listing work.
     const sellerId = currentUser.seller.id;
@@ -1100,35 +1149,13 @@ export async function POST(req: Request) {
       include: { event: true },
     });
 
-    if (requestManualReview) {
-      const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN || "https://truefantix-web.vercel.app").replace(/\/$/, "");
-      const reviewUrl = `${appUrl}/admin/tickets/${encodeURIComponent(created.id)}`;
-      const sellerName = created.seller?.name || "Seller";
-      await sendEmail({
-        to: DISPUTE_SUPPORT_EMAIL,
-        subject: `ACTION REQUIRED: Seller Listing Review — ${title}`,
-        text: `${sellerName} requested Admin review of an automated listing validation.\n\nEvent: ${title}\nVenue: ${venue}\nDate: ${date}\nSection/row/seat: ${section || "-"} / ${row || "-"} / ${seat || "-"}\nReason: ${validationFailure?.message || supportReviewNote || "Seller requested review"}\n\nReview all submitted details and receipt evidence:\n${reviewUrl}`,
-      });
-    }
+    const listingId = finalTicket?.id ?? created.id;
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN || "https://truefantix-web.vercel.app").replace(/\/$/, "");
+    const reviewUrl = `${appUrl}/admin/tickets/${encodeURIComponent(listingId)}`;
+    const sellerName = created.seller?.name || "Seller";
 
-    await sendAdminActivityEmail({
-      activity: "TICKETS_LISTED",
-      summary: `Tickets listed — ${finalTicket?.title ?? created.title}`,
-      details: {
-        "Listing ID": finalTicket?.id ?? created.id,
-        Seller: created.seller?.name || gate.user.email,
-        Event: finalTicket?.title ?? created.title,
-        Venue: finalTicket?.venue ?? created.venue,
-        Date: finalTicket?.date ?? created.date,
-        Section: (finalTicket as any)?.section ?? (created as any).section,
-        Row: (finalTicket as any)?.row ?? created.row,
-        Seat: (finalTicket as any)?.seat ?? created.seat,
-        Price: `${normalizeCurrency((finalTicket as any)?.currency ?? (created as any).currency)} ${centsToDollars(finalTicket?.priceCents ?? created.priceCents).toFixed(2)}`,
-        "Verification status": (verified as any)?.verificationStatus ?? (finalTicket as any)?.verificationStatus ?? "PENDING",
-      },
-    });
-
-    return NextResponse.json(
+    return {
+      response: NextResponse.json(
       {
         ok: true,
         ticket: {
@@ -1179,8 +1206,39 @@ export async function POST(req: Request) {
           : undefined,
       },
       { status: 201 }
-    );
+      ),
+      postCommitNotifications: {
+        listingId,
+        manualReviewEmail: requestManualReview
+          ? {
+              to: DISPUTE_SUPPORT_EMAIL,
+              subject: `ACTION REQUIRED: Seller Listing Review — ${title}`,
+              text: `${sellerName} requested Admin review of an automated listing validation.\n\nEvent: ${title}\nVenue: ${venue}\nDate: ${date}\nSection/row/seat: ${section || "-"} / ${row || "-"} / ${seat || "-"}\nReason: ${validationFailure?.message || supportReviewNote || "Seller requested review"}\n\nReview all submitted details and receipt evidence:\n${reviewUrl}`,
+            }
+          : null,
+        adminActivity: {
+          summary: `Tickets listed — ${finalTicket?.title ?? created.title}`,
+          details: {
+            "Listing ID": listingId,
+            Seller: sellerName,
+            Event: finalTicket?.title ?? created.title,
+            Venue: finalTicket?.venue ?? created.venue,
+            Date: finalTicket?.date ?? created.date,
+            Section: (finalTicket as any)?.section ?? (created as any).section,
+            Row: (finalTicket as any)?.row ?? created.row,
+            Seat: (finalTicket as any)?.seat ?? created.seat,
+            Price: `${normalizeCurrency((finalTicket as any)?.currency ?? (created as any).currency)} ${centsToDollars(finalTicket?.priceCents ?? created.priceCents).toFixed(2)}`,
+            "Verification status": (verified as any)?.verificationStatus ?? (finalTicket as any)?.verificationStatus ?? "PENDING",
+          },
+        },
+      } satisfies TicketListingPostCommitNotifications,
+    };
     });
+
+    if (result instanceof NextResponse) return result;
+
+    await sendTicketListingPostCommitNotifications(result.postCommitNotifications);
+    return result.response;
   } catch (err: unknown) {
     if (err instanceof ManagedAccountListingMutationError) {
       return NextResponse.json(
