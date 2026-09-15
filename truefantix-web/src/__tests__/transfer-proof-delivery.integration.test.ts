@@ -821,40 +821,40 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await ensureSyntheticOrder(orderId);
   });
 
-  it("falls back to creation order when a later seller decision has an impossible FIFO clock", async () => {
-    const firstId = `decision-fifo-valid-${runId}`;
-    const first = await prepareAdminDecision(
+  it("quarantines an earlier-created impossible seller FIFO clock before its canonical successor", async () => {
+    const poisonedId = `decision-fifo-impossible-${runId}`;
+    const poisoned = await prepareAdminDecision(
       "REQUEST_INFORMATION",
-      firstId,
-      "First valid decision.",
+      poisonedId,
+      "Earlier poisoned decision.",
       new Date("2026-12-01T00:40:00.000Z"),
     );
     await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
       orderId,
-      decisionId: firstId,
+      decisionId: poisonedId,
       action: "REQUEST_INFORMATION",
-      note: first.note,
-      decidedAt: first.decidedAt,
-      decidedByUserId: first.decision.decidedByUserId,
+      note: poisoned.note,
+      decidedAt: poisoned.decidedAt,
+      decidedByUserId: poisoned.decision.decidedByUserId,
       sellerUserId,
       sellerEmail: "seller@example.test",
       sellerFirstName: "Seller",
     }));
 
-    const poisonedId = `decision-fifo-impossible-${runId}`;
-    const poisoned = await prepareAdminDecision(
+    const secondId = `decision-fifo-valid-${runId}`;
+    const second = await prepareAdminDecision(
       "REJECT",
-      poisonedId,
-      "Later poisoned decision.",
+      secondId,
+      "Later valid decision.",
       new Date("2026-12-01T00:41:00.000Z"),
     );
     await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
       orderId,
-      decisionId: poisonedId,
+      decisionId: secondId,
       action: "REJECT",
-      note: poisoned.note,
-      decidedAt: poisoned.decidedAt,
-      decidedByUserId: poisoned.decision.decidedByUserId,
+      note: second.note,
+      decidedAt: second.decidedAt,
+      decidedByUserId: second.decision.decidedByUserId,
       sellerUserId,
       sellerEmail: "seller@example.test",
       sellerFirstName: "Seller",
@@ -868,10 +868,11 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     });
     const poisonedPayload = {
       ...(poisonedRow.payloadJson as Prisma.JsonObject),
-      decidedAt: "2026-00-01T00:00:00.000Z",
+      decidedAt: "9999-99-99T99:99:99.999Z",
     };
     await forceLegacyIntentState({ id: poisonedRow.id }, {
       payloadJson: poisonedPayload,
+      createdAt: poisoned.decidedAt,
       envelopeDigest: envelopeDigest({
         orderId,
         kind: poisonedRow.kind,
@@ -884,14 +885,6 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       orderId,
       now: new Date("2026-12-01T00:42:00.000Z"),
       limit: 1,
-    }, prisma)).resolves.toMatchObject({ scanned: 1, claimed: 1, delivered: 1, failed: 0 });
-    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
-    expect(mockedSendEmail.mock.calls[0]?.[0].text).toContain("First valid decision.");
-
-    await expect(drainTransferProofDeliveryIntents({
-      orderId,
-      now: new Date("2026-12-01T00:42:00.000Z"),
-      limit: 1,
     }, prisma)).resolves.toMatchObject({
       scanned: 1,
       claimed: 1,
@@ -899,7 +892,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       failed: 1,
       reconciliationRequired: 1,
     });
-    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedSendEmail).not.toHaveBeenCalled();
     await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
       where: { id: poisonedRow.id },
       select: { status: true, attemptCount: true, lastError: true },
@@ -908,6 +901,15 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       attemptCount: 0,
       lastError: "Pre-dispatch delivery failure: Invalid transfer-proof delivery payload field: decidedAt",
     });
+
+    // A quarantined predecessor remains an explicit reconciliation gate: the
+    // worker must not silently dispatch a later decision in a subsequent drain.
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T00:43:00.000Z"),
+      limit: 1,
+    }, prisma)).resolves.toMatchObject({ scanned: 0, claimed: 0, delivered: 0, failed: 0 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
     await ensureSyntheticOrder(orderId);
   });
 
