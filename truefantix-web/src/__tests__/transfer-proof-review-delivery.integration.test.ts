@@ -797,6 +797,149 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     });
   });
 
+  it("does not dispatch a concurrently replaced envelope after acquisition", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const template = await prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    });
+    const payload = template.payloadJson as {
+      sellerName: string;
+      sellerEmail: string;
+      eventTitle: string;
+      appOrigin: string;
+    };
+    const restoredSellerName = "Restored Seller Snapshot";
+    const restoredPayload = { ...payload, sellerName: restoredSellerName };
+    const subject = template.subject;
+    const textBody = template.textBody.replaceAll(payload.sellerName, restoredSellerName);
+    const htmlBody = template.htmlBody.replaceAll(payload.sellerName, restoredSellerName);
+    const [digest] = await prisma.$queryRaw<Array<{ value: string }>>`
+      SELECT transfer_proof_review_envelope_digest(
+        ${template.orderId}, ${template.requestId}, ${template.recipient},
+        ${template.requestedAt.toISOString()}, ${restoredPayload.sellerName},
+        ${restoredPayload.sellerEmail}, ${restoredPayload.eventTitle},
+        ${restoredPayload.appOrigin}, ${subject}, ${textBody}, ${htmlBody}
+      ) AS value
+    `;
+    let transactionCalls = 0;
+    type ReviewDeliveryDb = NonNullable<Parameters<typeof drainTransferProofReviewDeliveryIntents>[1]>;
+    const concurrentRestoreDb = {
+      transferProofReviewDeliveryIntent: prisma.transferProofReviewDeliveryIntent,
+      emailDelivery: prisma.emailDelivery,
+      $executeRaw: prisma.$executeRaw.bind(prisma),
+      $queryRaw: prisma.$queryRaw.bind(prisma),
+      $transaction: async (work: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+        transactionCalls += 1;
+        if (transactionCalls === 2) {
+          await prisma.$transaction(async (tx) => {
+            await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+            await tx.transferProofReviewDeliveryIntent.update({
+              where: { requestId },
+              data: {
+                payloadJson: restoredPayload,
+                textBody,
+                htmlBody,
+                envelopeDigest: digest.value,
+              },
+            });
+          });
+        }
+        return prisma.$transaction(work);
+      },
+    } as unknown as ReviewDeliveryDb;
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, concurrentRestoreDb))
+      .resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1, reconciliationRequired: 1 });
+    expect(transactionCalls).toBe(2);
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED",
+      payloadJson: restoredPayload,
+      envelopeDigest: digest.value,
+      attemptCount: 0,
+      dispatchStartedAt: null,
+      lastError: "Pre-dispatch review delivery failure: Transfer-proof review delivery envelope changed after acquisition",
+    });
+  });
+
+  it.each([
+    ["accepted", {
+      ok: true as const,
+      provider: "RESEND" as const,
+      providerResult: "ACCEPTED",
+    }],
+    ["rejected", {
+      ok: false as const,
+      provider: "RESEND" as const,
+      providerResult: "REJECTED",
+      error: "Synthetic provider rejection",
+    }],
+  ])("reconciles a concurrently replaced envelope after the provider %s it", async (
+    _outcome,
+    providerResponse,
+  ) => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const template = await prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    });
+    const payload = template.payloadJson as {
+      sellerName: string;
+      sellerEmail: string;
+      eventTitle: string;
+      appOrigin: string;
+    };
+    const restoredEventTitle = "Restored Event Snapshot";
+    const restoredPayload = { ...payload, eventTitle: restoredEventTitle };
+    const textBody = template.textBody.replaceAll(payload.eventTitle, restoredEventTitle);
+    const htmlBody = template.htmlBody.replaceAll(payload.eventTitle, restoredEventTitle);
+    const [digest] = await prisma.$queryRaw<Array<{ value: string }>>`
+      SELECT transfer_proof_review_envelope_digest(
+        ${template.orderId}, ${template.requestId}, ${template.recipient},
+        ${template.requestedAt.toISOString()}, ${restoredPayload.sellerName},
+        ${restoredPayload.sellerEmail}, ${restoredPayload.eventTitle},
+        ${restoredPayload.appOrigin}, ${template.subject}, ${textBody}, ${htmlBody}
+      ) AS value
+    `;
+    mockedSendEmail.mockImplementationOnce(async () => {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.transferProofReviewDeliveryIntent.update({
+          where: { requestId },
+          data: {
+            payloadJson: restoredPayload,
+            textBody,
+            htmlBody,
+            envelopeDigest: digest.value,
+          },
+        });
+      });
+      return providerResponse;
+    });
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1, reconciliationRequired: 1 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED",
+      payloadJson: restoredPayload,
+      envelopeDigest: digest.value,
+      attemptCount: 1,
+      providerResult: providerResponse.providerResult,
+      deliveredAt: null,
+      dispatchStartedAt: null,
+      lastError: "Review delivery envelope changed after provider dispatch; reconciliation required",
+    });
+    await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 0 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["approved", "PENDING"],
     ["rejected", "MISMATCHED"],

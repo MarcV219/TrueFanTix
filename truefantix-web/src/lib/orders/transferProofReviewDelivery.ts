@@ -264,6 +264,47 @@ function requireCanonicalEnvelope(row: TransferProofReviewDeliveryIntent) {
   }
 }
 
+function sameReviewEnvelopeSnapshot(
+  acquired: TransferProofReviewDeliveryIntent,
+  current: TransferProofReviewDeliveryIntent,
+) {
+  const acquiredPayload = acquired.payloadJson as Record<string, unknown>;
+  const currentPayload = current.payloadJson as Record<string, unknown>;
+  const payloadKeys = ["appOrigin", "eventTitle", "sellerEmail", "sellerName"];
+  return current.id === acquired.id
+    && current.orderId === acquired.orderId
+    && current.requestId === acquired.requestId
+    && current.recipient === acquired.recipient
+    && current.subject === acquired.subject
+    && current.textBody === acquired.textBody
+    && current.htmlBody === acquired.htmlBody
+    && current.requestedAt.getTime() === acquired.requestedAt.getTime()
+    && current.idempotencyKey === acquired.idempotencyKey
+    && current.envelopeDigest === acquired.envelopeDigest
+    && current.createdAt.getTime() === acquired.createdAt.getTime()
+    && payloadKeys.every((key) => currentPayload[key] === acquiredPayload[key]);
+}
+
+function reviewEnvelopeOwnershipWhere(row: TransferProofReviewDeliveryIntent) {
+  return {
+    id: row.id,
+    orderId: row.orderId,
+    requestId: row.requestId,
+    recipient: row.recipient,
+    subject: row.subject,
+    textBody: row.textBody,
+    htmlBody: row.htmlBody,
+    requestedAt: row.requestedAt,
+    idempotencyKey: row.idempotencyKey,
+    payloadJson: { equals: row.payloadJson as Prisma.InputJsonValue },
+    envelopeDigest: row.envelopeDigest,
+    createdAt: row.createdAt,
+  } satisfies Prisma.TransferProofReviewDeliveryIntentWhereInput;
+}
+
+const REVIEW_ENVELOPE_CHANGED_AFTER_DISPATCH_ERROR =
+  "Review delivery envelope changed after provider dispatch; reconciliation required";
+
 type RuntimeReviewOrder = {
   status: string;
   buyerConfirmationStatus: string | null;
@@ -543,11 +584,30 @@ export async function drainTransferProofReviewDeliveryIntents(
     try {
       requireCanonicalEnvelope(row);
       const dispatch = await db.$transaction(async (tx) => {
+        // Preserve the established parent -> seller -> intent lock order used
+        // by request staging before fencing the acquired envelope below.
         await requireRuntimeReviewSubject(tx, row);
+        // Acquisition deliberately releases its row locks before rendering and
+        // provider work. Re-lock and revalidate the complete durable envelope
+        // so a concurrent privileged restore cannot replace the snapshot while
+        // this worker continues with stale in-memory content.
+        const [current] = await tx.$queryRaw<TransferProofReviewDeliveryIntent[]>(Prisma.sql`
+          SELECT *
+          FROM "TransferProofReviewDeliveryIntent"
+          WHERE id = ${row.id}
+          FOR UPDATE
+        `);
+        if (!current) {
+          throw new Error("Transfer-proof review delivery is unavailable at dispatch");
+        }
+        requireCanonicalEnvelope(current);
+        if (!sameReviewEnvelopeSnapshot(row, current)) {
+          throw new Error("Transfer-proof review delivery envelope changed after acquisition");
+        }
         const dispatchNow = await databaseUtcNow(tx);
         return tx.transferProofReviewDeliveryIntent.updateMany({
           where: {
-            id: row.id,
+            ...reviewEnvelopeOwnershipWhere(row),
             status: "PROCESSING",
             provider,
             leaseExpiresAt: { equals: leaseExpiresAt, gt: dispatchNow },
@@ -587,7 +647,7 @@ export async function drainTransferProofReviewDeliveryIntents(
         const recordedAt = await databaseUtcNow(tx);
         const owned = await tx.transferProofReviewDeliveryIntent.updateMany({
           where: {
-            id: row.id,
+            ...reviewEnvelopeOwnershipWhere(row),
             status: "PROCESSING",
             provider,
             leaseExpiresAt,
@@ -605,7 +665,31 @@ export async function drainTransferProofReviewDeliveryIntents(
             lastError: null,
           },
         });
-        if (owned.count !== 1) return owned;
+        if (owned.count !== 1) {
+          const envelopeMismatch = await tx.transferProofReviewDeliveryIntent.updateMany({
+            where: {
+              id: row.id,
+              status: "PROCESSING",
+              provider,
+              leaseExpiresAt,
+              claimToken,
+              attemptCount,
+            },
+            data: {
+              status: "RECONCILIATION_REQUIRED",
+              processingAt: null,
+              leaseExpiresAt: null,
+              claimToken: null,
+              dispatchStartedAt: null,
+              providerResult,
+              lastError: REVIEW_ENVELOPE_CHANGED_AFTER_DISPATCH_ERROR,
+              availableAt: attemptCount < MAX_ATTEMPTS
+                ? new Date(recordedAt.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
+                : recordedAt,
+            },
+          });
+          return { owned, envelopeMismatch };
+        }
         await tx.emailDelivery.upsert({
           where: { orderId_emailType_recipient: {
             orderId: row.orderId,
@@ -623,9 +707,14 @@ export async function drainTransferProofReviewDeliveryIntents(
           },
           update: { provider, status: "SENT", error: null, sentAt: recordedAt },
         });
-        return owned;
+        return { owned, envelopeMismatch: { count: 0 } };
       });
-      if (recorded.count !== 1) {
+      if (recorded.envelopeMismatch.count === 1) {
+        reconciliationRequired += 1;
+        failed += 1;
+        continue;
+      }
+      if (recorded.owned.count !== 1) {
         throw new Error("Review provider accepted delivery but claim ownership was lost");
       }
       delivered += 1;
@@ -667,7 +756,7 @@ export async function drainTransferProofReviewDeliveryIntents(
         const recoveredAt = await databaseUtcNow(tx);
         const owned = await tx.transferProofReviewDeliveryIntent.updateMany({
           where: {
-            id: row.id,
+            ...reviewEnvelopeOwnershipWhere(row),
             status: "PROCESSING",
             provider,
             leaseExpiresAt,
@@ -693,7 +782,32 @@ export async function drainTransferProofReviewDeliveryIntents(
               : recoveredAt,
           },
         });
-        if (owned.count !== 1 || providerAccepted) return owned;
+        if (owned.count !== 1) {
+          const envelopeMismatch = await tx.transferProofReviewDeliveryIntent.updateMany({
+            where: {
+              id: row.id,
+              status: "PROCESSING",
+              provider,
+              leaseExpiresAt,
+              claimToken,
+              attemptCount,
+            },
+            data: {
+              status: "RECONCILIATION_REQUIRED",
+              processingAt: null,
+              leaseExpiresAt: null,
+              claimToken: null,
+              dispatchStartedAt: null,
+              providerResult,
+              lastError: REVIEW_ENVELOPE_CHANGED_AFTER_DISPATCH_ERROR,
+              availableAt: attemptCount < MAX_ATTEMPTS
+                ? new Date(recoveredAt.getTime() + RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1))
+                : recoveredAt,
+            },
+          });
+          return { owned, envelopeMismatch };
+        }
+        if (providerAccepted) return { owned, envelopeMismatch: { count: 0 } };
         await tx.emailDelivery.upsert({
           where: { orderId_emailType_recipient: {
             orderId: row.orderId,
@@ -716,10 +830,11 @@ export async function drainTransferProofReviewDeliveryIntents(
             sentAt: recoveredAt,
           },
         });
-        return owned;
+        return { owned, envelopeMismatch: { count: 0 } };
       });
-      if (requiresReconciliation) reconciliationRequired += recovered.count;
-      failed += recovered.count;
+      reconciliationRequired += recovered.envelopeMismatch.count;
+      if (requiresReconciliation) reconciliationRequired += recovered.owned.count;
+      failed += recovered.owned.count + recovered.envelopeMismatch.count;
     }
   }
 
