@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
 import { schemas, validateRequest } from "@/lib/validation";
-import { sendEmail } from "@/lib/email";
+import { sendEmail, type EmailSendResult } from "@/lib/email";
 
 function normalizeId(value: unknown) {
   try {
@@ -126,12 +126,23 @@ export async function PATCH(req: Request) {
     if (status === "NEEDS_CLARIFICATION") {
       const question = adminNotes?.trim() || "Please send us a little more information about the item you want added.";
       const emailContent = clarificationEmail({ request, question });
-      const emailResult = await sendEmail({
-        to: request.user.email,
-        subject: emailContent.subject,
-        text: emailContent.text,
-        html: emailContent.html,
-      });
+      let emailResult: EmailSendResult;
+      try {
+        emailResult = await sendEmail({
+          to: request.user.email,
+          subject: emailContent.subject,
+          text: emailContent.text,
+          html: emailContent.html,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown email error";
+        emailResult = {
+          ok: false,
+          provider: "CONSOLE",
+          providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+          error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+        };
+      }
 
       const clarificationRequest = await prisma.catalogRequest.update({
         where: { id },
