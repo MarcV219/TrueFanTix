@@ -1078,6 +1078,56 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     }
   });
 
+  it("quarantines an exhausted failed unsupported provider before generic exhaustion handling", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "TransferProofReviewDeliveryIntent"
+      DROP CONSTRAINT "TransferProofReviewDeliveryIntent_provider_check"
+    `);
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.transferProofReviewDeliveryIntent.update({
+          where: { requestId },
+          data: {
+            status: "FAILED",
+            provider: "CONSOLE",
+            attemptCount: 3,
+            firstAttemptAt: requestedAt,
+            lastError: "Synthetic exhausted rejection from a restored unsupported provider",
+          },
+        });
+      });
+
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+        .resolves.toMatchObject({ scanned: 0, claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 1 });
+      expect(mockedSendEmail).not.toHaveBeenCalled();
+      await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId },
+      })).resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        provider: "CONSOLE",
+        attemptCount: 3,
+        firstAttemptAt: requestedAt,
+        availableAt: requestedAt,
+        lastError: "Unsupported recorded review delivery provider CONSOLE; reconciliation required",
+      });
+    } finally {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.transferProofReviewDeliveryIntent.update({
+          where: { requestId },
+          data: { provider: "RESEND" },
+        });
+      });
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "TransferProofReviewDeliveryIntent"
+        ADD CONSTRAINT "TransferProofReviewDeliveryIntent_provider_check"
+        CHECK (provider IS NULL OR provider IN ('RESEND', 'SENDGRID'))
+      `);
+    }
+  });
+
   it("replays accepted Resend persistence ambiguity only with the same provider key", async () => {
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
     let transactionCall = 0;

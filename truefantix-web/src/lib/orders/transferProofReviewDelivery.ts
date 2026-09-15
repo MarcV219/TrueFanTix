@@ -339,6 +339,27 @@ export async function drainTransferProofReviewDeliveryIntents(
   // Worker transition evidence is database-clock owned. The optional clock is
   // retained only for call-site compatibility and must never advance a claim.
   void options.now;
+  // Restored legacy history can carry an unsupported provider at any retry
+  // ordinal, including the exhaustion boundary. Quarantine it with the exact
+  // provider-derived evidence before the generic exhausted-row promotion,
+  // whose preserved lastError intentionally cannot authenticate this special
+  // transition.
+  const unsupportedOrderFilter = options.orderId
+    ? Prisma.sql`AND "orderId" = ${options.orderId}`
+    : Prisma.empty;
+  const unsupportedFailedCount = await db.$executeRaw(Prisma.sql`
+    UPDATE "TransferProofReviewDeliveryIntent"
+    SET status = 'RECONCILIATION_REQUIRED',
+      "lastError" = 'Unsupported recorded review delivery provider '
+        || provider
+        || '; reconciliation required',
+      "updatedAt" = statement_timestamp() AT TIME ZONE 'UTC'
+    WHERE status = 'FAILED'
+      AND "attemptCount" >= ${MAX_ATTEMPTS}
+      AND provider IS NOT NULL
+      AND provider NOT IN ('RESEND', 'SENDGRID')
+      ${unsupportedOrderFilter}
+  `);
   const exhausted = await db.transferProofReviewDeliveryIntent.updateMany({
     where: {
       orderId: options.orderId,
@@ -378,7 +399,7 @@ export async function drainTransferProofReviewDeliveryIntents(
   const resendConfigured = providerIsConfigured("RESEND");
   const sendGridConfigured = providerIsConfigured("SENDGRID");
   const providerConfigured = resendConfigured || sendGridConfigured;
-  let reconciliationRequired = exhausted.count + expiredProcessingCount;
+  let reconciliationRequired = unsupportedFailedCount + exhausted.count + expiredProcessingCount;
   const acquisition = await db.$transaction(async (tx) => {
     const acquisitionNow = await databaseUtcNow(tx);
     const acquisitionResendWindowStart = new Date(
