@@ -141,14 +141,20 @@ export async function POST(req: Request) {
         references: { orderId, payoutId: completion.payoutId, failureCode: payoutResult.code },
         fingerprint: `automatic-payout:${completion.payoutId}:${payoutResult.code}`,
       });
-    } else if (payoutResult.instantPayoutStatus === "FAILED") {
+    } else if (["FAILED", "RECONCILIATION_REQUIRED", "ATTEMPTING", "PROVENANCE_MISMATCH"]
+      .includes(payoutResult.instantPayoutStatus || "")) {
       await reportProductionIncident({
         category: "APPLICATION",
         severity: "WARNING",
         summary: "Seller transfer succeeded but Instant Payout needs attention",
-        error: "Stripe could not complete the automatic Instant Payout. The seller funds remain safely in their connected Stripe account.",
-        references: { orderId, payoutId: completion.payoutId, stripeTransferId: payoutResult.stripeTransferId },
-        fingerprint: `instant-payout:${completion.payoutId}:failed`,
+        error: `The Instant Payout command is ${payoutResult.instantPayoutStatus}. The completed platform transfer remains recorded and must not be resent.`,
+        references: {
+          orderId,
+          payoutId: completion.payoutId,
+          stripeTransferId: payoutResult.stripeTransferId,
+          instantPayoutStatus: payoutResult.instantPayoutStatus,
+        },
+        fingerprint: `instant-payout:${completion.payoutId}:${payoutResult.instantPayoutStatus}`,
       });
     }
 

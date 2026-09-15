@@ -75,6 +75,14 @@ enum LegacyPaymentIntentCommandStatus {
   SUCCEEDED
 }
 
+enum LegacyPayoutCommandStatus {
+  NOT_SENT
+  ATTEMPTING
+  RECONCILIATION_REQUIRED
+  SUCCEEDED
+  FAILED
+}
+
 enum EventSelloutStatus {
   NOT_SOLD_OUT
   SOLD_OUT
@@ -1327,9 +1335,11 @@ model Seller {
   orders                  Order[]
   buyerOrders             Order[]                  @relation("BuyerOrders")
 
-  payouts Payout[]
-  metrics SellerMetrics?
-  user    User?
+  payouts                      Payout[]
+  legacyPayoutTransferCommands LegacyPayoutTransferCommand[]
+  legacyInstantPayoutCommands  LegacyInstantPayoutCommand[]
+  metrics                      SellerMetrics?
+  user                         User?
 
   // Reviews received
   reviewsReceived Review[]
@@ -1486,6 +1496,8 @@ model Order {
   transferProofDeliveryIntents TransferProofDeliveryIntent[]
   legacyDisputeRefundIntent    LegacyDisputeRefundIntent?
   legacyPaymentIntentCommand   LegacyPaymentIntentCommand?
+  legacyPayoutTransferCommand  LegacyPayoutTransferCommand?
+  legacyInstantPayoutCommand   LegacyInstantPayoutCommand?
 
   // Conversation for this order
   conversation Conversation?
@@ -1609,6 +1621,9 @@ model Payout {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  legacyPayoutTransferCommand LegacyPayoutTransferCommand?
+  legacyInstantPayoutCommand  LegacyInstantPayoutCommand?
 
   @@index([sellerId, createdAt])
   @@index([status, createdAt])
@@ -1781,7 +1796,91 @@ model Payment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  legacyDisputeRefundIntent LegacyDisputeRefundIntent?
+  legacyDisputeRefundIntent   LegacyDisputeRefundIntent?
+  legacyPayoutTransferCommand LegacyPayoutTransferCommand?
+  legacyInstantPayoutCommand  LegacyInstantPayoutCommand?
+}
+
+model LegacyPayoutTransferCommand {
+  id                         String                    @id @default(cuid())
+  payoutId                   String                    @unique
+  orderId                    String                    @unique
+  paymentId                  String                    @unique
+  sellerId                   String
+  connectedAccountId         String
+  paymentProviderRef         String
+  amountCents                Int
+  currency                   String
+  transferAmountCents        Int
+  transferCurrency           String
+  sourceTransaction          String
+  fundingMode                String
+  settlementCurrency         String
+  actorUserId                String?
+  automatic                  Boolean
+  commandDigest              String
+  idempotencyKey             String                    @unique
+  status                     LegacyPayoutCommandStatus @default(NOT_SENT)
+  dispatchStartedAt          DateTime?
+  providerTransferId         String?                   @unique
+  providerAmountCents        Int?
+  providerCurrency           String?
+  providerDestination        String?
+  providerSourceTransaction  String?
+  providerFundingMode        String?
+  providerSettlementCurrency String?
+  failureReason              String?
+  authorizedAt               DateTime                  @default(now())
+  completedAt                DateTime?
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+
+  payout               Payout                      @relation(fields: [payoutId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  order                Order                       @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  payment              Payment                     @relation(fields: [paymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  seller               Seller                      @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  instantPayoutCommand LegacyInstantPayoutCommand?
+
+  @@index([status, authorizedAt])
+  @@index([sellerId, authorizedAt])
+}
+
+model LegacyInstantPayoutCommand {
+  id                  String                    @id @default(cuid())
+  payoutId            String                    @unique
+  transferCommandId   String                    @unique
+  orderId             String                    @unique
+  paymentId           String                    @unique
+  sellerId            String
+  connectedAccountId  String
+  amountCents         Int
+  currency            String
+  destinationId       String
+  actorUserId         String?
+  automatic           Boolean
+  commandDigest       String
+  idempotencyKey      String                    @unique
+  status              LegacyPayoutCommandStatus @default(NOT_SENT)
+  dispatchStartedAt   DateTime?
+  providerPayoutId    String?                   @unique
+  providerStatus      String?
+  providerAmountCents Int?
+  providerCurrency    String?
+  providerDestination String?
+  failureReason       String?
+  authorizedAt        DateTime                  @default(now())
+  completedAt         DateTime?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  payout          Payout                      @relation(fields: [payoutId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  transferCommand LegacyPayoutTransferCommand @relation(fields: [transferCommandId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  order           Order                       @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  payment         Payment                     @relation(fields: [paymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  seller          Seller                      @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, authorizedAt])
+  @@index([sellerId, authorizedAt])
 }
 
 model LegacyPaymentIntentCommand {
