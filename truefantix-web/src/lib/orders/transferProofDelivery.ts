@@ -693,33 +693,15 @@ export async function drainTransferProofDeliveryIntents(
               AND predecessor.kind = ${SELLER_DECISION_KIND}
               AND predecessor.status IN ('PENDING', 'PROCESSING', 'FAILED', 'RECONCILIATION_REQUIRED')
               AND (
-                CASE
-                  WHEN predecessor."payloadJson" ->> 'decidedAt'
-                    ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
-                  THEN predecessor."payloadJson" ->> 'decidedAt'
-                  ELSE TO_CHAR(predecessor."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                END
-                  < CASE
-                    WHEN candidate."payloadJson" ->> 'decidedAt'
-                      ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
-                    THEN candidate."payloadJson" ->> 'decidedAt'
-                    ELSE TO_CHAR(candidate."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                  END
-                OR (
-                  CASE
-                    WHEN predecessor."payloadJson" ->> 'decidedAt'
-                      ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
-                    THEN predecessor."payloadJson" ->> 'decidedAt'
-                    ELSE TO_CHAR(predecessor."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                  END
-                    = CASE
-                      WHEN candidate."payloadJson" ->> 'decidedAt'
-                        ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
-                      THEN candidate."payloadJson" ->> 'decidedAt'
-                      ELSE TO_CHAR(candidate."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                    END
-                  AND predecessor.id < candidate.id
-                )
+                transfer_proof_seller_decision_fifo_clock(
+                  predecessor."payloadJson", predecessor."createdAt"
+                ),
+                predecessor.id
+              ) < (
+                transfer_proof_seller_decision_fifo_clock(
+                  candidate."payloadJson", candidate."createdAt"
+                ),
+                candidate.id
               )
           )
         )
