@@ -365,6 +365,14 @@ export async function drainTransferProofReviewDeliveryIntents(
       orderId: options.orderId,
       status: "FAILED",
       attemptCount: { gte: MAX_ATTEMPTS },
+      // An unsupported legacy provider is authenticated by the dedicated
+      // provider-derived transition above. Exclude it here as well so a
+      // concurrent restore between the two statements cannot reach this
+      // generic promotion with the wrong reconciliation explanation.
+      OR: [
+        { provider: null },
+        { provider: { in: ["RESEND", "SENDGRID"] } },
+      ],
     },
     data: {
       status: "RECONCILIATION_REQUIRED",

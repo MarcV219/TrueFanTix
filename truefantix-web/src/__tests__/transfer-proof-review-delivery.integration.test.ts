@@ -1128,6 +1128,89 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     }
   });
 
+  it("does not let a concurrently restored unsupported provider enter generic exhaustion", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofReviewDeliveryIntent.update({
+        where: { requestId },
+        data: {
+          status: "FAILED",
+          provider: "RESEND",
+          attemptCount: 3,
+          firstAttemptAt: requestedAt,
+          lastError: "Synthetic exhausted supported-provider rejection",
+        },
+      });
+    });
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "TransferProofReviewDeliveryIntent"
+      DROP CONSTRAINT "TransferProofReviewDeliveryIntent_provider_check"
+    `);
+    try {
+      let genericExhaustionReached = false;
+      type ReviewDeliveryDb = NonNullable<Parameters<typeof drainTransferProofReviewDeliveryIntents>[1]>;
+      const concurrentRestoreDb = {
+        transferProofReviewDeliveryIntent: {
+          updateMany: async (...args: Parameters<typeof prisma.transferProofReviewDeliveryIntent.updateMany>) => {
+            if (!genericExhaustionReached) {
+              genericExhaustionReached = true;
+              await prisma.$transaction(async (tx) => {
+                await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+                await tx.transferProofReviewDeliveryIntent.update({
+                  where: { requestId },
+                  data: { provider: "CONSOLE" },
+                });
+              });
+            }
+            return prisma.transferProofReviewDeliveryIntent.updateMany(...args);
+          },
+        },
+        emailDelivery: prisma.emailDelivery,
+        $executeRaw: prisma.$executeRaw.bind(prisma),
+        $queryRaw: prisma.$queryRaw.bind(prisma),
+        $transaction: prisma.$transaction.bind(prisma),
+      } as unknown as ReviewDeliveryDb;
+
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, concurrentRestoreDb))
+        .resolves.toMatchObject({ scanned: 0, claimed: 0, reconciliationRequired: 0 });
+      expect(genericExhaustionReached).toBe(true);
+      expect(mockedSendEmail).not.toHaveBeenCalled();
+      await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId },
+      })).resolves.toMatchObject({
+        status: "FAILED",
+        provider: "CONSOLE",
+        attemptCount: 3,
+        lastError: "Synthetic exhausted supported-provider rejection",
+      });
+
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+        .resolves.toMatchObject({ scanned: 0, claimed: 0, reconciliationRequired: 1 });
+      await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId },
+      })).resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        provider: "CONSOLE",
+        lastError: "Unsupported recorded review delivery provider CONSOLE; reconciliation required",
+      });
+      expect(mockedSendEmail).not.toHaveBeenCalled();
+    } finally {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.transferProofReviewDeliveryIntent.update({
+          where: { requestId },
+          data: { provider: "RESEND" },
+        });
+      });
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "TransferProofReviewDeliveryIntent"
+        ADD CONSTRAINT "TransferProofReviewDeliveryIntent_provider_check"
+        CHECK (provider IS NULL OR provider IN ('RESEND', 'SENDGRID'))
+      `);
+    }
+  });
+
   it("replays accepted Resend persistence ambiguity only with the same provider key", async () => {
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
     let transactionCall = 0;
