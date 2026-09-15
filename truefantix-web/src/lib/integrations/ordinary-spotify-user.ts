@@ -11,8 +11,9 @@ export async function runOrdinarySpotifyOperation<T>(
   try {
     return await prisma.$transaction(
       async (tx) => {
-        // Spotify token use, provider requests, user-scoped persistence, and
-        // optional delivery must not race access-token persona restoration.
+        // Spotify token use, provider requests, and user-scoped persistence
+        // must not race access-token persona restoration. External notification
+        // delivery occurs only after this transaction commits.
         await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
         const current = await tx.user.findUnique({
           where: { id: userId },

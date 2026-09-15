@@ -129,6 +129,19 @@ describe("Spotify staging-persona operation boundary", () => {
   });
 
   it("keeps provider-backed artist loading and import writes in one transaction", async () => {
+    const sequence: string[] = [];
+    mockedPrisma.$transaction.mockImplementationOnce(
+      async (work: (tx: typeof mockedPrisma) => unknown) => {
+        sequence.push("transaction-start");
+        const result = await work(mockedPrisma);
+        sequence.push("transaction-committed");
+        return result;
+      },
+    );
+    mockedSendEmail.mockImplementationOnce(async () => {
+      sequence.push("email-attempted");
+      return { ok: true, provider: "CONSOLE", providerResult: "LOGGED" };
+    });
     mockedGetSpotifyImportCandidates.mockResolvedValue({
       connected: true,
       artists: [
@@ -170,6 +183,83 @@ describe("Spotify staging-persona operation boundary", () => {
     expect(mockedPrisma.notificationPreference.upsert).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.catalogRequest.upsert).toHaveBeenCalledTimes(1);
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: expect.stringMatching(/^spotify-catalog:[a-f0-9]{64}$/),
+    }));
+    expect(sequence).toEqual([
+      "transaction-start",
+      "transaction-committed",
+      "email-attempted",
+    ]);
+  });
+
+  it("contains an unexpected providerless admin-email rejection after import writes", async () => {
+    const previousResendApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = "configured-but-not-evidence";
+    mockedGetSpotifyImportCandidates.mockResolvedValue({
+      connected: true,
+      artists: [
+        { spotifyId: "artist-2", name: "Unknown Artist", source: "top", match: null },
+      ],
+    });
+    mockedPrisma.catalogRequest.upsert.mockResolvedValue({
+      id: "request-1",
+      requestedValue: "Unknown Artist",
+      status: "PENDING",
+    });
+    mockedSendEmail.mockRejectedValueOnce(new Error("synthetic providerless failure"));
+
+    try {
+      const response = await importArtists(
+        request("/api/integrations/spotify/artists", "POST", { includeUnmatched: true }),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        requested: [{ id: "request-1", requestedValue: "Unknown Artist" }],
+      });
+      expect(mockedPrisma.catalogRequest.upsert).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(console.error).toHaveBeenCalledWith(
+        "Spotify unmatched artist admin email failed:",
+        "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic providerless failure",
+      );
+    } finally {
+      if (previousResendApiKey === undefined) {
+        delete process.env.RESEND_API_KEY;
+      } else {
+        process.env.RESEND_API_KEY = previousResendApiKey;
+      }
+    }
+  });
+
+  it("does not notify about unmatched requests when commit fails after the writes", async () => {
+    mockedGetSpotifyImportCandidates.mockResolvedValue({
+      connected: true,
+      artists: [
+        { spotifyId: "artist-2", name: "Unknown Artist", source: "top", match: null },
+      ],
+    });
+    mockedPrisma.catalogRequest.upsert.mockResolvedValue({
+      id: "request-1",
+      requestedValue: "Unknown Artist",
+      status: "PENDING",
+    });
+    mockedPrisma.$transaction.mockImplementationOnce(
+      async (work: (tx: typeof mockedPrisma) => unknown) => {
+        await work(mockedPrisma);
+        throw Object.assign(new Error("synthetic commit failure"), { code: "P2034" });
+      },
+    );
+
+    const response = await importArtists(
+      request("/api/integrations/spotify/artists", "POST", { includeUnmatched: true }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(mockedPrisma.catalogRequest.upsert).toHaveBeenCalledTimes(1);
+    expect(mockedSendEmail).not.toHaveBeenCalled();
   });
 
   it("refuses a restored managed user before Spotify access or local mutation", async () => {

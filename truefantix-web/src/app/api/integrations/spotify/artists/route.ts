@@ -1,8 +1,13 @@
 export const runtime = "nodejs";
 
+import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/guards";
-import { sendEmail } from "@/lib/email";
+import {
+  sendEmail,
+  type EmailPayload,
+  type EmailSendResult,
+} from "@/lib/email";
 import { getSpotifyImportCandidates } from "@/lib/integrations/spotify";
 import {
   ManagedAccountSpotifyOperationError,
@@ -10,6 +15,22 @@ import {
 } from "@/lib/integrations/ordinary-spotify-user";
 
 const ADMIN_EMAIL = "admin@truefantix.com";
+
+async function sendEmailWithProviderEvidence(
+  payload: EmailPayload,
+): Promise<EmailSendResult> {
+  try {
+    return await sendEmail(payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown email error";
+    return {
+      ok: false,
+      provider: "CONSOLE",
+      providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+      error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+    };
+  }
+}
 
 function stagingConsoleOnlyError() {
   const response = NextResponse.json(
@@ -31,9 +52,11 @@ function normalizeValue(value: string) {
 async function notifyAdminOfUnmatched({
   user,
   names,
+  requestIds,
 }: {
   user: { id: string; email: string; firstName: string; lastName: string };
   names: string[];
+  requestIds: string[];
 }) {
   if (names.length === 0) return;
   const subject = `Spotify catalog requests: ${names.length} artist${names.length === 1 ? "" : "s"}`;
@@ -60,7 +83,17 @@ Review pending catalog requests in /admin/catalog-requests and fulfill them to a
 </body>
 </html>`;
 
-  const result = await sendEmail({ to: ADMIN_EMAIL, subject, text, html });
+  const requestIdentity = [...new Set(requestIds)].sort().join("\n");
+  const idempotencyKey = `spotify-catalog:${createHash("sha256")
+    .update(`${user.id}\n${requestIdentity}`)
+    .digest("hex")}`;
+  const result = await sendEmailWithProviderEvidence({
+    to: ADMIN_EMAIL,
+    subject,
+    text,
+    html,
+    idempotencyKey,
+  });
   if (!result.ok) console.error("Spotify unmatched artist admin email failed:", result.error);
 }
 
@@ -94,13 +127,10 @@ export async function POST(req: Request) {
       : null;
     const includeUnmatched = body?.includeUnmatched !== false;
 
-    return await runOrdinarySpotifyOperation(gate.user.id, async (tx) => {
+    const result = await runOrdinarySpotifyOperation(gate.user.id, async (tx) => {
       const result = await getSpotifyImportCandidates(gate.user.id, tx);
       if (!result.connected) {
-        return NextResponse.json(
-          { ok: false, error: "SPOTIFY_NOT_CONNECTED", message: "Connect Spotify before importing artists." },
-          { status: 400 },
-        );
+        return { connected: false as const, imported: [], requested: [] };
       }
 
       const selected = result.artists.filter((artist) => !selectedIds || selectedIds.has(artist.spotifyId));
@@ -168,18 +198,31 @@ export async function POST(req: Request) {
         }
       }
 
-      await notifyAdminOfUnmatched({
-        user: {
-          id: gate.user.id,
-          email: gate.user.email,
-          firstName: gate.user.firstName,
-          lastName: gate.user.lastName,
-        },
-        names: requested.map((request) => request.requestedValue),
-      });
-
-      return NextResponse.json({ ok: true, imported, requested }, { status: 200 });
+      return { connected: true as const, imported, requested };
     });
+
+    if (!result.connected) {
+      return NextResponse.json(
+        { ok: false, error: "SPOTIFY_NOT_CONNECTED", message: "Connect Spotify before importing artists." },
+        { status: 400 },
+      );
+    }
+
+    await notifyAdminOfUnmatched({
+      user: {
+        id: gate.user.id,
+        email: gate.user.email,
+        firstName: gate.user.firstName,
+        lastName: gate.user.lastName,
+      },
+      names: result.requested.map((request) => request.requestedValue),
+      requestIds: result.requested.map((request) => request.id),
+    });
+
+    return NextResponse.json(
+      { ok: true, imported: result.imported, requested: result.requested },
+      { status: 200 },
+    );
   } catch (err) {
     if (err instanceof ManagedAccountSpotifyOperationError) return stagingConsoleOnlyError();
     console.error("POST /api/integrations/spotify/artists failed:", err);
