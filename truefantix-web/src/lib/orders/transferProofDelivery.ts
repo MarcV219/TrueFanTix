@@ -485,6 +485,129 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
   throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
 }
 
+type RuntimeDeliveryOrder = {
+  sellerId: string;
+  buyerSellerId: string | null;
+  transferProofType: string | null;
+  transferProofData: string | null;
+  disputeWindowEndsAt: Date | null;
+};
+
+type RuntimeDeliveryParticipant = {
+  id: string;
+  sellerId: string;
+  email: string;
+  firstName: string | null;
+};
+
+function hasDurableSellerDecision(order: RuntimeDeliveryOrder, data: Payload) {
+  if (!order.transferProofData) return false;
+  try {
+    const proof = JSON.parse(order.transferProofData) as { adminReviews?: unknown };
+    if (!proof || typeof proof !== "object" || !Array.isArray(proof.adminReviews)) return false;
+    return proof.adminReviews.some((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const decision = value as Record<string, unknown>;
+      return decision.id === data.decisionId
+        && decision.action === data.action
+        && decision.note === data.note
+        && decision.decidedAt === data.decidedAt
+        && decision.decidedByUserId === data.decidedByUserId;
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function runtimeDeliveryParticipant(
+  tx: Prisma.TransactionClient,
+  sellerId: string | null,
+) {
+  if (!sellerId) return undefined;
+  const [participant] = await tx.$queryRaw<RuntimeDeliveryParticipant[]>(Prisma.sql`
+    SELECT id, "sellerId" AS "sellerId", email, "firstName" AS "firstName"
+    FROM "User"
+    WHERE "sellerId" = ${sellerId}
+    FOR SHARE
+  `);
+  return participant;
+}
+
+async function requireRuntimeDeliverySubject(
+  tx: Prisma.TransactionClient,
+  row: TransferProofDeliveryIntent,
+  data: Payload,
+) {
+  // Version 1 rows predate database subject authorization and deliberately
+  // retain their original provider identity for bounded legacy recovery.
+  if (row.identityVersion === 1) return;
+
+  const [order] = await tx.$queryRaw<RuntimeDeliveryOrder[]>(Prisma.sql`
+    SELECT
+      parent_order."sellerId" AS "sellerId",
+      parent_order."buyerSellerId" AS "buyerSellerId",
+      parent_order."transferProofType" AS "transferProofType",
+      parent_order."transferProofData" AS "transferProofData",
+      parent_order."disputeWindowEndsAt" AS "disputeWindowEndsAt"
+    FROM "Order" parent_order
+    WHERE parent_order.id = ${row.orderId}
+    FOR SHARE OF parent_order
+  `);
+  if (!order) throw new Error("Transfer-proof delivery parent order is unavailable at dispatch");
+
+  if (row.kind === SELLER_DECISION_KIND) {
+    const seller = await runtimeDeliveryParticipant(tx, order.sellerId);
+    if (
+      !seller
+      || row.recipient !== seller.email
+      || data.sellerUserId !== seller.id
+      || data.sellerFirstName !== seller.firstName
+    ) {
+      throw new Error("Transfer-proof review-decision delivery does not match the current order seller");
+    }
+    if (!hasDurableSellerDecision(order, data)) {
+      throw new Error("Transfer-proof review-decision delivery does not match durable decision history");
+    }
+    return;
+  }
+
+  // Match the insert-side subject guard's lock order: parent Order, buyer
+  // profile, immutable item membership, and finally the seller profile when
+  // the administrator envelope needs it.
+  const buyer = await runtimeDeliveryParticipant(tx, order.buyerSellerId);
+  const orderItems = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT id
+    FROM "OrderItem"
+    WHERE "orderId" = ${row.orderId}
+    ORDER BY id
+    FOR SHARE
+  `);
+
+  if (row.kind === BUYER_KIND) {
+    if (!buyer || row.recipient !== buyer.email || data.buyerFirstName !== buyer.firstName) {
+      throw new Error("Transfer-proof buyer delivery does not match the current order buyer");
+    }
+  } else if (row.kind === ADMIN_KIND) {
+    const seller = await runtimeDeliveryParticipant(tx, order.sellerId);
+    if (
+      !seller
+      || data.sellerEmail !== seller.email
+      || data.buyerEmail !== (buyer?.email ?? null)
+      || data.transferProofType !== order.transferProofType
+    ) {
+      throw new Error("Transfer-proof administrator delivery does not match the current order snapshot");
+    }
+  }
+
+  if (
+    !order.disputeWindowEndsAt
+    || data.deadline !== order.disputeWindowEndsAt.toISOString()
+    || data.ticketCount !== orderItems.length
+  ) {
+    throw new Error("Transfer-proof accepted delivery does not match the current order snapshot");
+  }
+}
+
 export async function drainTransferProofDeliveryIntents(
   options: { orderId?: string; now?: Date; limit?: number } = {},
   db: DeliveryDb = prisma,
@@ -700,6 +823,7 @@ export async function drainTransferProofDeliveryIntents(
           orderId: row.orderId, reminderType: "BUYER_CONFIRMATION", recipient: row.recipient, windowStart,
         } };
         const dispatch = await db.$transaction(async (tx) => {
+          await requireRuntimeDeliverySubject(tx, row, data);
           const owned = await tx.transferProofDeliveryIntent.updateMany({
             where: {
               id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,
@@ -730,6 +854,7 @@ export async function drainTransferProofDeliveryIntents(
         attemptCount = row.attemptCount + 1;
       } else {
         const dispatch = await db.$transaction(async (tx) => {
+          await requireRuntimeDeliverySubject(tx, row, data);
           return tx.transferProofDeliveryIntent.updateMany({
             where: {
               id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken,

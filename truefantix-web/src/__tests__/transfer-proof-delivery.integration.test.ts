@@ -240,12 +240,25 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       decidedAt: decidedAt.toISOString(),
       decidedByUserId: "synthetic-admin-user",
     };
+    const current = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { transferProofData: true },
+    });
+    let history: unknown[] = [];
+    try {
+      const proof = current.transferProofData ? JSON.parse(current.transferProofData) : null;
+      if (proof && typeof proof === "object" && Array.isArray(proof.adminReviews)) {
+        history = proof.adminReviews;
+      }
+    } catch {
+      history = [];
+    }
     await prisma.order.update({
       where: { id: orderId },
       data: {
         transferVerificationStatus: action === "APPROVE" ? "PENDING" : action === "REJECT" ? "MISMATCHED" : "MANUAL_REVIEW",
         transferVerificationReason: JSON.stringify({ type: "TRANSFER_PROOF_ADMIN_REVIEW", ...decision }),
-        transferProofData: JSON.stringify({ proofUpload: "synthetic", adminReviews: [decision] }),
+        transferProofData: JSON.stringify({ proofUpload: "synthetic", adminReviews: [...history, decision] }),
         transferProofType: action === "APPROVE" ? "EMAIL" : null,
         disputeWindowEndsAt: action === "APPROVE" ? new Date(decidedAt.getTime() + 24 * 60 * 60 * 1000) : null,
       },
@@ -436,6 +449,79 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     }, prisma)).resolves.toMatchObject({ claimed: 0, delivered: 0, failed: 0 });
   });
 
+  it("quarantines a redigested buyer delivery whose recipient differs from the current order buyer", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "BUYER_CONFIRMATION_EMAIL" },
+    });
+    const payloadJson = row.payloadJson as Prisma.JsonObject;
+    const recipient = `redirected-${buyerEmail}`;
+    const envelope = { orderId: row.orderId, kind: row.kind, recipient, payloadJson };
+    await forceLegacyIntentState({ id: row.id }, {
+      recipient,
+      idempotencyKey: `${row.orderId}:${String(payloadJson.windowStart)}:${row.kind}:${recipient}`,
+      envelopeDigest: envelopeDigest(envelope),
+    });
+    await forceDeleteDeliveryIntents({ orderId, id: { not: row.id } });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T01:01:00.000Z"),
+    }, prisma)).resolves.toMatchObject({
+      claimed: 1,
+      delivered: 0,
+      failed: 1,
+      reconciliationRequired: 1,
+    });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: row.id },
+      select: { status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: "Pre-dispatch delivery failure: Transfer-proof buyer delivery does not match the current order buyer",
+    });
+  });
+
+  it("quarantines a redigested administrator delivery whose seller snapshot differs from the order", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("01")));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" },
+    });
+    const payloadJson = {
+      ...(row.payloadJson as Prisma.JsonObject),
+      sellerEmail: "redirected-seller@example.test",
+    };
+    const envelope = { orderId: row.orderId, kind: row.kind, recipient: row.recipient, payloadJson };
+    await forceLegacyIntentState({ id: row.id }, {
+      payloadJson,
+      envelopeDigest: envelopeDigest(envelope),
+    });
+    await forceDeleteDeliveryIntents({ orderId, id: { not: row.id } });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T01:01:00.000Z"),
+    }, prisma)).resolves.toMatchObject({
+      claimed: 1,
+      delivered: 0,
+      failed: 1,
+      reconciliationRequired: 1,
+    });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: row.id },
+      select: { status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: "Pre-dispatch delivery failure: Transfer-proof administrator delivery does not match the current order snapshot",
+    });
+  });
+
   it.each(["APPROVE", "REJECT", "REQUEST_INFORMATION"] as const)(
     "binds and delivers the canonical %s seller review decision",
     async (action) => {
@@ -497,6 +583,108 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       sellerEmail: "seller@example.test",
       sellerFirstName: "Seller",
     }))).rejects.toThrow(/latest durable decision/);
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("quarantines a redigested seller decision whose recipient differs from the current order seller", async () => {
+    const decisionId = `decision-runtime-seller-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL" },
+    });
+    const payloadJson = row.payloadJson as Prisma.JsonObject;
+    const recipient = "redirected-seller@example.test";
+    const envelope = { orderId: row.orderId, kind: row.kind, recipient, payloadJson };
+    await forceLegacyIntentState({ id: row.id }, {
+      recipient,
+      idempotencyKey: `${row.orderId}:${decisionId}:${row.kind}:${recipient}`,
+      envelopeDigest: envelopeDigest(envelope),
+    });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date(decidedAt.getTime() + 60_000),
+    }, prisma)).resolves.toMatchObject({
+      claimed: 1,
+      delivered: 0,
+      failed: 1,
+      reconciliationRequired: 1,
+    });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: row.id },
+      select: { status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: "Pre-dispatch delivery failure: Transfer-proof review-decision delivery does not match the current order seller",
+    });
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("quarantines a self-consistent seller decision whose content differs from durable history", async () => {
+    const decisionId = `decision-runtime-history-${runId}`;
+    const canonicalNote = "Canonical runtime history note.";
+    const forgedNote = "Forged runtime history note.";
+    const { decidedAt, decision } = await prepareAdminDecision("REJECT", decisionId, canonicalNote);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note: canonicalNote,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL" },
+    });
+    const source = row.payloadJson as Prisma.JsonObject;
+    const payloadJson = {
+      ...source,
+      note: forgedNote,
+      textBody: String(source.textBody).replace(canonicalNote, forgedNote),
+      htmlBody: String(source.htmlBody).replace(canonicalNote, forgedNote),
+    };
+    const envelope = { orderId: row.orderId, kind: row.kind, recipient: row.recipient, payloadJson };
+    await forceLegacyIntentState({ id: row.id }, {
+      payloadJson,
+      envelopeDigest: envelopeDigest(envelope),
+    });
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date(decidedAt.getTime() + 60_000),
+    }, prisma)).resolves.toMatchObject({
+      claimed: 1,
+      delivered: 0,
+      failed: 1,
+      reconciliationRequired: 1,
+    });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    expect(mockedSendAdmin).not.toHaveBeenCalled();
+    await expect(prisma.transferProofDeliveryIntent.findUniqueOrThrow({
+      where: { id: row.id },
+      select: { status: true, attemptCount: true, lastError: true },
+    })).resolves.toEqual({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: "Pre-dispatch delivery failure: Transfer-proof review-decision delivery does not match durable decision history",
+    });
     await ensureSyntheticOrder(orderId);
   });
 
@@ -1655,6 +1843,86 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       client.release();
       await prisma.user.update({ where: { id: buyerUserId }, data: { email: buyerEmail } });
     }
+  });
+
+  it("keeps runtime buyer revalidation and dispatch ownership ahead of a profile change", async () => {
+    await prisma.$transaction((tx) => stageTransferProofDeliveryIntent(tx, params("02")));
+    await forceDeleteDeliveryIntents({ orderId, kind: "ADMIN_TRANSFER_ACTIVITY_EMAIL" });
+
+    let subjectLocked!: () => void;
+    const subjectLockedPromise = new Promise<void>((resolve) => { subjectLocked = resolve; });
+    let releaseDispatch!: () => void;
+    const releaseDispatchPromise = new Promise<void>((resolve) => { releaseDispatch = resolve; });
+    let providerStarted!: () => void;
+    const providerStartedPromise = new Promise<void>((resolve) => { providerStarted = resolve; });
+    let releaseProvider!: () => void;
+    const releaseProviderPromise = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    let transactionCalls = 0;
+    let paused = false;
+    mockedSendEmail.mockImplementationOnce(async () => {
+      providerStarted();
+      await releaseProviderPromise;
+      return { ok: true, provider: "RESEND", providerResult: "ACCEPTED" };
+    });
+
+    const dispatchPausingDb = {
+      $transaction: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => {
+        transactionCalls += 1;
+        if (transactionCalls !== 2) return prisma.$transaction(fn);
+        return prisma.$transaction((tx) => {
+          const wrapped = new Proxy(tx, {
+            get(target, property) {
+              if (property === "transferProofDeliveryIntent") {
+                return new Proxy(target.transferProofDeliveryIntent, {
+                  get(delegate, delegateProperty) {
+                    if (delegateProperty === "updateMany") {
+                      return async (args: Prisma.TransferProofDeliveryIntentUpdateManyArgs) => {
+                        const attemptUpdate = typeof args.data.attemptCount === "object"
+                          && args.data.attemptCount !== null
+                          && "increment" in args.data.attemptCount;
+                        if (attemptUpdate && !paused) {
+                          paused = true;
+                          subjectLocked();
+                          await releaseDispatchPromise;
+                        }
+                        return target.transferProofDeliveryIntent.updateMany(args);
+                      };
+                    }
+                    const value = Reflect.get(delegate, delegateProperty, delegate);
+                    return typeof value === "function" ? value.bind(delegate) : value;
+                  },
+                });
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          }) as Prisma.TransactionClient;
+          return fn(wrapped);
+        });
+      },
+      transferProofDeliveryIntent: prisma.transferProofDeliveryIntent,
+      reminderDelivery: prisma.reminderDelivery,
+      emailDelivery: prisma.emailDelivery,
+    } as unknown as NonNullable<Parameters<typeof drainTransferProofDeliveryIntents>[1]>;
+
+    const drain = drainTransferProofDeliveryIntents({ orderId }, dispatchPausingDb);
+    await subjectLockedPromise;
+    let updateSettled = false;
+    const update = prisma.user.update({
+      where: { id: buyerUserId },
+      data: { email: `racing-${buyerEmail}` },
+    }).finally(() => { updateSettled = true; });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(updateSettled).toBe(false);
+    releaseDispatch();
+    await providerStartedPromise;
+    await expect(update).rejects.toThrow("Active transfer-proof delivery participant email is immutable");
+    expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: buyerEmail }));
+    releaseProvider();
+    await expect(drain).resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    await expect(prisma.user.findUniqueOrThrow({ where: { id: buyerUserId } }))
+      .resolves.toMatchObject({ email: buyerEmail });
   });
 
   it("makes a concurrent parent drift wait for and lose to version-2 staging", async () => {
