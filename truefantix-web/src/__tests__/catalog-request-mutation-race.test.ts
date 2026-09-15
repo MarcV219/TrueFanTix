@@ -126,6 +126,43 @@ describe("catalog-request staging-persona race boundary", () => {
     expect(mockedPrisma.catalogRequest.update).toHaveBeenCalledTimes(1);
   });
 
+  it("records an unexpected providerless email rejection without rolling back the request", async () => {
+    const previousResendApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = "configured-but-not-evidence";
+    mockedSendEmail.mockRejectedValueOnce(
+      new Error("synthetic providerless failure"),
+    );
+    mockedPrisma.catalogRequest.update.mockImplementation(async ({ data }) => ({
+      ...pendingRequest,
+      ...data,
+    }));
+
+    try {
+      const response = await POST(request());
+
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        request: { id: pendingRequest.id },
+      });
+      expect(mockedPrisma.catalogRequest.update).toHaveBeenCalledWith({
+        where: { id: pendingRequest.id },
+        data: {
+          emailError:
+            "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic providerless failure",
+        },
+        select: expect.any(Object),
+      });
+      expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousResendApiKey === undefined) {
+        delete process.env.RESEND_API_KEY;
+      } else {
+        process.env.RESEND_API_KEY = previousResendApiKey;
+      }
+    }
+  });
+
   it("keeps automatic fulfillment in the same serialized boundary", async () => {
     mockedResolveCatalogRequest.mockResolvedValue({
       status: "FOUND",

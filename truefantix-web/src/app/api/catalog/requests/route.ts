@@ -2,7 +2,11 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/guards";
-import { sendEmail } from "@/lib/email";
+import {
+  sendEmail,
+  type EmailPayload,
+  type EmailSendResult,
+} from "@/lib/email";
 import { schemas, validateRequest } from "@/lib/validation";
 import { resolveCatalogRequest } from "@/lib/catalog/request-resolver";
 import {
@@ -11,6 +15,22 @@ import {
 } from "@/lib/catalog/ordinary-requester";
 
 const ADMIN_EMAIL = "admin@truefantix.com";
+
+async function sendEmailWithProviderEvidence(
+  payload: EmailPayload,
+): Promise<EmailSendResult> {
+  try {
+    return await sendEmail(payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown email error";
+    return {
+      ok: false,
+      provider: "CONSOLE",
+      providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+      error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+    };
+  }
+}
 
 function escapeHtml(value: string) {
   return value
@@ -289,7 +309,7 @@ export async function POST(req: Request) {
           lastName: gate.user.lastName,
         },
       });
-      const emailResult = await sendEmail({
+      const emailResult = await sendEmailWithProviderEvidence({
         to: ADMIN_EMAIL,
         subject: emailContent.subject,
         text: emailContent.text,
