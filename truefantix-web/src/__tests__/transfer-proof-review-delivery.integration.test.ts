@@ -830,6 +830,88 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     expect(mockedSendEmail).not.toHaveBeenCalled();
   });
 
+  it("does not dispatch after runtime subject locking outlives the worker lease", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const locker = await pool.connect();
+    let acquisitionCommitted!: () => void;
+    const acquisitionCommittedPromise = new Promise<void>((resolve) => {
+      acquisitionCommitted = resolve;
+    });
+    let transactionCalls = 0;
+    type ReviewDeliveryDb = NonNullable<Parameters<typeof drainTransferProofReviewDeliveryIntents>[1]>;
+    const acquisitionObservingDb = {
+      transferProofReviewDeliveryIntent: prisma.transferProofReviewDeliveryIntent,
+      emailDelivery: prisma.emailDelivery,
+      $executeRaw: prisma.$executeRaw.bind(prisma),
+      $queryRaw: prisma.$queryRaw.bind(prisma),
+      $transaction: async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => {
+        transactionCalls += 1;
+        const call = transactionCalls;
+        const result = await prisma.$transaction(async (tx) => {
+          if (call !== 2) return work(tx);
+          const advancedClock = new Date((await databaseUtcNow()).getTime() + 60 * 60 * 1000);
+          const dispatchTx = new Proxy(tx, {
+            get(target, property, receiver) {
+              if (property !== "$queryRaw") return Reflect.get(target, property, receiver);
+              return (query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
+                if (Array.isArray(query) && query.join("").includes("statement_timestamp() AT TIME ZONE 'UTC'")) {
+                  return Promise.resolve([{ now: advancedClock }]);
+                }
+                return target.$queryRaw(query, ...values);
+              };
+            },
+          }) as Prisma.TransactionClient;
+          return work(dispatchTx);
+        });
+        if (call === 1) acquisitionCommitted();
+        return result;
+      },
+    } as unknown as ReviewDeliveryDb;
+
+    try {
+      await locker.query("BEGIN");
+      await locker.query('SELECT id FROM "Order" WHERE id = $1 FOR UPDATE', [orderId]);
+      const drain = drainTransferProofReviewDeliveryIntents({ orderId }, acquisitionObservingDb);
+      await acquisitionCommittedPromise;
+      await locker.query("COMMIT");
+
+      await expect(drain).resolves.toMatchObject({
+        claimed: 1,
+        delivered: 0,
+        failed: 0,
+        reconciliationRequired: 0,
+      });
+      expect(mockedSendEmail).not.toHaveBeenCalled();
+      await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId },
+        select: { status: true, attemptCount: true, dispatchStartedAt: true },
+      })).resolves.toEqual({ status: "PROCESSING", attemptCount: 0, dispatchStartedAt: null });
+      await expect(prisma.emailDelivery.count({ where: { orderId } })).resolves.toBe(0);
+
+      const expiredLease = new Date((await databaseUtcNow()).getTime() - 1);
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.transferProofReviewDeliveryIntent.update({
+          where: { requestId },
+          data: { leaseExpiresAt: expiredLease },
+        });
+      });
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+        .resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0 });
+      expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+      await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+        where: { requestId },
+      })).resolves.toMatchObject({ status: "DELIVERED", attemptCount: 1 });
+
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+        .resolves.toMatchObject({ scanned: 0, claimed: 0, delivered: 0 });
+      expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    } finally {
+      await locker.query("ROLLBACK").catch(() => undefined);
+      locker.release();
+    }
+  });
+
   it("quarantines an expired Resend claim whose replay window elapsed before dispatch", async () => {
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
     const databaseNow = await databaseUtcNow();

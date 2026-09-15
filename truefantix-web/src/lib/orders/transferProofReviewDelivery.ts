@@ -514,7 +514,7 @@ export async function drainTransferProofReviewDeliveryIntents(
             id: row.id,
             status: "PROCESSING",
             provider,
-            leaseExpiresAt,
+            leaseExpiresAt: { equals: leaseExpiresAt, gt: dispatchNow },
             claimToken,
             attemptCount: row.attemptCount,
             dispatchStartedAt: null,
