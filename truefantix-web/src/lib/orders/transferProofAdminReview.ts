@@ -9,7 +9,7 @@ export function transferProofStatusForAdminAction(action: TransferProofReviewAct
 }
 
 export function transferProofAdminActionMessage(action: TransferProofReviewAction) {
-  if (action === "APPROVE") return "Transfer proof approved. The buyer has been asked to confirm receipt.";
-  if (action === "REJECT") return "Transfer proof rejected. The seller has been asked to upload corrected documentation.";
-  return "More information requested from the seller. The review remains in the Admin Queue.";
+  if (action === "APPROVE") return "Transfer proof approved. Buyer and seller delivery was queued.";
+  if (action === "REJECT") return "Transfer proof rejected. Seller delivery was queued.";
+  return "More information requested. Seller delivery was queued and the review remains in the Admin Queue.";
 }

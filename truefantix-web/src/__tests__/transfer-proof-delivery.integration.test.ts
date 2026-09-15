@@ -10,6 +10,7 @@ import { sendEmail } from "@/lib/email";
 import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import {
   drainTransferProofDeliveryIntents,
+  stageTransferProofAdminDecisionDeliveryIntent,
   stageTransferProofDeliveryIntent,
 } from "@/lib/orders/transferProofDelivery";
 
@@ -178,7 +179,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   beforeEach(async () => {
     await useHistoricalClaimClock();
     await useHistoricalOriginClock();
-    await prisma.notification.deleteMany({ where: { userId: buyerUserId } });
+    await prisma.notification.deleteMany({ where: { userId: { in: [buyerUserId, sellerUserId] } } });
     await forceDeleteDeliveryIntents({ orderId });
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
@@ -192,7 +193,7 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   });
 
   afterAll(async () => {
-    await prisma.notification.deleteMany({ where: { userId: buyerUserId } });
+    await prisma.notification.deleteMany({ where: { userId: { in: [buyerUserId, sellerUserId] } } });
     await forceDeleteDeliveryIntents({ orderId });
     await prisma.reminderDelivery.deleteMany({ where: { orderId } });
     await prisma.emailDelivery.deleteMany({ where: { orderId } });
@@ -224,6 +225,32 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
       deadline: new Date("2026-12-03T00:00:00.000Z"),
       now,
     };
+  }
+
+  async function prepareAdminDecision(
+    action: "APPROVE" | "REJECT" | "REQUEST_INFORMATION",
+    decisionId: string,
+    note = "Synthetic review decision.",
+    decidedAt = new Date("2026-12-01T00:30:00.000Z"),
+  ) {
+    const decision = {
+      id: decisionId,
+      action,
+      note,
+      decidedAt: decidedAt.toISOString(),
+      decidedByUserId: "synthetic-admin-user",
+    };
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        transferVerificationStatus: action === "APPROVE" ? "PENDING" : action === "REJECT" ? "MISMATCHED" : "MANUAL_REVIEW",
+        transferVerificationReason: JSON.stringify({ type: "TRANSFER_PROOF_ADMIN_REVIEW", ...decision }),
+        transferProofData: JSON.stringify({ proofUpload: "synthetic", adminReviews: [decision] }),
+        transferProofType: action === "APPROVE" ? "EMAIL" : null,
+        disputeWindowEndsAt: action === "APPROVE" ? new Date(decidedAt.getTime() + 24 * 60 * 60 * 1000) : null,
+      },
+    });
+    return { decidedAt, decision, note };
   }
 
   async function ensureSyntheticOrder(id: string) {
@@ -358,6 +385,231 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await expect(prisma.transferProofDeliveryIntent.count({ where: { orderId } })).resolves.toBe(0);
     expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedSendAdmin).not.toHaveBeenCalled();
+  });
+
+  it.each(["APPROVE", "REJECT", "REQUEST_INFORMATION"] as const)(
+    "binds and delivers the canonical %s seller review decision",
+    async (action) => {
+      const decisionId = `decision-${action.toLowerCase()}-${runId}`;
+      const { decidedAt, decision, note } = await prepareAdminDecision(action, decisionId);
+
+      await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+        orderId,
+        decisionId,
+        action,
+        note,
+        decidedAt,
+        decidedByUserId: decision.decidedByUserId,
+        sellerUserId,
+        sellerEmail: "seller@example.test",
+        sellerFirstName: "Seller",
+      }));
+
+      const staged = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+        where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL" },
+      });
+      expect(staged).toMatchObject({
+        recipient: "seller@example.test",
+        status: "PENDING",
+        attemptCount: 0,
+        identityVersion: 2,
+      });
+      await expect(prisma.notification.count({ where: { userId: sellerUserId } })).resolves.toBe(1);
+
+      await expect(drainTransferProofDeliveryIntents({
+        orderId,
+        now: new Date(decidedAt.getTime() + 60_000),
+      }, prisma)).resolves.toMatchObject({ delivered: 1, failed: 0 });
+      expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+        to: "seller@example.test",
+        subject: expect.stringContaining(orderId),
+        idempotencyKey: expect.stringMatching(/^tft-transfer-proof-/),
+        provider: "RESEND",
+      }));
+      await expect(prisma.emailDelivery.findFirst({
+        where: { orderId, emailType: `TRANSFER_PROOF_ADMIN_${action}_${decisionId}` },
+      })).resolves.toMatchObject({ status: "SENT", recipient: "seller@example.test" });
+      await forceDeleteDeliveryIntents({ orderId, kind: "SELLER_REVIEW_DECISION_EMAIL" });
+      await ensureSyntheticOrder(orderId);
+    },
+  );
+
+  it("rejects a redigested seller decision whose note differs from durable review history", async () => {
+    const decisionId = `decision-forged-${runId}`;
+    const { decidedAt, decision } = await prepareAdminDecision("REJECT", decisionId, "Canonical note.");
+    await expect(prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note: "Forged note.",
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }))).rejects.toThrow(/latest durable decision/);
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("rejects a seller notification user outside the database-authorized envelope and rolls back", async () => {
+    const decisionId = `decision-wrong-user-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await expect(prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId: buyerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }))).rejects.toThrow(/environment and seller/);
+
+    await expect(prisma.transferProofDeliveryIntent.count({ where: {
+      orderId,
+      kind: "SELLER_REVIEW_DECISION_EMAIL",
+    } })).resolves.toBe(0);
+    await expect(prisma.notification.count({ where: {
+      userId: { in: [sellerUserId, buyerUserId] },
+    } })).resolves.toBe(0);
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("freezes the seller first name while a decision is active and releases it after delivery", async () => {
+    const decisionId = `decision-name-fence-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+
+    await expect(prisma.user.update({
+      where: { id: sellerUserId },
+      data: { firstName: "Changed Seller" },
+    })).rejects.toThrow(/name is immutable/);
+
+    await forceLegacyIntentState({
+      orderId,
+      kind: "SELLER_REVIEW_DECISION_EMAIL",
+    }, {
+      status: "DELIVERED",
+      deliveredAt: decidedAt,
+    });
+    await expect(prisma.user.update({
+      where: { id: sellerUserId },
+      data: { firstName: "Changed Seller" },
+    })).resolves.toMatchObject({ firstName: "Changed Seller" });
+    await prisma.user.update({ where: { id: sellerUserId }, data: { firstName: "Seller" } });
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("delivers seller decisions FIFO across an older backoff and a newer eligible decision", async () => {
+    const firstId = `decision-fifo-first-${runId}`;
+    const firstAt = new Date("2026-12-01T00:30:00.000Z");
+    const first = await prepareAdminDecision(
+      "REQUEST_INFORMATION",
+      firstId,
+      "Upload the transfer receipt.",
+      firstAt,
+    );
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId: firstId,
+      action: "REQUEST_INFORMATION",
+      note: first.note,
+      decidedAt: first.decidedAt,
+      decidedByUserId: first.decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    mockedSendEmail.mockResolvedValueOnce({
+      ok: false,
+      provider: "RESEND",
+      providerResult: "REJECTED",
+      error: "synthetic backoff",
+    });
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T00:31:00.000Z"),
+    }, prisma)).resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 1 });
+
+    const secondId = `decision-fifo-second-${runId}`;
+    const secondAt = new Date("2026-12-01T00:32:00.000Z");
+    const second = await prepareAdminDecision(
+      "REJECT",
+      secondId,
+      "Upload a corrected transfer receipt.",
+      secondAt,
+    );
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId: secondId,
+      action: "REJECT",
+      note: second.note,
+      decidedAt: second.decidedAt,
+      decidedByUserId: second.decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T00:33:00.000Z"),
+    }, prisma)).resolves.toMatchObject({ claimed: 0, delivered: 0 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T00:37:00.000Z"),
+    }, prisma)).resolves.toMatchObject({ claimed: 1, delivered: 1 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(2);
+    expect(mockedSendEmail.mock.calls[1]?.[0].text).toContain("Upload the transfer receipt.");
+
+    await expect(drainTransferProofDeliveryIntents({
+      orderId,
+      now: new Date("2026-12-01T00:38:00.000Z"),
+    }, prisma)).resolves.toMatchObject({ claimed: 1, delivered: 1 });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(3);
+    expect(mockedSendEmail.mock.calls[2]?.[0].text).toContain("Upload a corrected transfer receipt.");
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("rolls back the decision intent and seller notification without provider work", async () => {
+    const decisionId = `decision-rollback-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REQUEST_INFORMATION", decisionId);
+
+    await expect(prisma.$transaction(async (tx) => {
+      await stageTransferProofAdminDecisionDeliveryIntent(tx, {
+        orderId,
+        decisionId,
+        action: "REQUEST_INFORMATION",
+        note,
+        decidedAt,
+        decidedByUserId: decision.decidedByUserId,
+        sellerUserId,
+        sellerEmail: "seller@example.test",
+        sellerFirstName: "Seller",
+      });
+      throw new Error("force decision rollback");
+    })).rejects.toThrow("force decision rollback");
+
+    await expect(prisma.transferProofDeliveryIntent.count({ where: {
+      orderId,
+      kind: "SELLER_REVIEW_DECISION_EMAIL",
+    } })).resolves.toBe(0);
+    await expect(prisma.notification.count({ where: { userId: sellerUserId } })).resolves.toBe(0);
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await ensureSyntheticOrder(orderId);
   });
 
   it("rolls back accepted proof state, delivery intents, and notification together", async () => {

@@ -3,12 +3,14 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
-import { sendEmail } from "@/lib/email";
-import { createNotification } from "@/lib/notifications/service";
-import { BUYER_CONFIRMATION_DEADLINE_HOURS, addHours, notifyBuyerTransferConfirmationRequired } from "@/lib/orders/transferWorkflow";
+import { BUYER_CONFIRMATION_DEADLINE_HOURS, addHours } from "@/lib/orders/transferWorkflow";
 import { transferProofAdminActionMessage, transferProofStatusForAdminAction } from "@/lib/orders/transferProofAdminReview";
+import {
+  drainTransferProofDeliveryIntents,
+  stageTransferProofAdminDecisionDeliveryIntent,
+  stageTransferProofDeliveryIntent,
+} from "@/lib/orders/transferProofDelivery";
 import { schemas, validateRequest } from "@/lib/validation";
-import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import {
   AdminOperationAccessChangedError,
   ManagedAccountAdminOperationError,
@@ -30,21 +32,6 @@ function parseProofData(value: string | null) {
   }
 }
 
-function actionEmail(action: "APPROVE" | "REJECT" | "REQUEST_INFORMATION", orderId: string, firstName: string | null, note: string) {
-  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN || "https://truefantix.com").replace(/\/$/, "");
-  const holdingUrl = `${appUrl}/account/tickets/seller-holding`;
-  const heading = action === "APPROVE" ? "Transfer proof approved" : action === "REJECT" ? "Transfer proof needs to be replaced" : "ACTION REQUIRED: More transfer information needed";
-  const instruction = action === "APPROVE"
-    ? "No further transfer-proof action is required right now. The buyer has been asked to confirm receipt."
-    : action === "REJECT"
-      ? "Please upload corrected transfer documentation from Seller Holding."
-      : "Please upload the requested supporting information from Seller Holding so Support can complete its review.";
-  const subject = action === "APPROVE" ? `Transfer Proof Approved — ${orderId}` : `ACTION REQUIRED: ${heading} — ${orderId}`;
-  const text = `${heading}\n\nHi ${firstName || "there"},\n\nSupport reviewed the transfer proof for order ${orderId}.\n\nSupport note:\n${note}\n\n${instruction}\n\n${holdingUrl}\n\nThanks,\nThe TrueFanTix Team`;
-  const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#1f2937"><div style="background:#064a93;color:white;padding:20px;border-radius:8px 8px 0 0"><strong>${heading}</strong></div><div style="background:#f9fafb;padding:24px"><p>Hi ${firstName || "there"},</p><p>Support reviewed the transfer proof for order <strong>${orderId}</strong>.</p><div style="background:white;border-left:4px solid #f97316;padding:16px;margin:18px 0"><strong>Support note</strong><p style="white-space:pre-wrap">${note.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] || character)}</p></div><p>${instruction}</p><p><a href="${holdingUrl}" style="display:inline-block;background:#064a93;color:white;padding:12px 20px;text-decoration:none;border-radius:7px;font-weight:bold">Open Seller Holding</a></p></div></div>`;
-  return { subject, text, html };
-}
-
 export async function POST(req: Request) {
   try {
     const gate = await requireAdmin(req);
@@ -55,7 +42,9 @@ export async function POST(req: Request) {
     const validation = await validateRequest(schemas.adminReviewTransferProof)(req);
     if (!validation.success) return validation.response;
     const { action, note } = validation.data;
-    return await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
+    const decisionId = crypto.randomUUID();
+    let shouldDrainDelivery = false;
+    const response = await runOrdinaryAdminOperation(gate.user.id, async (tx) => {
       const order = await tx.order.findUnique({
         where: { id: orderId },
         select: {
@@ -63,9 +52,10 @@ export async function POST(req: Request) {
           status: true,
           buyerConfirmationStatus: true,
           transferVerificationStatus: true,
+          transferProofType: true,
           transferProofData: true,
           seller: { select: { user: { select: { id: true, email: true, firstName: true } } } },
-          buyerSeller: { select: { user: { select: { id: true } } } },
+          buyerSeller: { select: { user: { select: { id: true, email: true, firstName: true } } } },
           items: { select: { id: true } },
         },
       });
@@ -73,9 +63,19 @@ export async function POST(req: Request) {
       if (order.status !== "PAID" || order.buyerConfirmationStatus !== "PENDING" || order.transferVerificationStatus !== "MANUAL_REVIEW") {
         return NextResponse.json({ ok: false, error: "INVALID_STATE", message: "This transfer proof is no longer awaiting human review." }, { status: 409 });
       }
+      const sellerUser = order.seller.user;
+      if (!sellerUser?.id || !sellerUser.email) {
+        return NextResponse.json({ ok: false, error: "SELLER_IDENTITY_MISSING", message: "The order seller cannot receive this review decision." }, { status: 409 });
+      }
+      if (action === "APPROVE" && !order.transferProofType?.trim()) {
+        return NextResponse.json({ ok: false, error: "TRANSFER_PROOF_TYPE_MISSING", message: "The reviewed transfer proof has no durable type." }, { status: 409 });
+      }
 
-      const decidedAt = new Date();
-      const decision = { id: crypto.randomUUID(), action, note, decidedAt: decidedAt.toISOString(), decidedByUserId: gate.user.id };
+      const [clock] = await tx.$queryRaw<Array<{ now: Date }>>`
+        SELECT statement_timestamp() AT TIME ZONE 'UTC' AS now
+      `;
+      const decidedAt = clock.now;
+      const decision = { id: decisionId, action, note, decidedAt: decidedAt.toISOString(), decidedByUserId: gate.user.id };
       const existingProof = parseProofData(order.transferProofData);
       const history = Array.isArray((existingProof as { adminReviews?: unknown }).adminReviews)
         ? (existingProof as { adminReviews: unknown[] }).adminReviews
@@ -93,27 +93,43 @@ export async function POST(req: Request) {
       });
       if (updated.count !== 1) return NextResponse.json({ ok: false, error: "STALE_REVIEW", message: "Another Admin already updated this review. Refresh the order." }, { status: 409 });
 
-      const sellerUser = order.seller.user;
-      let sellerEmailSent = false;
-      if (sellerUser?.email) {
-        const email = actionEmail(action, order.id, sellerUser.firstName, note);
-        const result = await sendEmail({ to: sellerUser.email, ...email });
-        sellerEmailSent = result.ok;
-        await tx.emailDelivery.create({ data: { orderId: order.id, emailType: `TRANSFER_PROOF_ADMIN_${action}_${decision.id}`, recipient: sellerUser.email, provider: process.env.RESEND_API_KEY ? "RESEND" : process.env.SENDGRID_API_KEY ? "SENDGRID" : "CONSOLE", status: result.ok ? "SENT" : "FAILED", error: result.error || null } });
-        await createNotification({ userId: sellerUser.id, type: action === "APPROVE" ? "TRANSFER_RECEIVED" : "VERIFICATION_NEEDED", message: action === "APPROVE" ? `Support approved the transfer proof for order ${order.id}.` : action === "REJECT" ? `Support rejected the transfer proof for order ${order.id}. Upload corrected documentation.` : `Support requested more transfer information for order ${order.id}: ${note}`, link: "/account/tickets/seller-holding" }, tx);
-      }
-      if (action === "APPROVE" && order.buyerSeller.user?.id && disputeWindowEndsAt) {
-        await notifyBuyerTransferConfirmationRequired({ buyerUserId: order.buyerSeller.user.id, orderId: order.id, ticketCount: order.items.length, deadline: disputeWindowEndsAt, sendEmail: true, now: decidedAt });
-        await sendAdminActivityEmail({
-          activity: "TICKETS_TRANSFERRED",
-          summary: `Ticket transfer approved — order ${order.id}`,
-          details: { "Order ID": order.id, Seller: sellerUser?.email, "Ticket count": order.items.length, "Buyer confirmation deadline": disputeWindowEndsAt.toISOString(), "Approved by": gate.user.email },
+      if (action === "APPROVE" && disputeWindowEndsAt) {
+        await stageTransferProofDeliveryIntent(tx, {
+          buyerUserId: order.buyerSeller.user?.id ?? null,
+          buyerEmail: order.buyerSeller.user?.email ?? null,
+          buyerFirstName: order.buyerSeller.user?.firstName ?? null,
+          sellerEmail: sellerUser.email,
+          orderId: order.id,
+          ticketCount: order.items.length,
+          transferProofType: order.transferProofType!,
+          deadline: disputeWindowEndsAt,
+          now: decidedAt,
         });
       }
-      await auditLog({ action: "TRANSFER_PROOF_VERIFY", userId: gate.user.id, targetType: "Order", targetId: order.id, metadata: { ...decision, sellerEmailSent }, ...createAuditContext(req) }, tx);
+      await stageTransferProofAdminDecisionDeliveryIntent(tx, {
+        orderId: order.id,
+        decisionId: decision.id,
+        action,
+        note,
+        decidedAt,
+        decidedByUserId: gate.user.id,
+        sellerUserId: sellerUser.id,
+        sellerEmail: sellerUser.email,
+        sellerFirstName: sellerUser.firstName,
+      });
+      shouldDrainDelivery = true;
+      await auditLog({ action: "TRANSFER_PROOF_VERIFY", userId: gate.user.id, targetType: "Order", targetId: order.id, metadata: { ...decision, deliveryQueued: true }, ...createAuditContext(req) }, tx);
 
-      return NextResponse.json({ ok: true, message: transferProofAdminActionMessage(action), warning: Boolean(sellerUser?.email) && !sellerEmailSent });
+      return NextResponse.json({ ok: true, message: transferProofAdminActionMessage(action), warning: false });
     });
+    if (shouldDrainDelivery) {
+      try {
+        await drainTransferProofDeliveryIntents({ orderId });
+      } catch (deliveryError) {
+        console.error("Post-commit transfer-proof review-decision delivery dispatch failed:", deliveryError);
+      }
+    }
+    return response;
   } catch (err) {
     if (err instanceof ManagedAccountAdminOperationError) {
       return NextResponse.json(

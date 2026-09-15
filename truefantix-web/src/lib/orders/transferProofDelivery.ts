@@ -4,9 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { generateBuyerTransferConfirmationRequiredEmail, sendEmail, type EmailProvider } from "@/lib/email";
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import { reminderWindowStart } from "@/lib/orders/transferWorkflow";
+import { canonicalTransferProofReviewOrigin } from "@/lib/orders/transferProofReviewDelivery";
 
 const BUYER_KIND = "BUYER_CONFIRMATION_EMAIL";
 const ADMIN_KIND = "ADMIN_TRANSFER_ACTIVITY_EMAIL";
+const SELLER_DECISION_KIND = "SELLER_REVIEW_DECISION_EMAIL";
 const LEASE_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 const RETRY_BASE_MS = 5 * 60 * 1000;
@@ -52,6 +54,11 @@ function buyerNotificationIdempotencyKey(orderId: string, buyerUserId: string, w
   return `tft-notification-${createHash("sha256").update(canonicalIdentity).digest("hex")}`;
 }
 
+function sellerDecisionNotificationIdempotencyKey(orderId: string, decisionId: string, sellerUserId: string) {
+  const canonicalIdentity = ["transfer-proof-review-decision", orderId, decisionId, sellerUserId].join(":");
+  return `tft-notification-${createHash("sha256").update(canonicalIdentity).digest("hex")}`;
+}
+
 function configuredEmailProvider(): EmailProvider | null {
   if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
   if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
@@ -75,6 +82,130 @@ type StageParams = {
   deadline: Date;
   now: Date;
 };
+
+export type TransferProofAdminDecisionAction = "APPROVE" | "REJECT" | "REQUEST_INFORMATION";
+
+type StageAdminDecisionParams = {
+  orderId: string;
+  decisionId: string;
+  action: TransferProofAdminDecisionAction;
+  note: string;
+  decidedAt: Date;
+  decidedByUserId: string;
+  sellerUserId: string;
+  sellerEmail: string;
+  sellerFirstName: string | null;
+};
+
+function sellerDecisionMessage(action: TransferProofAdminDecisionAction, orderId: string, note: string) {
+  if (action === "APPROVE") return `Support approved the transfer proof for order ${orderId}.`;
+  if (action === "REJECT") return `Support rejected the transfer proof for order ${orderId}. Upload corrected documentation.`;
+  return `Support requested more transfer information for order ${orderId}: ${note}`;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]
+    || character
+  ));
+}
+
+function renderSellerDecisionEmail(orderId: string, data: Payload) {
+  const action = String(data.action) as TransferProofAdminDecisionAction;
+  const firstName = data.sellerFirstName ? String(data.sellerFirstName) : null;
+  const note = String(data.note);
+  const appOrigin = String(data.appOrigin).replace(/\/$/, "");
+  const holdingUrl = `${appOrigin}/account/tickets/seller-holding`;
+  const heading = action === "APPROVE"
+    ? "Transfer proof approved"
+    : action === "REJECT"
+      ? "Transfer proof needs to be replaced"
+      : "ACTION REQUIRED: More transfer information needed";
+  const instruction = action === "APPROVE"
+    ? "No further transfer-proof action is required right now. The buyer has been asked to confirm receipt."
+    : action === "REJECT"
+      ? "Please upload corrected transfer documentation from Seller Holding."
+      : "Please upload the requested supporting information from Seller Holding so Support can complete its review.";
+  const subject = action === "APPROVE"
+    ? `Transfer Proof Approved — ${orderId}`
+    : `ACTION REQUIRED: ${heading} — ${orderId}`;
+  const text = `${heading}\n\nHi ${firstName || "there"},\n\nSupport reviewed the transfer proof for order ${orderId}.\n\nSupport note:\n${note}\n\n${instruction}\n\n${holdingUrl}\n\nThanks,\nThe TrueFanTix Team`;
+  const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#1f2937"><div style="background:#064a93;color:white;padding:20px;border-radius:8px 8px 0 0"><strong>${escapeHtml(heading)}</strong></div><div style="background:#f9fafb;padding:24px"><p>Hi ${escapeHtml(firstName || "there")},</p><p>Support reviewed the transfer proof for order <strong>${escapeHtml(orderId)}</strong>.</p><div style="background:white;border-left:4px solid #f97316;padding:16px;margin:18px 0"><strong>Support note</strong><p style="white-space:pre-wrap">${escapeHtml(note)}</p></div><p>${escapeHtml(instruction)}</p><p><a href="${escapeHtml(holdingUrl)}" style="display:inline-block;background:#064a93;color:white;padding:12px 20px;text-decoration:none;border-radius:7px;font-weight:bold">Open Seller Holding</a></p></div></div>`;
+  return { subject, text, html };
+}
+
+export async function stageTransferProofAdminDecisionDeliveryIntent(
+  tx: Prisma.TransactionClient,
+  params: StageAdminDecisionParams,
+) {
+  const envelopeSnapshot = {
+    action: params.action,
+    appOrigin: canonicalTransferProofReviewOrigin(),
+    decidedAt: params.decidedAt.toISOString(),
+    decidedByUserId: params.decidedByUserId,
+    decisionId: params.decisionId,
+    note: params.note,
+    sellerFirstName: params.sellerFirstName,
+    sellerUserId: params.sellerUserId,
+  };
+  const rendered = renderSellerDecisionEmail(params.orderId, envelopeSnapshot);
+  const payloadJson = {
+    ...envelopeSnapshot,
+    htmlBody: rendered.html,
+    subject: rendered.subject,
+    textBody: rendered.text,
+  };
+  const envelope = {
+    orderId: params.orderId,
+    kind: SELLER_DECISION_KIND,
+    recipient: params.sellerEmail,
+    payloadJson,
+  };
+  const idempotencyKey = `${params.orderId}:${params.decisionId}:${SELLER_DECISION_KIND}:${params.sellerEmail}`;
+  const staged = await tx.transferProofDeliveryIntent.upsert({
+    where: { idempotencyKey },
+    create: {
+      ...envelope,
+      idempotencyKey,
+      identityVersion: 2,
+      envelopeDigest: deliveryEnvelopeDigest(envelope),
+      availableAt: params.decidedAt,
+    },
+    update: {},
+  });
+  requireMatchingStagedIdentity(staged, envelope, idempotencyKey);
+
+  const type = params.action === "APPROVE" ? "TRANSFER_RECEIVED" : "VERIFICATION_NEEDED";
+  const link = "/account/tickets/seller-holding";
+  const message = sellerDecisionMessage(params.action, params.orderId, params.note);
+  const boundSellerUserId = String(payloadJson.sellerUserId);
+  const notificationIdempotencyKey = sellerDecisionNotificationIdempotencyKey(
+    params.orderId,
+    params.decisionId,
+    boundSellerUserId,
+  );
+  const notification = await tx.notification.upsert({
+    where: { idempotencyKey: notificationIdempotencyKey },
+    create: {
+      userId: boundSellerUserId,
+      type,
+      message,
+      link,
+      isRead: false,
+      idempotencyKey: notificationIdempotencyKey,
+    },
+    update: {},
+  });
+  if (
+    notification.userId !== boundSellerUserId
+    || notification.type !== type
+    || notification.message !== message
+    || notification.link !== link
+    || notification.idempotencyKey !== notificationIdempotencyKey
+  ) {
+    throw new Error("Transfer-proof review-decision notification identity collision");
+  }
+}
 
 function requireMatchingStagedIdentity(
   row: TransferProofDeliveryIntent,
@@ -256,6 +387,44 @@ function assertValidDeliveryEnvelope(row: TransferProofDeliveryIntent, data: Pay
     requireDeliveryIdentity(row, data, reminderWindowStart(new Date(String(data.completedAt))));
     return;
   }
+  if (row.kind === SELLER_DECISION_KIND) {
+    requireNonEmptyString(data, "action");
+    if (!["APPROVE", "REJECT", "REQUEST_INFORMATION"].includes(String(data.action))) {
+      throw new Error("Invalid transfer-proof review-decision action");
+    }
+    requireNonEmptyString(data, "appOrigin");
+    requireIsoDate(data, "decidedAt");
+    requireNonEmptyString(data, "decidedByUserId");
+    requireNonEmptyString(data, "decisionId");
+    requireNonEmptyString(data, "note");
+    requireOptionalString(data, "sellerFirstName");
+    requireNonEmptyString(data, "sellerUserId");
+    requireNonEmptyString(data, "subject");
+    requireNonEmptyString(data, "textBody");
+    requireNonEmptyString(data, "htmlBody");
+    const rendered = renderSellerDecisionEmail(row.orderId, data);
+    if (
+      data.subject !== rendered.subject
+      || data.textBody !== rendered.text
+      || data.htmlBody !== rendered.html
+    ) {
+      throw new Error("Transfer-proof review-decision rendered envelope is not canonical");
+    }
+    const expectedKey = `${row.orderId}:${String(data.decisionId)}:${SELLER_DECISION_KIND}:${row.recipient}`;
+    if (row.idempotencyKey !== expectedKey || row.identityVersion !== 2 || !row.envelopeDigest) {
+      throw new Error("Transfer-proof review-decision identity does not match its envelope");
+    }
+    const expectedDigest = deliveryEnvelopeDigest({
+      orderId: row.orderId,
+      kind: row.kind,
+      recipient: row.recipient,
+      payloadJson: data,
+    });
+    if (row.envelopeDigest !== expectedDigest) {
+      throw new Error("Transfer-proof review-decision digest does not match its envelope");
+    }
+    return;
+  }
   throw new Error(`Unsupported transfer-proof delivery kind: ${row.kind}`);
 }
 
@@ -289,9 +458,9 @@ export async function drainTransferProofDeliveryIntents(
       ? Prisma.sql`AND "orderId" = ${options.orderId}`
       : Prisma.empty;
     const candidates = await tx.$queryRaw<TransferProofDeliveryIntent[]>(Prisma.sql`
-      SELECT *
-      FROM "TransferProofDeliveryIntent"
-      WHERE "attemptCount" < ${MAX_ATTEMPTS}
+      SELECT candidate.*
+      FROM "TransferProofDeliveryIntent" candidate
+      WHERE candidate."attemptCount" < ${MAX_ATTEMPTS}
         ${orderFilter}
         AND (
           ("status" IN ('PENDING', 'FAILED') AND "availableAt" <= ${now})
@@ -313,7 +482,26 @@ export async function drainTransferProofDeliveryIntents(
             OR ("status" = 'PROCESSING' AND "dispatchStartedAt" IS NOT NULL)
           ))
         )
-      ORDER BY "availableAt" ASC, "createdAt" ASC, "id" ASC
+        AND (
+          candidate.kind <> ${SELLER_DECISION_KIND}
+          OR NOT EXISTS (
+            SELECT 1
+            FROM "TransferProofDeliveryIntent" predecessor
+            WHERE predecessor."orderId" = candidate."orderId"
+              AND predecessor.kind = ${SELLER_DECISION_KIND}
+              AND predecessor.status IN ('PENDING', 'PROCESSING', 'FAILED', 'RECONCILIATION_REQUIRED')
+              AND (
+                (predecessor."payloadJson" ->> 'decidedAt')::timestamptz
+                  < (candidate."payloadJson" ->> 'decidedAt')::timestamptz
+                OR (
+                  (predecessor."payloadJson" ->> 'decidedAt')::timestamptz
+                    = (candidate."payloadJson" ->> 'decidedAt')::timestamptz
+                  AND predecessor.id < candidate.id
+                )
+              )
+          )
+        )
+      ORDER BY candidate."availableAt" ASC, candidate."createdAt" ASC, candidate.id ASC
       FOR UPDATE SKIP LOCKED
       LIMIT ${limit}
     `);
@@ -483,7 +671,7 @@ export async function drainTransferProofDeliveryIntents(
           return owned;
         });
         if (recorded.count !== 1) throw new Error("Transfer-proof provider accepted delivery but claim ownership was lost");
-      } else {
+      } else if (row.kind === ADMIN_KIND) {
         const result = await sendAdminActivityEmail({
           activity: "TICKETS_TRANSFERRED", summary: `Ticket transfer submitted — order ${row.orderId}`,
           idempotencyKey: providerIdempotencyKey(row.idempotencyKey), completedAt: String(data.completedAt), provider, details: {
@@ -522,6 +710,46 @@ export async function drainTransferProofDeliveryIntents(
           return owned;
         });
         if (recorded.count !== 1) throw new Error("Transfer-proof provider accepted delivery but claim ownership was lost");
+      } else {
+        const result = await sendEmail({
+          to: row.recipient,
+          subject: String(data.subject),
+          text: String(data.textBody),
+          html: String(data.htmlBody),
+          idempotencyKey: providerIdempotencyKey(row.idempotencyKey),
+          provider,
+        });
+        providerAccepted = result.ok;
+        providerResult = result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED");
+        providerFailure = result.ok ? null : result.error || "Unknown provider error";
+        providerIdentityMismatch = result.ok && result.provider !== provider;
+        if (providerIdentityMismatch) {
+          throw new Error(`Transfer-proof review-decision provider changed from ${provider} to ${result.provider ?? "UNKNOWN"}`);
+        }
+        if (!result.ok) throw new Error(result.error || "Seller review-decision provider rejected delivery");
+        const emailType = `TRANSFER_PROOF_ADMIN_${String(data.action)}_${String(data.decisionId)}`;
+        const recorded = await db.$transaction(async (tx) => {
+          const owned = await tx.transferProofDeliveryIntent.updateMany({
+            where: { id: row.id, status: "PROCESSING", provider, leaseExpiresAt, claimToken, attemptCount },
+            data: {
+              status: "DELIVERED", deliveredAt: now, processingAt: null, leaseExpiresAt: null,
+              claimToken: null, dispatchStartedAt: null, lastError: null,
+            },
+          });
+          if (owned.count !== 1) return owned;
+          await tx.emailDelivery.upsert({
+            where: { orderId_emailType_recipient: {
+              orderId: row.orderId, emailType, recipient: row.recipient,
+            } },
+            create: {
+              orderId: row.orderId, emailType, recipient: row.recipient,
+              provider, status: "SENT", error: null, sentAt: now,
+            },
+            update: { provider, status: "SENT", error: null, sentAt: now },
+          });
+          return owned;
+        });
+        if (recorded.count !== 1) throw new Error("Review-decision provider accepted delivery but claim ownership was lost");
       }
       delivered += 1;
     } catch (error) {
@@ -584,6 +812,16 @@ export async function drainTransferProofDeliveryIntents(
           }
         } else if (row.kind === ADMIN_KIND) {
           const emailType = `ADMIN_TRANSFER_SUBMITTED_${String(data.deadline)}`;
+          await tx.emailDelivery.upsert({
+            where: { orderId_emailType_recipient: { orderId: row.orderId, emailType, recipient: row.recipient } },
+            create: {
+              orderId: row.orderId, emailType, recipient: row.recipient,
+              provider, status: "FAILED", error: providerFailure || lastError, sentAt: now,
+            },
+            update: { provider, status: "FAILED", error: providerFailure || lastError, sentAt: now },
+          });
+        } else if (row.kind === SELLER_DECISION_KIND) {
+          const emailType = `TRANSFER_PROOF_ADMIN_${String(data.action)}_${String(data.decisionId)}`;
           await tx.emailDelivery.upsert({
             where: { orderId_emailType_recipient: { orderId: row.orderId, emailType, recipient: row.recipient } },
             create: {
