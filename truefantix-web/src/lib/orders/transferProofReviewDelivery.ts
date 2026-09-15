@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type TransferProofReviewDeliveryIntent } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail, type EmailProvider } from "@/lib/email";
+import { configuredEmailProvider, emailProviderIsConfigured } from "@/lib/emailProviderConfig";
 import { DISPUTE_SUPPORT_EMAIL } from "@/lib/disputes";
 
 const LEASE_MS = 15 * 60 * 1000;
@@ -11,15 +12,8 @@ const RESEND_IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const TRANSFER_PROOF_REVIEW_TEST_ORIGIN = "http://localhost:3000";
 export const TRANSFER_PROOF_REVIEW_STAGING_ORIGIN = "https://truefantix-staging-preview.vercel.app";
 
-function configuredEmailProvider(): EmailProvider | null {
-  if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
-  if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
-  return null;
-}
-
 function providerIsConfigured(provider: EmailProvider) {
-  if (provider === "RESEND") return Boolean(process.env.RESEND_API_KEY?.trim());
-  return Boolean(process.env.SENDGRID_API_KEY?.trim());
+  return emailProviderIsConfigured(provider);
 }
 
 function reviewDeliveryIdempotencyKey(orderId: string, requestId: string, recipient: string) {

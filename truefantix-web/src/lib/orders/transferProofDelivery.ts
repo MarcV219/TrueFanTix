@@ -2,6 +2,7 @@ import { Prisma, type TransferProofDeliveryIntent } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { generateBuyerTransferConfirmationRequiredEmail, sendEmail, type EmailProvider } from "@/lib/email";
+import { configuredEmailProvider, emailProviderIsConfigured } from "@/lib/emailProviderConfig";
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import { reminderWindowStart } from "@/lib/orders/transferWorkflow";
 import { canonicalTransferProofReviewOrigin } from "@/lib/orders/transferProofReviewDelivery";
@@ -86,16 +87,8 @@ function sellerDecisionNotificationIdempotencyKey(orderId: string, decisionId: s
   return `tft-notification-${createHash("sha256").update(canonicalIdentity).digest("hex")}`;
 }
 
-function configuredEmailProvider(): EmailProvider | null {
-  if (process.env.RESEND_API_KEY?.trim()) return "RESEND";
-  if (process.env.SENDGRID_API_KEY?.trim()) return "SENDGRID";
-  return null;
-}
-
 function providerIsConfigured(provider: EmailProvider) {
-  if (provider === "RESEND") return Boolean(process.env.RESEND_API_KEY?.trim());
-  if (provider === "SENDGRID") return Boolean(process.env.SENDGRID_API_KEY?.trim());
-  return false;
+  return emailProviderIsConfigured(provider);
 }
 
 type StageParams = {

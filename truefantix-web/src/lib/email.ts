@@ -1,8 +1,12 @@
 import sgMail from "@sendgrid/mail";
+import {
+  cleanEmailProviderCredential,
+  type EmailProvider,
+} from "@/lib/emailProviderConfig";
+
+export type { EmailProvider } from "@/lib/emailProviderConfig";
 
 export const DEFAULT_FROM_EMAIL = "noreply@truefantix.com";
-
-export type EmailProvider = "RESEND" | "SENDGRID" | "CONSOLE";
 
 export type EmailPayload = {
   to: string;
@@ -12,10 +16,6 @@ export type EmailPayload = {
   idempotencyKey?: string;
   provider?: EmailProvider;
 };
-
-function cleanSecret(value: string | undefined) {
-  return value?.trim().replace(/^['"]|['"]$/g, "");
-}
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => (
@@ -41,8 +41,8 @@ export type EmailSendResult = {
 };
 
 export async function sendEmail(payload: EmailPayload): Promise<EmailSendResult> {
-  const sendgridApiKey = cleanSecret(process.env.SENDGRID_API_KEY);
-  const resendApiKey = cleanSecret(process.env.RESEND_API_KEY);
+  const sendgridApiKey = cleanEmailProviderCredential(process.env.SENDGRID_API_KEY);
+  const resendApiKey = cleanEmailProviderCredential(process.env.RESEND_API_KEY);
   const configuredFromEmail = process.env.FROM_EMAIL?.trim();
   const fromEmail = configuredFromEmail || DEFAULT_FROM_EMAIL;
 

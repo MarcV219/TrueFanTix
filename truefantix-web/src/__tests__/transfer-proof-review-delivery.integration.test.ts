@@ -1545,6 +1545,33 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
     }
   });
 
+  it("uses the sender's credential normalization before selecting a provider", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const savedResendKey = process.env.RESEND_API_KEY;
+    const savedSendGridKey = process.env.SENDGRID_API_KEY;
+    process.env.RESEND_API_KEY = "  ''  ";
+    process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
+    mockedSendEmail.mockResolvedValue({
+      ok: true,
+      provider: "SENDGRID",
+      providerResult: "ACCEPTED",
+    });
+    try {
+      await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+        .resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    } finally {
+      if (savedResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = savedResendKey;
+      if (savedSendGridKey === undefined) delete process.env.SENDGRID_API_KEY;
+      else process.env.SENDGRID_API_KEY = savedSendGridKey;
+    }
+
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({ provider: "SENDGRID" }));
+    await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({ where: { requestId } }))
+      .resolves.toMatchObject({ status: "DELIVERED", provider: "SENDGRID", attemptCount: 1 });
+  });
+
   it.each([
     ["before provider result", null],
     ["after accepted-send persistence loss", "ACCEPTED"],
