@@ -220,4 +220,18 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: `${base}-payment` } })).resolves.toMatchObject({ status: "PENDING_PROVIDER", providerIntentId: null });
     await expect(db.primaryAdmissionTicket.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
   });
+
+  it("rejects reservation commitment chronology drift before provider mutation", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING"]) {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
+    }
+    const reservation = await db.primaryInventoryReservation.findUniqueOrThrow({ where: { id: `${base}-reservation` } });
+    expect(reservation.paymentCommittedAt).not.toBeNull();
+    await db.primaryInventoryReservation.update({ where: { id: reservation.id }, data: { reconciliationAfter: new Date(reservation.paymentCommittedAt!.getTime() + 120_001) } });
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_RESERVATION_INVALID" });
+    await expect(db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: `${base}-payment` } })).resolves.toMatchObject({ status: "PENDING_PROVIDER", providerIntentId: null });
+    await expect(db.primaryAdmissionTicket.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+  });
 });

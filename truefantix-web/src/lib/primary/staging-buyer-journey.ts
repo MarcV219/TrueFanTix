@@ -86,7 +86,10 @@ async function requireScenarioRoot(tx: Tx, scope: ReturnType<typeof ids>, actor:
 function requireReservationState(reservation: Prisma.PrimaryInventoryReservationGetPayload<object>, scope: ReturnType<typeof ids>, buyerId: string) {
   const holdLifetimeMs = reservation.expiresAt.getTime() - reservation.createdAt.getTime();
   const heldState = reservation.status === "HELD" && reservation.paymentCommittedAt === null && reservation.reconciliationAfter === null && reservation.commitIdempotencyKey === null;
-  const committedState = reservation.status === "PAYMENT_COMMITTED" && reservation.paymentCommittedAt !== null && reservation.reconciliationAfter !== null && reservation.commitIdempotencyKey === `${scope.base}:commit`;
+  const committedState = reservation.status === "PAYMENT_COMMITTED" && reservation.paymentCommittedAt !== null && reservation.reconciliationAfter !== null
+    && reservation.paymentCommittedAt.getTime() >= reservation.createdAt.getTime()
+    && reservation.reconciliationAfter.getTime() - reservation.paymentCommittedAt.getTime() === 120_000
+    && reservation.commitIdempotencyKey === `${scope.base}:commit`;
   if (
     reservation.organizerId !== ORGANIZER_ID || reservation.eventId !== scope.eventId || reservation.ticketTypeId !== scope.ticketTypeId
     || reservation.buyerUserId !== buyerId || reservation.quantity !== 1 || reservation.createIdempotencyKey !== `${scope.base}:hold`
