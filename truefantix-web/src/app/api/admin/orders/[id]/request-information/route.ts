@@ -3,7 +3,11 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { auditLog, createAuditContext } from "@/lib/audit";
-import { generateDisputeInformationRequestEmail, sendEmail } from "@/lib/email";
+import {
+  generateDisputeInformationRequestEmail,
+  sendEmail,
+  type EmailSendResult,
+} from "@/lib/email";
 import { emailProviderEvidence } from "@/lib/emailProviderConfig";
 import { parseDisputeCase } from "@/lib/disputes";
 import { createNotification } from "@/lib/notifications/service";
@@ -94,7 +98,18 @@ export async function POST(req: Request) {
           requestMessage: message,
           responseUrl: target.link,
         });
-        const result = await sendEmail({ to: target.email, ...email });
+        let result: EmailSendResult;
+        try {
+          result = await sendEmail({ to: target.email, ...email });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown email error";
+          result = {
+            ok: false,
+            provider: "CONSOLE",
+            providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+            error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${errorMessage}`,
+          };
+        }
         const status = result.ok ? "SENT" as const : "FAILED" as const;
         await tx.emailDelivery.create({
           data: {

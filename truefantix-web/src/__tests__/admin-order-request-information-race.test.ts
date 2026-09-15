@@ -173,4 +173,30 @@ describe("admin dispute-information staging-persona boundary", () => {
     expect(mockedAuditLog).toHaveBeenCalledTimes(1);
     expect(mockedAuditLog).toHaveBeenCalledWith(expect.any(Object), mockedPrisma);
   });
+
+  it("records neutral evidence when the sender rejects without provider identity", async () => {
+    const previousResendApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = "synthetic-configured-but-unattributed-key";
+    mockedSendEmail.mockRejectedValueOnce(new Error("synthetic providerless failure"));
+
+    try {
+      const response = await POST(request());
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ ok: true, warning: true });
+      expect(mockedPrisma.emailDelivery.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          provider: "CONSOLE",
+          status: "FAILED",
+          error: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic providerless failure",
+        }),
+      });
+      expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
+      expect(mockedCreateNotification).toHaveBeenCalledTimes(1);
+      expect(mockedAuditLog).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousResendApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousResendApiKey;
+    }
+  });
 });
