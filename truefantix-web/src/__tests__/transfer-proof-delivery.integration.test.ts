@@ -613,13 +613,17 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
   });
 
   it.each([
-    ["an extra field", (source: Prisma.JsonObject) => ({ ...source, injected: true })],
+    ["an extra field", (source: Prisma.JsonObject) => ({ ...source, injected: true }), "Transfer-proof review-decision payload must have the canonical shape"],
     ["a missing sellerFirstName field", (source: Prisma.JsonObject) => {
       const missing = { ...source };
       delete missing.sellerFirstName;
       return missing;
-    }],
-  ])("quarantines a seller decision with %s in its runtime payload shape", async (_label, poison) => {
+    }, "Transfer-proof review-decision payload must have the canonical shape"],
+    ["a malformed decidedAt field", (source: Prisma.JsonObject) => ({
+      ...source,
+      decidedAt: "not-a-date",
+    }), "Invalid transfer-proof delivery payload field: decidedAt"],
+  ] as const)("quarantines a seller decision with %s in its runtime payload shape", async (_label, poison, expectedError) => {
     const decisionId = `decision-runtime-shape-${_label.replaceAll(" ", "-")}-${runId}`;
     const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
     await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
@@ -652,9 +656,46 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     })).resolves.toEqual({
       status: "RECONCILIATION_REQUIRED",
       attemptCount: 0,
-      lastError: "Pre-dispatch delivery failure: Transfer-proof review-decision payload must have the canonical shape",
+      lastError: `Pre-dispatch delivery failure: ${expectedError}`,
     });
     await forceDeleteDeliveryIntents({ id: row.id });
+    await ensureSyntheticOrder(orderId);
+  });
+
+  it("rejects a seller decision whose initial schedule differs from its authenticated decision clock", async () => {
+    const decisionId = `decision-schedule-${runId}`;
+    const { decidedAt, decision, note } = await prepareAdminDecision("REJECT", decisionId);
+    await prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+      orderId,
+      decisionId,
+      action: "REJECT",
+      note,
+      decidedAt,
+      decidedByUserId: decision.decidedByUserId,
+      sellerUserId,
+      sellerEmail: "seller@example.test",
+      sellerFirstName: "Seller",
+    }));
+    const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+      where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL", idempotencyKey: { contains: decisionId } },
+    });
+    await forceDeleteDeliveryIntents({ id: row.id });
+
+    await expect(prisma.transferProofDeliveryIntent.create({ data: {
+      orderId: row.orderId,
+      kind: row.kind,
+      recipient: row.recipient,
+      payloadJson: row.payloadJson as Prisma.InputJsonValue,
+      idempotencyKey: row.idempotencyKey,
+      identityVersion: row.identityVersion,
+      envelopeDigest: row.envelopeDigest,
+      availableAt: new NativeDate(decidedAt.getTime() + 60 * 60 * 1000),
+    } })).rejects.toThrow(/initial schedule must match its decision clock/);
+
+    await expect(prisma.transferProofDeliveryIntent.count({ where: {
+      orderId,
+      kind: "SELLER_REVIEW_DECISION_EMAIL",
+    } })).resolves.toBe(0);
     await ensureSyntheticOrder(orderId);
   });
 
