@@ -1,6 +1,7 @@
 const findUser: jest.Mock = jest.fn();
 const createNotificationOncePerWindow: jest.Mock = jest.fn();
 const sendEmail: jest.Mock = jest.fn();
+const sendAdminActivityEmail: jest.Mock = jest.fn();
 const upsertReminderDelivery: jest.Mock = jest.fn();
 const updateReminderDelivery: jest.Mock = jest.fn();
 const generateSellerTransferReminderEmail: jest.Mock = jest.fn(() => ({
@@ -34,6 +35,10 @@ jest.mock("@/lib/email", () => ({
     generateBuyerTransferConfirmationRequiredEmail(...args),
   generateSellerTransferReminderEmail: (...args: unknown[]) => generateSellerTransferReminderEmail(...args),
   sendEmail: (...args: unknown[]) => sendEmail(...args),
+}));
+
+jest.mock("@/lib/adminActivityEmail", () => ({
+  sendAdminActivityEmail: (...args: unknown[]) => sendAdminActivityEmail(...args),
 }));
 
 import {
@@ -79,6 +84,7 @@ describe("seller transfer reminder email", () => {
     process.env.RESEND_API_KEY = "  '\"\"'  ";
     process.env.SENDGRID_API_KEY = "  'synthetic-sendgrid-key'  ";
     createNotificationOncePerWindow.mockResolvedValue({ ok: true, notification: { id: "notice-provider" } });
+    sendEmail.mockResolvedValueOnce({ ok: true, provider: "SENDGRID", providerResult: "accepted" });
 
     await notifySellerTransferRequired({
       sellerUserId: "seller-user",
@@ -93,6 +99,106 @@ describe("seller transfer reminder email", () => {
       create: expect.objectContaining({ provider: "SENDGRID" }),
     }));
     expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ provider: "SENDGRID" }));
+  });
+
+  it("does not infer configured provider evidence when the sender rejects unexpectedly", async () => {
+    process.env.RESEND_API_KEY = "synthetic-configured-but-unattributed-key";
+    createNotificationOncePerWindow.mockResolvedValue({ ok: true, notification: { id: "notice-rejected" } });
+    sendEmail.mockRejectedValueOnce(new Error("synthetic providerless failure"));
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await notifySellerTransferRequired({
+        sellerUserId: "seller-user",
+        orderId: "order-providerless",
+        ticketCount: 1,
+        deadline: new Date("2026-07-30T16:00:00.000Z"),
+        sendEmail: true,
+        now: new Date("2026-07-30T12:00:00.000Z"),
+      });
+
+      expect(upsertReminderDelivery).toHaveBeenCalledWith(expect.objectContaining({
+        create: expect.objectContaining({ provider: "RESEND", status: "ATTEMPTING" }),
+      }));
+      expect(updateReminderDelivery).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          provider: "CONSOLE",
+          status: "FAILED",
+          providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+          failureReason: "synthetic providerless failure",
+        }),
+      }));
+      expect(consoleError).toHaveBeenCalledWith(
+        "[EMAIL] Seller transfer reminder email failed:",
+        "synthetic providerless failure",
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("fails closed when a resolved result changes the pinned provider identity", async () => {
+    process.env.SENDGRID_API_KEY = "synthetic-sendgrid-key";
+    createNotificationOncePerWindow.mockResolvedValue({ ok: true, notification: { id: "notice-mismatch" } });
+    sendEmail.mockResolvedValueOnce({ ok: true, provider: "RESEND", providerResult: "accepted-by-wrong-provider" });
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await notifySellerTransferRequired({
+        sellerUserId: "seller-user",
+        orderId: "order-provider-mismatch",
+        ticketCount: 1,
+        deadline: new Date("2026-07-30T16:00:00.000Z"),
+        sendEmail: true,
+        now: new Date("2026-07-30T12:00:00.000Z"),
+      });
+
+      expect(upsertReminderDelivery).toHaveBeenCalledWith(expect.objectContaining({
+        create: expect.objectContaining({ provider: "SENDGRID", status: "ATTEMPTING" }),
+      }));
+      expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ provider: "SENDGRID" }));
+      expect(updateReminderDelivery).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          provider: "SENDGRID",
+          status: "FAILED",
+          providerResult: "PROVIDER_IDENTITY_MISMATCH:SENDGRID->RESEND",
+          failureReason: "Email provider identity mismatch: expected SENDGRID, received RESEND",
+        }),
+      }));
+      expect(sendAdminActivityEmail).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalledWith(
+        "[EMAIL] Seller transfer reminder email failed:",
+        "Email provider identity mismatch: expected SENDGRID, received RESEND",
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("does not relabel a post-result persistence failure as providerless", async () => {
+    process.env.RESEND_API_KEY = "synthetic-resend-key";
+    createNotificationOncePerWindow.mockResolvedValue({ ok: true, notification: { id: "notice-persistence" } });
+    sendEmail.mockResolvedValueOnce({ ok: true, provider: "RESEND", providerResult: "accepted-resend-id" });
+    updateReminderDelivery.mockRejectedValueOnce(new Error("synthetic persistence failure"));
+
+    await expect(notifySellerTransferRequired({
+      sellerUserId: "seller-user",
+      orderId: "order-persistence-failure",
+      ticketCount: 1,
+      deadline: new Date("2026-07-30T16:00:00.000Z"),
+      sendEmail: true,
+      now: new Date("2026-07-30T12:00:00.000Z"),
+    })).rejects.toThrow("synthetic persistence failure");
+
+    expect(updateReminderDelivery).toHaveBeenCalledTimes(1);
+    expect(updateReminderDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        provider: "RESEND",
+        status: "SENT",
+        providerResult: "accepted-resend-id",
+      }),
+    }));
+    expect(sendAdminActivityEmail).not.toHaveBeenCalled();
   });
 
   it("does not email again when the reminder window was already handled", async () => {

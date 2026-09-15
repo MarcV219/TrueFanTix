@@ -4,6 +4,7 @@ import {
   generateBuyerTransferConfirmationRequiredEmail,
   generateSellerTransferReminderEmail,
   sendEmail,
+  type EmailSendResult,
 } from "@/lib/email";
 import { createNotification, createNotificationOncePerWindow } from "@/lib/notifications/service";
 import { sendAdminActivityEmail } from "@/lib/adminActivityEmail";
@@ -79,27 +80,61 @@ async function sendLoggedReminder(params: {
     },
   });
 
+  let result: EmailSendResult;
   try {
-    const result = await sendEmail({ to: params.recipient, ...params.email, provider });
-    await prisma.reminderDelivery.update({
-      where: key,
-      data: {
-        provider: result.provider || provider,
-        status: result.ok ? "SENT" : "FAILED",
-        providerResult: result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED"),
-        failureReason: result.ok ? null : result.error || "Unknown provider error",
-        completedAt: new Date(),
-      },
-    });
-    return result;
+    result = await sendEmail({ to: params.recipient, ...params.email, provider });
   } catch (error) {
     const failureReason = error instanceof Error ? error.message : "Unknown email error";
     await prisma.reminderDelivery.update({
       where: key,
-      data: { status: "FAILED", providerResult: "EXCEPTION", failureReason, completedAt: new Date() },
+      data: {
+        provider: "CONSOLE",
+        status: "FAILED",
+        providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+        failureReason,
+        completedAt: new Date(),
+      },
     });
-    return { ok: false as const, error: failureReason, provider };
+    return {
+      ok: false as const,
+      error: failureReason,
+      provider: "CONSOLE" as const,
+      providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
+    };
   }
+
+  if (result.provider !== provider) {
+    const failureReason = `Email provider identity mismatch: expected ${provider}, received ${result.provider ?? "UNKNOWN"}`;
+    const providerResult = `PROVIDER_IDENTITY_MISMATCH:${provider}->${result.provider ?? "UNKNOWN"}`;
+    await prisma.reminderDelivery.update({
+      where: key,
+      data: {
+        provider,
+        status: "FAILED",
+        providerResult,
+        failureReason,
+        completedAt: new Date(),
+      },
+    });
+    return {
+      ok: false as const,
+      error: failureReason,
+      provider: "CONSOLE" as const,
+      providerResult,
+    };
+  }
+
+  await prisma.reminderDelivery.update({
+    where: key,
+    data: {
+      provider,
+      status: result.ok ? "SENT" : "FAILED",
+      providerResult: result.providerResult || (result.ok ? "ACCEPTED" : "REJECTED"),
+      failureReason: result.ok ? null : result.error || "Unknown provider error",
+      completedAt: new Date(),
+    },
+  });
+  return result;
 }
 
 export async function notifySellerTransferRequired(params: {
