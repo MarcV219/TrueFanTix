@@ -185,6 +185,44 @@ describe("dispute email transaction client", () => {
     expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
   });
 
+  it("reserves stable cancellation identities before sending", async () => {
+    await sendDisputeEmails({
+      orderId: "order-stable-cancel",
+      kind: "CANCELLED",
+      parties: [
+        { email: "buyer@example.test", role: "Buyer" },
+        { email: "seller@example.test", role: "Seller" },
+        { email: "support@example.test", role: "TrueFanTix Support" },
+      ],
+      submittedBy: "Synthetic Buyer",
+      comments: "The dispute was resolved.",
+      ticketCount: 1,
+      fileNames: [],
+      idempotencyKeyPrefix: "dispute-cancelled:order-stable-cancel",
+    });
+
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({ emailType: "DISPUTE_CANCELLED_BUYER" }),
+    });
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(2, {
+      data: expect.objectContaining({ emailType: "DISPUTE_CANCELLED_SELLER" }),
+    });
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(3, {
+      data: expect.objectContaining({ emailType: "DISPUTE_CANCELLED_TRUEFANTIX_SUPPORT" }),
+    });
+    expect(mockedSendEmail).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      idempotencyKey: "dispute-cancelled:order-stable-cancel:BUYER",
+    }));
+    expect(mockedSendEmail).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      idempotencyKey: "dispute-cancelled:order-stable-cancel:SELLER",
+    }));
+    expect(mockedSendEmail).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      idempotencyKey: "dispute-cancelled:order-stable-cancel:TRUEFANTIX_SUPPORT",
+    }));
+    expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenCalledTimes(3);
+    expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
+  });
+
   it("treats pre-existing terminal delivery evidence as no-send and no-overwrite", async () => {
     mockedPrisma.emailDelivery.create.mockRejectedValueOnce({ code: "P2002" });
 

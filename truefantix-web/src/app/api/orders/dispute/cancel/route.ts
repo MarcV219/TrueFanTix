@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
     const { orderId } = validation.data;
 
-    return await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
+    const result = await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
       // Serialize buyer cancellation with evidence submission and administrator
       // resolution. The locked snapshot is authoritative for case closure.
       await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
@@ -137,27 +137,42 @@ export async function POST(req: Request) {
           link: "/account/tickets/seller-holding",
         }, tx);
       }
-      await sendDisputeEmails({
-        orderId: order.id,
-        kind: "CANCELLED",
-        submittedBy: "Buyer",
-        comments: "The buyer confirmed that the dispute was satisfactorily resolved.",
-        ticketCount: dispute.ticketCount || dispute.ticketIds?.length || 0,
-        tickets: disputedTicketDetails,
-        fileNames: [],
-        parties: [
-          ...(order.buyerSeller.user?.email ? [{ email: order.buyerSeller.user.email, firstName: order.buyerSeller.user.firstName, role: "Buyer" as const }] : []),
-          ...(order.seller.user?.email ? [{ email: order.seller.user.email, firstName: order.seller.user.firstName, role: "Seller" as const }] : []),
-          { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
-        ],
-      }, tx);
-
-      return NextResponse.json({
-        ok: true,
-        order: completedOrder,
-        message: "Dispute cancelled. You confirmed that it was satisfactorily resolved.",
-      });
+      return {
+        response: NextResponse.json({
+          ok: true,
+          order: completedOrder,
+          message: "Dispute cancelled. You confirmed that it was satisfactorily resolved.",
+        }),
+        postCommitEmail: {
+          orderId: order.id,
+          kind: "CANCELLED" as const,
+          submittedBy: "Buyer",
+          comments: "The buyer confirmed that the dispute was satisfactorily resolved.",
+          ticketCount: dispute.ticketCount || dispute.ticketIds?.length || 0,
+          tickets: disputedTicketDetails,
+          fileNames: [],
+          parties: [
+            ...(order.buyerSeller.user?.email ? [{ email: order.buyerSeller.user.email, firstName: order.buyerSeller.user.firstName, role: "Buyer" as const }] : []),
+            ...(order.seller.user?.email ? [{ email: order.seller.user.email, firstName: order.seller.user.firstName, role: "Seller" as const }] : []),
+            { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" as const },
+          ],
+          idempotencyKeyPrefix: `dispute-cancelled:${order.id}`,
+        },
+      };
     });
+
+    if (result instanceof NextResponse) return result;
+
+    try {
+      await sendDisputeEmails(result.postCommitEmail);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown dispute email error";
+      console.error(
+        "[EMAIL] Dispute-cancelled notifications failed after commit:",
+        `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+      );
+    }
+    return result.response;
   } catch (err) {
     if (err instanceof ManagedAccountOrderOperationError) {
       return NextResponse.json(
