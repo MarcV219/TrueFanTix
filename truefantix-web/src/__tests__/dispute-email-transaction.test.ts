@@ -38,7 +38,7 @@ describe("dispute email transaction client", () => {
     await sendDisputeEmails({
       orderId: "order-synthetic",
       kind: "RESOLVED",
-      parties: [{ email: "buyer@example.test", role: "Buyer" }],
+      parties: [{ email: "buyer@example.test", role: "Buyer" as const }],
       submittedBy: "Synthetic Support",
       comments: "Synthetic resolution.",
       ticketCount: 1,
@@ -120,6 +120,67 @@ describe("dispute email transaction client", () => {
     expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: "ATTEMPTING" }),
       data: expect.objectContaining({ status: "SENT", provider: "SENDGRID" }),
+    }));
+    expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates one committed update while allowing the next submission", async () => {
+    const update: Omit<Parameters<typeof sendDisputeEmails>[0], "idempotencyKeyPrefix"> = {
+      orderId: "order-stable-update",
+      kind: "UPDATED" as const,
+      parties: [{ email: "buyer@example.test", role: "Buyer" }],
+      submittedBy: "Synthetic Buyer",
+      comments: "Additional evidence.",
+      ticketCount: 1,
+      fileNames: ["evidence.txt"],
+    };
+    mockedPrisma.emailDelivery.create
+      .mockResolvedValueOnce({ id: "submission-1-delivery" })
+      .mockRejectedValueOnce({ code: "P2002" })
+      .mockResolvedValueOnce({ id: "submission-2-delivery" });
+
+    await sendDisputeEmails({
+      ...update,
+      idempotencyKeyPrefix: "dispute-updated:order-stable-update:submission-1",
+    });
+    await sendDisputeEmails({
+      ...update,
+      idempotencyKeyPrefix: "dispute-updated:order-stable-update:submission-1",
+    });
+    await sendDisputeEmails({
+      ...update,
+      idempotencyKeyPrefix: "dispute-updated:order-stable-update:submission-2",
+    });
+
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({
+        emailType: "DISPUTE_UPDATE_dispute-updated:order-stable-update:submission-1_BUYER",
+      }),
+    });
+    expect(mockedPrisma.emailDelivery.create).toHaveBeenNthCalledWith(3, {
+      data: expect.objectContaining({
+        emailType: "DISPUTE_UPDATE_dispute-updated:order-stable-update:submission-2_BUYER",
+      }),
+    });
+    expect(mockedSendEmail).toHaveBeenCalledTimes(2);
+    expect(mockedSendEmail).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      idempotencyKey: "dispute-updated:order-stable-update:submission-1:BUYER",
+    }));
+    expect(mockedSendEmail).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      idempotencyKey: "dispute-updated:order-stable-update:submission-2:BUYER",
+    }));
+    expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenCalledTimes(2);
+    expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({
+        emailType: "DISPUTE_UPDATE_dispute-updated:order-stable-update:submission-1_BUYER",
+        status: "ATTEMPTING",
+      }),
+    }));
+    expect(mockedPrisma.emailDelivery.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({
+        emailType: "DISPUTE_UPDATE_dispute-updated:order-stable-update:submission-2_BUYER",
+        status: "ATTEMPTING",
+      }),
     }));
     expect(mockedPrisma.emailDelivery.upsert).not.toHaveBeenCalled();
   });

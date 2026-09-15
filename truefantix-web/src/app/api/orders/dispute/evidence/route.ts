@@ -20,7 +20,7 @@ export async function POST(req: Request) {
     if (!validation.success) return validation.response;
     const { orderId, comments, evidenceFiles } = validation.data;
 
-    return await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
+    const result = await runOrdinaryOrderOperation(gate.user.id, async (tx, current) => {
       // Serialize submissions with dispute closure and other evidence updates.
       // The locked snapshot is authoritative for both authorization and append.
       await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
@@ -78,30 +78,45 @@ export async function POST(req: Request) {
           link: role === "BUYER" ? "/account/tickets/seller-holding" : "/account/tickets/holding",
         }, tx);
       }
-      await sendDisputeEmails({
-        orderId: order.id,
-        kind: "UPDATED",
-        submittedBy: role === "BUYER" ? "Buyer" : "Seller",
-        comments: comments || "(documents only)",
-        ticketCount: dispute.ticketCount || dispute.ticketIds?.length || 0,
-        tickets: order.items
-          .filter((item) => dispute.ticketIds?.includes(item.ticketId))
-          .map((item) => {
-            const location = [item.ticket.row ? `Row ${item.ticket.row}` : null, item.ticket.seat ? `Seat ${item.ticket.seat}` : null]
-              .filter(Boolean)
-              .join(", ");
-            return `${item.ticket.title} — ${item.ticket.venue} — ${item.ticket.date}${location ? ` — ${location}` : ""} (ticket ${item.ticket.id})`;
-          }),
-        fileNames: evidenceFiles.map((file) => file.fileName),
-        parties: [
-          ...(buyer?.email ? [{ email: buyer.email, firstName: buyer.firstName, role: "Buyer" as const }] : []),
-          ...(seller?.email ? [{ email: seller.email, firstName: seller.firstName, role: "Seller" as const }] : []),
-          { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" },
-        ],
-      }, tx);
-
-      return NextResponse.json({ ok: true, message: "Additional dispute information submitted." });
+      return {
+        response: NextResponse.json({ ok: true, message: "Additional dispute information submitted." }),
+        postCommitEmail: {
+          orderId: order.id,
+          kind: "UPDATED" as const,
+          submittedBy: role === "BUYER" ? "Buyer" : "Seller",
+          comments: comments || "(documents only)",
+          ticketCount: dispute.ticketCount || dispute.ticketIds?.length || 0,
+          tickets: order.items
+            .filter((item) => dispute.ticketIds?.includes(item.ticketId))
+            .map((item) => {
+              const location = [item.ticket.row ? `Row ${item.ticket.row}` : null, item.ticket.seat ? `Seat ${item.ticket.seat}` : null]
+                .filter(Boolean)
+                .join(", ");
+              return `${item.ticket.title} — ${item.ticket.venue} — ${item.ticket.date}${location ? ` — ${location}` : ""} (ticket ${item.ticket.id})`;
+            }),
+          fileNames: evidenceFiles.map((file) => file.fileName),
+          parties: [
+            ...(buyer?.email ? [{ email: buyer.email, firstName: buyer.firstName, role: "Buyer" as const }] : []),
+            ...(seller?.email ? [{ email: seller.email, firstName: seller.firstName, role: "Seller" as const }] : []),
+            { email: DISPUTE_SUPPORT_EMAIL, role: "TrueFanTix Support" as const },
+          ],
+          idempotencyKeyPrefix: `dispute-updated:${order.id}:${submission.id}`,
+        },
+      };
     });
+
+    if (result instanceof NextResponse) return result;
+
+    try {
+      await sendDisputeEmails(result.postCommitEmail);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown dispute email error";
+      console.error(
+        "[EMAIL] Dispute-update notifications failed after commit:",
+        `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
+      );
+    }
+    return result.response;
   } catch (err) {
     if (err instanceof ManagedAccountOrderOperationError) {
       return NextResponse.json(

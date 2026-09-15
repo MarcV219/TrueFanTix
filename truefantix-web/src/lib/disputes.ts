@@ -70,7 +70,9 @@ export async function sendDisputeEmails(params: {
               ? `DISPUTE_REFUNDED_${roleKey}`
             : params.kind === "RESOLVED"
               ? `DISPUTE_RESOLVED_${roleKey}`
-            : `DISPUTE_UPDATE_${Date.now()}_${roleKey}`;
+            : params.idempotencyKeyPrefix
+              ? `DISPUTE_UPDATE_${params.idempotencyKeyPrefix}_${roleKey}`
+              : `DISPUTE_UPDATE_${Date.now()}_${roleKey}`;
       const link =
         party.role === "TrueFanTix Support"
           ? adminLink

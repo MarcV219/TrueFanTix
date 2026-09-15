@@ -169,7 +169,25 @@ describe("dispute evidence staging-persona race boundary", () => {
     expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
   });
 
-  it("appends evidence and records delivery through one locked serializable boundary", async () => {
+  it("commits the appended evidence before dispatching its prepared email envelope", async () => {
+    const sequence: string[] = [];
+    mockedPrisma.$transaction.mockImplementationOnce(
+      async (work: (tx: typeof mockedPrisma) => unknown) => {
+        sequence.push("transaction-start");
+        const result = await work(mockedPrisma);
+        expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
+        sequence.push("transaction-committed");
+        return result;
+      },
+    );
+    mockedPrisma.order.update.mockImplementationOnce(async () => {
+      sequence.push("local-write");
+      return { id: orderId };
+    });
+    mockedSendDisputeEmails.mockImplementationOnce(async () => {
+      sequence.push("email-attempted");
+    });
+
     const response = await POST(request());
 
     expect(response.status).toBe(200);
@@ -182,7 +200,46 @@ describe("dispute evidence staging-persona race boundary", () => {
     expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
     expect(mockedAuditLog).toHaveBeenCalledWith(expect.any(Object), mockedPrisma);
     expect(mockedCreateNotification).toHaveBeenCalledWith(expect.any(Object), mockedPrisma);
-    expect(mockedSendDisputeEmails).toHaveBeenCalledWith(expect.any(Object), mockedPrisma);
+    expect(sequence).toEqual([
+      "transaction-start",
+      "local-write",
+      "transaction-committed",
+      "email-attempted",
+    ]);
+    expect(mockedSendDisputeEmails).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKeyPrefix: expect.stringMatching(`^dispute-updated:${orderId}:[0-9a-f-]+$`),
+    }));
+  });
+
+  it("does not dispatch when commit resolution fails after preparing the response", async () => {
+    mockedPrisma.$transaction.mockImplementationOnce(
+      async (work: (tx: typeof mockedPrisma) => unknown) => {
+        await work(mockedPrisma);
+        throw Object.assign(new Error("synthetic commit failure"), { code: "P2034" });
+      },
+    );
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(500);
+    expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
+    expect(mockedSendDisputeEmails).not.toHaveBeenCalled();
+  });
+
+  it("preserves the committed response when the post-commit email helper rejects", async () => {
+    mockedSendDisputeEmails.mockRejectedValueOnce(
+      new Error("synthetic post-commit providerless failure"),
+    );
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+    expect(mockedPrisma.order.update).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith(
+      "[EMAIL] Dispute-update notifications failed after commit:",
+      "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic post-commit providerless failure",
+    );
   });
 
   it("rechecks the locked dispute before appending evidence", async () => {
