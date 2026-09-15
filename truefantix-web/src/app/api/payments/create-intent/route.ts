@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import type { LegacyPaymentIntentCommand } from "@prisma/client";
 import { releaseOrderAccessTokenHolds } from "@/lib/accessTokenHolds";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
@@ -10,6 +11,16 @@ import {
   ManagedAccountPurchaseError,
   runOrdinaryPurchase,
 } from "@/lib/tickets/ordinary-buyer";
+import { prisma } from "@/lib/prisma";
+import {
+  assertLegacyPaymentIntentProviderEvidence,
+  claimLegacyPaymentIntentCommand,
+  finalizeLegacyPaymentIntentCommand,
+  LegacyPaymentIntentAuthorizationChangedError,
+  type LegacyPaymentIntentProviderEvidence,
+  markLegacyPaymentIntentReconciliationRequired,
+  stageLegacyPaymentIntentCommand,
+} from "@/lib/payments/legacyPaymentIntent";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -25,8 +36,68 @@ function normalizeCurrency(value: unknown): "CAD" | "USD" {
   return String(value || "CAD").trim().toUpperCase() === "USD" ? "USD" : "CAD";
 }
 
-function isReusablePaymentIntentStatus(status: string) {
-  return ["requires_payment_method", "requires_confirmation", "requires_action", "processing"].includes(status);
+async function replaySucceededPaymentIntent(
+  stripe: Awaited<ReturnType<typeof getStripe>>,
+  command: LegacyPaymentIntentCommand,
+) {
+  if (!command.providerIntentId) {
+    return NextResponse.json({
+      ok: false,
+      error: "PAYMENT_RECONCILIATION_REQUIRED",
+      message: "The committed payment-intent evidence is incomplete. Reconciliation is required.",
+      retrySafe: false,
+    }, { status: 409 });
+  }
+
+  let rawIntent: {
+    id?: string;
+    status?: string;
+    amount?: number;
+    currency?: string;
+    client_secret?: string | null;
+  };
+  try {
+    rawIntent = await stripe.paymentIntents.retrieve(command.providerIntentId);
+  } catch {
+    return NextResponse.json({
+      ok: false,
+      error: "PAYMENT_PROVIDER_UNAVAILABLE",
+      message: "The existing payment intent could not be retrieved. No new payment intent was created.",
+      retrySafe: true,
+    }, { status: 503 });
+  }
+  const evidence: LegacyPaymentIntentProviderEvidence = {
+    id: typeof rawIntent.id === "string" ? rawIntent.id : "",
+    status: typeof rawIntent.status === "string" ? rawIntent.status : "",
+    amountCents: Number(rawIntent.amount),
+    currency: typeof rawIntent.currency === "string" ? rawIntent.currency : "",
+    clientSecret: typeof rawIntent.client_secret === "string" ? rawIntent.client_secret : "",
+  };
+  try {
+    assertLegacyPaymentIntentProviderEvidence(command, evidence);
+    if (
+      evidence.id !== command.providerIntentId
+      || evidence.status !== command.providerStatus
+      || evidence.amountCents !== command.providerAmountCents
+      || evidence.currency.toUpperCase() !== command.providerCurrency
+    ) {
+      throw new Error("provider evidence mismatch");
+    }
+  } catch {
+    return NextResponse.json({
+      ok: false,
+      error: "PAYMENT_RECONCILIATION_REQUIRED",
+      message: "The retrieved payment intent did not match the committed provider evidence. No new payment intent was created.",
+      retrySafe: false,
+    }, { status: 409 });
+  }
+  return NextResponse.json({
+    ok: true,
+    clientSecret: evidence.clientSecret,
+    amount: command.expectedAmountCents,
+    currency: command.currency,
+    reused: true,
+  });
 }
 
 export async function POST(req: Request) {
@@ -43,8 +114,18 @@ export async function POST(req: Request) {
     const { orderId } = validation.data;
 
     const result = await runOrdinaryPurchase(gate.user.id, async (tx, currentUser) => {
-      // Keep order ownership, reservation cleanup, provider activity, and the
-      // payment record behind the same current-identity lock as checkout.
+      // Commit an immutable checkout command before provider I/O. The order,
+      // every reserved ticket, and the buyer wallet remain behind the same
+      // current-identity boundary as checkout.
+      await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+      await tx.$queryRaw`
+        SELECT ticket."id"
+        FROM "Ticket" ticket
+        INNER JOIN "OrderItem" item ON item."ticketId" = ticket."id"
+        WHERE item."orderId" = ${orderId}
+        ORDER BY ticket."id"
+        FOR UPDATE OF ticket
+      `;
       const order = await tx.order.findUnique({
         where: { id: orderId },
         include: {
@@ -131,89 +212,242 @@ export async function POST(req: Request) {
         }
       }
 
-      const stripe = await getStripe();
       const currency = normalizeCurrency((order as any).currency);
-
-      if (order.payment?.provider === "STRIPE" && order.payment.providerRef) {
-        const existingIntent = await stripe.paymentIntents.retrieve(order.payment.providerRef);
-        if (
-          existingIntent.amount === order.totalCents &&
-          existingIntent.currency.toUpperCase() === currency &&
-          isReusablePaymentIntentStatus(existingIntent.status) &&
-          existingIntent.client_secret
-        ) {
-          return {
-            status: 200,
-            body: {
-              ok: true,
-              clientSecret: existingIntent.client_secret,
-              amount: order.totalCents,
-              currency,
-              reused: true,
-            },
-          };
-        }
-
-        if (existingIntent.status === "succeeded") {
-          return {
-            status: 409,
-            body: {
-              ok: false,
-              error: "PAYMENT_ALREADY_SUCCEEDED",
-              message: "Stripe has already accepted payment for this order. Please wait a moment and refresh your order status.",
-            },
-          };
-        }
-      }
-
-      const paymentIntent = await stripe.paymentIntents.create(
-        {
-          amount: order.totalCents,
-          currency: currency.toLowerCase(),
-          automatic_payment_methods: { enabled: true },
-          metadata: {
-            orderId: order.id,
-            buyerId: currentUser.id,
-            sellerId: order.sellerId,
-            currency,
-          },
-          description: `TrueFanTix Order #${order.id.slice(0, 8)}`,
-        },
-        { idempotencyKey: `truefantix-order-${order.id}` },
-      );
-
-      await tx.payment.upsert({
-        where: { orderId: order.id },
-        create: {
-          orderId: order.id,
-          amountCents: paymentIntent.amount,
-          currency,
-          status: "REQUIRES_PAYMENT",
-          provider: "STRIPE",
-          providerRef: paymentIntent.id,
-        },
-        update: {
-          amountCents: paymentIntent.amount,
-          currency,
-          status: "REQUIRES_PAYMENT",
-          provider: "STRIPE",
-          providerRef: paymentIntent.id,
-        },
+      const priorPayment = order.payment
+        ? {
+            id: order.payment.id,
+            provider: order.payment.provider,
+            providerRef: order.payment.providerRef,
+            amountCents: order.payment.amountCents,
+            currency: order.payment.currency,
+          }
+        : null;
+      const command = await stageLegacyPaymentIntentCommand(tx, {
+        orderId: order.id,
+        buyerUserId: currentUser.id,
+        buyerSellerId: currentUser.seller.id,
+        sellerId: order.sellerId,
+        expectedAmountCents: order.totalCents,
+        currency,
+        priorPayment,
+        ticketSnapshot: tickets.map((ticket) => ({
+          id: ticket.id,
+          status: ticket.status,
+          reservedByOrderId: ticket.reservedByOrderId,
+          reservedUntil: ticket.reservedUntil?.toISOString() ?? null,
+        })),
+        authorizedAt: now,
       });
-
-      return {
-        status: 200,
-        body: {
-          ok: true,
-          clientSecret: paymentIntent.client_secret,
-          amount: order.totalCents,
-          currency,
-        },
-      };
+      return { command };
     });
 
-    return NextResponse.json(result.body, { status: result.status });
+    if ("status" in result) {
+      return NextResponse.json(result.body, { status: result.status });
+    }
+
+    if (result.command.status === "SUCCEEDED") {
+      let replayStripe;
+      try {
+        replayStripe = await getStripe();
+      } catch {
+        return NextResponse.json({
+          ok: false,
+          error: "PAYMENT_PROVIDER_UNAVAILABLE",
+          message: "The existing payment intent could not be retrieved. No new payment intent was created.",
+          retrySafe: true,
+        }, { status: 503 });
+      }
+      return replaySucceededPaymentIntent(replayStripe, result.command);
+    }
+    if (result.command.status !== "NOT_SENT") {
+      return NextResponse.json({
+        ok: false,
+        error: "PAYMENT_RECONCILIATION_REQUIRED",
+        message: "A payment-intent provider attempt is already recorded for this order. Do not retry automatically; reconciliation is required.",
+        retrySafe: false,
+      }, { status: 409 });
+    }
+
+    let stripe;
+    try {
+      stripe = await getStripe();
+    } catch (error) {
+      return NextResponse.json({
+        ok: false,
+        error: "PAYMENT_PROVIDER_UNAVAILABLE",
+        message: error instanceof Error ? error.message : "Payment provider is unavailable.",
+        retrySafe: true,
+      }, { status: 503 });
+    }
+
+    const claimed = await prisma.$transaction(
+      (tx) => claimLegacyPaymentIntentCommand(tx, result.command.id),
+      { isolationLevel: "Serializable" },
+    );
+    if (!claimed) {
+      const current = await prisma.legacyPaymentIntentCommand.findUnique({ where: { id: result.command.id } });
+      if (current?.status === "SUCCEEDED") {
+        return replaySucceededPaymentIntent(stripe, current);
+      }
+      return NextResponse.json({
+        ok: false,
+        error: "PAYMENT_RECONCILIATION_REQUIRED",
+        message: "Another request may already have contacted the payment provider. Do not retry automatically; reconciliation is required.",
+        retrySafe: false,
+      }, { status: 409 });
+    }
+
+    let rawIntent: {
+      id?: string;
+      status?: string;
+      amount?: number;
+      currency?: string;
+      client_secret?: string | null;
+    };
+    let reused = false;
+    try {
+      if (claimed.priorPaymentProvider === "STRIPE" && claimed.priorPaymentRef) {
+        rawIntent = await stripe.paymentIntents.retrieve(claimed.priorPaymentRef);
+        const retrievedEvidence: LegacyPaymentIntentProviderEvidence = {
+          id: typeof rawIntent.id === "string" ? rawIntent.id : "",
+          status: typeof rawIntent.status === "string" ? rawIntent.status : "",
+          amountCents: Number(rawIntent.amount),
+          currency: typeof rawIntent.currency === "string" ? rawIntent.currency : "",
+          clientSecret: typeof rawIntent.client_secret === "string" ? rawIntent.client_secret : "",
+        };
+        try {
+          assertLegacyPaymentIntentProviderEvidence(claimed, retrievedEvidence);
+          reused = true;
+        } catch {
+          if (retrievedEvidence.status === "succeeded") {
+            await prisma.$transaction((tx) => markLegacyPaymentIntentReconciliationRequired(
+              tx,
+              claimed.id,
+              "EXISTING_PROVIDER_INTENT_ALREADY_SUCCEEDED",
+              {
+                id: retrievedEvidence.id,
+                status: retrievedEvidence.status,
+                amountCents: retrievedEvidence.amountCents,
+                currency: retrievedEvidence.currency.toUpperCase(),
+              },
+            ));
+            return NextResponse.json({
+              ok: false,
+              error: "PAYMENT_ALREADY_SUCCEEDED",
+              message: "Stripe has already accepted payment for this order. Reconciliation is required before retrying.",
+              retrySafe: false,
+            }, { status: 409 });
+          }
+          rawIntent = await stripe.paymentIntents.create({
+            amount: claimed.expectedAmountCents,
+            currency: claimed.currency.toLowerCase(),
+            automatic_payment_methods: { enabled: true },
+            metadata: {
+              orderId: claimed.orderId,
+              buyerId: claimed.buyerUserId,
+              sellerId: claimed.sellerId,
+              currency: claimed.currency,
+              paymentCommandId: claimed.id,
+              commandDigest: claimed.commandDigest,
+            },
+            description: `TrueFanTix Order #${claimed.orderId.slice(0, 8)}`,
+          }, { idempotencyKey: claimed.idempotencyKey });
+        }
+      } else {
+        rawIntent = await stripe.paymentIntents.create({
+          amount: claimed.expectedAmountCents,
+          currency: claimed.currency.toLowerCase(),
+          automatic_payment_methods: { enabled: true },
+          metadata: {
+            orderId: claimed.orderId,
+            buyerId: claimed.buyerUserId,
+            sellerId: claimed.sellerId,
+            currency: claimed.currency,
+            paymentCommandId: claimed.id,
+            commandDigest: claimed.commandDigest,
+          },
+          description: `TrueFanTix Order #${claimed.orderId.slice(0, 8)}`,
+        }, { idempotencyKey: claimed.idempotencyKey });
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Unknown provider outcome";
+      await prisma.$transaction((tx) => markLegacyPaymentIntentReconciliationRequired(
+        tx,
+        claimed.id,
+        `PROVIDER_OUTCOME_UNKNOWN: ${reason}`,
+      ));
+      return NextResponse.json({
+        ok: false,
+        error: "PAYMENT_RECONCILIATION_REQUIRED",
+        message: "The provider outcome is unknown. Do not retry automatically; reconciliation is required.",
+        retrySafe: false,
+      }, { status: 409 });
+    }
+
+    const evidence: LegacyPaymentIntentProviderEvidence = {
+      id: typeof rawIntent.id === "string" ? rawIntent.id : "",
+      status: typeof rawIntent.status === "string" ? rawIntent.status : "",
+      amountCents: Number(rawIntent.amount),
+      currency: typeof rawIntent.currency === "string" ? rawIntent.currency : "",
+      clientSecret: typeof rawIntent.client_secret === "string" ? rawIntent.client_secret : "",
+    };
+    try {
+      assertLegacyPaymentIntentProviderEvidence(claimed, evidence);
+    } catch {
+      await prisma.$transaction((tx) => markLegacyPaymentIntentReconciliationRequired(
+        tx,
+        claimed.id,
+        "PROVIDER_EVIDENCE_MISMATCH_OR_NONREUSABLE_STATUS",
+        evidence.id && evidence.status && Number.isFinite(evidence.amountCents) && evidence.currency
+          ? { ...evidence, currency: evidence.currency.toUpperCase() }
+          : undefined,
+      ));
+      return NextResponse.json({
+        ok: false,
+        error: "PAYMENT_RECONCILIATION_REQUIRED",
+        message: "The provider response did not match the committed payment command. Do not retry automatically; reconciliation is required.",
+        retrySafe: false,
+      }, { status: 409 });
+    }
+
+    try {
+      await runOrdinaryPurchase(gate.user.id, (tx) => finalizeLegacyPaymentIntentCommand(tx, {
+        commandId: claimed.id,
+        buyerUserId: claimed.buyerUserId,
+        evidence,
+      }));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Unknown local finalization failure";
+      await prisma.$transaction((tx) => markLegacyPaymentIntentReconciliationRequired(
+        tx,
+        claimed.id,
+        `PROVIDER_SUCCEEDED_LOCAL_FINALIZE_FAILED: ${reason}`,
+        { ...evidence, currency: evidence.currency.toUpperCase() },
+      ));
+      return NextResponse.json({
+        ok: false,
+        error: "PAYMENT_RECONCILIATION_REQUIRED",
+        message: "The provider accepted the payment command but local finalization did not commit. Do not retry automatically; reconciliation is required.",
+        retrySafe: false,
+      }, { status: 409 });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      clientSecret: evidence.clientSecret,
+      amount: claimed.expectedAmountCents,
+      currency: claimed.currency,
+      ...(reused ? { reused: true } : {}),
+    });
   } catch (err: unknown) {
+    if (err instanceof LegacyPaymentIntentAuthorizationChangedError) {
+      return NextResponse.json({
+        ok: false,
+        error: "PAYMENT_AUTHORIZATION_CHANGED",
+        message: err.message,
+        retrySafe: false,
+      }, { status: 409 });
+    }
     if (err instanceof ManagedAccountPurchaseError) {
       return NextResponse.json(
         {

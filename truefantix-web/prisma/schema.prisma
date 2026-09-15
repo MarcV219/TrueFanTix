@@ -68,6 +68,13 @@ enum LegacyDisputeRefundStatus {
   FAILED
 }
 
+enum LegacyPaymentIntentCommandStatus {
+  NOT_SENT
+  ATTEMPTING
+  RECONCILIATION_REQUIRED
+  SUCCEEDED
+}
+
 enum EventSelloutStatus {
   NOT_SOLD_OUT
   SOLD_OUT
@@ -1478,6 +1485,7 @@ model Order {
   accessTokenTransactions      AccessTokenTransaction[]
   transferProofDeliveryIntents TransferProofDeliveryIntent[]
   legacyDisputeRefundIntent    LegacyDisputeRefundIntent?
+  legacyPaymentIntentCommand   LegacyPaymentIntentCommand?
 
   // Conversation for this order
   conversation Conversation?
@@ -1774,6 +1782,40 @@ model Payment {
   updatedAt DateTime @updatedAt
 
   legacyDisputeRefundIntent LegacyDisputeRefundIntent?
+}
+
+model LegacyPaymentIntentCommand {
+  id                      String                           @id @default(cuid())
+  orderId                 String                           @unique
+  buyerUserId             String
+  buyerSellerId           String
+  sellerId                String
+  expectedAmountCents     Int
+  currency                String
+  priorPaymentId          String?
+  priorPaymentProvider    String?
+  priorPaymentRef         String?
+  priorPaymentAmountCents Int?
+  priorPaymentCurrency    String?
+  ticketSnapshot          Json
+  commandDigest           String
+  idempotencyKey          String                           @unique
+  status                  LegacyPaymentIntentCommandStatus @default(NOT_SENT)
+  dispatchStartedAt       DateTime?
+  providerIntentId        String?                          @unique
+  providerStatus          String?
+  providerAmountCents     Int?
+  providerCurrency        String?
+  failureReason           String?
+  authorizedAt            DateTime                         @default(now())
+  completedAt             DateTime?
+  createdAt               DateTime                         @default(now())
+  updatedAt               DateTime                         @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, authorizedAt])
+  @@index([buyerUserId, authorizedAt])
 }
 
 model LegacyDisputeRefundIntent {
