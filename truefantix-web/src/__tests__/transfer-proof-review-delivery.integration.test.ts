@@ -668,6 +668,54 @@ if (!databaseUrl) describe.skip("transfer-proof review delivery PostgreSQL bound
       .resolves.toMatchObject({ claimed: 0, reconciliationRequired: 0 });
   });
 
+  it("quarantines a redigested review envelope whose link origin differs from the current environment", async () => {
+    await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
+    const template = await prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    });
+    const payload = template.payloadJson as {
+      sellerName: string;
+      sellerEmail: string;
+      eventTitle: string;
+      appOrigin: string;
+    };
+    const poisonedOrigin = "https://attacker.example";
+    const poisonedPayload = { ...payload, appOrigin: poisonedOrigin };
+    const textBody = template.textBody.replaceAll(payload.appOrigin, poisonedOrigin);
+    const htmlBody = template.htmlBody.replaceAll(payload.appOrigin, poisonedOrigin);
+    const [digest] = await prisma.$queryRaw<Array<{ value: string }>>`
+      SELECT transfer_proof_review_envelope_digest(
+        ${template.orderId}, ${template.requestId}, ${template.recipient},
+        ${template.requestedAt.toISOString()}, ${poisonedPayload.sellerName},
+        ${poisonedPayload.sellerEmail}, ${poisonedPayload.eventTitle},
+        ${poisonedPayload.appOrigin}, ${template.subject}, ${textBody}, ${htmlBody}
+      ) AS value
+    `;
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.transferProofReviewDeliveryIntent.update({
+        where: { requestId },
+        data: {
+          payloadJson: poisonedPayload,
+          textBody,
+          htmlBody,
+          envelopeDigest: digest.value,
+        },
+      });
+    });
+
+    await expect(drainTransferProofReviewDeliveryIntents({ orderId }, prisma))
+      .resolves.toMatchObject({ claimed: 1, failed: 1, reconciliationRequired: 1 });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+    await expect(prisma.transferProofReviewDeliveryIntent.findUniqueOrThrow({
+      where: { requestId },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED",
+      attemptCount: 0,
+      lastError: "Pre-dispatch review delivery failure: Transfer-proof review delivery origin does not match the current environment",
+    });
+  });
+
   it("quarantines an expired Resend claim whose replay window elapsed before dispatch", async () => {
     await prisma.$transaction((tx) => stageTransferProofReviewDeliveryIntent(tx, params()));
     const databaseNow = await databaseUtcNow();

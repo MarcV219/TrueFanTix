@@ -238,6 +238,9 @@ function requireCanonicalEnvelope(row: TransferProofReviewDeliveryIntent) {
   if (reviewAppOrigin(payload.appOrigin) !== payload.appOrigin) {
     throw new Error("Invalid transfer-proof review delivery application origin");
   }
+  if (payload.appOrigin !== canonicalTransferProofReviewOrigin()) {
+    throw new Error("Transfer-proof review delivery origin does not match the current environment");
+  }
   const rendered = renderReviewEnvelope({ orderId: row.orderId, requestedAt: row.requestedAt, payload });
   const expectedKey = reviewDeliveryIdempotencyKey(row.orderId, row.requestId, row.recipient);
   const expectedDigest = reviewEnvelopeDigest({
