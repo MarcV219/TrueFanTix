@@ -699,6 +699,42 @@ if (!databaseUrl) describe.skip("transfer-proof delivery PostgreSQL boundary", (
     await ensureSyntheticOrder(orderId);
   });
 
+  it("preserves a database-authenticated seller decision schedule across the generic origin trigger", async () => {
+    await useDatabaseOriginClock();
+    const decisionId = `decision-database-origin-${runId}`;
+    const decidedAt = await databaseUtcNow();
+    const { decision, note } = await prepareAdminDecision("REJECT", decisionId, undefined, decidedAt);
+    try {
+      await expect(prisma.$transaction((tx) => stageTransferProofAdminDecisionDeliveryIntent(tx, {
+        orderId,
+        decisionId,
+        action: "REJECT",
+        note,
+        decidedAt,
+        decidedByUserId: decision.decidedByUserId,
+        sellerUserId,
+        sellerEmail: "seller@example.test",
+        sellerFirstName: "Seller",
+      }))).resolves.toBeUndefined();
+
+      const row = await prisma.transferProofDeliveryIntent.findFirstOrThrow({
+        where: { orderId, kind: "SELLER_REVIEW_DECISION_EMAIL", idempotencyKey: { contains: decisionId } },
+        select: { availableAt: true, createdAt: true, updatedAt: true },
+      });
+      expect(row).toEqual({
+        availableAt: decidedAt,
+        createdAt: expect.any(NativeDate),
+        updatedAt: expect.any(NativeDate),
+      });
+      expect(row.createdAt.getTime()).toBeGreaterThanOrEqual(decidedAt.getTime());
+      expect(row.updatedAt).toEqual(row.createdAt);
+    } finally {
+      await forceDeleteDeliveryIntents({ orderId, kind: "SELLER_REVIEW_DECISION_EMAIL" });
+      await ensureSyntheticOrder(orderId);
+      await useHistoricalOriginClock();
+    }
+  });
+
   it("does not let a caller clock reclaim or quarantine a live seller-decision claim", async () => {
     await useDatabaseClaimClock();
     const decisionId = `decision-live-clock-${runId}`;
