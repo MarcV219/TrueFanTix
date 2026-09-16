@@ -37,6 +37,9 @@ type ArtistPrimitive = Readonly<{
 }>;
 
 export type SpotifyArtistCatalogMatch = Readonly<{
+  type: "ARTIST";
+  value: string;
+  label: string;
   catalogEntityId: string;
   canonicalName: string;
   provider: string;
@@ -52,9 +55,38 @@ export type SpotifyArtistReadResult =
   | Readonly<{ status: "DRIFTED" }>
   | Readonly<{ status: "READY"; artists: readonly SpotifyArtistReadItem[] }>;
 
+export type SpotifyArtistImportSelection = Readonly<{
+  spotifyIds: readonly string[] | null;
+  includeUnmatched: boolean;
+}>;
+
+export type SpotifyArtistImportResult =
+  | Readonly<{ status: Exclude<SpotifyArtistCredentialResult["status"], "READY"> }>
+  | Readonly<{ status: "DRIFTED" }>
+  | Readonly<{
+      status: "READY";
+      imported: readonly Readonly<{
+        id: string;
+        type: string;
+        value: string;
+        status: string;
+        catalogEntityId: string | null;
+      }>[];
+      requested: readonly Readonly<{
+        id: string;
+        requestedValue: string;
+        status: string;
+      }>[];
+    }>;
+
+type RawCatalogMatch = Readonly<Pick<
+  SpotifyArtistCatalogMatch,
+  "catalogEntityId" | "canonicalName" | "provider" | "providerId"
+>>;
+
 type CatalogMatcher = (
   artists: readonly Readonly<{ spotifyId: string; name: string }>[],
-) => Promise<readonly (SpotifyArtistCatalogMatch | null)[]>;
+) => Promise<readonly (RawCatalogMatch | null)[]>;
 
 type ArtistReadOptions = {
   db?: RootDatabase;
@@ -320,14 +352,22 @@ function validateMatch(value: unknown) {
   if (!catalogEntityId || !canonicalName || !provider || !providerId) {
     throw new Error("SPOTIFY_ARTIST_CATALOG_INVALID");
   }
-  return Object.freeze({ catalogEntityId, canonicalName, provider, providerId });
+  return Object.freeze({
+    type: "ARTIST" as const,
+    value: canonicalName,
+    label: canonicalName,
+    catalogEntityId,
+    canonicalName,
+    provider,
+    providerId,
+  });
 }
 
 async function defaultCatalogMatcher(
   db: RootDatabase,
   artists: readonly Readonly<{ spotifyId: string; name: string }>[],
 ) {
-  const results: (SpotifyArtistCatalogMatch | null)[] = [];
+  const results: (RawCatalogMatch | null)[] = [];
   for (const artist of artists) {
     const matches = await db.catalogEntity.findMany({
       where: { type: "ARTIST", canonicalName: { equals: artist.name, mode: "insensitive" } },
@@ -357,9 +397,19 @@ async function lockOrdinaryUser(tx: Transaction, userId: string) {
   if (user.role !== "USER") throw new SpotifyRefreshAccessChangedError("NOT_AUTHENTICATED");
   if (user.isBanned) throw new SpotifyRefreshAccessChangedError("BANNED");
   if (!user.emailVerifiedAt || !user.phoneVerifiedAt) throw new SpotifyRefreshAccessChangedError("NOT_VERIFIED");
+  return user;
 }
 
-async function finalFence(db: RootDatabase, credential: SpotifyArtistReadCredential, now: Date) {
+function isSerializationFailure(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2034";
+}
+
+async function finalFence<T>(
+  db: RootDatabase,
+  credential: SpotifyArtistReadCredential,
+  now: Date,
+  work: (tx: Transaction) => Promise<T>,
+) {
   return db.$transaction(async (tx) => {
     await lockOrdinaryUser(tx, credential.userId);
     await tx.$queryRaw`SELECT "id" FROM "ConnectedAccount" WHERE "id" = ${credential.connectionId} FOR UPDATE`;
@@ -367,25 +417,35 @@ async function finalFence(db: RootDatabase, credential: SpotifyArtistReadCredent
       where: { id: credential.connectionId },
       select: { id: true, userId: true, provider: true, providerAccountId: true, expiresAt: true, currentRefreshCommandId: true },
     });
-    if (!account) return false;
+    if (!account) return Object.freeze({ valid: false as const });
     const rows = await tx.$queryRaw<Array<{ digest: string }>>`
       SELECT spotify_connected_account_version_digest(account_row) AS digest
       FROM "ConnectedAccount" account_row WHERE account_row.id = ${credential.connectionId}
     `;
-    return account.userId === credential.userId
+    const valid = account.userId === credential.userId
       && account.provider === "spotify"
       && account.providerAccountId === credential.providerAccountId
       && account.currentRefreshCommandId === credential.refreshCommandId
       && rows[0]?.digest === credential.versionDigest
       && account.expiresAt?.toISOString() === credential.expiresAt
       && account.expiresAt.getTime() >= now.getTime() + EXPIRY_LEEWAY_MS;
+    if (!valid) return Object.freeze({ valid: false as const });
+    return Object.freeze({ valid: true as const, value: await work(tx) });
   }, { isolationLevel: "Serializable", timeout: 120_000 });
 }
 
-export async function readSpotifyArtistSnapshot(
+type LoadedArtistSnapshot =
+  | Readonly<{ status: Exclude<SpotifyArtistCredentialResult["status"], "READY"> }>
+  | Readonly<{
+      status: "READY";
+      credential: SpotifyArtistReadCredential;
+      artists: readonly SpotifyArtistReadItem[];
+    }>;
+
+async function loadSpotifyArtistSnapshot(
   userId: string,
   options: ArtistReadOptions = {},
-): Promise<SpotifyArtistReadResult> {
+): Promise<LoadedArtistSnapshot> {
   const db = options.db ?? prisma;
   const now = options.now ?? (() => new Date());
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -419,16 +479,139 @@ export async function readSpotifyArtistSnapshot(
     throw new Error("SPOTIFY_ARTIST_CATALOG_INVALID");
   }
   const matches = rawMatches.map(validateMatch);
-  let valid: boolean;
+  const output = artists.map((artist, index) => Object.freeze({ ...artist, match: matches[index] }));
+  return Object.freeze({
+    status: "READY",
+    credential: envelope.credential,
+    artists: Object.freeze(output),
+  });
+}
+
+export async function readSpotifyArtistSnapshot(
+  userId: string,
+  options: ArtistReadOptions = {},
+): Promise<SpotifyArtistReadResult> {
+  const db = options.db ?? prisma;
+  const now = options.now ?? (() => new Date());
+  const loaded = await loadSpotifyArtistSnapshot(userId, options);
+  if (loaded.status !== "READY") return loaded;
   try {
-    valid = await finalFence(db, envelope.credential, now());
+    const fenced = await finalFence(db, loaded.credential, now(), async () => undefined);
+    if (!fenced.valid) return Object.freeze({ status: "DRIFTED" });
   } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "P2034") {
-      return Object.freeze({ status: "DRIFTED" });
-    }
+    if (isSerializationFailure(error)) return Object.freeze({ status: "DRIFTED" });
     throw error;
   }
-  if (!valid) return Object.freeze({ status: "DRIFTED" });
-  const output = artists.map((artist, index) => Object.freeze({ ...artist, match: matches[index] }));
-  return Object.freeze({ status: "READY", artists: Object.freeze(output) });
+  return Object.freeze({ status: "READY", artists: loaded.artists });
+}
+
+function validateSelection(selection: SpotifyArtistImportSelection) {
+  if (typeof selection.includeUnmatched !== "boolean") throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
+  if (selection.spotifyIds === null) return null;
+  if (!Array.isArray(selection.spotifyIds) || selection.spotifyIds.length > MAX_TOTAL_ITEMS) {
+    throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
+  }
+  const selected = new Set<string>();
+  for (const value of selection.spotifyIds) {
+    const id = boundedText(value, MAX_ID_LENGTH);
+    if (!id || selected.has(id)) throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
+    selected.add(id);
+  }
+  return selected;
+}
+
+export async function importSpotifyArtistSnapshot(
+  userId: string,
+  selection: SpotifyArtistImportSelection,
+  options: ArtistReadOptions = {},
+): Promise<SpotifyArtistImportResult> {
+  const selectedIds = validateSelection(selection);
+  const db = options.db ?? prisma;
+  const now = options.now ?? (() => new Date());
+  const loaded = await loadSpotifyArtistSnapshot(userId, options);
+  if (loaded.status !== "READY") return loaded;
+  const selected = Object.freeze(loaded.artists.filter((artist) => !selectedIds || selectedIds.has(artist.spotifyId)));
+  if (selectedIds && selected.length !== selectedIds.size) {
+    throw new Error("SPOTIFY_ARTIST_SELECTION_STALE");
+  }
+
+  try {
+    const fenced = await finalFence(db, loaded.credential, now(), async (tx) => {
+      const imported = [];
+      const requested = [];
+      const importedIds = new Set<string>();
+      const requestedIds = new Set<string>();
+
+      for (const artist of selected) {
+        if (artist.match) {
+          const entity = await tx.catalogEntity.findUnique({
+            where: { id: artist.match.catalogEntityId },
+            select: { id: true, type: true, canonicalName: true, provider: true, providerId: true },
+          });
+          if (
+            !entity
+            || entity.type !== "ARTIST"
+            || entity.canonicalName !== artist.match.canonicalName
+            || entity.provider !== artist.match.provider
+            || entity.providerId !== artist.match.providerId
+          ) {
+            throw new Error("SPOTIFY_ARTIST_CATALOG_DRIFT");
+          }
+          const preference = await tx.notificationPreference.upsert({
+            where: { userId_type_value: { userId, type: "ARTIST", value: entity.canonicalName } },
+            create: {
+              userId,
+              type: "ARTIST",
+              value: entity.canonicalName,
+              catalogEntityId: entity.id,
+              status: "ACTIVE",
+            },
+            update: { catalogEntityId: entity.id, status: "ACTIVE" },
+            select: { id: true, type: true, value: true, status: true, catalogEntityId: true },
+          });
+          if (!importedIds.has(preference.id)) {
+            importedIds.add(preference.id);
+            imported.push(Object.freeze(preference));
+          }
+        } else if (selection.includeUnmatched) {
+          const request = await tx.catalogRequest.upsert({
+            where: {
+              userId_requestedType_requestedValue: {
+                userId,
+                requestedType: "ARTIST",
+                requestedValue: artist.name,
+              },
+            },
+            create: {
+              userId,
+              requestedType: "ARTIST",
+              requestedValue: artist.name,
+              notes: "Imported from Spotify; needs catalog review.",
+              status: "PENDING",
+            },
+            update: {
+              notes: "Imported from Spotify; needs catalog review.",
+              status: "PENDING",
+              adminNotes: null,
+              reviewedAt: null,
+            },
+            select: { id: true, requestedValue: true, status: true },
+          });
+          if (!requestedIds.has(request.id)) {
+            requestedIds.add(request.id);
+            requested.push(Object.freeze(request));
+          }
+        }
+      }
+      return Object.freeze({
+        imported: Object.freeze(imported),
+        requested: Object.freeze(requested),
+      });
+    });
+    if (!fenced.valid) return Object.freeze({ status: "DRIFTED" });
+    return Object.freeze({ status: "READY", ...fenced.value });
+  } catch (error) {
+    if (isSerializationFailure(error)) return Object.freeze({ status: "DRIFTED" });
+    throw error;
+  }
 }

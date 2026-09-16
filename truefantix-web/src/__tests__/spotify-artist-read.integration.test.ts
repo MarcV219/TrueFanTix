@@ -4,7 +4,10 @@ import crypto from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { readSpotifyArtistSnapshot } from "@/lib/integrations/spotify-artist-read";
+import {
+  importSpotifyArtistSnapshot,
+  readSpotifyArtistSnapshot,
+} from "@/lib/integrations/spotify-artist-read";
 import { prisma } from "@/lib/prisma";
 
 const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
@@ -18,6 +21,7 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
   const suffix = `${Date.now()}-${process.pid}`;
   const userId = `artist-read-user-${suffix}`;
   const connectionId = `artist-read-connection-${suffix}`;
+  const catalogEntityId = `artist-read-catalog-${suffix}`;
   const secret = "artist-read-integration-encryption-key";
   const now = new Date("2026-09-16T12:00:00.000Z");
   const env = { NODE_ENV: "test", SPOTIFY_TOKEN_ENCRYPTION_KEY: secret } as NodeJS.ProcessEnv;
@@ -32,8 +36,11 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
   async function reset() {
     await db.$transaction(async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.notificationPreference.deleteMany({ where: { userId } });
+      await tx.catalogRequest.deleteMany({ where: { userId } });
       await tx.connectedAccount.deleteMany({ where: { userId } });
       await tx.user.deleteMany({ where: { id: userId } });
+      await tx.catalogEntity.deleteMany({ where: { id: catalogEntityId } });
     });
   }
 
@@ -72,6 +79,113 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
     expect(result).toEqual({ status: "READY", artists: [{ spotifyId: "artist-1", name: "Artist One", popularity: 80, source: "followed", spotifyUrl: null, imageUrl: null, match: null }] });
     expect(JSON.stringify(result)).not.toContain("provider-access-token");
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it("atomically imports the selected matched and unmatched artists after the exact final fence", async () => {
+    await db.catalogEntity.create({ data: {
+      id: catalogEntityId,
+      type: "ARTIST",
+      canonicalName: "Matched Artist",
+      provider: "spotify",
+      providerId: "artist-matched",
+    } });
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [
+          { id: "artist-matched", name: "Matched Artist" },
+          { id: "artist-unmatched", name: "Unmatched Artist" },
+        ], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+
+    const result = await importSpotifyArtistSnapshot(userId, {
+      spotifyIds: Object.freeze(["artist-matched", "artist-unmatched"]),
+      includeUnmatched: true,
+    }, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+
+    expect(result).toMatchObject({
+      status: "READY",
+      imported: [{ value: "Matched Artist", catalogEntityId }],
+      requested: [{ requestedValue: "Unmatched Artist", status: "PENDING" }],
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    await expect(db.notificationPreference.count({ where: { userId } })).resolves.toBe(1);
+    await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(1);
+  });
+
+  it("rejects mixed and wholly unknown selections without writing a partial import", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-known", name: "Known Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+
+    await expect(importSpotifyArtistSnapshot(userId, {
+      spotifyIds: Object.freeze(["artist-known", "artist-unknown"]),
+      includeUnmatched: true,
+    }, { db: serviceDb, env, fetchImpl, now: () => new Date(now) }))
+      .rejects.toThrow("SPOTIFY_ARTIST_SELECTION_STALE");
+    await expect(importSpotifyArtistSnapshot(userId, {
+      spotifyIds: Object.freeze(["artist-unknown"]),
+      includeUnmatched: true,
+    }, { db: serviceDb, env, fetchImpl, now: () => new Date(now) }))
+      .rejects.toThrow("SPOTIFY_ARTIST_SELECTION_STALE");
+    await expect(db.notificationPreference.count({ where: { userId } })).resolves.toBe(0);
+    await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(0);
+  });
+
+  it("returns drift without writes when the credential changes after provider and catalog reads", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const matcher = jest.fn(async () => {
+      await db.connectedAccount.update({
+        where: { id: connectionId },
+        data: { expiresAt: new Date("2026-09-16T15:00:00.000Z") },
+      });
+      return [null];
+    });
+
+    await expect(importSpotifyArtistSnapshot(userId, {
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, fetchImpl, catalogMatcher: matcher, now: () => new Date(now) }))
+      .resolves.toEqual({ status: "DRIFTED" });
+    await expect(db.notificationPreference.count({ where: { userId } })).resolves.toBe(0);
+    await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(0);
+  });
+
+  it("rolls back every import write when matched catalog evidence drifts", async () => {
+    await db.catalogEntity.create({ data: {
+      id: catalogEntityId,
+      type: "ARTIST",
+      canonicalName: "Matched Artist",
+      provider: "spotify",
+      providerId: "artist-matched",
+    } });
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [
+          { id: "artist-unmatched", name: "Unmatched Artist" },
+          { id: "artist-matched", name: "Matched Artist" },
+        ], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const matcher = jest.fn(async () => {
+      const match = {
+        catalogEntityId,
+        canonicalName: "Matched Artist",
+        provider: "spotify",
+        providerId: "artist-matched",
+      };
+      await db.catalogEntity.update({
+        where: { id: catalogEntityId },
+        data: { providerId: "artist-replaced" },
+      });
+      return [null, match];
+    });
+
+    await expect(importSpotifyArtistSnapshot(userId, {
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, fetchImpl, catalogMatcher: matcher, now: () => new Date(now) }))
+      .rejects.toThrow("SPOTIFY_ARTIST_CATALOG_DRIFT");
+    await expect(db.notificationPreference.count({ where: { userId } })).resolves.toBe(0);
+    await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(0);
   });
 
   it("rejects a hostile pagination URL without following it or invoking catalog matching", async () => {

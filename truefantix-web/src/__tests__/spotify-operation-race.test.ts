@@ -9,12 +9,16 @@ import {
   disconnectSpotify,
   exchangeSpotifyCode,
   getSpotifyConnectionEvidence,
-  getSpotifyImportCandidates,
   hasSpotifyConnection,
   snapshotSpotifyConnectionAuthorization,
   spotifyAccountRedirectUrl,
   storeSpotifyConnection,
 } from "@/lib/integrations/spotify";
+import {
+  importSpotifyArtistSnapshot,
+  readSpotifyArtistSnapshot,
+} from "@/lib/integrations/spotify-artist-read";
+import { ManagedAccountSpotifyOperationError } from "@/lib/integrations/ordinary-spotify-user";
 import { GET as getConnection, DELETE as deleteConnection } from "@/app/api/integrations/spotify/connection/route";
 import { GET as getArtists, POST as importArtists } from "@/app/api/integrations/spotify/artists/route";
 import { GET as spotifyCallback } from "@/app/api/integrations/spotify/callback/route";
@@ -34,11 +38,14 @@ jest.mock("@/lib/prisma", () => ({
 jest.mock("@/lib/auth/guards", () => ({ requireUser: jest.fn() }));
 jest.mock("@/lib/email", () => ({ sendEmail: jest.fn() }));
 jest.mock("next/headers", () => ({ cookies: jest.fn() }));
+jest.mock("@/lib/integrations/spotify-artist-read", () => ({
+  importSpotifyArtistSnapshot: jest.fn(),
+  readSpotifyArtistSnapshot: jest.fn(),
+}));
 jest.mock("@/lib/integrations/spotify", () => ({
   disconnectSpotify: jest.fn(),
   exchangeSpotifyCode: jest.fn(),
   getSpotifyConnectionEvidence: jest.fn(),
-  getSpotifyImportCandidates: jest.fn(),
   hasSpotifyConnection: jest.fn(),
   snapshotSpotifyConnectionAuthorization: jest.fn(),
   spotifyAccountRedirectUrl: jest.fn(),
@@ -62,8 +69,11 @@ const mockedExchangeSpotifyCode = exchangeSpotifyCode as jest.MockedFunction<typ
 const mockedGetSpotifyConnectionEvidence = getSpotifyConnectionEvidence as jest.MockedFunction<
   typeof getSpotifyConnectionEvidence
 >;
-const mockedGetSpotifyImportCandidates = getSpotifyImportCandidates as jest.MockedFunction<
-  typeof getSpotifyImportCandidates
+const mockedImportSpotifyArtistSnapshot = importSpotifyArtistSnapshot as jest.MockedFunction<
+  typeof importSpotifyArtistSnapshot
+>;
+const mockedReadSpotifyArtistSnapshot = readSpotifyArtistSnapshot as jest.MockedFunction<
+  typeof readSpotifyArtistSnapshot
 >;
 const mockedHasSpotifyConnection = hasSpotifyConnection as jest.MockedFunction<typeof hasSpotifyConnection>;
 const mockedSnapshotSpotifyConnectionAuthorization = snapshotSpotifyConnectionAuthorization as jest.MockedFunction<
@@ -118,7 +128,8 @@ describe("Spotify staging-persona operation boundary", () => {
     );
     mockedHasSpotifyConnection.mockResolvedValue(true);
     mockedDisconnectSpotify.mockResolvedValue(undefined);
-    mockedGetSpotifyImportCandidates.mockResolvedValue({ connected: true, artists: [] });
+    mockedImportSpotifyArtistSnapshot.mockResolvedValue({ status: "READY", imported: [], requested: [] });
+    mockedReadSpotifyArtistSnapshot.mockResolvedValue({ status: "READY", artists: [] });
     mockedExchangeSpotifyCode.mockResolvedValue({ access_token: "token" });
     mockedSnapshotSpotifyConnectionAuthorization.mockResolvedValue({
       userId: "user-1",
@@ -169,84 +180,131 @@ describe("Spotify staging-persona operation boundary", () => {
     });
   });
 
-  it("keeps provider-backed artist loading and import writes in one transaction", async () => {
+  it("keeps artist-route authentication refusals private", async () => {
+    mockedRequireUser.mockResolvedValueOnce({
+      ok: false,
+      res: NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED" }, { status: 401 }),
+    } as never);
+
+    const response = await getArtists(request("/api/integrations/spotify/artists"));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mockedReadSpotifyArtistSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("passes a bounded selection to the import boundary and emails only after committed output", async () => {
     const sequence: string[] = [];
-    mockedPrisma.$transaction.mockImplementationOnce(
-      async (work: (tx: typeof mockedPrisma) => unknown) => {
-        sequence.push("transaction-start");
-        const result = await work(mockedPrisma);
-        sequence.push("transaction-committed");
-        return result;
-      },
-    );
+    mockedImportSpotifyArtistSnapshot.mockImplementationOnce(async () => {
+      sequence.push("import-committed");
+      return {
+        status: "READY",
+        imported: [{ id: "preference-1", type: "ARTIST", value: "Matched Artist", status: "ACTIVE", catalogEntityId: "entity-1" }],
+        requested: [{ id: "request-1", requestedValue: "Unknown Artist", status: "PENDING" }],
+      };
+    });
     mockedSendEmail.mockImplementationOnce(async () => {
       sequence.push("email-attempted");
       return { ok: true, provider: "CONSOLE", providerResult: "LOGGED" };
     });
-    mockedGetSpotifyImportCandidates.mockResolvedValue({
-      connected: true,
-      artists: [
-        {
-          spotifyId: "artist-1",
-          name: "Matched Artist",
-          source: "followed",
-          match: {
-            type: "ARTIST",
-            value: "Matched Artist",
-            label: "Matched Artist",
-            canonicalName: "Matched Artist",
-            catalogEntityId: "entity-1",
-            provider: "spotify",
-            providerId: "artist-1",
-          },
-        },
-        { spotifyId: "artist-2", name: "Unknown Artist", source: "top", match: null },
-      ],
-    });
-    mockedPrisma.catalogEntity.findUnique.mockResolvedValue({
-      id: "entity-1",
-      type: "ARTIST",
-      canonicalName: "Matched Artist",
-    });
-    mockedPrisma.notificationPreference.upsert.mockResolvedValue({ id: "preference-1" });
-    mockedPrisma.catalogRequest.upsert.mockResolvedValue({
-      id: "request-1",
-      requestedValue: "Unknown Artist",
-      status: "PENDING",
-    });
 
     const response = await importArtists(
-      request("/api/integrations/spotify/artists", "POST", { includeUnmatched: true }),
+      request("/api/integrations/spotify/artists", "POST", {
+        spotifyIds: ["artist-1", "artist-1", "artist-2"],
+        includeUnmatched: true,
+      }),
     );
 
     expect(response.status).toBe(200);
-    expect(mockedGetSpotifyImportCandidates).toHaveBeenCalledWith("user-1", mockedPrisma);
-    expect(mockedPrisma.notificationPreference.upsert).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.catalogRequest.upsert).toHaveBeenCalledTimes(1);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mockedImportSpotifyArtistSnapshot).toHaveBeenCalledWith("user-1", {
+      spotifyIds: ["artist-1", "artist-2"],
+      includeUnmatched: true,
+    });
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
     expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({
       idempotencyKey: expect.stringMatching(/^spotify-catalog:[a-f0-9]{64}$/),
     }));
-    expect(sequence).toEqual([
-      "transaction-start",
-      "transaction-committed",
-      "email-attempted",
-    ]);
+    expect(sequence).toEqual(["import-committed", "email-attempted"]);
+  });
+
+  it("rejects unknown or hostile selection fields before the import boundary", async () => {
+    const response = await importArtists(
+      request("/api/integrations/spotify/artists", "POST", {
+        spotifyIds: ["artist-1"],
+        includeUnmatched: true,
+        nested: { arbitrary: ["work"] },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toMatchObject({ error: "INVALID_REQUEST" });
+    expect(mockedImportSpotifyArtistSnapshot).not.toHaveBeenCalled();
+    expect(mockedSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("keeps refresh and drift outcomes private and does not disguise them as empty success", async () => {
+    mockedReadSpotifyArtistSnapshot.mockResolvedValueOnce({ status: "DRIFTED" });
+    const drifted = await getArtists(request("/api/integrations/spotify/artists"));
+    expect(drifted.status).toBe(409);
+    expect(drifted.headers.get("cache-control")).toBe("private, no-store");
+    await expect(drifted.json()).resolves.toMatchObject({ error: "SPOTIFY_RETRY_REQUIRED" });
+
+    mockedReadSpotifyArtistSnapshot.mockResolvedValueOnce({ status: "NO_CONNECTION" });
+    const disconnected = await getArtists(request("/api/integrations/spotify/artists"));
+    expect(disconnected.status).toBe(200);
+    await expect(disconnected.json()).resolves.toEqual({ ok: true, connected: false, artists: [] });
+  });
+
+  it("preserves the matched-artist label contract used by the notification UI", async () => {
+    mockedReadSpotifyArtistSnapshot.mockResolvedValueOnce({
+      status: "READY",
+      artists: [{
+        spotifyId: "artist-1",
+        name: "Matched Artist",
+        popularity: 80,
+        source: "followed",
+        spotifyUrl: null,
+        imageUrl: null,
+        match: {
+          type: "ARTIST",
+          value: "Matched Artist",
+          label: "Matched Artist",
+          catalogEntityId: "entity-1",
+          canonicalName: "Matched Artist",
+          provider: "spotify",
+          providerId: "artist-1",
+        },
+      }],
+    });
+
+    const response = await getArtists(request("/api/integrations/spotify/artists"));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      connected: true,
+      artists: [{ match: { type: "ARTIST", value: "Matched Artist", label: "Matched Artist" } }],
+    });
+  });
+
+  it("returns a bounded stale-selection conflict without email", async () => {
+    mockedImportSpotifyArtistSnapshot.mockRejectedValueOnce(new Error("SPOTIFY_ARTIST_SELECTION_STALE"));
+    const response = await importArtists(
+      request("/api/integrations/spotify/artists", "POST", { spotifyIds: ["missing"] }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toMatchObject({ error: "SPOTIFY_SELECTION_STALE" });
+    expect(mockedSendEmail).not.toHaveBeenCalled();
   });
 
   it("contains an unexpected providerless admin-email rejection after import writes", async () => {
     const previousResendApiKey = process.env.RESEND_API_KEY;
     process.env.RESEND_API_KEY = "configured-but-not-evidence";
-    mockedGetSpotifyImportCandidates.mockResolvedValue({
-      connected: true,
-      artists: [
-        { spotifyId: "artist-2", name: "Unknown Artist", source: "top", match: null },
-      ],
-    });
-    mockedPrisma.catalogRequest.upsert.mockResolvedValue({
-      id: "request-1",
-      requestedValue: "Unknown Artist",
-      status: "PENDING",
+    mockedImportSpotifyArtistSnapshot.mockResolvedValue({
+      status: "READY",
+      imported: [],
+      requested: [{ id: "request-1", requestedValue: "Unknown Artist", status: "PENDING" }],
     });
     mockedSendEmail.mockRejectedValueOnce(new Error("synthetic providerless failure"));
 
@@ -260,8 +318,7 @@ describe("Spotify staging-persona operation boundary", () => {
         ok: true,
         requested: [{ id: "request-1", requestedValue: "Unknown Artist" }],
       });
-      expect(mockedPrisma.catalogRequest.upsert).toHaveBeenCalledTimes(1);
-      expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockedImportSpotifyArtistSnapshot).toHaveBeenCalledTimes(1);
       expect(console.error).toHaveBeenCalledWith(
         "Spotify unmatched artist admin email failed:",
         "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic providerless failure",
@@ -275,23 +332,9 @@ describe("Spotify staging-persona operation boundary", () => {
     }
   });
 
-  it("does not notify about unmatched requests when commit fails after the writes", async () => {
-    mockedGetSpotifyImportCandidates.mockResolvedValue({
-      connected: true,
-      artists: [
-        { spotifyId: "artist-2", name: "Unknown Artist", source: "top", match: null },
-      ],
-    });
-    mockedPrisma.catalogRequest.upsert.mockResolvedValue({
-      id: "request-1",
-      requestedValue: "Unknown Artist",
-      status: "PENDING",
-    });
-    mockedPrisma.$transaction.mockImplementationOnce(
-      async (work: (tx: typeof mockedPrisma) => unknown) => {
-        await work(mockedPrisma);
-        throw Object.assign(new Error("synthetic commit failure"), { code: "P2034" });
-      },
+  it("does not notify when the import boundary does not commit", async () => {
+    mockedImportSpotifyArtistSnapshot.mockRejectedValueOnce(
+      Object.assign(new Error("synthetic commit failure"), { code: "P2034" }),
     );
 
     const response = await importArtists(
@@ -299,12 +342,11 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(500);
-    expect(mockedPrisma.catalogRequest.upsert).toHaveBeenCalledTimes(1);
     expect(mockedSendEmail).not.toHaveBeenCalled();
   });
 
   it("refuses a restored managed user before Spotify access or local mutation", async () => {
-    mockedPrisma.user.findUnique.mockResolvedValue(managedUser);
+    mockedImportSpotifyArtistSnapshot.mockRejectedValueOnce(new ManagedAccountSpotifyOperationError());
 
     const response = await importArtists(
       request("/api/integrations/spotify/artists", "POST", { includeUnmatched: true }),
@@ -313,22 +355,17 @@ describe("Spotify staging-persona operation boundary", () => {
     expect(response.status).toBe(403);
     expect(response.headers.get("cache-control")).toContain("private");
     await expect(response.json()).resolves.toMatchObject({ error: "STAGING_CONSOLE_ONLY" });
-    expect(mockedGetSpotifyImportCandidates).not.toHaveBeenCalled();
-    expect(mockedPrisma.notificationPreference.upsert).not.toHaveBeenCalled();
-    expect(mockedPrisma.catalogRequest.upsert).not.toHaveBeenCalled();
+    expect(mockedImportSpotifyArtistSnapshot).toHaveBeenCalledTimes(1);
     expect(mockedSendEmail).not.toHaveBeenCalled();
   });
 
   it("reclassifies a serialization abort after persona restoration", async () => {
-    mockedPrisma.$transaction.mockRejectedValue(
-      Object.assign(new Error("serialization failure"), { code: "P2034" }),
-    );
-    mockedPrisma.user.findUnique.mockResolvedValue(managedUser);
+    mockedReadSpotifyArtistSnapshot.mockRejectedValueOnce(new ManagedAccountSpotifyOperationError());
 
     const response = await getArtists(request("/api/integrations/spotify/artists"));
 
     expect(response.status).toBe(403);
-    expect(mockedGetSpotifyImportCandidates).not.toHaveBeenCalled();
+    expect(mockedReadSpotifyArtistSnapshot).toHaveBeenCalledWith("user-1");
   });
 
   it("commits callback authorization before provider I/O and revalidates before storage", async () => {
