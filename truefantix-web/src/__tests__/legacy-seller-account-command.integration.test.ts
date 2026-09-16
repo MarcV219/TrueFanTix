@@ -9,6 +9,7 @@ import {
   claimLegacySellerAccountCommandInTransaction,
   finalizeLegacySellerAccountCommandInTransaction,
   markSellerAccountReconciliationRequiredInTransaction,
+  persistSellerStatusProjectionInTransaction,
   stageLegacySellerAccountCommand,
   type SellerAccountProviderEvidence,
 } from "@/lib/sellers/ordinary-onboarding";
@@ -93,6 +94,45 @@ if (!databaseUrl) describe.skip("legacy seller-account PostgreSQL boundary", () 
     });
   }
 
+  async function installLinkedAccount() {
+    await db.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.seller.update({
+        where: { id: sellerId },
+        data: {
+          stripeAccountId: providerAccountId,
+          stripeDetailsSubmitted: false,
+          stripeChargesEnabled: false,
+          stripePayoutsEnabled: false,
+          status: "PENDING",
+          statusReason: null,
+        },
+      });
+      await tx.user.update({ where: { id: userId }, data: { canSell: false } });
+    });
+  }
+
+  async function persistStatus(projection: {
+    detailsSubmitted: boolean;
+    chargesEnabled: boolean;
+    payoutsEnabled: boolean;
+  }) {
+    return db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "Seller" WHERE "id" = ${sellerId} FOR UPDATE`;
+      const current = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        include: { seller: true },
+      });
+      return persistSellerStatusProjectionInTransaction(
+        tx,
+        current,
+        { kind: "ACCOUNT", userId, sellerId, stripeAccountId: providerAccountId },
+        projection,
+      );
+    }, { isolationLevel: "Serializable" });
+  }
+
   beforeAll(async () => {
     await db.seller.create({ data: { id: sellerId, name: "Synthetic Seller", status: "PENDING" } });
     await db.user.create({
@@ -131,6 +171,63 @@ if (!databaseUrl) describe.skip("legacy seller-account PostgreSQL boundary", () 
       throw new Error("force authorization rollback");
     })).rejects.toThrow("force authorization rollback");
     await expect(db.legacySellerAccountCommand.count({ where: { sellerId } })).resolves.toBe(0);
+  });
+
+  it("atomically persists an exact linked-account readiness projection", async () => {
+    await installLinkedAccount();
+
+    await persistStatus({ detailsSubmitted: true, chargesEnabled: true, payoutsEnabled: true });
+
+    await expect(db.seller.findUniqueOrThrow({ where: { id: sellerId } })).resolves.toMatchObject({
+      stripeAccountId: providerAccountId,
+      stripeDetailsSubmitted: true,
+      stripeChargesEnabled: true,
+      stripePayoutsEnabled: true,
+      status: "APPROVED",
+    });
+    await expect(db.user.findUniqueOrThrow({ where: { id: userId } }))
+      .resolves.toMatchObject({ canSell: true });
+  });
+
+  it("rolls back every readiness field when the final can-sell projection fails", async () => {
+    await installLinkedAccount();
+    const suffix = `${process.pid}${Date.now()}`;
+    const functionName = `reject_status_can_sell_${suffix}`;
+    const triggerName = `reject_status_can_sell_trigger_${suffix}`;
+    await db.$executeRawUnsafe(`
+      CREATE FUNCTION "${functionName}"() RETURNS trigger AS $$
+      BEGIN
+        IF OLD."canSell" = FALSE AND NEW."canSell" = TRUE THEN
+          RAISE EXCEPTION 'synthetic can-sell projection failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER "${triggerName}"
+      BEFORE UPDATE OF "canSell" ON "User"
+      FOR EACH ROW EXECUTE FUNCTION "${functionName}"();
+    `);
+
+    try {
+      await expect(persistStatus({
+        detailsSubmitted: true,
+        chargesEnabled: true,
+        payoutsEnabled: true,
+      })).rejects.toThrow("synthetic can-sell projection failure");
+    } finally {
+      await db.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${triggerName}" ON "User"`);
+      await db.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"()`);
+    }
+
+    await expect(db.seller.findUniqueOrThrow({ where: { id: sellerId } })).resolves.toMatchObject({
+      stripeAccountId: providerAccountId,
+      stripeDetailsSubmitted: false,
+      stripeChargesEnabled: false,
+      stripePayoutsEnabled: false,
+      status: "PENDING",
+    });
+    await expect(db.user.findUniqueOrThrow({ where: { id: userId } }))
+      .resolves.toMatchObject({ canSell: false });
   });
 
   it("reuses only the exact frozen authorization", async () => {

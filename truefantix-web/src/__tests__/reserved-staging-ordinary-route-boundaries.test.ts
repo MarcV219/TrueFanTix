@@ -46,6 +46,7 @@ jest.mock("@/lib/prisma", () => ({
     user: { findUnique: jest.fn(), update: jest.fn() },
     seller: { update: jest.fn() },
     session: { deleteMany: jest.fn() },
+    $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   },
 }));
@@ -86,6 +87,8 @@ jest.mock("@/lib/reputation", () => ({ updateSellerBadges: jest.fn() }));
 const mockedPrisma = prisma as unknown as {
   user: { findUnique: jest.Mock; update: jest.Mock };
   seller: { update: jest.Mock };
+  $queryRaw: jest.Mock;
+  $transaction: jest.Mock;
 };
 const mockedSession = getUserIdFromSessionCookie as jest.MockedFunction<
   typeof getUserIdFromSessionCookie
@@ -207,6 +210,10 @@ describe("reserved staging personas cannot enter direct ordinary session routes"
   });
 
   it("blocks seller onboarding before calling a provider account", async () => {
+    mockedPrisma.$queryRaw.mockResolvedValue([]);
+    mockedPrisma.$transaction.mockImplementation(
+      async (work: (tx: typeof mockedPrisma) => unknown) => work(mockedPrisma),
+    );
     mockedPrisma.user.findUnique.mockResolvedValue({
       id: "staging-admin",
       email: "admin@primary-staging.example.invalid",
@@ -219,11 +226,15 @@ describe("reserved staging personas cannot enter direct ordinary session routes"
 
     await expectConsoleOnly(await getSellerOnboardingStatus());
 
-    expect(mockedPrisma.user.findUnique).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.user.findUnique).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
   });
 
   it("blocks provider access after a managed persona email drift", async () => {
+    mockedPrisma.$queryRaw.mockResolvedValue([]);
+    mockedPrisma.$transaction.mockImplementation(
+      async (work: (tx: typeof mockedPrisma) => unknown) => work(mockedPrisma),
+    );
     mockedPrisma.user.findUnique.mockResolvedValue({
       id: "staging-admin",
       email: "drifted-reviewer@example.test",
@@ -238,6 +249,7 @@ describe("reserved staging personas cannot enter direct ordinary session routes"
     });
 
     await expectConsoleOnly(await getSellerOnboardingStatus());
+    expect(mockedPrisma.user.findUnique).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
   });
 

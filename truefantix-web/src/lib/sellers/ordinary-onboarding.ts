@@ -14,12 +14,13 @@ const BUSINESS_PROFILE_DESCRIPTION =
   "Individual seller listing personal event tickets at or below face value through the TrueFanTix marketplace.";
 
 export class ManagedAccountSellerOnboardingError extends Error {}
+export class SellerOnboardingAccountNotFoundError extends Error {}
 export class SellerOnboardingVerificationError extends Error {}
 export class SellerAccountAuthorizationChangedError extends Error {}
 export class SellerAccountReconciliationRequiredError extends Error {}
 export class SellerAccountMissingError extends Error {}
 
-type CurrentSellerOnboardingUser = {
+export type CurrentSellerOnboardingUser = {
   id: string;
   email: string;
   emailVerifiedAt: Date | null;
@@ -61,6 +62,26 @@ export type SellerLinkAuthorizationSnapshot = {
   linkKind: "ONBOARDING" | "LOGIN";
   refreshUrl: string | null;
   returnUrl: string | null;
+};
+
+export type SellerStatusAuthorizationResult =
+  | { kind: "NO_ACCOUNT" }
+  | {
+      kind: "ACCOUNT";
+      userId: string;
+      sellerId: string;
+      stripeAccountId: string;
+    };
+
+export type SellerStatusAuthorizationSnapshot = Extract<
+  SellerStatusAuthorizationResult,
+  { kind: "ACCOUNT" }
+>;
+
+export type SellerStatusProjection = {
+  detailsSubmitted: boolean;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
 };
 
 function exactOrigin(value: string) {
@@ -301,7 +322,7 @@ export async function runOrdinarySellerOnboardingOperation<T>(
           },
         });
 
-        if (!current || current.isBanned) throw new Error("ACCOUNT_NOT_FOUND");
+        if (!current || current.isBanned) throw new SellerOnboardingAccountNotFoundError();
         if (isPrimaryStagingManagedUser(current)) throw new ManagedAccountSellerOnboardingError();
         if (lockedSellerId !== (current.seller?.id ?? null)) {
           throw new SellerAccountAuthorizationChangedError("Seller binding changed during authorization");
@@ -603,4 +624,69 @@ export async function authorizeSellerLinkSnapshot(
       returnUrl: linkKind === "ONBOARDING" ? `${origin}/account?stripe=return` : null,
     };
   });
+}
+
+export async function authorizeSellerStatusSnapshot(
+  userId: string,
+): Promise<SellerStatusAuthorizationResult> {
+  return runOrdinarySellerOnboardingOperation(userId, async (_tx, current) => {
+    assertCurrentVerified(current);
+    if (!current.seller?.stripeAccountId) return { kind: "NO_ACCOUNT" };
+    return {
+      kind: "ACCOUNT",
+      userId: current.id,
+      sellerId: current.seller.id,
+      stripeAccountId: current.seller.stripeAccountId,
+    };
+  });
+}
+
+export async function persistSellerStatusSnapshot(
+  snapshot: SellerStatusAuthorizationSnapshot,
+  projection: SellerStatusProjection,
+) {
+  return runOrdinarySellerOnboardingOperation(snapshot.userId, (tx, current) =>
+    persistSellerStatusProjectionInTransaction(tx, current, snapshot, projection));
+}
+
+export async function persistSellerStatusProjectionInTransaction(
+  tx: Tx,
+  current: CurrentSellerOnboardingUser,
+  snapshot: SellerStatusAuthorizationSnapshot,
+  projection: SellerStatusProjection,
+) {
+  assertCurrentVerified(current);
+  if (
+    current.id !== snapshot.userId
+    || current.isBanned
+    || isPrimaryStagingManagedUser(current)
+    || current.seller?.id !== snapshot.sellerId
+    || current.seller.stripeAccountId !== snapshot.stripeAccountId
+  ) {
+    throw new SellerAccountAuthorizationChangedError(
+      "Seller account binding changed before status persistence",
+    );
+  }
+
+  const fullyEnabled = projection.detailsSubmitted && projection.payoutsEnabled;
+  await tx.seller.update({
+    where: { id: snapshot.sellerId },
+    data: {
+      stripeDetailsSubmitted: projection.detailsSubmitted,
+      stripeChargesEnabled: projection.chargesEnabled,
+      stripePayoutsEnabled: projection.payoutsEnabled,
+      ...(fullyEnabled ? {
+        status: "APPROVED",
+        statusUpdatedAt: new Date(),
+        statusReason: null,
+      } : {}),
+    },
+  });
+
+  if (fullyEnabled && !current.canSell) {
+    await tx.user.update({
+      where: { id: snapshot.userId },
+      data: { canSell: true },
+    });
+  }
 }
