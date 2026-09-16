@@ -271,7 +271,7 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Once an order exists, its tenant/buyer/reservation bindings, lifecycle, totals, currency, idempotency key, sole line snapshot, and exact face-value/organizer-fee components are revalidated before payment preparation. Snapshot drift fails closed without committing the hold or creating a payment attempt.
 - Admission validation binds the deterministic ticket and credential to the authoritative paid lifecycle and current transaction clock. Issuance before payment or in the future, and future-dated accepted scans, fail closed before any new scan or check-in mutation.
 - The synthetic payment chain requires an empty provider-event and exception history. Unexpected webhook-like provenance or payment-exception evidence fails closed before admission issuance or check-in.
-- Payment-attempt creation must follow the order's authoritative preparation timestamp, and synthetic provider attachment must follow attempt creation without being future-dated relative to the transaction clock. Chronology drift fails before payment success or admission mutation.
+- Payment-attempt creation must follow the order's authoritative preparation timestamp without being future-dated relative to the transaction clock, and synthetic provider attachment must likewise follow attempt creation without being future-dated. Chronology drift fails before provider attachment, payment success, or admission mutation.
 
 ### Refund, cancellation, and revocation design gate
 

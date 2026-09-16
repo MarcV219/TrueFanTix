@@ -128,7 +128,8 @@ function requirePaymentState(payment: Prisma.PrimaryPaymentAttemptGetPayload<{ i
   const paidOrder = order.status === "PAID" && order.prepareIdempotencyKey === `${scope.base}:prepare`
     && order.prepareReconciliationDelayMs === 120000 && order.paymentProcessingAt !== null && order.paidAt !== null && order.paymentFailedAt === null;
   const preparationMatches = order.paymentProcessingAt !== null && order.paymentProcessingAt.getTime() === reservationCommittedAt.getTime();
-  const preparedAfterOrder = preparationMatches && payment.createdAt.getTime() >= order.paymentProcessingAt!.getTime();
+  const preparedAfterOrder = preparationMatches && payment.createdAt.getTime() >= order.paymentProcessingAt!.getTime()
+    && payment.createdAt.getTime() <= now.getTime();
   const lifecycleMatches = (pending && paymentProcessingOrder && preparedAfterOrder)
     || (processing && paymentProcessingOrder && preparedAfterOrder && payment.providerCreatedAt!.getTime() >= payment.createdAt.getTime() && payment.providerCreatedAt!.getTime() <= now.getTime())
     || (succeeded && paidOrder && preparedAfterOrder && payment.providerCreatedAt!.getTime() >= payment.createdAt.getTime() && payment.providerCreatedAt!.getTime() <= now.getTime() && payment.terminalAt!.getTime() === order.paidAt!.getTime() && payment.terminalAt!.getTime() <= now.getTime());
