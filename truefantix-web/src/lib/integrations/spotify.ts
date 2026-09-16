@@ -176,7 +176,7 @@ function providerTimeout(value: number | undefined) {
 function isJsonContentType(value: string | null) {
   if (!value) return false;
   const mediaType = value.split(";", 1)[0]?.trim().toLowerCase();
-  return mediaType === "application/json" || Boolean(mediaType?.startsWith("application/") && mediaType.endsWith("+json"));
+  return mediaType === "application/json";
 }
 
 async function boundedProviderJson(
