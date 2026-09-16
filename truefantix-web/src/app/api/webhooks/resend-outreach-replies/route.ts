@@ -6,6 +6,11 @@ import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
 import { retrieveOutreachReplyEmail } from "@/lib/outreach-reply-email";
 import {
+  buildOutreachReplyForwardIntent,
+  drainOutreachReplyForwardIntents,
+  outreachReplyForwardingConfig,
+} from "@/lib/outreach-reply-forwarding";
+import {
   boundedOutreachWebhookText,
   cancelUnlockedWebhookBody,
   verifiedOutreachWebhookHeaders,
@@ -142,6 +147,19 @@ export async function POST(req: Request) {
   }
 
   const toEmail = event.to.map(mailbox).find(address => replyPattern.test(address)) || mailbox(event.to[0] || "");
+  const forwardConfig = outreachReplyForwardingConfig();
+  const forwardIntent = forwardConfig
+    ? buildOutreachReplyForwardIntent({
+        providerEmailId: event.emailId,
+        fromEmail: mailbox(event.from),
+        subject: received.subject,
+        textBody: received.text,
+        htmlBody: received.html,
+        attachmentCount: received.attachmentCount,
+        receivedAt: event.receivedAt,
+      }, forwardConfig)
+    : null;
+  let duplicate = false;
   try {
     await prisma.$transaction([
       prisma.outreachReply.create({ data: {
@@ -156,23 +174,25 @@ export async function POST(req: Request) {
         htmlBody: received.html,
         receivedAt: event.receivedAt,
         attachmentCount: received.attachmentCount,
+        ...(forwardIntent ? { forwardIntent: { create: forwardIntent } } : {}),
       } }),
       prisma.outreachRecipient.update({ where: { id: recipient.id }, data: { repliedAt: event.receivedAt, status: "REPLIED" } }),
       prisma.outreachContact.update({ where: { id: recipient.contactId }, data: { engagementStage: "REPLIED", followUpAt: null } }),
     ]);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      return privateJson({ ok: true, duplicate: true });
+      duplicate = true;
+    } else {
+      throw error;
     }
-    throw error;
   }
 
-  const forwardTo = process.env.OUTREACH_REPLY_FORWARD_TO?.trim();
-  if (forwardTo) {
-    const resend = new Resend(apiKey);
-    const forwarded = await resend.emails.receiving.forward({ emailId: event.emailId, to: forwardTo, from: process.env.OUTREACH_FROM_EMAIL || "marc@truefantix.com", passthrough: true });
-    if (!forwarded.error) await prisma.outreachReply.update({ where: { providerEmailId: event.emailId }, data: { forwardedAt: new Date() } });
+  if (forwardConfig) {
+    await drainOutreachReplyForwardIntents({
+      providerEmailId: event.emailId,
+      limit: 1,
+    }).catch(() => undefined);
   }
 
-  return privateJson({ ok: true });
+  return privateJson({ ok: true, ...(duplicate ? { duplicate: true } : {}) });
 }

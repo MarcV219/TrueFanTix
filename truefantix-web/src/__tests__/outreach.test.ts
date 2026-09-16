@@ -1,8 +1,15 @@
 /** @jest-environment node */
+jest.mock("@/lib/auth/guards", () => ({
+  requireAdmin: jest.fn().mockResolvedValue({ ok: true, user: { id: "synthetic-admin" } }),
+}));
+
+import { GET as getOutreachDeliveryStatus } from "@/app/api/admin/outreach/delivery-status/route";
 import {
   OutreachEmailOutcomeUncertainError,
   OutreachEmailRejectedError,
   outreachReplyAddress,
+  outreachReplyCaptureConfigured,
+  outreachReplyForwardConfigured,
   outreachSender,
   sendOutreachEmail,
 } from "@/lib/outreach-email";
@@ -49,6 +56,47 @@ describe("outreach security and personalization", () => {
   expect(outreachSender()).toBe("Marc at TrueFanTix <marc@truefantix.com>");
   expect(outreachReplyAddress("abc123")).toBe("reply+abc123@replies.truefantix.com");
     expect(normalizeEmail(" Test@Example.COM ")).toBe("test@example.com");
+  });
+
+  it("reports reply capture independently from valid optional forwarding", () => {
+    process.env.OUTREACH_RESEND_INBOUND_API_KEY = "re_inbound_test";
+    process.env.OUTREACH_RESEND_INBOUND_WEBHOOK_SECRET = "whsec_inbound_test";
+    delete process.env.OUTREACH_REPLY_FORWARD_TO;
+    expect(outreachReplyCaptureConfigured()).toBe(true);
+    expect(outreachReplyForwardConfigured()).toBe(false);
+    process.env.OUTREACH_REPLY_FORWARD_TO = "owner@example.test";
+    expect(outreachReplyForwardConfigured()).toBe(true);
+
+    process.env.OUTREACH_REPLY_FORWARD_TO = "bad\n@example.test";
+    expect(outreachReplyForwardConfigured()).toBe(false);
+    process.env.OUTREACH_REPLY_FORWARD_TO = "owner@example.test";
+    process.env.OUTREACH_FROM_EMAIL = "bad\n@example.test";
+    expect(outreachReplyForwardConfigured()).toBe(false);
+
+    delete process.env.OUTREACH_RESEND_INBOUND_API_KEY;
+    delete process.env.OUTREACH_RESEND_INBOUND_WEBHOOK_SECRET;
+    delete process.env.OUTREACH_REPLY_FORWARD_TO;
+  });
+
+  it.each([
+    ["destination", "bad\n@example.test", "marc@truefantix.com"],
+    ["sender", "owner@example.test", "bad\n@example.test"],
+  ])("does not report malformed forwarding %s as ready", async (_label, forwardTo, sender) => {
+    process.env.OUTREACH_RESEND_INBOUND_API_KEY = "re_inbound_test";
+    process.env.OUTREACH_RESEND_INBOUND_WEBHOOK_SECRET = "whsec_inbound_test";
+    process.env.OUTREACH_REPLY_FORWARD_TO = forwardTo;
+    process.env.OUTREACH_FROM_EMAIL = sender;
+
+    const response = await getOutreachDeliveryStatus(new Request("https://example.test/api/admin/outreach/delivery-status"));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      replyCaptureConfigured: true,
+      replyForwardConfigured: false,
+    });
+
+    delete process.env.OUTREACH_RESEND_INBOUND_API_KEY;
+    delete process.env.OUTREACH_RESEND_INBOUND_WEBHOOK_SECRET;
+    delete process.env.OUTREACH_REPLY_FORWARD_TO;
   });
 
   it("guards against contacting an address again within 30 days", () => {

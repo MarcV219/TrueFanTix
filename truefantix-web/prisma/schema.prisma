@@ -2853,14 +2853,14 @@ model OutreachEmailEventTombstone {
 }
 
 model OutreachReply {
-  id                String            @id @default(cuid())
-  createdAt         DateTime          @default(now())
-  providerEmailId   String            @unique
+  id                String                      @id @default(cuid())
+  createdAt         DateTime                    @default(now())
+  providerEmailId   String                      @unique
   providerMessageId String?
   recipientId       String
-  recipient         OutreachRecipient @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  recipient         OutreachRecipient           @relation(fields: [recipientId], references: [id], onDelete: Cascade)
   contactId         String
-  contact           OutreachContact   @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  contact           OutreachContact             @relation(fields: [contactId], references: [id], onDelete: Restrict)
   fromEmail         String
   toEmail           String
   subject           String
@@ -2868,10 +2868,38 @@ model OutreachReply {
   htmlBody          String?
   receivedAt        DateTime
   forwardedAt       DateTime?
-  attachmentCount   Int               @default(0)
+  attachmentCount   Int                         @default(0)
+  forwardIntent     OutreachReplyForwardIntent?
 
   @@index([contactId, receivedAt])
   @@index([recipientId, receivedAt])
+}
+
+model OutreachReplyForwardIntent {
+  id                 String        @id @default(cuid())
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  replyId            String        @unique
+  reply              OutreachReply @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  providerEmailId    String
+  fromEmailSnapshot  String
+  toEmailSnapshot    String
+  subjectSnapshot    String
+  textBodySnapshot   String
+  attachmentCount    Int
+  idempotencyKey     String        @unique
+  status             String        @default("PENDING")
+  availableAt        DateTime      @default(now())
+  attemptCount       Int           @default(0)
+  claimToken         String?       @unique
+  claimExpiresAt     DateTime?
+  providerDispatchAt DateTime?
+  providerMessageId  String?       @unique
+  failureCode        String?
+  completedAt        DateTime?
+
+  @@index([status, availableAt, createdAt, id])
+  @@index([status, claimExpiresAt])
 }
 
 model OutreachEmailEvent {

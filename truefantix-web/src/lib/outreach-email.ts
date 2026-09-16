@@ -1,3 +1,5 @@
+import { outreachReplyForwardingConfig } from "@/lib/outreach-reply-forwarding";
+
 function clean(value: string | undefined) { return value?.trim().replace(/^['"]|['"]$/g, ""); }
 const RESEND_RESPONSE_MAX_BYTES = 65_536;
 const RESEND_RESPONSE_TIMEOUT_MS = 15_000;
@@ -125,7 +127,10 @@ export function outreachSender() { return `Marc at TrueFanTix <${outreachSenderE
 export function outreachProviderConfigured() { return Boolean(clean(process.env.OUTREACH_RESEND_API_KEY)); }
 export function outreachReplyDomain() { return clean(process.env.OUTREACH_REPLY_DOMAIN) || "replies.truefantix.com"; }
 export function outreachReplyAddress(token: string) { return `reply+${token}@${outreachReplyDomain()}`; }
-export function outreachReplyCaptureConfigured() { return Boolean(clean(process.env.OUTREACH_RESEND_INBOUND_API_KEY) && clean(process.env.OUTREACH_RESEND_INBOUND_WEBHOOK_SECRET) && clean(process.env.OUTREACH_REPLY_FORWARD_TO)); }
+export function outreachReplyCaptureConfigured() { return Boolean(clean(process.env.OUTREACH_RESEND_INBOUND_API_KEY) && clean(process.env.OUTREACH_RESEND_INBOUND_WEBHOOK_SECRET)); }
+export function outreachReplyForwardConfigured() {
+  return outreachReplyCaptureConfigured() && outreachReplyForwardingConfig() !== null;
+}
 
 export type OutreachEmailResult = { provider: "RESEND"; messageId: string };
 export class OutreachEmailRejectedError extends Error {

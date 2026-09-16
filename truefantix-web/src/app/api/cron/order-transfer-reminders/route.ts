@@ -6,6 +6,7 @@ import { runTransferReminderWorkflow } from "@/lib/orders/transferWorkflow";
 import { drainTransferProofDeliveryIntents } from "@/lib/orders/transferProofDelivery";
 import { drainTransferProofReviewDeliveryIntents } from "@/lib/orders/transferProofReviewDelivery";
 import { recoverSpotifyCatalogRequestDeliveries } from "@/lib/integrations/spotify-catalog-request-delivery";
+import { drainOutreachReplyForwardIntents } from "@/lib/outreach-reply-forwarding";
 import { prisma } from "@/lib/prisma";
 import { reportProductionIncident } from "@/lib/productionIncidents";
 
@@ -33,6 +34,10 @@ export async function POST(req: Request) {
       "spotifyCatalogRequestDeliveries",
       () => recoverSpotifyCatalogRequestDeliveries(),
     );
+    const outreachReplyForwards = await runSchedulerComponent(
+      "outreachReplyForwards",
+      () => drainOutreachReplyForwardIntents(),
+    );
     const transferReminders = await runSchedulerComponent(
       "transferReminders",
       () => runTransferReminderWorkflow(startedAt),
@@ -41,18 +46,21 @@ export async function POST(req: Request) {
       transferProofDeliveries: schedulerComponentEvidence(transferProofDeliveries),
       transferProofReviewDeliveries: schedulerComponentEvidence(transferProofReviewDeliveries),
       spotifyCatalogRequestDeliveries: schedulerComponentEvidence(spotifyCatalogRequestDeliveries),
+      outreachReplyForwards: schedulerComponentEvidence(outreachReplyForwards),
       transferReminders: schedulerComponentEvidence(transferReminders),
     };
     const failures = [
       transferProofDeliveries,
       transferProofReviewDeliveries,
       spotifyCatalogRequestDeliveries,
+      outreachReplyForwards,
       transferReminders,
     ].filter((component): component is SchedulerComponentFailure => !component.ok);
     if (
       !transferProofDeliveries.ok
       || !transferProofReviewDeliveries.ok
       || !spotifyCatalogRequestDeliveries.ok
+      || !outreachReplyForwards.ok
       || !transferReminders.ok
     ) {
       throw new AggregateError(
@@ -66,6 +74,7 @@ export async function POST(req: Request) {
       transferProofDeliveries: transferProofDeliveries.value,
       transferProofReviewDeliveries: transferProofReviewDeliveries.value,
       spotifyCatalogRequestDeliveries: spotifyCatalogRequestDeliveries.value,
+      outreachReplyForwards: outreachReplyForwards.value,
     };
     await recordSchedulerRun("SUCCESS", startedAt, result);
     return NextResponse.json({ ok: true, ...result });

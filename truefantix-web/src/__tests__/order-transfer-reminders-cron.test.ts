@@ -5,6 +5,7 @@ import { runTransferReminderWorkflow } from "@/lib/orders/transferWorkflow";
 import { drainTransferProofDeliveryIntents } from "@/lib/orders/transferProofDelivery";
 import { drainTransferProofReviewDeliveryIntents } from "@/lib/orders/transferProofReviewDelivery";
 import { recoverSpotifyCatalogRequestDeliveries } from "@/lib/integrations/spotify-catalog-request-delivery";
+import { drainOutreachReplyForwardIntents } from "@/lib/outreach-reply-forwarding";
 import { prisma } from "@/lib/prisma";
 import { reportProductionIncident } from "@/lib/productionIncidents";
 import { POST } from "@/app/api/cron/order-transfer-reminders/route";
@@ -14,6 +15,7 @@ jest.mock("@/lib/orders/transferWorkflow", () => ({ runTransferReminderWorkflow:
 jest.mock("@/lib/orders/transferProofDelivery", () => ({ drainTransferProofDeliveryIntents: jest.fn() }));
 jest.mock("@/lib/orders/transferProofReviewDelivery", () => ({ drainTransferProofReviewDeliveryIntents: jest.fn() }));
 jest.mock("@/lib/integrations/spotify-catalog-request-delivery", () => ({ recoverSpotifyCatalogRequestDeliveries: jest.fn() }));
+jest.mock("@/lib/outreach-reply-forwarding", () => ({ drainOutreachReplyForwardIntents: jest.fn() }));
 jest.mock("@/lib/prisma", () => ({ prisma: { auditLog: { create: jest.fn() } } }));
 jest.mock("@/lib/productionIncidents", () => ({ reportProductionIncident: jest.fn() }));
 
@@ -22,12 +24,14 @@ const mockedReminderWorkflow = runTransferReminderWorkflow as jest.MockedFunctio
 const mockedDeliveryDrainer = drainTransferProofDeliveryIntents as jest.MockedFunction<typeof drainTransferProofDeliveryIntents>;
 const mockedReviewDrainer = drainTransferProofReviewDeliveryIntents as jest.MockedFunction<typeof drainTransferProofReviewDeliveryIntents>;
 const mockedSpotifyDrainer = recoverSpotifyCatalogRequestDeliveries as jest.MockedFunction<typeof recoverSpotifyCatalogRequestDeliveries>;
+const mockedOutreachReplyDrainer = drainOutreachReplyForwardIntents as jest.MockedFunction<typeof drainOutreachReplyForwardIntents>;
 const mockedAuditCreate = prisma.auditLog.create as jest.Mock;
 const mockedReportIncident = reportProductionIncident as jest.MockedFunction<typeof reportProductionIncident>;
 
 const deliveryResult = { scanned: 1, claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0 };
 const reviewResult = { scanned: 1, claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0 };
 const spotifyResult = { claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0 };
+const outreachReplyResult = { scanned: 1, claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0, quarantined: 0 };
 const reminderResult = { processed: 2 };
 
 function request() {
@@ -41,6 +45,7 @@ describe("transfer reminder scheduler recovery isolation", () => {
     mockedDeliveryDrainer.mockResolvedValue(deliveryResult);
     mockedReviewDrainer.mockResolvedValue(reviewResult);
     mockedSpotifyDrainer.mockResolvedValue(spotifyResult);
+    mockedOutreachReplyDrainer.mockResolvedValue(outreachReplyResult);
     mockedReminderWorkflow.mockResolvedValue(reminderResult as never);
     mockedAuditCreate.mockResolvedValue({ id: "audit-1" });
     mockedReportIncident.mockResolvedValue(undefined as never);
@@ -56,10 +61,12 @@ describe("transfer reminder scheduler recovery isolation", () => {
       transferProofDeliveries: deliveryResult,
       transferProofReviewDeliveries: reviewResult,
       spotifyCatalogRequestDeliveries: spotifyResult,
+      outreachReplyForwards: outreachReplyResult,
     });
     expect(mockedDeliveryDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReviewDrainer).toHaveBeenCalledTimes(1);
     expect(mockedSpotifyDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedOutreachReplyDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReminderWorkflow).toHaveBeenCalledTimes(1);
     expect(mockedAuditCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "TRANSFER_REMINDER_SCHEDULER_RUN" }),
@@ -76,7 +83,9 @@ describe("transfer reminder scheduler recovery isolation", () => {
 
     expect(mockedReviewDrainer).toHaveBeenCalledTimes(1);
     expect(mockedSpotifyDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedOutreachReplyDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReminderWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockedOutreachReplyDrainer).toHaveBeenCalledTimes(1);
     const metadata = JSON.parse(mockedAuditCreate.mock.calls[0][0].data.metadata);
     expect(metadata).toMatchObject({
       status: "FAILED",
@@ -102,6 +111,7 @@ describe("transfer reminder scheduler recovery isolation", () => {
     expect(mockedDeliveryDrainer).toHaveBeenCalledTimes(1);
     expect(mockedSpotifyDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReminderWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockedOutreachReplyDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReportIncident).toHaveBeenCalledTimes(1);
   });
 
@@ -118,6 +128,20 @@ describe("transfer reminder scheduler recovery isolation", () => {
     expect(mockedReportIncident).toHaveBeenCalledTimes(1);
   });
 
+  it("still runs every other component when outreach reply recovery fails", async () => {
+    mockedOutreachReplyDrainer.mockRejectedValue(new Error("reply forward poison"));
+
+    await expect(POST(request())).rejects.toThrow(
+      "Transfer reminder scheduler components failed: outreachReplyForwards",
+    );
+
+    expect(mockedDeliveryDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedReviewDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedSpotifyDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedReminderWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockedReportIncident).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses unauthenticated callers before any recovery work", async () => {
     mockedCronAuth.mockReturnValue(false);
 
@@ -127,6 +151,7 @@ describe("transfer reminder scheduler recovery isolation", () => {
     expect(mockedDeliveryDrainer).not.toHaveBeenCalled();
     expect(mockedReviewDrainer).not.toHaveBeenCalled();
     expect(mockedSpotifyDrainer).not.toHaveBeenCalled();
+    expect(mockedOutreachReplyDrainer).not.toHaveBeenCalled();
     expect(mockedReminderWorkflow).not.toHaveBeenCalled();
   });
 });

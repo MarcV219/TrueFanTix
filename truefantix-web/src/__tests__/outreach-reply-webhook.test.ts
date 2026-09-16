@@ -1,27 +1,29 @@
 /** @jest-environment node */
 const mockVerify = jest.fn();
-const mockForwardReceived = jest.fn();
 const mockRetrieveReply = jest.fn();
+const mockForwardConfig = jest.fn();
+const mockBuildForwardIntent = jest.fn();
+const mockDrainForwards = jest.fn();
 const mockFindRecipient = jest.fn();
 const mockCreateReply = jest.fn();
 const mockUpdateRecipient = jest.fn();
 const mockUpdateContact = jest.fn();
-const mockUpdateReply = jest.fn();
 const mockTransaction = jest.fn();
 
 jest.mock("resend", () => ({
   Resend: jest.fn().mockImplementation(() => ({
     webhooks: { verify: mockVerify },
-    emails: {
-      receiving: {
-        forward: mockForwardReceived,
-      },
-    },
   })),
 }));
 
 jest.mock("@/lib/outreach-reply-email", () => ({
   retrieveOutreachReplyEmail: (...args: unknown[]) => mockRetrieveReply(...args),
+}));
+
+jest.mock("@/lib/outreach-reply-forwarding", () => ({
+  outreachReplyForwardingConfig: () => mockForwardConfig(),
+  buildOutreachReplyForwardIntent: (...args: unknown[]) => mockBuildForwardIntent(...args),
+  drainOutreachReplyForwardIntents: (...args: unknown[]) => mockDrainForwards(...args),
 }));
 
 jest.mock("@/lib/prisma", () => ({
@@ -32,7 +34,6 @@ jest.mock("@/lib/prisma", () => ({
     },
     outreachReply: {
       create: (...args: unknown[]) => mockCreateReply(...args),
-      update: (...args: unknown[]) => mockUpdateReply(...args),
     },
     outreachContact: {
       update: (...args: unknown[]) => mockUpdateContact(...args),
@@ -42,6 +43,7 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 import { POST } from "@/app/api/webhooks/resend-outreach-replies/route";
+import { Prisma } from "@prisma/client";
 
 const endpoint = "https://truefantix.ca/api/webhooks/resend-outreach-replies";
 const validHeaders = Object.freeze({
@@ -108,7 +110,9 @@ describe("Resend outreach reply webhook ingress", () => {
     mockCreateReply.mockResolvedValue({});
     mockUpdateRecipient.mockResolvedValue({});
     mockUpdateContact.mockResolvedValue({});
-    mockUpdateReply.mockResolvedValue({});
+    mockForwardConfig.mockReturnValue(null);
+    mockBuildForwardIntent.mockReturnValue({});
+    mockDrainForwards.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -268,5 +272,80 @@ describe("Resend outreach reply webhook ingress", () => {
       attachmentCount: 0,
     } });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockDrainForwards).not.toHaveBeenCalled();
+  });
+
+  it("atomically stages a bounded forward intent and drains only after reply commit", async () => {
+    const config = {
+      apiKey: "re_inbound_test",
+      fromEmail: "marc@truefantix.com",
+      toEmail: "owner@example.test",
+    };
+    const intent = {
+      providerEmailId: "inbound-email-1",
+      fromEmailSnapshot: config.fromEmail,
+      toEmailSnapshot: config.toEmail,
+      subjectSnapshot: "Outreach reply: A reply",
+      textBodySnapshot: "bounded notice",
+      attachmentCount: 0,
+      idempotencyKey: "tft-outreach-reply-forward-v1-test",
+    };
+    mockVerify.mockReturnValue(validEvent);
+    mockFindRecipient.mockResolvedValue({ id: "recipient-1", contactId: "contact-1" });
+    mockRetrieveReply.mockResolvedValue({
+      subject: "A reply",
+      text: "Plain body",
+      html: "<p>HTML body</p>",
+      attachmentCount: 0,
+    });
+    mockForwardConfig.mockReturnValue(config);
+    mockBuildForwardIntent.mockReturnValue(intent);
+
+    const response = await POST(requestWithBody(streamFrom([encoded("signed-payload")]).stream));
+
+    expect(response.status).toBe(200);
+    expect(mockBuildForwardIntent).toHaveBeenCalledWith(expect.objectContaining({
+      providerEmailId: "inbound-email-1",
+      fromEmail: "fan@example.com",
+      textBody: "Plain body",
+    }), config);
+    expect(mockCreateReply).toHaveBeenCalledWith({ data: expect.objectContaining({
+      forwardIntent: { create: intent },
+    }) });
+    expect(mockTransaction.mock.invocationCallOrder[0])
+      .toBeLessThan(mockDrainForwards.mock.invocationCallOrder[0]);
+    expect(mockDrainForwards).toHaveBeenCalledWith({
+      providerEmailId: "inbound-email-1",
+      limit: 1,
+    });
+  });
+
+  it("lets a duplicate webhook recover the already committed forward intent", async () => {
+    mockVerify.mockReturnValue(validEvent);
+    mockFindRecipient.mockResolvedValue({ id: "recipient-1", contactId: "contact-1" });
+    mockRetrieveReply.mockResolvedValue({
+      subject: "A reply",
+      text: "Plain body",
+      html: null,
+      attachmentCount: 0,
+    });
+    mockForwardConfig.mockReturnValue({
+      apiKey: "re_inbound_test",
+      fromEmail: "marc@truefantix.com",
+      toEmail: "owner@example.test",
+    });
+    mockTransaction.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError(
+      "synthetic duplicate",
+      { code: "P2002", clientVersion: "synthetic" },
+    ));
+
+    const response = await POST(requestWithBody(streamFrom([encoded("signed-payload")]).stream));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, duplicate: true });
+    expect(mockDrainForwards).toHaveBeenCalledWith({
+      providerEmailId: "inbound-email-1",
+      limit: 1,
+    });
   });
 });
