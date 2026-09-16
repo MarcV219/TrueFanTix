@@ -48,6 +48,25 @@ export type SpotifyArtistCredentialResult =
   | Readonly<{ status: "RECONNECT_REQUIRED"; commandId?: string }>
   | Readonly<{ status: "READY"; credential: SpotifyArtistReadCredential }>;
 
+const issuedReadyCredentials = new WeakSet<object>();
+
+export function isIssuedSpotifyArtistReadCredential(
+  value: unknown,
+): value is Readonly<{ status: "READY"; credential: SpotifyArtistReadCredential }> {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && issuedReadyCredentials.has(value)
+    && Object.isFrozen(value)
+    && "status" in value
+    && value.status === "READY"
+    && "credential" in value
+    && value.credential
+    && typeof value.credential === "object"
+    && Object.isFrozen(value.credential),
+  );
+}
+
 type CredentialHooks = {
   afterInitialSnapshotCommitted?: (snapshot: CredentialSnapshot | null) => Promise<void> | void;
   afterRefreshCompleted?: (result: SpotifyRefreshCommandResult) => Promise<void> | void;
@@ -108,6 +127,7 @@ async function lockOrdinaryUser(tx: Transaction, userId: string) {
       phone: true,
       termsVersion: true,
       privacyVersion: true,
+      role: true,
       emailVerifiedAt: true,
       phoneVerifiedAt: true,
       isBanned: true,
@@ -115,6 +135,7 @@ async function lockOrdinaryUser(tx: Transaction, userId: string) {
   });
   if (!user) throw new SpotifyRefreshAccessChangedError("NOT_AUTHENTICATED");
   if (isPrimaryStagingManagedUser(user)) throw new ManagedAccountSpotifyOperationError();
+  if (user.role !== "USER") throw new SpotifyRefreshAccessChangedError("NOT_AUTHENTICATED");
   if (user.isBanned) throw new SpotifyRefreshAccessChangedError("BANNED");
   if (!user.emailVerifiedAt || !user.phoneVerifiedAt) {
     throw new SpotifyRefreshAccessChangedError("NOT_VERIFIED");
@@ -241,7 +262,7 @@ function readyCredential(snapshot: CredentialSnapshot, env: NodeJS.ProcessEnv): 
   }
   try {
     const accessToken = decryptAccessToken(snapshot.accessTokenEncrypted, env);
-    return Object.freeze({
+    const result = Object.freeze({
       status: "READY",
       credential: Object.freeze({
         userId: snapshot.userId,
@@ -254,6 +275,8 @@ function readyCredential(snapshot: CredentialSnapshot, env: NodeJS.ProcessEnv): 
         refreshCommandId: snapshot.currentRefreshCommandId,
       }),
     });
+    issuedReadyCredentials.add(result);
+    return result;
   } catch {
     return Object.freeze({ status: "RECONNECT_REQUIRED" });
   }
