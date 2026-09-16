@@ -10,6 +10,10 @@ const TOKEN_URL = "https://accounts.spotify.com/api/token";
 const AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 const API_BASE = "https://api.spotify.com/v1";
 const SCOPES = ["user-follow-read", "user-top-read"];
+export const SPOTIFY_STAGING_ORIGIN = "https://truefantix-staging-preview.vercel.app";
+export const SPOTIFY_PRODUCTION_ORIGIN = "https://www.truefantix.com";
+export const SPOTIFY_TEST_ORIGIN = "https://spotify.test.invalid";
+const SPOTIFY_CALLBACK_PATH = "/api/integrations/spotify/callback";
 
 export type SpotifyArtistImportCandidate = {
   spotifyId: string;
@@ -19,6 +23,24 @@ export type SpotifyArtistImportCandidate = {
   spotifyUrl?: string;
   imageUrl?: string;
   match: ProviderCatalogSuggestion | null;
+};
+
+export type SpotifyConnectionAuthorization = {
+  userId: string;
+  connectedAccountId: string | null;
+  providerAccountId: string | null;
+  connectionVersion: string | null;
+};
+
+export type SpotifyConnectionEvidence = {
+  providerAccountId: string;
+  accessToken: string;
+  refreshToken: string | null;
+  tokenType: string;
+  scope: string;
+  expiresAt: Date | null;
+  displayName: string | null;
+  email: string | null;
 };
 
 function cleanSecret(value: string | undefined) {
@@ -31,14 +53,82 @@ function requiredEnv(name: string) {
   return value;
 }
 
-function appOrigin() {
-  const configured = process.env.APP_ORIGIN || process.env.NEXT_PUBLIC_APP_URL;
-  if (configured) return new URL(configured).origin;
-  return "http://localhost:3000";
+function exactHttpsOrigin(value: string) {
+  const trimmed = value.trim().replace(/\/$/, "");
+  const parsed = new URL(trimmed);
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.origin !== trimmed
+    || parsed.pathname !== "/"
+    || parsed.search
+    || parsed.hash
+  ) {
+    throw new Error("Invalid Spotify application origin.");
+  }
+  return parsed.origin;
+}
+
+export function canonicalSpotifyConfiguration(env: NodeJS.ProcessEnv = process.env) {
+  const origins = [env.NEXT_PUBLIC_APP_URL, env.APP_ORIGIN]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map(exactHttpsOrigin);
+  if (origins.length === 0 || origins.some((origin) => origin !== origins[0])) {
+    throw new Error("Spotify requires one matching configured application origin.");
+  }
+
+  for (const identity of [env.PRIMARY_TICKETING_ENVIRONMENT_ID, env.PRIMARY_TICKETING_DEPLOYMENT_ID]) {
+    if (identity && identity !== "isolated-preview" && identity !== "isolated-test") {
+      throw new Error("Spotify requires a recognized deployment identity.");
+    }
+  }
+  const isolatedPreview = env.PRIMARY_TICKETING_ENVIRONMENT_ID === "isolated-preview"
+    || env.PRIMARY_TICKETING_DEPLOYMENT_ID === "isolated-preview"
+    || env.VERCEL_ENV === "preview";
+  const isolatedTest = env.PRIMARY_TICKETING_ENVIRONMENT_ID === "isolated-test"
+    || env.PRIMARY_TICKETING_DEPLOYMENT_ID === "isolated-test"
+    || env.NODE_ENV === "test";
+  const production = env.VERCEL_ENV === "production";
+  if ([isolatedPreview, isolatedTest, production].filter(Boolean).length !== 1) {
+    throw new Error("Spotify deployment identity is ambiguous.");
+  }
+  const expectedOrigin = isolatedPreview
+    ? SPOTIFY_STAGING_ORIGIN
+    : isolatedTest
+      ? SPOTIFY_TEST_ORIGIN
+      : production
+        ? SPOTIFY_PRODUCTION_ORIGIN
+        : null;
+  if (!expectedOrigin || origins[0] !== expectedOrigin) {
+    throw new Error("Spotify origin does not match a recognized deployment identity.");
+  }
+
+  const configuredRedirect = cleanSecret(env.SPOTIFY_REDIRECT_URI);
+  const redirect = new URL(configuredRedirect || `${expectedOrigin}${SPOTIFY_CALLBACK_PATH}`);
+  if (
+    redirect.protocol !== "https:"
+    || redirect.username
+    || redirect.password
+    || redirect.origin !== expectedOrigin
+    || redirect.pathname !== SPOTIFY_CALLBACK_PATH
+    || redirect.search
+    || redirect.hash
+  ) {
+    throw new Error("Invalid Spotify callback URI.");
+  }
+
+  return { origin: expectedOrigin, redirectUri: redirect.toString() };
 }
 
 export function spotifyRedirectUri() {
-  return cleanSecret(process.env.SPOTIFY_REDIRECT_URI) || `${appOrigin()}/api/integrations/spotify/callback`;
+  return canonicalSpotifyConfiguration().redirectUri;
+}
+
+export function spotifyAccountRedirectUrl(status: string) {
+  const target = new URL("/account/notifications", canonicalSpotifyConfiguration().origin);
+  target.searchParams.set("spotify", status);
+  return target;
 }
 
 export function spotifyConfigured() {
@@ -176,43 +266,160 @@ async function spotifyApi<T>(accessToken: string, path: string): Promise<T> {
   return data as T;
 }
 
+function boundedProviderText(value: unknown, maxLength: number) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength) return null;
+  return normalized;
+}
+
+function boundedProviderSecret(value: unknown, maxLength: number) {
+  if (typeof value !== "string" || !value.trim() || value.length > maxLength) return null;
+  return value;
+}
+
+type SpotifyConnectionVersionSource = {
+  id: string;
+  providerAccountId: string;
+  accessTokenEncrypted: string;
+  refreshTokenEncrypted: string | null;
+  expiresAt: Date | null;
+  updatedAt: Date;
+};
+
+function spotifyConnectionVersion(connection: SpotifyConnectionVersionSource) {
+  return crypto.createHash("sha256").update(JSON.stringify({
+    id: connection.id,
+    providerAccountId: connection.providerAccountId,
+    accessTokenEncrypted: connection.accessTokenEncrypted,
+    refreshTokenEncrypted: connection.refreshTokenEncrypted,
+    expiresAt: connection.expiresAt?.toISOString() ?? null,
+    updatedAt: connection.updatedAt.toISOString(),
+  })).digest("hex");
+}
+
+export async function snapshotSpotifyConnectionAuthorization(
+  userId: string,
+  db: SpotifyDb,
+): Promise<SpotifyConnectionAuthorization> {
+  const current = await db.connectedAccount.findUnique({
+    where: { userId_provider: { userId, provider: SPOTIFY_PROVIDER } },
+    select: {
+      id: true,
+      providerAccountId: true,
+      accessTokenEncrypted: true,
+      refreshTokenEncrypted: true,
+      expiresAt: true,
+      updatedAt: true,
+    },
+  });
+  return {
+    userId,
+    connectedAccountId: current?.id ?? null,
+    providerAccountId: current?.providerAccountId ?? null,
+    connectionVersion: current ? spotifyConnectionVersion(current) : null,
+  };
+}
+
+export async function getSpotifyConnectionEvidence(token: unknown): Promise<SpotifyConnectionEvidence> {
+  if (!token || typeof token !== "object") throw new Error("Spotify returned an invalid token response.");
+  const value = token as Record<string, unknown>;
+  const accessToken = boundedProviderSecret(value.access_token, 16_384);
+  if (!accessToken) throw new Error("Spotify returned an invalid access token.");
+
+  const me: unknown = await spotifyApi(accessToken, "/me");
+  if (!me || typeof me !== "object") throw new Error("Spotify returned an invalid account response.");
+  const account = me as Record<string, unknown>;
+  const providerAccountId = boundedProviderText(account.id, 512);
+  if (!providerAccountId) throw new Error("Spotify returned an invalid account identity.");
+
+  const expiresIn = typeof value.expires_in === "number" && Number.isFinite(value.expires_in)
+    ? value.expires_in
+    : null;
+  const expiresAt = expiresIn !== null && expiresIn >= 0 && expiresIn <= 31_536_000
+    ? new Date(Date.now() + expiresIn * 1000)
+    : null;
+
+  return {
+    providerAccountId,
+    accessToken,
+    refreshToken: boundedProviderSecret(value.refresh_token, 16_384),
+    tokenType: boundedProviderText(value.token_type, 128) ?? "Bearer",
+    scope: boundedProviderText(value.scope, 2_048) ?? SCOPES.join(" "),
+    expiresAt,
+    displayName: boundedProviderText(account.display_name, 1_024),
+    email: boundedProviderText(account.email, 1_024),
+  };
+}
+
 export async function storeSpotifyConnection({
-  userId,
-  token,
+  authorization,
+  evidence,
   db = prisma,
 }: {
-  userId: string;
-  token: any;
+  authorization: SpotifyConnectionAuthorization;
+  evidence: SpotifyConnectionEvidence;
   db?: SpotifyDb;
 }) {
-  const accessToken = token.access_token as string;
-  const me: any = await spotifyApi(accessToken, "/me");
-  const expiresAt = typeof token.expires_in === "number" ? new Date(Date.now() + token.expires_in * 1000) : null;
+  const current = await db.connectedAccount.findUnique({
+    where: { userId_provider: { userId: authorization.userId, provider: SPOTIFY_PROVIDER } },
+    select: {
+      id: true,
+      providerAccountId: true,
+      accessTokenEncrypted: true,
+      refreshTokenEncrypted: true,
+      expiresAt: true,
+      updatedAt: true,
+    },
+  });
+  const bindingMatches = authorization.connectedAccountId === null
+    ? current === null && authorization.providerAccountId === null && authorization.connectionVersion === null
+    : current?.id === authorization.connectedAccountId
+      && current.providerAccountId === authorization.providerAccountId
+      && authorization.connectionVersion !== null
+      && spotifyConnectionVersion(current) === authorization.connectionVersion;
+  if (!bindingMatches) throw new Error("SPOTIFY_CONNECTION_CHANGED");
 
-  return db.connectedAccount.upsert({
-    where: { userId_provider: { userId, provider: SPOTIFY_PROVIDER } },
-    create: {
-      userId,
+  const data = {
+    providerAccountId: evidence.providerAccountId,
+    accessTokenEncrypted: encrypt(evidence.accessToken),
+    refreshTokenEncrypted: evidence.refreshToken ? encrypt(evidence.refreshToken) : undefined,
+    tokenType: evidence.tokenType,
+    scope: evidence.scope,
+    expiresAt: evidence.expiresAt,
+    displayName: evidence.displayName,
+    email: evidence.email,
+  };
+
+  if (!current) {
+    return db.connectedAccount.create({
+      data: {
+      userId: authorization.userId,
       provider: SPOTIFY_PROVIDER,
-      providerAccountId: String(me.id),
-      accessTokenEncrypted: encrypt(accessToken),
-      refreshTokenEncrypted: token.refresh_token ? encrypt(token.refresh_token) : null,
-      tokenType: token.token_type ?? "Bearer",
-      scope: token.scope ?? SCOPES.join(" "),
-      expiresAt,
-      displayName: me.display_name ?? null,
-      email: me.email ?? null,
+        ...data,
+        refreshTokenEncrypted: data.refreshTokenEncrypted ?? null,
+      },
+      select: { id: true, displayName: true, email: true },
+    });
+  }
+
+  const updated = await db.connectedAccount.updateMany({
+    where: {
+      id: current.id,
+      userId: authorization.userId,
+      provider: SPOTIFY_PROVIDER,
+      providerAccountId: current.providerAccountId,
+      accessTokenEncrypted: current.accessTokenEncrypted,
+      refreshTokenEncrypted: current.refreshTokenEncrypted,
+      expiresAt: current.expiresAt,
+      updatedAt: current.updatedAt,
     },
-    update: {
-      providerAccountId: String(me.id),
-      accessTokenEncrypted: encrypt(accessToken),
-      refreshTokenEncrypted: token.refresh_token ? encrypt(token.refresh_token) : undefined,
-      tokenType: token.token_type ?? "Bearer",
-      scope: token.scope ?? SCOPES.join(" "),
-      expiresAt,
-      displayName: me.display_name ?? null,
-      email: me.email ?? null,
-    },
+    data,
+  });
+  if (updated.count !== 1) throw new Error("SPOTIFY_CONNECTION_CHANGED");
+
+  return db.connectedAccount.findUniqueOrThrow({
+    where: { id: current.id },
     select: { id: true, displayName: true, email: true },
   });
 }

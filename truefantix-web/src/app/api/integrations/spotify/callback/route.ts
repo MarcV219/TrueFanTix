@@ -3,16 +3,25 @@ export const runtime = "nodejs";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/guards";
-import { exchangeSpotifyCode, storeSpotifyConnection } from "@/lib/integrations/spotify";
+import {
+  exchangeSpotifyCode,
+  getSpotifyConnectionEvidence,
+  snapshotSpotifyConnectionAuthorization,
+  spotifyAccountRedirectUrl,
+  storeSpotifyConnection,
+  type SpotifyConnectionAuthorization,
+} from "@/lib/integrations/spotify";
 import {
   ManagedAccountSpotifyOperationError,
-  runOrdinarySpotifyOperation,
+  runOrdinarySpotifyTransaction,
 } from "@/lib/integrations/ordinary-spotify-user";
 
 const STATE_COOKIE = "tft_spotify_oauth_state";
 
-function redirect(req: Request, status: string) {
-  return NextResponse.redirect(new URL(`/account/notifications?spotify=${encodeURIComponent(status)}`, req.url));
+function redirect(status: string) {
+  const response = NextResponse.redirect(spotifyAccountRedirectUrl(status));
+  response.cookies.set(STATE_COOKIE, "", { path: "/", maxAge: 0 });
+  return response;
 }
 
 function stagingConsoleOnlyError() {
@@ -31,11 +40,14 @@ function stagingConsoleOnlyError() {
 
 export async function GET(req: Request) {
   const gate = await requireUser(req);
-  if (!gate.ok) return gate.res;
+  if (!gate.ok) {
+    gate.res.cookies.set(STATE_COOKIE, "", { path: "/", maxAge: 0 });
+    return gate.res;
+  }
 
   const url = new URL(req.url);
   const error = url.searchParams.get("error");
-  if (error) return redirect(req, "denied");
+  if (error) return redirect("denied");
 
   const code = url.searchParams.get("code")?.trim();
   const state = url.searchParams.get("state")?.trim();
@@ -43,24 +55,25 @@ export async function GET(req: Request) {
   const cookieState = jar.get(STATE_COOKIE)?.value;
 
   if (!code || !state || !cookieState || state !== cookieState) {
-    const res = redirect(req, "invalid_state");
-    res.cookies.set(STATE_COOKIE, "", { path: "/", maxAge: 0 });
-    return res;
+    return redirect("invalid_state");
   }
 
   try {
-    await runOrdinarySpotifyOperation(gate.user.id, async (tx) => {
-      const token = await exchangeSpotifyCode(code);
-      await storeSpotifyConnection({ userId: gate.user.id, token, db: tx });
+    const authorization = await runOrdinarySpotifyTransaction<SpotifyConnectionAuthorization>(
+      gate.user.id,
+      (tx) => snapshotSpotifyConnectionAuthorization(gate.user.id, tx),
+    );
+
+    const token = await exchangeSpotifyCode(code);
+    const evidence = await getSpotifyConnectionEvidence(token);
+
+    await runOrdinarySpotifyTransaction(gate.user.id, (tx) => {
+      return storeSpotifyConnection({ authorization, evidence, db: tx });
     });
-    const res = redirect(req, "connected");
-    res.cookies.set(STATE_COOKIE, "", { path: "/", maxAge: 0 });
-    return res;
+    return redirect("connected");
   } catch (err) {
     if (err instanceof ManagedAccountSpotifyOperationError) return stagingConsoleOnlyError();
     console.error("Spotify callback failed:", err);
-    const res = redirect(req, "failed");
-    res.cookies.set(STATE_COOKIE, "", { path: "/", maxAge: 0 });
-    return res;
+    return redirect("failed");
   }
 }

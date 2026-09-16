@@ -1,14 +1,18 @@
 /** @jest-environment node */
 
 import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { sendEmail } from "@/lib/email";
 import {
   disconnectSpotify,
   exchangeSpotifyCode,
+  getSpotifyConnectionEvidence,
   getSpotifyImportCandidates,
   hasSpotifyConnection,
+  snapshotSpotifyConnectionAuthorization,
+  spotifyAccountRedirectUrl,
   storeSpotifyConnection,
 } from "@/lib/integrations/spotify";
 import { GET as getConnection, DELETE as deleteConnection } from "@/app/api/integrations/spotify/connection/route";
@@ -33,8 +37,11 @@ jest.mock("next/headers", () => ({ cookies: jest.fn() }));
 jest.mock("@/lib/integrations/spotify", () => ({
   disconnectSpotify: jest.fn(),
   exchangeSpotifyCode: jest.fn(),
+  getSpotifyConnectionEvidence: jest.fn(),
   getSpotifyImportCandidates: jest.fn(),
   hasSpotifyConnection: jest.fn(),
+  snapshotSpotifyConnectionAuthorization: jest.fn(),
+  spotifyAccountRedirectUrl: jest.fn(),
   storeSpotifyConnection: jest.fn(),
 }));
 
@@ -52,10 +59,19 @@ const mockedCookies = cookies as jest.MockedFunction<typeof cookies>;
 const mockedSendEmail = sendEmail as jest.MockedFunction<typeof sendEmail>;
 const mockedDisconnectSpotify = disconnectSpotify as jest.MockedFunction<typeof disconnectSpotify>;
 const mockedExchangeSpotifyCode = exchangeSpotifyCode as jest.MockedFunction<typeof exchangeSpotifyCode>;
+const mockedGetSpotifyConnectionEvidence = getSpotifyConnectionEvidence as jest.MockedFunction<
+  typeof getSpotifyConnectionEvidence
+>;
 const mockedGetSpotifyImportCandidates = getSpotifyImportCandidates as jest.MockedFunction<
   typeof getSpotifyImportCandidates
 >;
 const mockedHasSpotifyConnection = hasSpotifyConnection as jest.MockedFunction<typeof hasSpotifyConnection>;
+const mockedSnapshotSpotifyConnectionAuthorization = snapshotSpotifyConnectionAuthorization as jest.MockedFunction<
+  typeof snapshotSpotifyConnectionAuthorization
+>;
+const mockedSpotifyAccountRedirectUrl = spotifyAccountRedirectUrl as jest.MockedFunction<
+  typeof spotifyAccountRedirectUrl
+>;
 const mockedStoreSpotifyConnection = storeSpotifyConnection as jest.MockedFunction<typeof storeSpotifyConnection>;
 
 const ordinaryUser = {
@@ -98,6 +114,25 @@ describe("Spotify staging-persona operation boundary", () => {
     mockedDisconnectSpotify.mockResolvedValue(undefined);
     mockedGetSpotifyImportCandidates.mockResolvedValue({ connected: true, artists: [] });
     mockedExchangeSpotifyCode.mockResolvedValue({ access_token: "token" });
+    mockedSnapshotSpotifyConnectionAuthorization.mockResolvedValue({
+      userId: "user-1",
+      connectedAccountId: null,
+      providerAccountId: null,
+      connectionVersion: null,
+    });
+    mockedSpotifyAccountRedirectUrl.mockImplementation(
+      (status) => new URL(`/account/notifications?spotify=${status}`, "https://trusted.example"),
+    );
+    mockedGetSpotifyConnectionEvidence.mockResolvedValue({
+      providerAccountId: "spotify-listener-1",
+      accessToken: "token",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      scope: "user-follow-read user-top-read",
+      expiresAt: null,
+      displayName: "Listener",
+      email: "listener@example.test",
+    });
     mockedStoreSpotifyConnection.mockResolvedValue({
       id: "account-1",
       displayName: "Listener",
@@ -290,18 +325,64 @@ describe("Spotify staging-persona operation boundary", () => {
     expect(mockedGetSpotifyImportCandidates).not.toHaveBeenCalled();
   });
 
-  it("serializes callback token exchange and connection storage", async () => {
+  it("commits callback authorization before provider I/O and revalidates before storage", async () => {
+    const sequence: string[] = [];
+    mockedPrisma.$transaction
+      .mockImplementationOnce(async (work: (tx: typeof mockedPrisma) => unknown) => {
+        sequence.push("authorization-start");
+        const result = await work(mockedPrisma);
+        sequence.push("authorization-committed");
+        return result;
+      })
+      .mockImplementationOnce(async (work: (tx: typeof mockedPrisma) => unknown) => {
+        sequence.push("storage-start");
+        const result = await work(mockedPrisma);
+        sequence.push("storage-committed");
+        return result;
+      });
+    mockedExchangeSpotifyCode.mockImplementationOnce(async () => {
+      sequence.push("code-exchanged");
+      return { access_token: "token" };
+    });
+    mockedGetSpotifyConnectionEvidence.mockImplementationOnce(async () => {
+      sequence.push("account-read");
+      return {
+        providerAccountId: "spotify-listener-1",
+        accessToken: "token",
+        refreshToken: "refresh",
+        tokenType: "Bearer",
+        scope: "user-follow-read user-top-read",
+        expiresAt: null,
+        displayName: "Listener",
+        email: "listener@example.test",
+      };
+    });
+
     const response = await spotifyCallback(
       request("/api/integrations/spotify/callback?code=code-1&state=expected-state"),
     );
 
     expect(response.status).toBe(307);
     expect(mockedExchangeSpotifyCode).toHaveBeenCalledWith("code-1");
+    expect(mockedGetSpotifyConnectionEvidence).toHaveBeenCalledWith({ access_token: "token" });
     expect(mockedStoreSpotifyConnection).toHaveBeenCalledWith({
-      userId: "user-1",
-      token: { access_token: "token" },
+      authorization: {
+        userId: "user-1",
+        connectedAccountId: null,
+        providerAccountId: null,
+        connectionVersion: null,
+      },
+      evidence: expect.objectContaining({ providerAccountId: "spotify-listener-1" }),
       db: mockedPrisma,
     });
+    expect(sequence).toEqual([
+      "authorization-start",
+      "authorization-committed",
+      "code-exchanged",
+      "account-read",
+      "storage-start",
+      "storage-committed",
+    ]);
   });
 
   it("refuses a restored managed callback before exchanging the provider code", async () => {
@@ -314,6 +395,92 @@ describe("Spotify staging-persona operation boundary", () => {
     expect(response.status).toBe(403);
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
+    expect(mockedGetSpotifyConnectionEvidence).not.toHaveBeenCalled();
     expect(mockedStoreSpotifyConnection).not.toHaveBeenCalled();
+  });
+
+  it("does not exchange the callback code when authorization commit aborts", async () => {
+    mockedPrisma.$transaction.mockImplementationOnce(
+      async (work: (tx: typeof mockedPrisma) => unknown) => {
+        await work(mockedPrisma);
+        throw Object.assign(new Error("synthetic commit failure"), { code: "P2034" });
+      },
+    );
+
+    const response = await spotifyCallback(
+      request("/api/integrations/spotify/callback?code=code-1&state=expected-state"),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toContain("spotify=failed");
+    expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
+    expect(mockedGetSpotifyConnectionEvidence).not.toHaveBeenCalled();
+    expect(mockedStoreSpotifyConnection).not.toHaveBeenCalled();
+  });
+
+  it("does not store provider evidence when identity revalidation fails", async () => {
+    mockedPrisma.user.findUnique
+      .mockResolvedValueOnce(ordinaryUser)
+      .mockResolvedValueOnce(managedUser);
+
+    const response = await spotifyCallback(
+      request("/api/integrations/spotify/callback?code=code-1&state=expected-state"),
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockedExchangeSpotifyCode).toHaveBeenCalledTimes(1);
+    expect(mockedGetSpotifyConnectionEvidence).toHaveBeenCalledTimes(1);
+    expect(mockedStoreSpotifyConnection).not.toHaveBeenCalled();
+  });
+
+  it("uses the configured redirect origin and clears state on provider denial", async () => {
+    const response = await spotifyCallback(
+      new Request("https://hostile.example/api/integrations/spotify/callback?error=access_denied", {
+        headers: {
+          host: "hostile.example",
+          origin: "https://hostile.example",
+          "x-forwarded-host": "forwarded-hostile.example",
+          "x-forwarded-proto": "http",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://trusted.example/account/notifications?spotify=denied",
+    );
+    expect(response.headers.get("set-cookie")).toContain("tft_spotify_oauth_state=");
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
+  });
+
+  it("clears callback state when the current request is unauthenticated", async () => {
+    mockedRequireUser.mockResolvedValueOnce({
+      ok: false,
+      res: NextResponse.json({ ok: false, error: "NOT_AUTHENTICATED" }, { status: 401 }),
+    } as never);
+
+    const response = await spotifyCallback(
+      request("/api/integrations/spotify/callback?code=code-1&state=expected-state"),
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("set-cookie")).toContain("tft_spotify_oauth_state=");
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a newer connection after provider evidence returns", async () => {
+    mockedStoreSpotifyConnection.mockRejectedValueOnce(new Error("SPOTIFY_CONNECTION_CHANGED"));
+
+    const response = await spotifyCallback(
+      request("/api/integrations/spotify/callback?code=code-1&state=expected-state"),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toContain("spotify=failed");
+    expect(mockedExchangeSpotifyCode).toHaveBeenCalledTimes(1);
+    expect(mockedGetSpotifyConnectionEvidence).toHaveBeenCalledTimes(1);
+    expect(mockedStoreSpotifyConnection).toHaveBeenCalledTimes(1);
   });
 });
