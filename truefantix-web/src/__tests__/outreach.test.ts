@@ -95,16 +95,19 @@ describe("outreach security and personalization", () => {
   });
 
   it("distinguishes an explicit provider rejection from an accepted response with missing identity", async () => {
-    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ message: "synthetic rejection" }), {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ message: "provider-secret-rejection" }), {
       status: 422,
       headers: { "Content-Type": "application/json" },
     }));
-    await expect(sendOutreachEmail({
+    const rejection = sendOutreachEmail({
       to: "person@example.com",
       subject: "Hello",
       text: "Message",
       unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
-    })).rejects.toBeInstanceOf(OutreachEmailRejectedError);
+    });
+    await expect(rejection).rejects.toBeInstanceOf(OutreachEmailRejectedError);
+    await expect(rejection).rejects.toThrow("RESEND_HTTP_4XX");
+    await expect(rejection).rejects.not.toThrow("provider-secret-rejection");
 
     jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response("{}", {
       status: 200,
@@ -117,8 +120,124 @@ describe("outreach security and personalization", () => {
       unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
     })).rejects.toBeInstanceOf(OutreachEmailOutcomeUncertainError);
 
-    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ message: "synthetic outage" }), {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ message: "provider-secret-outage" }), {
       status: 500,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const outage = sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    });
+    await expect(outage).rejects.toBeInstanceOf(OutreachEmailOutcomeUncertainError);
+    await expect(outage).rejects.toThrow("RESEND_HTTP_NON_4XX");
+    await expect(outage).rejects.not.toThrow("provider-secret-outage");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["wrong", { "Content-Type": "text/plain" }],
+  ])("treats a %s JSON media type as an uncertain outcome", async (_label, headers) => {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ id: "email_123" }), {
+      status: 200,
+      headers,
+    }));
+    await expect(sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    })).rejects.toThrow("RESEND_PROVIDER_RESPONSE_INVALID");
+  });
+
+  it("does not await cancellation when rejecting a 2xx invalid media type", async () => {
+    const cancel = jest.fn(() => new Promise<void>(() => undefined));
+    const body = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => undefined),
+      cancel,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    }));
+    await expect(sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    }, { timeoutMs: 1_000 })).rejects.toThrow("RESEND_PROVIDER_RESPONSE_INVALID");
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["wrong", { "Content-Type": "text/plain" }],
+  ])("classifies HTTP 422 before a %s media type or stalled body", async (_label, headers) => {
+    const cancel = jest.fn(() => new Promise<void>(() => undefined));
+    const body = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => undefined),
+      cancel,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, {
+      status: 422,
+      headers,
+    }));
+    const rejection = sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=provider-secret-text",
+    }, { timeoutMs: 1_000 });
+    await expect(rejection).rejects.toBeInstanceOf(OutreachEmailRejectedError);
+    await expect(rejection).rejects.toThrow("RESEND_HTTP_4XX");
+    await expect(rejection).rejects.not.toThrow("provider-secret-text");
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies HTTP 500 before a malformed or stalled body", async () => {
+    const cancel = jest.fn(() => new Promise<void>(() => undefined));
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(Uint8Array.from([0xc3, 0x28])),
+      pull: () => new Promise(() => undefined),
+      cancel,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, {
+      status: 500,
+      headers: { "Content-Type": "text/plain" },
+    }));
+    const outcome = sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    }, { timeoutMs: 1_000 });
+    await expect(outcome).rejects.toBeInstanceOf(OutreachEmailOutcomeUncertainError);
+    await expect(outcome).rejects.toThrow("RESEND_HTTP_NON_4XX");
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats invalid JSON as an uncertain outcome", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response("not-json", {
+      status: 200,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    }));
+    await expect(sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    })).rejects.toThrow("RESEND_PROVIDER_RESPONSE_INVALID");
+  });
+
+  it("cancels a stalled provider body once at the shared deadline", async () => {
+    const cancel = jest.fn();
+    const body = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => undefined),
+      cancel,
+    });
+    const fetchImpl = jest.fn().mockResolvedValue(new Response(body, {
+      status: 200,
       headers: { "Content-Type": "application/json" },
     }));
     await expect(sendOutreachEmail({
@@ -126,7 +245,48 @@ describe("outreach security and personalization", () => {
       subject: "Hello",
       text: "Message",
       unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
-    })).rejects.toBeInstanceOf(OutreachEmailOutcomeUncertainError);
+    }, { fetchImpl, timeoutMs: 10 })).rejects.toThrow("RESEND_PROVIDER_TIMEOUT");
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal.aborted).toBe(true);
+  });
+
+  it("aborts a stalled provider fetch at the shared deadline", async () => {
+    const fetchImpl = jest.fn((_url: string | URL | Request, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      })
+    ));
+    await expect(sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    }, { fetchImpl: fetchImpl as typeof fetch, timeoutMs: 10 }))
+      .rejects.toThrow("RESEND_PROVIDER_TIMEOUT");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it.each([
+    ["oversized", new Uint8Array(65_537)],
+    ["malformed UTF-8", Uint8Array.from([0xc3, 0x28])],
+  ])("cancels the %s provider body once", async (_label, bytes) => {
+    const cancel = jest.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(bytes),
+      cancel,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    await expect(sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    })).rejects.toThrow("RESEND_PROVIDER_RESPONSE_INVALID");
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("preserves safe rich text and removes unsafe pasted Word markup", () => {

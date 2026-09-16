@@ -2,7 +2,11 @@
 
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/guards";
-import { OutreachEmailOutcomeUncertainError, sendOutreachEmail } from "@/lib/outreach-email";
+import {
+  OutreachEmailOutcomeUncertainError,
+  OutreachEmailRejectedError,
+  sendOutreachEmail,
+} from "@/lib/outreach-email";
 import { auditLog } from "@/lib/audit";
 import {
   claimOutreachRecipient,
@@ -289,10 +293,14 @@ if (!databaseUrl) describe.skip("outreach send PostgreSQL claim boundary", () =>
       .resolves.toMatchObject({ status: "COMPLETED" });
   });
 
-  it("never dispatches a second provider call after an HTTP 500 outcome", async () => {
+  it.each([
+    "RESEND_HTTP_NON_4XX",
+    "RESEND_PROVIDER_TIMEOUT",
+    "RESEND_PROVIDER_RESPONSE_INVALID",
+  ])("never dispatches a second provider call after uncertain outcome %s", async (evidence) => {
     const { campaignId, campaignName, recipientIds } = await fixture();
     mockedSendOutreachEmail.mockRejectedValueOnce(
-      new OutreachEmailOutcomeUncertainError("Resend returned HTTP 500."),
+      new OutreachEmailOutcomeUncertainError(evidence),
     );
 
     const first = await sendCampaign(request(campaignName), {
@@ -312,6 +320,34 @@ if (!databaseUrl) describe.skip("outreach send PostgreSQL claim boundary", () =>
         status: "RECONCILIATION_REQUIRED",
         providerMessageId: null,
         providerResult: "RESEND_OUTCOME_UNCERTAIN",
+        error: evidence,
+      });
+  });
+
+  it("records explicit HTTP 4xx rejection without replaying or persisting provider text", async () => {
+    const { campaignId, campaignName, recipientIds } = await fixture();
+    mockedSendOutreachEmail.mockRejectedValueOnce(
+      new OutreachEmailRejectedError("RESEND_HTTP_4XX"),
+    );
+
+    const first = await sendCampaign(request(campaignName), {
+      params: Promise.resolve({ id: campaignId }),
+    });
+    await expect(first.json()).resolves.toMatchObject({
+      sent: 0,
+      failed: 1,
+      reconciliationRequired: 0,
+      remaining: 0,
+    });
+    await sendCampaign(request(campaignName), { params: Promise.resolve({ id: campaignId }) });
+
+    expect(mockedSendOutreachEmail).toHaveBeenCalledTimes(1);
+    await expect(prisma.outreachRecipient.findUniqueOrThrow({ where: { id: recipientIds[0] } }))
+      .resolves.toMatchObject({
+        status: "FAILED",
+        providerMessageId: null,
+        providerResult: "RESEND_REJECTED",
+        error: "RESEND_HTTP_4XX",
       });
   });
 
