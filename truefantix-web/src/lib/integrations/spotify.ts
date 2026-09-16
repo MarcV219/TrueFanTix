@@ -9,6 +9,8 @@ const TOKEN_URL = "https://accounts.spotify.com/api/token";
 const AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 const API_BASE = "https://api.spotify.com/v1";
 const SCOPES = ["user-follow-read", "user-top-read"];
+const MAX_PROVIDER_BODY_BYTES = 65_536;
+const DEFAULT_PROVIDER_TIMEOUT_MS = 10_000;
 export const SPOTIFY_STAGING_ORIGIN = "https://truefantix-staging-preview.vercel.app";
 export const SPOTIFY_PRODUCTION_ORIGIN = "https://www.truefantix.com";
 export const SPOTIFY_TEST_ORIGIN = "https://spotify.test.invalid";
@@ -30,6 +32,11 @@ export type SpotifyConnectionEvidence = {
   expiresAt: Date | null;
   displayName: string | null;
   email: string | null;
+};
+
+type SpotifyProviderOptions = {
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 };
 
 function cleanSecret(value: string | undefined) {
@@ -152,31 +159,102 @@ function encrypt(value: string) {
 function basicAuthHeader() {
   const clientId = requiredEnv("SPOTIFY_CLIENT_ID");
   const clientSecret = requiredEnv("SPOTIFY_CLIENT_SECRET");
+  if (clientId.length > 4_096 || clientSecret.length > 4_096) {
+    throw new Error("Spotify credentials are invalid.");
+  }
   return `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
 }
 
-async function tokenRequest(body: URLSearchParams) {
-  const res = await fetch(TOKEN_URL, {
+function providerTimeout(value: number | undefined) {
+  if (value === undefined) return DEFAULT_PROVIDER_TIMEOUT_MS;
+  if (!Number.isFinite(value) || value <= 0 || value > 60_000) {
+    throw new Error("Spotify provider timeout is invalid.");
+  }
+  return value;
+}
+
+async function boundedProviderJson(
+  url: typeof TOKEN_URL | `${typeof API_BASE}/me`,
+  init: RequestInit,
+  options: SpotifyProviderOptions,
+) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = providerTimeout(options.timeoutMs);
+  const controller = new AbortController();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let readerCancelled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancelActiveStream = async () => {
+    controller.abort();
+    if (reader && !readerCancelled) {
+      readerCancelled = true;
+      await reader.cancel().catch(() => undefined);
+    }
+  };
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      void cancelActiveStream();
+      reject(new Error("SPOTIFY_OAUTH_PROVIDER_TIMEOUT"));
+    }, timeoutMs);
+  });
+  const operation = (async () => {
+    const response = await fetchImpl(url, { ...init, signal: controller.signal });
+    if (!response.ok) {
+      controller.abort();
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error("SPOTIFY_OAUTH_PROVIDER_REJECTED");
+    }
+    reader = response.body?.getReader() ?? null;
+    if (!reader) throw new Error("SPOTIFY_OAUTH_PROVIDER_INVALID");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let raw = "";
+    let bytes = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > MAX_PROVIDER_BODY_BYTES) {
+          throw new Error("SPOTIFY_OAUTH_PROVIDER_INVALID");
+        }
+        raw += decoder.decode(chunk.value, { stream: true });
+      }
+      raw += decoder.decode();
+      return JSON.parse(raw) as unknown;
+    } catch (error) {
+      await cancelActiveStream();
+      throw error;
+    }
+  })();
+  try {
+    return await Promise.race([operation, timeout]);
+  } catch {
+    throw new Error("SPOTIFY_OAUTH_PROVIDER_FAILED");
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function tokenRequest(body: URLSearchParams, options: SpotifyProviderOptions = {}) {
+  return boundedProviderJson(TOKEN_URL, {
     method: "POST",
     headers: {
       Authorization: basicAuthHeader(),
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body,
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) {
-    throw new Error(data?.error_description || data?.error || `Spotify token request failed (${res.status}).`);
-  }
-  return data;
+  }, options);
 }
 
-export async function exchangeSpotifyCode(code: string) {
+export async function exchangeSpotifyCode(code: string, options: SpotifyProviderOptions = {}) {
+  if (!code.trim() || code.length > 4_096) {
+    throw new Error("Spotify authorization code is invalid.");
+  }
   const body = new URLSearchParams();
   body.set("grant_type", "authorization_code");
   body.set("code", code);
   body.set("redirect_uri", spotifyRedirectUri());
-  return tokenRequest(body);
+  return tokenRequest(body, options);
 }
 
 export async function hasSpotifyConnection(userId: string, db: SpotifyDb = prisma) {
@@ -193,14 +271,16 @@ export async function disconnectSpotify(userId: string, db: SpotifyDb = prisma) 
   });
 }
 
-async function spotifyApi<T>(accessToken: string, path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+async function spotifyApi<T>(
+  accessToken: string,
+  path: "/me",
+  options: SpotifyProviderOptions,
+): Promise<T> {
+  return boundedProviderJson(`${API_BASE}${path}`, {
+    method: "GET",
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error?.message || `Spotify API request failed (${res.status}).`);
-  return data as T;
+  }, options) as Promise<T>;
 }
 
 function boundedProviderText(value: unknown, maxLength: number) {
@@ -259,13 +339,16 @@ export async function snapshotSpotifyConnectionAuthorization(
   };
 }
 
-export async function getSpotifyConnectionEvidence(token: unknown): Promise<SpotifyConnectionEvidence> {
+export async function getSpotifyConnectionEvidence(
+  token: unknown,
+  options: SpotifyProviderOptions = {},
+): Promise<SpotifyConnectionEvidence> {
   if (!token || typeof token !== "object") throw new Error("Spotify returned an invalid token response.");
   const value = token as Record<string, unknown>;
   const accessToken = boundedProviderSecret(value.access_token, 16_384);
   if (!accessToken) throw new Error("Spotify returned an invalid access token.");
 
-  const me: unknown = await spotifyApi(accessToken, "/me");
+  const me: unknown = await spotifyApi(accessToken, "/me", options);
   if (!me || typeof me !== "object") throw new Error("Spotify returned an invalid account response.");
   const account = me as Record<string, unknown>;
   const providerAccountId = boundedProviderText(account.id, 512);

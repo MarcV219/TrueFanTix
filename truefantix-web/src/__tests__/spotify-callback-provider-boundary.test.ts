@@ -2,6 +2,7 @@
 
 import {
   canonicalSpotifyConfiguration,
+  exchangeSpotifyCode,
   getSpotifyConnectionEvidence,
   snapshotSpotifyConnectionAuthorization,
   spotifyAccountRedirectUrl,
@@ -32,12 +33,16 @@ describe("Spotify callback provider evidence boundary", () => {
   };
 
   const previousEncryptionKey = process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY;
+  const previousClientId = process.env.SPOTIFY_CLIENT_ID;
+  const previousClientSecret = process.env.SPOTIFY_CLIENT_SECRET;
   const previousRedirectUri = process.env.SPOTIFY_REDIRECT_URI;
   const previousAppOrigin = process.env.APP_ORIGIN;
   const previousPublicAppUrl = process.env.NEXT_PUBLIC_APP_URL;
 
   beforeEach(() => {
     process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY = "test-only-spotify-encryption-key-32-bytes";
+    process.env.SPOTIFY_CLIENT_ID = "spotify-client-id";
+    process.env.SPOTIFY_CLIENT_SECRET = "spotify-client-secret";
     process.env.APP_ORIGIN = SPOTIFY_TEST_ORIGIN;
     process.env.NEXT_PUBLIC_APP_URL = SPOTIFY_TEST_ORIGIN;
     process.env.SPOTIFY_REDIRECT_URI = `${SPOTIFY_TEST_ORIGIN}/api/integrations/spotify/callback`;
@@ -50,6 +55,10 @@ describe("Spotify callback provider evidence boundary", () => {
     } else {
       process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY = previousEncryptionKey;
     }
+    if (previousClientId === undefined) delete process.env.SPOTIFY_CLIENT_ID;
+    else process.env.SPOTIFY_CLIENT_ID = previousClientId;
+    if (previousClientSecret === undefined) delete process.env.SPOTIFY_CLIENT_SECRET;
+    else process.env.SPOTIFY_CLIENT_SECRET = previousClientSecret;
     if (previousRedirectUri === undefined) {
       delete process.env.SPOTIFY_REDIRECT_URI;
     } else {
@@ -78,10 +87,12 @@ describe("Spotify callback provider evidence boundary", () => {
       ignored: "provider field",
     });
 
-    expect(fetch).toHaveBeenCalledWith("https://api.spotify.com/v1/me", {
+    expect(fetch).toHaveBeenCalledWith("https://api.spotify.com/v1/me", expect.objectContaining({
+      method: "GET",
       headers: { Authorization: "Bearer access-token" },
       cache: "no-store",
-    });
+      signal: expect.any(AbortSignal),
+    }));
     expect(result).toEqual({
       providerAccountId: "spotify-listener-1",
       accessToken: "access-token",
@@ -103,6 +114,70 @@ describe("Spotify callback provider evidence boundary", () => {
 
     await expect(getSpotifyConnectionEvidence({ access_token: "access-token" }))
       .rejects.toThrow("invalid account identity");
+  });
+
+  it("rejects oversized profile bodies without parsing provider content", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      id: "spotify-listener-1",
+      ignored: "x".repeat(65_536),
+    }), { status: 200 }));
+
+    await expect(getSpotifyConnectionEvidence({ access_token: "access-token" }))
+      .rejects.toThrow("SPOTIFY_OAUTH_PROVIDER_FAILED");
+  });
+
+  it("cancels a stalled profile body at the provider deadline", async () => {
+    const cancel = jest.fn();
+    const body = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => undefined),
+      cancel,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, { status: 200 }));
+
+    await expect(getSpotifyConnectionEvidence(
+      { access_token: "access-token" },
+      { timeoutMs: 10 },
+    )).rejects.toThrow("SPOTIFY_OAUTH_PROVIDER_FAILED");
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels malformed UTF-8 profile streams and returns only canonical failure", async () => {
+    const cancel = jest.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(Uint8Array.from([0xc3, 0x28])),
+      cancel,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, { status: 200 }));
+
+    await expect(getSpotifyConnectionEvidence({ access_token: "access-token" }))
+      .rejects.toEqual(new Error("SPOTIFY_OAUTH_PROVIDER_FAILED"));
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds token responses and never surfaces provider error text", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      error: "provider-secret-detail",
+    }), { status: 429 }));
+
+    await expect(exchangeSpotifyCode("one-time-code"))
+      .rejects.toEqual(new Error("SPOTIFY_OAUTH_PROVIDER_FAILED"));
+  });
+
+  it("aborts a stalled token exchange and rejects oversized codes before provider contact", async () => {
+    const fetchImpl = jest.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    }));
+
+    await expect(exchangeSpotifyCode("one-time-code", {
+      fetchImpl: fetchImpl as typeof fetch,
+      timeoutMs: 10,
+    })).rejects.toThrow("SPOTIFY_OAUTH_PROVIDER_FAILED");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect((fetchImpl.mock.calls[0]?.[1] as RequestInit | undefined)?.signal?.aborted).toBe(true);
+
+    await expect(exchangeSpotifyCode("x".repeat(4_097), { fetchImpl: fetchImpl as typeof fetch }))
+      .rejects.toThrow("authorization code is invalid");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("derives the account redirect only from configured Spotify origin", () => {
