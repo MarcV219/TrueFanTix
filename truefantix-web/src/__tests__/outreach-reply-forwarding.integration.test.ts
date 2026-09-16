@@ -1,5 +1,8 @@
 /** @jest-environment node */
 
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Pool } from "pg";
 import { prisma } from "@/lib/prisma";
 import {
   buildOutreachReplyForwardIntent,
@@ -12,6 +15,7 @@ const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
 if (!databaseUrl) describe.skip("outreach reply forwarding PostgreSQL boundary", () => {
   it("requires an isolated database", () => undefined);
 }); else describe("outreach reply forwarding PostgreSQL boundary", () => {
+  const pool = new Pool({ connectionString: databaseUrl });
   const runId = `${Date.now()}-${process.pid}`;
   const campaignId = `reply-forward-campaign-${runId}`;
   const contactId = `reply-forward-contact-${runId}`;
@@ -135,6 +139,7 @@ if (!databaseUrl) describe.skip("outreach reply forwarding PostgreSQL boundary",
     delete process.env.OUTREACH_RESEND_INBOUND_API_KEY;
     delete process.env.OUTREACH_REPLY_FORWARD_TO;
     delete process.env.OUTREACH_FROM_EMAIL;
+    await pool.end();
   });
 
   it("recovers a committed pending intent and persists exact acceptance atomically", async () => {
@@ -172,6 +177,362 @@ if (!databaseUrl) describe.skip("outreach reply forwarding PostgreSQL boundary",
     });
   });
 
+  it("owns origin, lease, dispatch, and update clocks independently of session timezone", async () => {
+    const id = ++sequence;
+    const providerEmailId = `inbound-forward-${runId}-${id}`;
+    const replyId = `reply-forward-${runId}-${id}`;
+    const intentId = `reply-forward-intent-${runId}-${id}`;
+    const config = outreachReplyForwardingConfig();
+    if (!config) throw new Error("Synthetic forward configuration is missing.");
+    const envelope = buildOutreachReplyForwardIntent({
+      providerEmailId,
+      fromEmail: "fan@example.test",
+      subject: "Timezone-independent clocks",
+      textBody: "Synthetic plain-text reply.",
+      htmlBody: null,
+      attachmentCount: 0,
+      receivedAt: new Date("2026-09-16T15:00:00.000Z"),
+    }, config);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL TIME ZONE 'America/Los_Angeles'");
+      await tx.outreachReply.create({ data: {
+        id: replyId,
+        providerEmailId,
+        recipientId,
+        contactId,
+        fromEmail: "fan@example.test",
+        toEmail: "reply+synthetic@replies.truefantix.com",
+        subject: "Timezone-independent clocks",
+        textBody: "Synthetic plain-text reply.",
+        receivedAt: new Date("2026-09-16T15:00:00.000Z"),
+        forwardIntent: { create: { id: intentId, ...envelope } },
+      } });
+      await expect(tx.$queryRaw<Array<{ databaseOwned: boolean; aligned: boolean }>>`
+        SELECT
+          "createdAt" BETWEEN
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 seconds'
+            AND (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '5 seconds'
+            AS "databaseOwned",
+          "createdAt" = "updatedAt" AND "createdAt" = "availableAt" AS aligned
+        FROM "OutreachReplyForwardIntent" WHERE "id" = ${intentId}
+      `).resolves.toEqual([{ databaseOwned: true, aligned: true }]);
+
+      const claimToken = `timezone-claim-${runId}`;
+      await expect(tx.$queryRaw<Array<{ leaseOwned: boolean; updateOwned: boolean }>>`
+        UPDATE "OutreachReplyForwardIntent"
+        SET "status" = 'PROCESSING',
+            "claimToken" = ${claimToken},
+            "claimExpiresAt" = (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '15 minutes',
+            "updatedAt" = TIMESTAMP '2001-01-01 00:00:00'
+        WHERE "id" = ${intentId}
+        RETURNING
+          "claimExpiresAt" = ((statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '15 minutes')::TIMESTAMP(3)
+            AS "leaseOwned",
+          "updatedAt" BETWEEN
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 seconds'
+            AND (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '5 seconds'
+            AS "updateOwned"
+      `).resolves.toEqual([{ leaseOwned: true, updateOwned: true }]);
+
+      await expect(tx.$queryRaw<Array<{ dispatchOwned: boolean }>>`
+        UPDATE "OutreachReplyForwardIntent"
+        SET "attemptCount" = 1,
+            "providerDispatchAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = TIMESTAMP '2099-01-01 00:00:00'
+        WHERE "id" = ${intentId}
+        RETURNING "providerDispatchAt" = (statement_timestamp() AT TIME ZONE 'UTC')::TIMESTAMP(3)
+          AS "dispatchOwned"
+      `).resolves.toEqual([{ dispatchOwned: true }]);
+    });
+  });
+
+  it("rejects dispatch and authoritative provider results after the worker lease expires", async () => {
+    const expired = new Date("2020-01-01T00:00:00.000Z");
+    const preDispatch = await seedIntent({
+      status: "PROCESSING",
+      attemptCount: 0,
+      claimToken: `expired-dispatch-${runId}`,
+      claimExpiresAt: expired,
+    });
+    const preDispatchIntent = await prisma.outreachReplyForwardIntent.findUniqueOrThrow({
+      where: { replyId: preDispatch.id },
+    });
+    await expect(prisma.$executeRaw`
+      UPDATE "OutreachReplyForwardIntent"
+      SET "attemptCount" = 1,
+          "providerDispatchAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+          "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+      WHERE "id" = ${preDispatchIntent.id}
+    `).rejects.toThrow();
+
+    const dispatched = await seedIntent({
+      status: "PROCESSING",
+      attemptCount: 1,
+      claimToken: `expired-result-${runId}`,
+      claimExpiresAt: expired,
+      providerDispatchAt: expired,
+    });
+    const dispatchedIntent = await prisma.outreachReplyForwardIntent.findUniqueOrThrow({
+      where: { replyId: dispatched.id },
+    });
+    await expect(prisma.$executeRaw`
+      UPDATE "OutreachReplyForwardIntent"
+      SET "status" = 'DELIVERED',
+          "providerMessageId" = ${`expired-result-${runId}`},
+          "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+          "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+      WHERE "id" = ${dispatchedIntent.id}
+    `).rejects.toThrow();
+    await expect(prisma.$executeRaw`
+      UPDATE "OutreachReplyForwardIntent"
+      SET "status" = 'FAILED',
+          "failureCode" = 'RESEND_FORWARD_REJECTED',
+          "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+          "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+      WHERE "id" = ${dispatchedIntent.id}
+    `).rejects.toThrow();
+    await expect(prisma.$executeRaw`
+      UPDATE "OutreachReplyForwardIntent"
+      SET "status" = 'RECONCILIATION_REQUIRED',
+          "failureCode" = 'RESEND_FORWARD_TIMEOUT',
+          "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+          "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+      WHERE "id" = ${dispatchedIntent.id}
+    `).rejects.toThrow();
+    await expect(prisma.$executeRaw`
+      UPDATE "OutreachReplyForwardIntent"
+      SET "status" = 'RECONCILIATION_REQUIRED',
+          "failureCode" = 'FORWARD_CLAIM_EXPIRED_AFTER_DISPATCH',
+          "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+          "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+      WHERE "id" = ${dispatchedIntent.id}
+    `).resolves.toBe(1);
+  });
+
+  it("installs the UTC clock and live-lease fence as a forward-only upgrade", async () => {
+    const upgradeSchema = `outreach_forward_clock_${process.pid}_${Date.now()}`;
+    const client = await pool.connect();
+    const migration113 = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260916182000_add_outreach_reply_forward_intents/migration.sql",
+    ), "utf8");
+    const migration114 = await readFile(join(
+      process.cwd(),
+      "prisma/migrations/20260916190000_fence_outreach_reply_forward_clock/migration.sql",
+    ), "utf8");
+    const insertReply = (id: string) => client.query(`
+      INSERT INTO "OutreachReply" (
+        id, "providerEmailId", "recipientId", "contactId", "fromEmail", "toEmail",
+        subject, "textBody", "receivedAt", "attachmentCount"
+      ) VALUES (
+        $1, $2, 'recipient', 'contact', 'fan@example.test',
+        'reply+synthetic@replies.truefantix.com', 'Synthetic', 'Body',
+        TIMESTAMP '2026-09-16 15:00:00', 0
+      )
+    `, [`${id}-reply`, `${id}-provider`]);
+    const insertIntent = (id: string) => client.query(`
+      INSERT INTO "OutreachReplyForwardIntent" (
+        id, "updatedAt", "replyId", "providerEmailId", "fromEmailSnapshot",
+        "toEmailSnapshot", "subjectSnapshot", "textBodySnapshot", "attachmentCount",
+        "idempotencyKey"
+      ) VALUES (
+        $1, CURRENT_TIMESTAMP, $2, $3, 'marc@truefantix.com',
+        'owner@example.test', 'Outreach reply: Synthetic', 'Body', 0,
+        outreach_reply_forward_idempotency_key(
+          $3, 'marc@truefantix.com', 'owner@example.test',
+          'Outreach reply: Synthetic', 'Body', 0
+        )
+      )
+    `, [id, `${id}-reply`, `${id}-provider`]);
+
+    try {
+      await client.query(`CREATE SCHEMA "${upgradeSchema}"`);
+      await client.query(`SET search_path TO "${upgradeSchema}", public`);
+      await client.query(`
+        CREATE TABLE "OutreachReply" (
+          id TEXT PRIMARY KEY,
+          "providerEmailId" TEXT NOT NULL UNIQUE,
+          "providerMessageId" TEXT,
+          "recipientId" TEXT NOT NULL,
+          "contactId" TEXT NOT NULL,
+          "fromEmail" TEXT NOT NULL,
+          "toEmail" TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          "textBody" TEXT,
+          "htmlBody" TEXT,
+          "receivedAt" TIMESTAMP(3) NOT NULL,
+          "attachmentCount" INTEGER NOT NULL,
+          "forwardedAt" TIMESTAMP(3)
+        )
+      `);
+      await client.query(migration113);
+      await client.query("SET TIME ZONE 'America/Los_Angeles'");
+
+      await insertReply("permissive");
+      await insertIntent("permissive");
+      await client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET status = 'PROCESSING', "claimToken" = 'permissive-claim',
+            "claimExpiresAt" = CURRENT_TIMESTAMP + INTERVAL '15 minutes',
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = 'permissive'
+      `);
+      await client.query(`ALTER TABLE "OutreachReplyForwardIntent" DISABLE TRIGGER "OutreachReplyForwardIntent_guard"`);
+      await client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET "claimExpiresAt" = TIMESTAMP '2001-01-01 00:00:00'
+        WHERE id = 'permissive'
+      `);
+      await client.query(`ALTER TABLE "OutreachReplyForwardIntent" ENABLE TRIGGER "OutreachReplyForwardIntent_guard"`);
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET "attemptCount" = 1, "providerDispatchAt" = CURRENT_TIMESTAMP,
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = 'permissive'
+      `)).resolves.toBeDefined();
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET status = 'DELIVERED', "providerMessageId" = 'permissive-message',
+            "completedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = 'permissive'
+      `)).resolves.toBeDefined();
+      await expect(client.query(`
+        SELECT status FROM "OutreachReplyForwardIntent" WHERE id = 'permissive'
+      `)).resolves.toMatchObject({ rows: [{ status: "DELIVERED" }] });
+
+      await client.query("SET TIME ZONE 'UTC'");
+      for (const id of [
+        "upgrade-live-dispatch",
+        "upgrade-expired-dispatch",
+        "upgrade-live-result",
+        "upgrade-expired-result",
+      ]) {
+        await insertReply(id);
+        await insertIntent(id);
+        await client.query(`
+          UPDATE "OutreachReplyForwardIntent"
+          SET status = 'PROCESSING', "claimToken" = $2,
+              "claimExpiresAt" = CURRENT_TIMESTAMP + INTERVAL '15 minutes',
+              "updatedAt" = CURRENT_TIMESTAMP
+          WHERE id = $1
+        `, [id, `${id}-claim`]);
+      }
+      await client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET "attemptCount" = 1, "providerDispatchAt" = CURRENT_TIMESTAMP,
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id IN ('upgrade-live-result', 'upgrade-expired-result')
+      `);
+      await client.query(`ALTER TABLE "OutreachReplyForwardIntent" DISABLE TRIGGER "OutreachReplyForwardIntent_guard"`);
+      await client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET "claimExpiresAt" = TIMESTAMP '2001-01-01 00:00:00'
+        WHERE id IN ('upgrade-expired-dispatch', 'upgrade-expired-result')
+      `);
+      await client.query(`ALTER TABLE "OutreachReplyForwardIntent" ENABLE TRIGGER "OutreachReplyForwardIntent_guard"`);
+      const activeBefore = await client.query<{ snapshot: string }>(`
+        SELECT row_to_json(i)::text AS snapshot
+        FROM "OutreachReplyForwardIntent" i
+        WHERE id LIKE 'upgrade-%'
+        ORDER BY id
+      `);
+
+      await client.query(migration114);
+      const activeAfter = await client.query<{ snapshot: string }>(`
+        SELECT row_to_json(i)::text AS snapshot
+        FROM "OutreachReplyForwardIntent" i
+        WHERE id LIKE 'upgrade-%'
+        ORDER BY id
+      `);
+      expect(activeAfter.rows).toEqual(activeBefore.rows);
+
+      await client.query("SET TIME ZONE 'America/Los_Angeles'");
+      await insertReply("strict-clock");
+      await insertIntent("strict-clock");
+      await expect(client.query(`
+        SELECT
+          "createdAt" BETWEEN
+            (statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '5 seconds'
+            AND (statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '5 seconds'
+            AS utc_owned
+        FROM "OutreachReplyForwardIntent" WHERE id = 'strict-clock'
+      `)).resolves.toMatchObject({ rows: [{ utc_owned: true }] });
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET "attemptCount" = 1,
+            "providerDispatchAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-expired-dispatch'
+      `)).rejects.toThrow(/invalid pre-dispatch outreach reply forward transition/);
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET status = 'PENDING', "claimToken" = NULL, "claimExpiresAt" = NULL,
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-expired-dispatch'
+        RETURNING status, "attemptCount", "claimToken", "claimExpiresAt",
+                  "providerDispatchAt", "completedAt"
+      `)).resolves.toMatchObject({ rows: [{
+        status: "PENDING",
+        attemptCount: 0,
+        claimToken: null,
+        claimExpiresAt: null,
+        providerDispatchAt: null,
+        completedAt: null,
+      }] });
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET "attemptCount" = 1,
+            "providerDispatchAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-live-dispatch'
+      `)).resolves.toBeDefined();
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET status = 'DELIVERED', "providerMessageId" = 'strict-message',
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-expired-result'
+      `)).rejects.toThrow(/expired outreach reply forward claim/);
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET status = 'RECONCILIATION_REQUIRED',
+            "failureCode" = 'RESEND_FORWARD_TIMEOUT',
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-expired-result'
+      `)).rejects.toThrow(/expired outreach reply forward claim/);
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET status = 'RECONCILIATION_REQUIRED',
+            "failureCode" = 'FORWARD_CLAIM_EXPIRED_AFTER_DISPATCH',
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-live-result'
+      `)).rejects.toThrow(/live outreach reply forward claim cannot use expired-lease recovery/);
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET status = 'DELIVERED', "providerMessageId" = 'upgrade-live-message',
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-live-result'
+      `)).resolves.toBeDefined();
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
+        SET status = 'RECONCILIATION_REQUIRED',
+            "failureCode" = 'FORWARD_CLAIM_EXPIRED_AFTER_DISPATCH',
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-expired-result'
+      `)).resolves.toBeDefined();
+    } finally {
+      await client.query("SET TIME ZONE 'UTC'");
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA IF EXISTS "${upgradeSchema}" CASCADE`);
+      client.release();
+    }
+  });
+
   it("permits only one provider dispatch under concurrent drains", async () => {
     const reply = await seedIntent();
     const fetchImpl = jest.fn().mockResolvedValue(accepted(`forwarded-${runId}-2`));
@@ -185,6 +546,72 @@ if (!databaseUrl) describe.skip("outreach reply forwarding PostgreSQL boundary",
     await expect(prisma.outreachReplyForwardIntent.findUniqueOrThrow({
       where: { replyId: reply.id },
     })).resolves.toMatchObject({ status: "DELIVERED", attemptCount: 1 });
+  });
+
+  it.each([
+    ["acceptance", () => accepted(`late-acceptance-${runId}`), false],
+    ["explicit rejection", () => new Response(null, { status: 422 }), true],
+  ])("does not persist late provider %s after the owned lease expires", async (
+    _label,
+    providerResponse,
+    rejectsDrain,
+  ) => {
+    const reply = await seedIntent();
+    let providerStarted!: () => void;
+    let releaseProvider!: (response: Response) => void;
+    const started = new Promise<void>((resolve) => { providerStarted = resolve; });
+    const fetchImpl = jest.fn(() => {
+      providerStarted();
+      return new Promise<Response>((resolve) => { releaseProvider = resolve; });
+    });
+    const firstDrain = drainOutreachReplyForwardIntents({
+      providerEmailId: reply.providerEmailId,
+      limit: 1,
+      fetchImpl,
+    });
+    await started;
+    const processing = await prisma.outreachReplyForwardIntent.findUniqueOrThrow({
+      where: { replyId: reply.id },
+    });
+    expect(processing).toMatchObject({ status: "PROCESSING", attemptCount: 1 });
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.outreachReplyForwardIntent.update({
+        where: { id: processing.id },
+        data: { claimExpiresAt: new Date("2001-01-01T00:00:00.000Z") },
+      });
+    });
+    releaseProvider(providerResponse());
+    if (rejectsDrain) await expect(firstDrain).rejects.toThrow();
+    else await expect(firstDrain).resolves.toBeDefined();
+
+    await expect(prisma.outreachReplyForwardIntent.findUniqueOrThrow({
+      where: { replyId: reply.id },
+    })).resolves.toMatchObject({
+      status: "PROCESSING",
+      attemptCount: 1,
+      providerMessageId: null,
+      failureCode: null,
+      completedAt: null,
+    });
+    await expect(prisma.outreachReply.findUniqueOrThrow({ where: { id: reply.id } }))
+      .resolves.toMatchObject({ forwardedAt: null });
+
+    await drainOutreachReplyForwardIntents({
+      providerEmailId: reply.providerEmailId,
+      limit: 1,
+      fetchImpl,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await expect(prisma.outreachReplyForwardIntent.findUniqueOrThrow({
+      where: { replyId: reply.id },
+    })).resolves.toMatchObject({
+      status: "RECONCILIATION_REQUIRED",
+      failureCode: "FORWARD_CLAIM_EXPIRED_AFTER_DISPATCH",
+      providerMessageId: null,
+    });
+    await expect(prisma.outreachReply.findUniqueOrThrow({ where: { id: reply.id } }))
+      .resolves.toMatchObject({ forwardedAt: null });
   });
 
   it.each([

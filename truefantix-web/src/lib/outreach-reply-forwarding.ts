@@ -325,7 +325,7 @@ async function recoverExpiredClaims() {
       FROM "OutreachReplyForwardIntent"
       WHERE "status" = 'PROCESSING'
         AND "attemptCount" = 1
-        AND "claimExpiresAt" <= CURRENT_TIMESTAMP
+        AND "claimExpiresAt" <= (statement_timestamp() AT TIME ZONE 'UTC')
       ORDER BY "claimExpiresAt", "createdAt", "id"
       LIMIT ${RECOVERY_LIMIT}
       FOR UPDATE SKIP LOCKED
@@ -333,8 +333,8 @@ async function recoverExpiredClaims() {
     UPDATE "OutreachReplyForwardIntent"
     SET "status" = 'RECONCILIATION_REQUIRED',
         "failureCode" = 'FORWARD_CLAIM_EXPIRED_AFTER_DISPATCH',
-        "completedAt" = CURRENT_TIMESTAMP,
-        "updatedAt" = CURRENT_TIMESTAMP
+        "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+        "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
     FROM expired
     WHERE "OutreachReplyForwardIntent"."id" = expired."id"
   `;
@@ -344,7 +344,7 @@ async function recoverExpiredClaims() {
       FROM "OutreachReplyForwardIntent"
       WHERE "status" = 'PROCESSING'
         AND "attemptCount" = 0
-        AND "claimExpiresAt" <= CURRENT_TIMESTAMP
+        AND "claimExpiresAt" <= (statement_timestamp() AT TIME ZONE 'UTC')
       ORDER BY "claimExpiresAt", "createdAt", "id"
       LIMIT ${RECOVERY_LIMIT}
       FOR UPDATE SKIP LOCKED
@@ -353,7 +353,7 @@ async function recoverExpiredClaims() {
     SET "status" = 'PENDING',
         "claimToken" = NULL,
         "claimExpiresAt" = NULL,
-        "updatedAt" = CURRENT_TIMESTAMP
+        "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
     FROM expired
     WHERE "OutreachReplyForwardIntent"."id" = expired."id"
   `;
@@ -389,8 +389,8 @@ async function claimIntent(id: string, config: ForwardConfig | null): Promise<Cl
         UPDATE "OutreachReplyForwardIntent"
         SET "status" = 'QUARANTINED',
             "failureCode" = 'FORWARD_CONFIGURATION_DRIFT',
-            "completedAt" = CURRENT_TIMESTAMP,
-            "updatedAt" = CURRENT_TIMESTAMP
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
         WHERE "id" = ${id} AND "status" = 'PENDING'
       `;
       return null;
@@ -400,8 +400,8 @@ async function claimIntent(id: string, config: ForwardConfig | null): Promise<Cl
         UPDATE "OutreachReplyForwardIntent"
         SET "status" = 'QUARANTINED',
             "failureCode" = 'FORWARD_LOCAL_ENVELOPE_INVALID',
-            "completedAt" = CURRENT_TIMESTAMP,
-            "updatedAt" = CURRENT_TIMESTAMP
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
         WHERE "id" = ${id} AND "status" = 'PENDING'
       `;
       return null;
@@ -411,11 +411,11 @@ async function claimIntent(id: string, config: ForwardConfig | null): Promise<Cl
       UPDATE "OutreachReplyForwardIntent"
       SET "status" = 'PROCESSING',
           "claimToken" = ${claimToken},
-          "claimExpiresAt" = CURRENT_TIMESTAMP + (${CLAIM_MINUTES} * INTERVAL '1 minute'),
-          "updatedAt" = CURRENT_TIMESTAMP
+          "claimExpiresAt" = (statement_timestamp() AT TIME ZONE 'UTC') + (${CLAIM_MINUTES} * INTERVAL '1 minute'),
+          "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
       WHERE "id" = ${id}
         AND "status" = 'PENDING'
-        AND "availableAt" <= CURRENT_TIMESTAMP
+        AND "availableAt" <= (statement_timestamp() AT TIME ZONE 'UTC')
       RETURNING "id", "claimToken", "providerEmailId", "fromEmailSnapshot",
                 "toEmailSnapshot", "subjectSnapshot", "textBodySnapshot", "idempotencyKey"
     `;
@@ -427,13 +427,13 @@ async function markProviderDispatch(intent: ClaimedIntent) {
   const rows = await prisma.$queryRaw<Array<{ id: string }>>`
     UPDATE "OutreachReplyForwardIntent"
     SET "attemptCount" = 1,
-        "providerDispatchAt" = CURRENT_TIMESTAMP,
-        "updatedAt" = CURRENT_TIMESTAMP
+        "providerDispatchAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+        "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
     WHERE "id" = ${intent.id}
       AND "status" = 'PROCESSING'
       AND "attemptCount" = 0
       AND "claimToken" = ${intent.claimToken}
-      AND "claimExpiresAt" > CURRENT_TIMESTAMP
+      AND "claimExpiresAt" > (statement_timestamp() AT TIME ZONE 'UTC')
     RETURNING "id"
   `;
   return rows.length === 1;
@@ -446,22 +446,23 @@ async function settleIntent(
 ) {
   await prisma.$transaction(async (tx) => {
     if (outcome === "DELIVERED") {
-      const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      const rows = await tx.$queryRaw<Array<{ id: string; completedAt: Date }>>`
         UPDATE "OutreachReplyForwardIntent"
         SET "status" = 'DELIVERED',
             "providerMessageId" = ${evidence},
-            "completedAt" = CURRENT_TIMESTAMP,
-            "updatedAt" = CURRENT_TIMESTAMP
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
         WHERE "id" = ${intent.id}
           AND "status" = 'PROCESSING'
           AND "attemptCount" = 1
           AND "claimToken" = ${intent.claimToken}
-        RETURNING "id"
+          AND "claimExpiresAt" > (statement_timestamp() AT TIME ZONE 'UTC')
+        RETURNING "id", "completedAt"
       `;
       if (rows.length !== 1) throw new Error("Outreach reply forward acceptance lost its claim.");
       const replies = await tx.$executeRaw`
         UPDATE "OutreachReply"
-        SET "forwardedAt" = CURRENT_TIMESTAMP
+        SET "forwardedAt" = ${rows[0].completedAt}
         WHERE "providerEmailId" = ${intent.providerEmailId}
           AND "forwardedAt" IS NULL
       `;
@@ -472,12 +473,13 @@ async function settleIntent(
       UPDATE "OutreachReplyForwardIntent"
       SET "status" = ${outcome},
           "failureCode" = ${evidence},
-          "completedAt" = CURRENT_TIMESTAMP,
-          "updatedAt" = CURRENT_TIMESTAMP
+          "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+          "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
       WHERE "id" = ${intent.id}
         AND "status" = 'PROCESSING'
         AND "attemptCount" = 1
         AND "claimToken" = ${intent.claimToken}
+        AND "claimExpiresAt" > (statement_timestamp() AT TIME ZONE 'UTC')
       RETURNING "id"
     `;
     if (rows.length !== 1) throw new Error("Outreach reply forward failure lost its claim.");
@@ -496,7 +498,7 @@ export async function drainOutreachReplyForwardIntents(
     SELECT "id"
     FROM "OutreachReplyForwardIntent"
     WHERE "status" = 'PENDING'
-      AND "availableAt" <= CURRENT_TIMESTAMP
+      AND "availableAt" <= (statement_timestamp() AT TIME ZONE 'UTC')
       AND (${options.providerEmailId ?? null}::text IS NULL OR "providerEmailId" = ${options.providerEmailId ?? null})
     ORDER BY "availableAt", "createdAt", "id"
     LIMIT ${limit}
