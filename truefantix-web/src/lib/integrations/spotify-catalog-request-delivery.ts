@@ -283,19 +283,39 @@ export async function drainSpotifyCatalogRequestDeliveries(
       const payload = canonicalEnvelope(row);
       const dispatch = await db.$transaction(async (tx) => {
         const now = await databaseNow(tx);
-        const items = await tx.spotifyCatalogRequestDeliveryItem.findMany({
-          where: { intentId: row.id },
-          orderBy: { catalogRequestId: "asc" },
-          select: { catalogRequestId: true, requestedValue: true },
-        });
+        const items = await tx.$queryRaw<Array<{
+          catalogRequestId: string;
+          requestedValue: string;
+          requestUserId: string;
+          requestedType: string;
+          requestStatus: string;
+          requestValue: string;
+        }>>(Prisma.sql`
+          SELECT
+            item."catalogRequestId",
+            item."requestedValue",
+            request."userId" AS "requestUserId",
+            request."requestedType",
+            request.status AS "requestStatus",
+            request."requestedValue" AS "requestValue"
+          FROM "SpotifyCatalogRequestDeliveryItem" item
+          JOIN "CatalogRequest" request ON request.id = item."catalogRequestId"
+          WHERE item."intentId" = ${row.id}
+          ORDER BY item."catalogRequestId" ASC
+          FOR UPDATE OF request
+        `);
         if (
           items.length !== payload.requestIds.length
           || items.some((item, index) => (
             item.catalogRequestId !== payload.requestIds[index]
             || item.requestedValue !== payload.names[index]
+            || item.requestUserId !== row.userId
+            || item.requestedType !== "ARTIST"
+            || item.requestValue !== item.requestedValue
+            || item.requestStatus !== "PENDING"
           ))
         ) {
-          throw new Error("SPOTIFY_CATALOG_DELIVERY_ITEMS_INVALID");
+          throw new Error("SPOTIFY_CATALOG_DELIVERY_REQUESTS_INVALID");
         }
         return tx.spotifyCatalogRequestDeliveryIntent.updateMany({
           where: {

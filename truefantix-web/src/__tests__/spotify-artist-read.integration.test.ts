@@ -307,6 +307,83 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
       .resolves.toMatchObject({ status: "DELIVERED", attemptCount: 1, provider: "RESEND" });
   });
 
+  it("quarantines a delayed delivery when its catalog request was already reviewed", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const imported = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    if (imported.status !== "READY") throw new Error("expected ready import");
+    const request = await db.catalogRequest.findFirstOrThrow({ where: { userId } });
+    await db.catalogRequest.update({
+      where: { id: request.id },
+      data: { status: "REJECTED", adminNotes: "reviewed before recovery", reviewedAt: now },
+    });
+    const send = jest.fn(async () => ({ ok: true, provider: "RESEND" as const, providerResult: "accepted" }));
+    const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+
+    await expect(recoverSpotifyCatalogRequestDeliveries(serviceDb, { env: deliveryEnv, send }))
+      .resolves.toMatchObject({ claimed: 1, delivered: 0, reconciliationRequired: 1 });
+    await recoverSpotifyCatalogRequestDeliveries(serviceDb, { env: deliveryEnv, send });
+
+    expect(send).not.toHaveBeenCalled();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        attemptCount: 0,
+        provider: "RESEND",
+        firstAttemptAt: null,
+        dispatchStartedAt: null,
+        providerResult: null,
+        lastError: "Pre-dispatch Spotify catalog delivery failure requires reconciliation",
+      });
+  });
+
+  it("prevents catalog review from crossing an active provider dispatch", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const imported = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    if (imported.status !== "READY") throw new Error("expected ready import");
+    const request = await db.catalogRequest.findFirstOrThrow({ where: { userId } });
+    let markProviderStarted!: () => void;
+    let releaseProvider!: () => void;
+    const providerStarted = new Promise<void>((resolve) => { markProviderStarted = resolve; });
+    const providerRelease = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    const send = jest.fn(async () => {
+      markProviderStarted();
+      await providerRelease;
+      return { ok: true, provider: "RESEND" as const, providerResult: "accepted" };
+    });
+    const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+
+    const drain = drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+    await providerStarted;
+    await expect(db.catalogRequest.update({
+      where: { id: request.id },
+      data: { status: "REJECTED", adminNotes: "racing review", reviewedAt: now },
+    })).rejects.toThrow("Catalog request review is blocked during Spotify delivery dispatch");
+    releaseProvider();
+    await expect(drain).resolves.toMatchObject({ delivered: 1 });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    await expect(db.catalogRequest.update({
+      where: { id: request.id },
+      data: { status: "REJECTED", adminNotes: "reviewed after delivery", reviewedAt: now },
+    })).resolves.toMatchObject({ status: "REJECTED", adminNotes: "reviewed after delivery" });
+  });
+
   it("leaves pending recovery work untouched while its provider is unavailable", async () => {
     const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
       ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
