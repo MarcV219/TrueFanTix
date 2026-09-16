@@ -2797,29 +2797,32 @@ model OutreachCampaign {
 }
 
 model OutreachRecipient {
-  id                String               @id @default(cuid())
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  campaignId        String
-  campaign          OutreachCampaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contactId         String
-  contact           OutreachContact      @relation(fields: [contactId], references: [id], onDelete: Restrict)
-  emailSnapshot     String
-  subjectSnapshot   String
-  bodyTextSnapshot  String
-  bodyHtmlSnapshot  String?
-  status            String               @default("PENDING")
-  deliveryAttemptId String?              @unique
-  gmailMessageId    String?
-  gmailThreadId     String?
-  providerMessageId String?              @unique
-  providerResult    String?
-  error             String?
-  sentAt            DateTime?
-  repliedAt         DateTime?
-  replyToken        String               @unique @default(cuid())
-  events            OutreachEmailEvent[]
-  replies           OutreachReply[]
+  id                       String               @id @default(cuid())
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  campaignId               String
+  campaign                 OutreachCampaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId                String
+  contact                  OutreachContact      @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  emailSnapshot            String
+  subjectSnapshot          String
+  bodyTextSnapshot         String
+  bodyHtmlSnapshot         String?
+  status                   String               @default("PENDING")
+  deliveryAttemptId        String?              @unique
+  gmailMessageId           String?
+  gmailThreadId            String?
+  providerMessageId        String?              @unique
+  providerResult           String?
+  error                    String?
+  deliveryStatusPriority   Int?
+  deliveryStatusOccurredAt DateTime?
+  deliveryStatusSvixId     String?
+  sentAt                   DateTime?
+  repliedAt                DateTime?
+  replyToken               String               @unique @default(cuid())
+  events                   OutreachEmailEvent[]
+  replies                  OutreachReply[]
 
   @@unique([campaignId, contactId])
   @@index([status, createdAt])

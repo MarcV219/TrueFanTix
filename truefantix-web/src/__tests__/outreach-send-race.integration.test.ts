@@ -571,4 +571,290 @@ if (!databaseUrl) describe.skip("outreach send PostgreSQL claim boundary", () =>
       where: { recipientId: recipientIds[0] },
     })).resolves.toBe(2);
   });
+
+  it("reduces equal-priority conflicts identically in both orders and concurrently", async () => {
+    const conflicts = [
+      {
+        older: { type: "email.delivered", nextStatus: "DELIVERED", detail: null },
+        newer: { type: "email.failed", nextStatus: "FAILED", detail: "synthetic failure" },
+        expectedStatus: "FAILED",
+        expectedCampaignStatus: "COMPLETED_WITH_ERRORS",
+      },
+      {
+        older: { type: "email.bounced", nextStatus: "BOUNCED", detail: "synthetic bounce" },
+        newer: { type: "email.suppressed", nextStatus: "SUPPRESSED", detail: "synthetic suppression" },
+        expectedStatus: "SUPPRESSED",
+        expectedCampaignStatus: "COMPLETED",
+      },
+    ] as const;
+    const modes = ["older-first", "newer-first", "concurrent"] as const;
+
+    for (const conflict of conflicts) {
+      for (const mode of modes) {
+        const { campaignId, recipientIds, contactIds: fixtureContactIds, emails } = await fixture();
+        const providerMessageId = `outreach-order-${conflict.expectedStatus}-${mode}-${runId}`;
+        await prisma.outreachRecipient.update({
+          where: { id: recipientIds[0] },
+          data: { status: "SENT", providerMessageId },
+        });
+        await prisma.outreachCampaign.update({
+          where: { id: campaignId },
+          data: { status: "SENDING" },
+        });
+        const olderAt = new Date("2026-09-16T14:00:00.000Z");
+        const newerAt = new Date("2026-09-16T14:01:00.000Z");
+        const input = (
+          event: typeof conflict.older | typeof conflict.newer,
+          occurredAt: Date,
+          suffix: string,
+        ) => ({
+          svixId: `outreach-order-${conflict.expectedStatus}-${mode}-${suffix}-${runId}`,
+          type: event.type,
+          providerMessageId,
+          deliveryAttemptId: null,
+          normalizedEmail: emails[0],
+          occurredAt,
+          detail: event.detail,
+          nextStatus: event.nextStatus,
+          suppressionReason: event.type === "email.suppressed" ? "PROVIDER_SUPPRESSED" : null,
+          contactUpdate: event.type === "email.bounced"
+            ? { engagementStage: "BOUNCED" as const, followUpAt: null }
+            : null,
+        });
+        const older = input(conflict.older, olderAt, "older");
+        const newer = input(conflict.newer, newerAt, "newer");
+
+        if (mode === "older-first") {
+          await recordOutreachDeliveryEvent(older);
+          await recordOutreachDeliveryEvent(newer);
+        } else if (mode === "newer-first") {
+          await recordOutreachDeliveryEvent(newer);
+          await recordOutreachDeliveryEvent(older);
+        } else {
+          await Promise.all([
+            recordOutreachDeliveryEvent(older),
+            recordOutreachDeliveryEvent(newer),
+          ]);
+        }
+
+        await expect(prisma.outreachRecipient.findUniqueOrThrow({
+          where: { id: recipientIds[0] },
+        })).resolves.toMatchObject({
+          status: conflict.expectedStatus,
+          error: conflict.newer.detail,
+          deliveryStatusPriority: conflict.expectedStatus === "FAILED" ? 3 : 4,
+          deliveryStatusOccurredAt: newerAt,
+          deliveryStatusSvixId: newer.svixId,
+        });
+        await expect(prisma.outreachEmailEvent.count({
+          where: { recipientId: recipientIds[0] },
+        })).resolves.toBe(2);
+        await settleOutreachCampaign(campaignId);
+        await expect(prisma.outreachCampaign.findUniqueOrThrow({
+          where: { id: campaignId },
+        })).resolves.toMatchObject({ status: conflict.expectedCampaignStatus });
+
+        if (conflict.expectedStatus === "SUPPRESSED") {
+          await expect(prisma.outreachContact.findUniqueOrThrow({
+            where: { id: fixtureContactIds[0] },
+          })).resolves.toMatchObject({ engagementStage: "BOUNCED" });
+          await expect(prisma.outreachSuppression.findUniqueOrThrow({
+            where: { normalizedEmail: emails[0] },
+          })).resolves.toMatchObject({ reason: "PROVIDER_SUPPRESSED" });
+        }
+      }
+    }
+  });
+
+  it("uses Svix ID as a stable equal-time tie-break and preserves both events", async () => {
+    const { recipientIds, emails } = await fixture();
+    const providerMessageId = `outreach-tie-provider-${runId}`;
+    const occurredAt = new Date("2026-09-16T14:10:00.000Z");
+    await prisma.outreachRecipient.update({
+      where: { id: recipientIds[0] },
+      data: { status: "SENT", providerMessageId },
+    });
+    const base = {
+      providerMessageId,
+      deliveryAttemptId: null,
+      normalizedEmail: emails[0],
+      occurredAt,
+      suppressionReason: null,
+      contactUpdate: null,
+    } as const;
+    const winningSvixId = `outreach-tie-z-${runId}`;
+    await recordOutreachDeliveryEvent({
+      ...base,
+      svixId: winningSvixId,
+      type: "email.failed",
+      detail: "stable winner",
+      nextStatus: "FAILED",
+    });
+    await recordOutreachDeliveryEvent({
+      ...base,
+      svixId: `outreach-tie-a-${runId}`,
+      type: "email.delivered",
+      detail: null,
+      nextStatus: "DELIVERED",
+    });
+
+    await expect(prisma.outreachRecipient.findUniqueOrThrow({
+      where: { id: recipientIds[0] },
+    })).resolves.toMatchObject({
+      status: "FAILED",
+      error: "stable winner",
+      deliveryStatusPriority: 3,
+      deliveryStatusOccurredAt: occurredAt,
+      deliveryStatusSvixId: winningSvixId,
+    });
+    await expect(prisma.outreachEmailEvent.count({
+      where: { recipientId: recipientIds[0] },
+    })).resolves.toBe(2);
+  });
+
+  it("keeps legacy status authoritative until strictly higher priority evidence", async () => {
+    const { recipientIds, emails } = await fixture();
+    const providerMessageId = `outreach-legacy-provider-${runId}`;
+    await prisma.outreachRecipient.update({
+      where: { id: recipientIds[0] },
+      data: { status: "DELIVERED", providerMessageId },
+    });
+    const base = {
+      providerMessageId,
+      deliveryAttemptId: null,
+      normalizedEmail: emails[0],
+      occurredAt: new Date("2026-09-16T14:20:00.000Z"),
+      suppressionReason: null,
+      contactUpdate: null,
+    } as const;
+    await recordOutreachDeliveryEvent({
+      ...base,
+      svixId: `outreach-legacy-equal-${runId}`,
+      type: "email.failed",
+      detail: "must not replace legacy",
+      nextStatus: "FAILED",
+    });
+    await expect(prisma.outreachRecipient.findUniqueOrThrow({
+      where: { id: recipientIds[0] },
+    })).resolves.toMatchObject({
+      status: "DELIVERED",
+      error: null,
+      deliveryStatusPriority: null,
+      deliveryStatusOccurredAt: null,
+      deliveryStatusSvixId: null,
+    });
+
+    const advancingSvixId = `outreach-legacy-higher-${runId}`;
+    await recordOutreachDeliveryEvent({
+      ...base,
+      svixId: advancingSvixId,
+      type: "email.bounced",
+      detail: "higher priority",
+      nextStatus: "BOUNCED",
+      contactUpdate: { engagementStage: "BOUNCED" as const, followUpAt: null },
+    });
+    await expect(prisma.outreachRecipient.findUniqueOrThrow({
+      where: { id: recipientIds[0] },
+    })).resolves.toMatchObject({
+      status: "BOUNCED",
+      error: "higher priority",
+      deliveryStatusPriority: 4,
+      deliveryStatusSvixId: advancingSvixId,
+    });
+  });
+
+  it("rejects forged or non-advancing materialized provenance in PostgreSQL", async () => {
+    const { recipientIds, emails } = await fixture();
+    const providerMessageId = `outreach-provenance-provider-${runId}`;
+    await prisma.outreachRecipient.update({
+      where: { id: recipientIds[0] },
+      data: { status: "SENT", providerMessageId },
+    });
+    const selectedAt = new Date("2026-09-16T14:30:00.000Z");
+    const selectedSvixId = `outreach-provenance-selected-${runId}`;
+    await recordOutreachDeliveryEvent({
+      svixId: selectedSvixId,
+      type: "email.delivered",
+      providerMessageId,
+      deliveryAttemptId: null,
+      normalizedEmail: emails[0],
+      occurredAt: selectedAt,
+      detail: null,
+      nextStatus: "DELIVERED",
+      suppressionReason: null,
+      contactUpdate: null,
+    });
+    await expect(prisma.outreachRecipient.update({
+      where: { id: recipientIds[0] },
+      data: { status: "FAILED", error: "same provenance rewrite" },
+    })).rejects.toThrow();
+    await expect(prisma.outreachRecipient.update({
+      where: { id: recipientIds[0] },
+      data: { status: "REPLIED", repliedAt: new Date("2026-09-16T14:30:30.000Z") },
+    })).resolves.toMatchObject({
+      status: "REPLIED",
+      deliveryStatusPriority: 3,
+      deliveryStatusSvixId: selectedSvixId,
+    });
+    const lowerSvixId = `outreach-provenance-lower-${runId}`;
+    const lowerAt = new Date("2026-09-16T14:29:00.000Z");
+    await recordOutreachDeliveryEvent({
+      svixId: lowerSvixId,
+      type: "email.delivery_delayed",
+      providerMessageId,
+      deliveryAttemptId: null,
+      normalizedEmail: emails[0],
+      occurredAt: lowerAt,
+      detail: "older delay",
+      nextStatus: "DELIVERY_DELAYED",
+      suppressionReason: null,
+      contactUpdate: null,
+    });
+
+    await expect(prisma.outreachRecipient.update({
+      where: { id: recipientIds[0] },
+      data: {
+        status: "FAILED",
+        error: "forged",
+        deliveryStatusPriority: 3,
+        deliveryStatusOccurredAt: new Date("2026-09-16T14:31:00.000Z"),
+        deliveryStatusSvixId: `outreach-provenance-missing-${runId}`,
+      },
+    })).rejects.toThrow();
+    await expect(prisma.outreachRecipient.update({
+      where: { id: recipientIds[0] },
+      data: {
+        status: "DELIVERY_DELAYED",
+        error: "older delay",
+        deliveryStatusPriority: 2,
+        deliveryStatusOccurredAt: lowerAt,
+        deliveryStatusSvixId: lowerSvixId,
+      },
+    })).rejects.toThrow();
+  });
+
+  it("refuses non-ASCII Svix identity before persistence", async () => {
+    const { recipientIds, emails } = await fixture();
+    const providerMessageId = `outreach-non-ascii-provider-${runId}`;
+    await prisma.outreachRecipient.update({
+      where: { id: recipientIds[0] },
+      data: { status: "SENT", providerMessageId },
+    });
+
+    await expect(recordOutreachDeliveryEvent({
+      svixId: `outreach-non-ascii-é-${runId}`,
+      type: "email.delivered",
+      providerMessageId,
+      deliveryAttemptId: null,
+      normalizedEmail: emails[0],
+      occurredAt: new Date("2026-09-16T14:40:00.000Z"),
+      detail: null,
+      nextStatus: "DELIVERED",
+      suppressionReason: null,
+      contactUpdate: null,
+    })).rejects.toThrow("Invalid outreach delivery event identity.");
+    await expect(prisma.outreachEmailEvent.count({
+      where: { recipientId: recipientIds[0] },
+    })).resolves.toBe(0);
+  });
 });

@@ -19,6 +19,7 @@ const MAX_TIMESTAMP_LENGTH = 64;
 const MAX_DETAIL_INPUT_LENGTH = 4_096;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SVIX_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const trackedTypes = new Set([
   "email.sent",
@@ -77,8 +78,10 @@ function boundedRequiredHeader(headers: Headers, name: string, maxLength: number
 }
 
 function verifiedHeaders(req: Request) {
+  const id = boundedRequiredHeader(req.headers, "svix-id", MAX_SVIX_ID_LENGTH);
+  if (!SVIX_ID_PATTERN.test(id)) throw new InvalidWebhookIngressError();
   return Object.freeze({
-    id: boundedRequiredHeader(req.headers, "svix-id", MAX_SVIX_ID_LENGTH),
+    id,
     timestamp: boundedRequiredHeader(req.headers, "svix-timestamp", MAX_SVIX_TIMESTAMP_LENGTH),
     signature: boundedRequiredHeader(req.headers, "svix-signature", MAX_SVIX_SIGNATURE_LENGTH),
   });

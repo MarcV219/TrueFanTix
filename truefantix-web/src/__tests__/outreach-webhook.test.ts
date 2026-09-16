@@ -182,6 +182,18 @@ describe("Resend outreach webhook security", () => {
     expect(mockRecordOutreachDeliveryEvent).not.toHaveBeenCalled();
   });
 
+  it("refuses a non-canonical Svix ID before verification", async () => {
+    const response = await POST(requestWithBody(
+      streamFrom([encoded("{}")]).stream,
+      { ...validHeaders, "svix-id": "evt_non_ascii_é" },
+    ));
+
+    expect(response.status).toBe(400);
+    expectPrivate(response);
+    expect(mockVerify).not.toHaveBeenCalled();
+    expect(mockRecordOutreachDeliveryEvent).not.toHaveBeenCalled();
+  });
+
   it("rejects events without a valid Resend signature", async () => {
     mockVerify.mockImplementation(() => { throw new Error("provider verifier detail"); });
     const response = await POST(requestWithBody(streamFrom([encoded("{}")]).stream));

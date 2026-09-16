@@ -17,6 +17,7 @@ const statusPriority: Readonly<Record<string, number>> = Object.freeze({
 });
 
 const QUARANTINE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const CANONICAL_SVIX_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
 export type OutreachDeliveryEventInput = Readonly<{
   svixId: string;
@@ -39,7 +40,31 @@ type LockedRecipient = Readonly<{
   deliveryAttemptId: string | null;
   providerMessageId: string | null;
   status: string;
+  deliveryStatusPriority: number | null;
+  deliveryStatusOccurredAt: Date | null;
+  deliveryStatusSvixId: string | null;
 }>;
+
+function shouldSelectDeliveryStatus(
+  recipient: LockedRecipient,
+  input: OutreachDeliveryEventInput,
+) {
+  const incomingPriority = statusPriority[input.nextStatus] ?? 0;
+  if (
+    recipient.deliveryStatusPriority === null
+    || recipient.deliveryStatusOccurredAt === null
+    || recipient.deliveryStatusSvixId === null
+  ) {
+    return incomingPriority > (statusPriority[recipient.status] ?? 0);
+  }
+  if (incomingPriority !== recipient.deliveryStatusPriority) {
+    return incomingPriority > recipient.deliveryStatusPriority;
+  }
+  const occurredComparison = input.occurredAt.getTime()
+    - recipient.deliveryStatusOccurredAt.getTime();
+  if (occurredComparison !== 0) return occurredComparison > 0;
+  return input.svixId > recipient.deliveryStatusSvixId;
+}
 
 export async function lockOutreachProviderMessage(
   tx: Prisma.TransactionClient,
@@ -91,10 +116,16 @@ async function applyDeliveryEvent(
       detail: input.detail,
     },
   });
-  if ((statusPriority[input.nextStatus] ?? 0) >= (statusPriority[recipient.status] ?? 0)) {
+  if (shouldSelectDeliveryStatus(recipient, input)) {
     await tx.outreachRecipient.update({
       where: { id: recipient.id },
-      data: { status: input.nextStatus, error: input.detail },
+      data: {
+        status: input.nextStatus,
+        error: input.detail,
+        deliveryStatusPriority: statusPriority[input.nextStatus] ?? 0,
+        deliveryStatusOccurredAt: input.occurredAt,
+        deliveryStatusSvixId: input.svixId,
+      },
     });
   }
   if (input.contactUpdate) {
@@ -130,6 +161,11 @@ async function applyDeliveryEvent(
 }
 
 export async function recordOutreachDeliveryEvent(input: OutreachDeliveryEventInput) {
+  // Printable canonical ASCII makes JavaScript code-unit ordering identical to
+  // PostgreSQL's bytewise C collation for the final deterministic tie-break.
+  if (!CANONICAL_SVIX_ID.test(input.svixId)) {
+    throw new Error("Invalid outreach delivery event identity.");
+  }
   return prisma.$transaction(async (tx) => {
     await lockOutreachProviderMessage(tx, input.providerMessageId);
     await tx.outreachQuarantinedEmailEvent.deleteMany({
@@ -179,6 +215,9 @@ export async function recordOutreachDeliveryEvent(input: OutreachDeliveryEventIn
         deliveryAttemptId: true,
         providerMessageId: true,
         status: true,
+        deliveryStatusPriority: true,
+        deliveryStatusOccurredAt: true,
+        deliveryStatusSvixId: true,
       },
     });
     if (!recipient) return Object.freeze({ status: "IGNORED" as const, campaignId: null });
