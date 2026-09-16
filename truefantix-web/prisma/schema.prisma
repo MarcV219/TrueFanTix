@@ -2891,6 +2891,7 @@ model OutreachReplyForwardIntent {
   status             String        @default("PENDING")
   availableAt        DateTime      @default(now())
   attemptCount       Int           @default(0)
+  retryCount         Int           @default(0)
   claimToken         String?       @unique
   claimExpiresAt     DateTime?
   providerDispatchAt DateTime?

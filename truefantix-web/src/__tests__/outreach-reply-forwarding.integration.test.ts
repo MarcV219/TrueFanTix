@@ -798,6 +798,68 @@ if (!databaseUrl) describe.skip("outreach reply forwarding PostgreSQL boundary",
     });
   });
 
+  it("persists a 429 retry and later delivers the identical idempotent envelope exactly once", async () => {
+    const reply = await seedIntent();
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(new Response(null, {
+        status: 429,
+        headers: { "retry-after": "60" },
+      }))
+      .mockResolvedValueOnce(accepted(`forwarded-after-rate-limit-${runId}`));
+
+    await expect(drainOutreachReplyForwardIntents({
+      providerEmailId: reply.providerEmailId,
+      limit: 1,
+      fetchImpl,
+    })).resolves.toMatchObject({ claimed: 1, delivered: 0, failed: 0 });
+
+    const retry = await prisma.outreachReplyForwardIntent.findUniqueOrThrow({
+      where: { replyId: reply.id },
+    });
+    expect(retry).toMatchObject({
+      status: "PENDING",
+      attemptCount: 0,
+      retryCount: 1,
+      failureCode: "RESEND_FORWARD_RATE_LIMITED",
+      claimToken: null,
+      claimExpiresAt: null,
+      providerDispatchAt: null,
+    });
+    expect(retry.availableAt.getTime()).toBeGreaterThan(retry.updatedAt.getTime());
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.outreachReplyForwardIntent.update({
+        where: { id: retry.id },
+        data: { availableAt: new Date("2020-01-01T00:00:00.000Z") },
+      });
+    });
+
+    await expect(drainOutreachReplyForwardIntents({
+      providerEmailId: reply.providerEmailId,
+      limit: 1,
+      fetchImpl,
+    })).resolves.toMatchObject({ claimed: 1, delivered: 1 });
+    await drainOutreachReplyForwardIntents({
+      providerEmailId: reply.providerEmailId,
+      limit: 1,
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const requests = fetchImpl.mock.calls.map(([, init]) => init as RequestInit);
+    expect(requests[1].headers).toEqual(requests[0].headers);
+    expect(requests[1].body).toBe(requests[0].body);
+    await expect(prisma.outreachReplyForwardIntent.findUniqueOrThrow({
+      where: { replyId: reply.id },
+    })).resolves.toMatchObject({
+      status: "DELIVERED",
+      retryCount: 1,
+      providerMessageId: `forwarded-after-rate-limit-${runId}`,
+      failureCode: null,
+    });
+  });
+
   it.each([
     ["409", new Response(null, { status: 409 }), "RECONCILIATION_REQUIRED", "RESEND_FORWARD_CONCURRENT_IDEMPOTENCY"],
     ["explicit 422", new Response(null, { status: 422 }), "FAILED", "RESEND_FORWARD_REJECTED"],

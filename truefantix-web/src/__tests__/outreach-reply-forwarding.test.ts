@@ -3,6 +3,7 @@
 import {
   buildOutreachReplyForwardIntent,
   outreachReplyForwardingConfig,
+  OutreachReplyForwardRateLimitedError,
   OutreachReplyForwardRejectedError,
   OutreachReplyForwardUncertainError,
   sendOutreachReplyForward,
@@ -96,7 +97,7 @@ describe("outreach reply forward provider boundary", () => {
     });
   });
 
-  it.each([400, 401, 403, 422, 429])(
+  it.each([400, 401, 403, 422])(
     "classifies explicit HTTP %i refusal as terminal rejection",
     async (status) => {
       await expect(sendOutreachReplyForward(claimed, config, {
@@ -104,6 +105,24 @@ describe("outreach reply forward provider boundary", () => {
       })).rejects.toBeInstanceOf(OutreachReplyForwardRejectedError);
     },
   );
+
+  it("classifies HTTP 429 as a bounded retry-safe refusal", async () => {
+    await expect(sendOutreachReplyForward(claimed, config, {
+      fetchImpl: jest.fn().mockResolvedValue(new Response(null, {
+        status: 429,
+        headers: { "retry-after": "120" },
+      })),
+    })).rejects.toMatchObject({
+      name: "OutreachReplyForwardRateLimitedError",
+      retryAfterMs: 120_000,
+    });
+    await expect(sendOutreachReplyForward(claimed, config, {
+      fetchImpl: jest.fn().mockResolvedValue(new Response(null, {
+        status: 429,
+        headers: { "retry-after": "999999" },
+      })),
+    })).rejects.toBeInstanceOf(OutreachReplyForwardRateLimitedError);
+  });
 
   it.each([409, 500, 503])(
     "classifies HTTP %i as ambiguous without exposing provider detail",

@@ -9,6 +9,9 @@ const PROVIDER_TIMEOUT_MS = 15_000;
 const MAX_PROVIDER_MESSAGE_ID = 512;
 const MAX_FORWARD_SUBJECT = 1_000;
 const MAX_FORWARD_TEXT = 110_000;
+const MAX_RATE_LIMIT_RETRIES = 2;
+const DEFAULT_RATE_LIMIT_RETRY_MS = 60_000;
+const MAX_RATE_LIMIT_RETRY_MS = 15 * 60_000;
 
 type ForwardConfig = Readonly<{
   apiKey: string;
@@ -65,6 +68,13 @@ export class OutreachReplyForwardRejectedError extends Error {
   constructor() {
     super("RESEND_FORWARD_REJECTED");
     this.name = "OutreachReplyForwardRejectedError";
+  }
+}
+
+export class OutreachReplyForwardRateLimitedError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super("RESEND_FORWARD_RATE_LIMITED");
+    this.name = "OutreachReplyForwardRateLimitedError";
   }
 }
 
@@ -174,6 +184,16 @@ function isJsonContentType(value: string | null) {
   return value?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
 }
 
+function rateLimitRetryMs(value: string | null, now = Date.now()) {
+  if (!value) return DEFAULT_RATE_LIMIT_RETRY_MS;
+  const seconds = /^\d+$/.test(value.trim()) ? Number(value.trim()) : Number.NaN;
+  const parsed = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : Date.parse(value) - now;
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_RATE_LIMIT_RETRY_MS;
+  return Math.min(Math.ceil(parsed), MAX_RATE_LIMIT_RETRY_MS);
+}
+
 function nonBlockingCancel(cancel: () => Promise<unknown> | unknown) {
   try {
     void Promise.resolve(cancel()).catch(() => undefined);
@@ -243,6 +263,11 @@ export async function sendOutreachReplyForward(
     reader = response.body?.getReader() ?? null;
     if (!response.ok) {
       cancel();
+      if (response.status === 429) {
+        throw new OutreachReplyForwardRateLimitedError(
+          rateLimitRetryMs(response.headers.get("retry-after")),
+        );
+      }
       if (response.status >= 400 && response.status < 500 && response.status !== 409) {
         throw new OutreachReplyForwardRejectedError();
       }
@@ -450,6 +475,7 @@ async function settleIntent(
         UPDATE "OutreachReplyForwardIntent"
         SET "status" = 'DELIVERED',
             "providerMessageId" = ${evidence},
+            "failureCode" = NULL,
             "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
             "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
         WHERE "id" = ${intent.id}
@@ -484,6 +510,33 @@ async function settleIntent(
     `;
     if (rows.length !== 1) throw new Error("Outreach reply forward failure lost its claim.");
   }, { isolationLevel: "ReadCommitted" });
+}
+
+async function retryRateLimitedIntent(
+  intent: ClaimedIntent,
+  retryAfterMs: number,
+) {
+  const rows = await prisma.$queryRaw<Array<{ retryCount: number }>>`
+    UPDATE "OutreachReplyForwardIntent"
+    SET "status" = 'PENDING',
+        "availableAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+          + (${retryAfterMs} * INTERVAL '1 millisecond'),
+        "attemptCount" = 0,
+        "retryCount" = "retryCount" + 1,
+        "claimToken" = NULL,
+        "claimExpiresAt" = NULL,
+        "providerDispatchAt" = NULL,
+        "failureCode" = 'RESEND_FORWARD_RATE_LIMITED',
+        "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+    WHERE "id" = ${intent.id}
+      AND "status" = 'PROCESSING'
+      AND "attemptCount" = 1
+      AND "retryCount" < ${MAX_RATE_LIMIT_RETRIES}
+      AND "claimToken" = ${intent.claimToken}
+      AND "claimExpiresAt" > (statement_timestamp() AT TIME ZONE 'UTC')
+    RETURNING "retryCount"
+  `;
+  return rows.length === 1;
 }
 
 export async function drainOutreachReplyForwardIntents(
@@ -536,7 +589,12 @@ export async function drainOutreachReplyForwardIntents(
         reconciliations += 1;
       }
     } catch (error) {
-      if (error instanceof OutreachReplyForwardRejectedError) {
+      if (error instanceof OutreachReplyForwardRateLimitedError) {
+        if (!await retryRateLimitedIntent(intent, error.retryAfterMs)) {
+          await settleIntent(intent, "FAILED", "RESEND_FORWARD_RATE_LIMIT_EXHAUSTED");
+          failed += 1;
+        }
+      } else if (error instanceof OutreachReplyForwardRejectedError) {
         await settleIntent(intent, "FAILED", "RESEND_FORWARD_REJECTED");
         failed += 1;
       } else {
