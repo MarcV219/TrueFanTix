@@ -13,6 +13,8 @@ import {
   hasSpotifyConnection,
   snapshotSpotifyConnectionAuthorization,
   spotifyAccountRedirectUrl,
+  spotifyAuthorizeUrl,
+  spotifyConfigured,
   storeSpotifyConnection,
 } from "@/lib/integrations/spotify";
 import {
@@ -20,6 +22,7 @@ import {
   readSpotifyArtistSnapshot,
 } from "@/lib/integrations/spotify-artist-read";
 import { ManagedAccountSpotifyOperationError } from "@/lib/integrations/ordinary-spotify-user";
+import { GET as startSpotify } from "@/app/api/integrations/spotify/start/route";
 import { GET as getConnection, DELETE as deleteConnection } from "@/app/api/integrations/spotify/connection/route";
 import { GET as getArtists, POST as importArtists } from "@/app/api/integrations/spotify/artists/route";
 import { GET as spotifyCallback } from "@/app/api/integrations/spotify/callback/route";
@@ -53,6 +56,8 @@ jest.mock("@/lib/integrations/spotify", () => ({
   hasSpotifyConnection: jest.fn(),
   snapshotSpotifyConnectionAuthorization: jest.fn(),
   spotifyAccountRedirectUrl: jest.fn(),
+  spotifyAuthorizeUrl: jest.fn(),
+  spotifyConfigured: jest.fn(),
   storeSpotifyConnection: jest.fn(),
 }));
 
@@ -89,6 +94,8 @@ const mockedSnapshotSpotifyConnectionAuthorization = snapshotSpotifyConnectionAu
 const mockedSpotifyAccountRedirectUrl = spotifyAccountRedirectUrl as jest.MockedFunction<
   typeof spotifyAccountRedirectUrl
 >;
+const mockedSpotifyAuthorizeUrl = spotifyAuthorizeUrl as jest.MockedFunction<typeof spotifyAuthorizeUrl>;
+const mockedSpotifyConfigured = spotifyConfigured as jest.MockedFunction<typeof spotifyConfigured>;
 const mockedStoreSpotifyConnection = storeSpotifyConnection as jest.MockedFunction<typeof storeSpotifyConnection>;
 
 const ordinaryUser = {
@@ -148,6 +155,10 @@ describe("Spotify staging-persona operation boundary", () => {
     mockedSpotifyAccountRedirectUrl.mockImplementation(
       (status) => new URL(`/account/notifications?spotify=${status}`, "https://trusted.example"),
     );
+    mockedSpotifyAuthorizeUrl.mockImplementation(
+      (state) => `https://accounts.spotify.test/authorize?state=${state}`,
+    );
+    mockedSpotifyConfigured.mockReturnValue(true);
     mockedGetSpotifyConnectionEvidence.mockResolvedValue({
       providerAccountId: "spotify-listener-1",
       accessToken: "token",
@@ -186,6 +197,49 @@ describe("Spotify staging-persona operation boundary", () => {
       isolationLevel: "Serializable",
       timeout: 120_000,
     });
+  });
+
+  it("revalidates an ordinary user before issuing a private Spotify authorization redirect", async () => {
+    const response = await startSpotify(request("/api/integrations/spotify/start"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toMatch(/^https:\/\/accounts\.spotify\.test\/authorize\?state=/);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("set-cookie")).toContain("tft_spotify_oauth_state=");
+    expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: "Serializable",
+      timeout: 120_000,
+    });
+    expect(mockedSpotifyAuthorizeUrl).toHaveBeenCalledWith(expect.stringMatching(/^[a-f0-9]{48}$/));
+  });
+
+  it("refuses a managed user before creating Spotify state or an external redirect", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue(managedUser);
+
+    const response = await startSpotify(request("/api/integrations/spotify/start"));
+
+    expect(response.status).toBe(403);
+    expectPrivateStateCleared(response);
+    await expect(response.json()).resolves.toMatchObject({ error: "STAGING_CONSOLE_ONLY" });
+    expect(mockedSpotifyConfigured).not.toHaveBeenCalled();
+    expect(mockedSpotifyAuthorizeUrl).not.toHaveBeenCalled();
+  });
+
+  it("uses the configured local redirect and clears stale state when Spotify is unavailable", async () => {
+    mockedSpotifyConfigured.mockReturnValue(false);
+
+    const response = await startSpotify(new Request("https://hostile.example/api/integrations/spotify/start", {
+      headers: { host: "hostile.example", "x-forwarded-host": "forwarded-hostile.example" },
+    }));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://trusted.example/account/notifications?spotify=not_configured",
+    );
+    expectPrivateStateCleared(response);
+    expect(mockedSpotifyAccountRedirectUrl).toHaveBeenCalledWith("not_configured");
+    expect(mockedSpotifyAuthorizeUrl).not.toHaveBeenCalled();
   });
 
   it("keeps artist-route authentication refusals private", async () => {

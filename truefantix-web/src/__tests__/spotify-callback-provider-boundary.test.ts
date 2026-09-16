@@ -204,6 +204,9 @@ describe("Spotify callback provider evidence boundary", () => {
     ["missing token type", {
       access_token: "access-token", refresh_token: "refresh-token", scope: "user-follow-read user-top-read", expires_in: 3600,
     }],
+    ["missing scope", {
+      access_token: "access-token", refresh_token: "refresh-token", token_type: "Bearer", expires_in: 3600,
+    }],
     ["partial scope", {
       access_token: "access-token", refresh_token: "refresh-token", token_type: "Bearer", scope: "user-follow-read", expires_in: 3600,
     }],

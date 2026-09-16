@@ -364,9 +364,7 @@ export async function getSpotifyConnectionEvidence(
     ? value.expires_in
     : null;
   if (expiresIn === null) throw new Error("Spotify returned an invalid token expiry.");
-  const scope = value.scope === undefined
-    ? SCOPES.join(" ")
-    : boundedProviderText(value.scope, 2_048);
+  const scope = boundedProviderText(value.scope, 2_048);
   const grantedScopes = new Set(scope?.split(/\s+/).filter(Boolean) ?? []);
   if (!scope || SCOPES.some((requiredScope) => !grantedScopes.has(requiredScope))) {
     throw new Error("Spotify returned insufficient token scope.");
