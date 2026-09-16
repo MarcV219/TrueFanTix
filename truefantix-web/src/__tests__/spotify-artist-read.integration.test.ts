@@ -8,7 +8,10 @@ import {
   importSpotifyArtistSnapshot,
   readSpotifyArtistSnapshot,
 } from "@/lib/integrations/spotify-artist-read";
-import { drainSpotifyCatalogRequestDeliveries } from "@/lib/integrations/spotify-catalog-request-delivery";
+import {
+  drainSpotifyCatalogRequestDeliveries,
+  recoverSpotifyCatalogRequestDeliveries,
+} from "@/lib/integrations/spotify-catalog-request-delivery";
 import { prisma } from "@/lib/prisma";
 
 const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
@@ -273,13 +276,58 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
 
     await Promise.all([
       drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send }),
-      drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send }),
+      recoverSpotifyCatalogRequestDeliveries(serviceDb, { env: deliveryEnv, send }),
     ]);
-    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+    await recoverSpotifyCatalogRequestDeliveries(serviceDb, { env: deliveryEnv, send });
 
     expect(send).toHaveBeenCalledTimes(1);
     await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
       .resolves.toMatchObject({ status: "DELIVERED", attemptCount: 1, provider: "RESEND" });
+  });
+
+  it("recovers a committed pending delivery when the request-path drain is skipped", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    const send = jest.fn(async () => ({ ok: true, provider: "RESEND" as const, providerResult: "accepted" }));
+    const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+
+    await expect(recoverSpotifyCatalogRequestDeliveries(serviceDb, { env: deliveryEnv, send }))
+      .resolves.toMatchObject({ claimed: 1, delivered: 1 });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
+      .resolves.toMatchObject({ status: "DELIVERED", attemptCount: 1, provider: "RESEND" });
+  });
+
+  it("leaves pending recovery work untouched while its provider is unavailable", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    const send = jest.fn();
+
+    await expect(recoverSpotifyCatalogRequestDeliveries(serviceDb, {
+      env: { NODE_ENV: "test" } as NodeJS.ProcessEnv,
+      send,
+    })).resolves.toEqual({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 0 });
+
+    expect(send).not.toHaveBeenCalled();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
+      .resolves.toMatchObject({ status: "PENDING", attemptCount: 0, provider: null });
   });
 
   it("quarantines an ambiguous sender exception and does not call the provider again", async () => {
@@ -298,7 +346,7 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
     const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
 
     await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
-    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+    await recoverSpotifyCatalogRequestDeliveries(serviceDb, { env: deliveryEnv, send });
 
     expect(send).toHaveBeenCalledTimes(1);
     await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
@@ -368,7 +416,7 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
     const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
 
     await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
-    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+    await recoverSpotifyCatalogRequestDeliveries(serviceDb, { env: deliveryEnv, send });
 
     expect(send).toHaveBeenCalledTimes(1);
     await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))

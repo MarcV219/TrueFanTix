@@ -4,6 +4,7 @@ import { hasInternalCronAuth } from "@/lib/auth/guards";
 import { runTransferReminderWorkflow } from "@/lib/orders/transferWorkflow";
 import { drainTransferProofDeliveryIntents } from "@/lib/orders/transferProofDelivery";
 import { drainTransferProofReviewDeliveryIntents } from "@/lib/orders/transferProofReviewDelivery";
+import { recoverSpotifyCatalogRequestDeliveries } from "@/lib/integrations/spotify-catalog-request-delivery";
 import { prisma } from "@/lib/prisma";
 import { reportProductionIncident } from "@/lib/productionIncidents";
 import { POST } from "@/app/api/cron/order-transfer-reminders/route";
@@ -12,6 +13,7 @@ jest.mock("@/lib/auth/guards", () => ({ hasInternalCronAuth: jest.fn() }));
 jest.mock("@/lib/orders/transferWorkflow", () => ({ runTransferReminderWorkflow: jest.fn() }));
 jest.mock("@/lib/orders/transferProofDelivery", () => ({ drainTransferProofDeliveryIntents: jest.fn() }));
 jest.mock("@/lib/orders/transferProofReviewDelivery", () => ({ drainTransferProofReviewDeliveryIntents: jest.fn() }));
+jest.mock("@/lib/integrations/spotify-catalog-request-delivery", () => ({ recoverSpotifyCatalogRequestDeliveries: jest.fn() }));
 jest.mock("@/lib/prisma", () => ({ prisma: { auditLog: { create: jest.fn() } } }));
 jest.mock("@/lib/productionIncidents", () => ({ reportProductionIncident: jest.fn() }));
 
@@ -19,11 +21,13 @@ const mockedCronAuth = hasInternalCronAuth as jest.MockedFunction<typeof hasInte
 const mockedReminderWorkflow = runTransferReminderWorkflow as jest.MockedFunction<typeof runTransferReminderWorkflow>;
 const mockedDeliveryDrainer = drainTransferProofDeliveryIntents as jest.MockedFunction<typeof drainTransferProofDeliveryIntents>;
 const mockedReviewDrainer = drainTransferProofReviewDeliveryIntents as jest.MockedFunction<typeof drainTransferProofReviewDeliveryIntents>;
+const mockedSpotifyDrainer = recoverSpotifyCatalogRequestDeliveries as jest.MockedFunction<typeof recoverSpotifyCatalogRequestDeliveries>;
 const mockedAuditCreate = prisma.auditLog.create as jest.Mock;
 const mockedReportIncident = reportProductionIncident as jest.MockedFunction<typeof reportProductionIncident>;
 
 const deliveryResult = { scanned: 1, claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0 };
 const reviewResult = { scanned: 1, claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0 };
+const spotifyResult = { claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0 };
 const reminderResult = { processed: 2 };
 
 function request() {
@@ -36,6 +40,7 @@ describe("transfer reminder scheduler recovery isolation", () => {
     mockedCronAuth.mockReturnValue(true);
     mockedDeliveryDrainer.mockResolvedValue(deliveryResult);
     mockedReviewDrainer.mockResolvedValue(reviewResult);
+    mockedSpotifyDrainer.mockResolvedValue(spotifyResult);
     mockedReminderWorkflow.mockResolvedValue(reminderResult as never);
     mockedAuditCreate.mockResolvedValue({ id: "audit-1" });
     mockedReportIncident.mockResolvedValue(undefined as never);
@@ -50,9 +55,11 @@ describe("transfer reminder scheduler recovery isolation", () => {
       processed: 2,
       transferProofDeliveries: deliveryResult,
       transferProofReviewDeliveries: reviewResult,
+      spotifyCatalogRequestDeliveries: spotifyResult,
     });
     expect(mockedDeliveryDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReviewDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedSpotifyDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReminderWorkflow).toHaveBeenCalledTimes(1);
     expect(mockedAuditCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "TRANSFER_REMINDER_SCHEDULER_RUN" }),
@@ -68,6 +75,7 @@ describe("transfer reminder scheduler recovery isolation", () => {
     );
 
     expect(mockedReviewDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedSpotifyDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReminderWorkflow).toHaveBeenCalledTimes(1);
     const metadata = JSON.parse(mockedAuditCreate.mock.calls[0][0].data.metadata);
     expect(metadata).toMatchObject({
@@ -76,6 +84,7 @@ describe("transfer reminder scheduler recovery isolation", () => {
         components: {
           transferProofDeliveries: { status: "FAILED", error: "accepted-proof poison" },
           transferProofReviewDeliveries: { status: "SUCCESS", result: reviewResult },
+          spotifyCatalogRequestDeliveries: { status: "SUCCESS", result: spotifyResult },
           transferReminders: { status: "SUCCESS", result: reminderResult },
         },
       },
@@ -91,6 +100,20 @@ describe("transfer reminder scheduler recovery isolation", () => {
     );
 
     expect(mockedDeliveryDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedSpotifyDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedReminderWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockedReportIncident).toHaveBeenCalledTimes(1);
+  });
+
+  it("still runs reminders when Spotify catalog delivery recovery fails", async () => {
+    mockedSpotifyDrainer.mockRejectedValue(new Error("Spotify delivery poison"));
+
+    await expect(POST(request())).rejects.toThrow(
+      "Transfer reminder scheduler components failed: spotifyCatalogRequestDeliveries",
+    );
+
+    expect(mockedDeliveryDrainer).toHaveBeenCalledTimes(1);
+    expect(mockedReviewDrainer).toHaveBeenCalledTimes(1);
     expect(mockedReminderWorkflow).toHaveBeenCalledTimes(1);
     expect(mockedReportIncident).toHaveBeenCalledTimes(1);
   });
@@ -103,6 +126,7 @@ describe("transfer reminder scheduler recovery isolation", () => {
     expect(response.status).toBe(401);
     expect(mockedDeliveryDrainer).not.toHaveBeenCalled();
     expect(mockedReviewDrainer).not.toHaveBeenCalled();
+    expect(mockedSpotifyDrainer).not.toHaveBeenCalled();
     expect(mockedReminderWorkflow).not.toHaveBeenCalled();
   });
 });

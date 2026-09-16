@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 const ADMIN_EMAIL = "admin@truefantix.com";
 const LEASE_MS = 15 * 60 * 1000;
 const MAX_INTENTS_PER_IMPORT = 350;
+const MAX_RECOVERY_INTENTS = 100;
 
 type PendingCatalogRequest = Readonly<{
   id: string;
@@ -252,7 +253,9 @@ export async function drainSpotifyCatalogRequestDeliveries(
     const now = await databaseNow(tx);
     const rows = await tx.$queryRaw<SpotifyCatalogRequestDeliveryIntent[]>(Prisma.sql`
       SELECT * FROM "SpotifyCatalogRequestDeliveryIntent"
-      WHERE id IN (${Prisma.join(ids)}) AND status = 'PENDING'
+      WHERE id IN (${Prisma.join(ids)})
+        AND status = 'PENDING'
+        AND "availableAt" <= statement_timestamp() AT TIME ZONE 'UTC'
       ORDER BY "createdAt" ASC, id ASC
       FOR UPDATE SKIP LOCKED
     `);
@@ -372,4 +375,32 @@ export async function drainSpotifyCatalogRequestDeliveries(
     }
   }
   return Object.freeze({ claimed: acquired.length, delivered, failed, reconciliationRequired });
+}
+
+export async function recoverSpotifyCatalogRequestDeliveries(
+  db: DeliveryDb = prisma,
+  options: DeliveryOptions = {},
+) {
+  const candidates = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT id
+    FROM "SpotifyCatalogRequestDeliveryIntent"
+    WHERE (
+      status = 'PENDING'
+      AND "availableAt" <= statement_timestamp() AT TIME ZONE 'UTC'
+    ) OR (
+      status = 'PROCESSING'
+      AND "leaseExpiresAt" <= statement_timestamp() AT TIME ZONE 'UTC'
+    )
+    ORDER BY
+      CASE WHEN status = 'PROCESSING' THEN 0 ELSE 1 END,
+      CASE WHEN status = 'PROCESSING' THEN "leaseExpiresAt" ELSE "availableAt" END ASC,
+      "createdAt" ASC,
+      id ASC
+    LIMIT ${MAX_RECOVERY_INTENTS}
+  `);
+  return drainSpotifyCatalogRequestDeliveries(
+    candidates.map((candidate) => candidate.id),
+    db,
+    options,
+  );
 }

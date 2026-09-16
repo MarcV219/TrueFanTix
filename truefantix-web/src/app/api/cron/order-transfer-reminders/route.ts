@@ -5,6 +5,7 @@ import { hasInternalCronAuth } from "@/lib/auth/guards";
 import { runTransferReminderWorkflow } from "@/lib/orders/transferWorkflow";
 import { drainTransferProofDeliveryIntents } from "@/lib/orders/transferProofDelivery";
 import { drainTransferProofReviewDeliveryIntents } from "@/lib/orders/transferProofReviewDelivery";
+import { recoverSpotifyCatalogRequestDeliveries } from "@/lib/integrations/spotify-catalog-request-delivery";
 import { prisma } from "@/lib/prisma";
 import { reportProductionIncident } from "@/lib/productionIncidents";
 
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
   const startedAt = new Date();
 
   try {
-    // These are independent recovery domains. Always attempt all three so a
+    // These are independent recovery domains. Always attempt every component so a
     // poisoned row or transient failure in one outbox cannot indefinitely
     // starve unrelated committed work in another.
     const transferProofDeliveries = await runSchedulerComponent(
@@ -28,6 +29,10 @@ export async function POST(req: Request) {
       "transferProofReviewDeliveries",
       () => drainTransferProofReviewDeliveryIntents({ now: startedAt }),
     );
+    const spotifyCatalogRequestDeliveries = await runSchedulerComponent(
+      "spotifyCatalogRequestDeliveries",
+      () => recoverSpotifyCatalogRequestDeliveries(),
+    );
     const transferReminders = await runSchedulerComponent(
       "transferReminders",
       () => runTransferReminderWorkflow(startedAt),
@@ -35,16 +40,19 @@ export async function POST(req: Request) {
     const components = {
       transferProofDeliveries: schedulerComponentEvidence(transferProofDeliveries),
       transferProofReviewDeliveries: schedulerComponentEvidence(transferProofReviewDeliveries),
+      spotifyCatalogRequestDeliveries: schedulerComponentEvidence(spotifyCatalogRequestDeliveries),
       transferReminders: schedulerComponentEvidence(transferReminders),
     };
     const failures = [
       transferProofDeliveries,
       transferProofReviewDeliveries,
+      spotifyCatalogRequestDeliveries,
       transferReminders,
     ].filter((component): component is SchedulerComponentFailure => !component.ok);
     if (
       !transferProofDeliveries.ok
       || !transferProofReviewDeliveries.ok
+      || !spotifyCatalogRequestDeliveries.ok
       || !transferReminders.ok
     ) {
       throw new AggregateError(
@@ -57,6 +65,7 @@ export async function POST(req: Request) {
       ...transferReminders.value,
       transferProofDeliveries: transferProofDeliveries.value,
       transferProofReviewDeliveries: transferProofReviewDeliveries.value,
+      spotifyCatalogRequestDeliveries: spotifyCatalogRequestDeliveries.value,
     };
     await recordSchedulerRun("SUCCESS", startedAt, result);
     return NextResponse.json({ ok: true, ...result });
