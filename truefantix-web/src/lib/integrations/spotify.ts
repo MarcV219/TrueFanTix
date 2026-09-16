@@ -1,7 +1,6 @@
 import crypto from "crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { searchProviderCatalog, type ProviderCatalogSuggestion } from "@/lib/catalog/provider-catalog";
 
 type SpotifyDb = Pick<Prisma.TransactionClient, "connectedAccount">;
 
@@ -14,16 +13,6 @@ export const SPOTIFY_STAGING_ORIGIN = "https://truefantix-staging-preview.vercel
 export const SPOTIFY_PRODUCTION_ORIGIN = "https://www.truefantix.com";
 export const SPOTIFY_TEST_ORIGIN = "https://spotify.test.invalid";
 const SPOTIFY_CALLBACK_PATH = "/api/integrations/spotify/callback";
-
-export type SpotifyArtistImportCandidate = {
-  spotifyId: string;
-  name: string;
-  popularity?: number;
-  source: "followed" | "top";
-  spotifyUrl?: string;
-  imageUrl?: string;
-  match: ProviderCatalogSuggestion | null;
-};
 
 export type SpotifyConnectionAuthorization = {
   userId: string;
@@ -160,18 +149,6 @@ function encrypt(value: string) {
   return [iv.toString("base64url"), tag.toString("base64url"), ciphertext.toString("base64url")].join(".");
 }
 
-function decrypt(value: string) {
-  const [ivRaw, tagRaw, ciphertextRaw] = value.split(".");
-  if (!ivRaw || !tagRaw || !ciphertextRaw) throw new Error("Invalid encrypted token.");
-  const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(ivRaw, "base64url"));
-  decipher.setAuthTag(Buffer.from(tagRaw, "base64url"));
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(ciphertextRaw, "base64url")),
-    decipher.final(),
-  ]);
-  return plaintext.toString("utf8");
-}
-
 function basicAuthHeader() {
   const clientId = requiredEnv("SPOTIFY_CLIENT_ID");
   const clientSecret = requiredEnv("SPOTIFY_CLIENT_SECRET");
@@ -200,46 +177,6 @@ export async function exchangeSpotifyCode(code: string) {
   body.set("code", code);
   body.set("redirect_uri", spotifyRedirectUri());
   return tokenRequest(body);
-}
-
-async function refreshSpotifyToken(account: {
-  id: string;
-  refreshTokenEncrypted: string | null;
-}, db: SpotifyDb = prisma) {
-  if (!account.refreshTokenEncrypted) throw new Error("Spotify refresh token is missing.");
-  const body = new URLSearchParams();
-  body.set("grant_type", "refresh_token");
-  body.set("refresh_token", decrypt(account.refreshTokenEncrypted));
-  const data = await tokenRequest(body);
-  const expiresAt = typeof data.expires_in === "number" ? new Date(Date.now() + data.expires_in * 1000) : null;
-  await db.connectedAccount.update({
-    where: { id: account.id },
-    data: {
-      accessTokenEncrypted: encrypt(data.access_token),
-      refreshTokenEncrypted: data.refresh_token ? encrypt(data.refresh_token) : undefined,
-      tokenType: data.token_type ?? "Bearer",
-      scope: data.scope ?? undefined,
-      expiresAt,
-    },
-  });
-  return data.access_token as string;
-}
-
-export async function getSpotifyAccessToken(userId: string, db: SpotifyDb = prisma) {
-  const account = await db.connectedAccount.findUnique({
-    where: { userId_provider: { userId, provider: SPOTIFY_PROVIDER } },
-    select: {
-      id: true,
-      accessTokenEncrypted: true,
-      refreshTokenEncrypted: true,
-      expiresAt: true,
-    },
-  });
-  if (!account) return null;
-  if (account.expiresAt && account.expiresAt.getTime() < Date.now() + 60_000) {
-    return refreshSpotifyToken(account, db);
-  }
-  return decrypt(account.accessTokenEncrypted);
 }
 
 export async function hasSpotifyConnection(userId: string, db: SpotifyDb = prisma) {
@@ -450,89 +387,4 @@ export async function storeSpotifyConnection({
     where: { id: current.id },
     select: { id: true, displayName: true, email: true },
   });
-}
-
-function artistFromSpotify(item: any, source: "followed" | "top") {
-  const image = Array.isArray(item.images) ? item.images[0]?.url : undefined;
-  return {
-    spotifyId: String(item.id),
-    name: String(item.name || "").trim(),
-    popularity: typeof item.popularity === "number" ? item.popularity : undefined,
-    source,
-    spotifyUrl: item.external_urls?.spotify,
-    imageUrl: image,
-  };
-}
-
-async function fetchFollowedArtists(accessToken: string) {
-  const artists: ReturnType<typeof artistFromSpotify>[] = [];
-  let after: string | null = null;
-  for (let page = 0; page < 4; page++) {
-    const params = new URLSearchParams({ type: "artist", limit: "50" });
-    if (after) params.set("after", after);
-    const data: any = await spotifyApi(accessToken, `/me/following?${params.toString()}`);
-    const items = Array.isArray(data?.artists?.items) ? data.artists.items : [];
-    artists.push(...items.map((item: any) => artistFromSpotify(item, "followed")));
-    after = data?.artists?.cursors?.after ?? null;
-    if (!after || items.length === 0) break;
-  }
-  return artists;
-}
-
-async function fetchTopArtists(accessToken: string) {
-  const artists: ReturnType<typeof artistFromSpotify>[] = [];
-  for (const timeRange of ["short_term", "medium_term", "long_term"]) {
-    const params = new URLSearchParams({ time_range: timeRange, limit: "50" });
-    const data: any = await spotifyApi(accessToken, `/me/top/artists?${params.toString()}`);
-    const items = Array.isArray(data?.items) ? data.items : [];
-    artists.push(...items.map((item: any) => artistFromSpotify(item, "top")));
-  }
-  return artists;
-}
-
-function normalizedName(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-async function matchArtist(name: string) {
-  const suggestions = await searchProviderCatalog({ query: name, type: "ARTIST", limit: 8 });
-  const normalized = normalizedName(name);
-  return (
-    suggestions.find((suggestion) => normalizedName(suggestion.canonicalName || suggestion.label) === normalized) ??
-    suggestions[0] ??
-    null
-  );
-}
-
-export async function getSpotifyImportCandidates(userId: string, db: SpotifyDb = prisma) {
-  const accessToken = await getSpotifyAccessToken(userId, db);
-  if (!accessToken) return { connected: false as const, artists: [] };
-
-  const [followed, top] = await Promise.all([
-    fetchFollowedArtists(accessToken).catch(() => []),
-    fetchTopArtists(accessToken).catch(() => []),
-  ]);
-
-  const byId = new Map<string, ReturnType<typeof artistFromSpotify>>();
-  for (const artist of [...followed, ...top]) {
-    if (!artist.spotifyId || !artist.name) continue;
-    const existing = byId.get(artist.spotifyId);
-    if (!existing || existing.source !== "followed") byId.set(artist.spotifyId, artist);
-  }
-
-  const artists = Array.from(byId.values())
-    .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0) || a.name.localeCompare(b.name))
-    .slice(0, 120);
-
-  const candidates: SpotifyArtistImportCandidate[] = [];
-  for (const artist of artists) {
-    candidates.push({ ...artist, match: await matchArtist(artist.name) });
-  }
-
-  return { connected: true as const, artists: candidates };
 }
