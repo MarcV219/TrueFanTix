@@ -151,8 +151,10 @@ describe("Spotify callback provider evidence boundary", () => {
           refreshTokenEncrypted: null,
           expiresAt: null,
           updatedAt: new Date("2026-09-16T02:00:00.000Z"),
+          currentRefreshCommandId: null,
         }),
         create: jest.fn(),
+        deleteMany: jest.fn(),
         updateMany: jest.fn(),
         findUniqueOrThrow: jest.fn(),
       },
@@ -172,11 +174,13 @@ describe("Spotify callback provider evidence boundary", () => {
       refreshTokenEncrypted: "existing-refresh-ciphertext",
       expiresAt: new Date("2026-09-16T02:30:00.000Z"),
       updatedAt: new Date("2026-09-16T02:00:00.000Z"),
+      currentRefreshCommandId: null,
     };
     const db = {
       connectedAccount: {
         findUnique: jest.fn().mockResolvedValue(current),
         create: jest.fn(),
+        deleteMany: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "connection-1" }),
       },
@@ -200,11 +204,48 @@ describe("Spotify callback provider evidence boundary", () => {
     }));
   });
 
+  it("replaces a refresh-owned connection with a new generation", async () => {
+    const current = {
+      id: "connection-owned",
+      providerAccountId: "spotify-old",
+      accessTokenEncrypted: "owned-access-ciphertext",
+      refreshTokenEncrypted: "owned-refresh-ciphertext",
+      expiresAt: new Date("2026-09-16T02:30:00.000Z"),
+      updatedAt: new Date("2026-09-16T02:00:00.000Z"),
+      currentRefreshCommandId: "refresh-command-1",
+    };
+    const db = {
+      connectedAccount: {
+        findUnique: jest.fn().mockResolvedValue(current),
+        create: jest.fn().mockResolvedValue({ id: "connection-new-generation" }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+        updateMany: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
+      },
+    };
+    const exactAuthorization = await snapshotSpotifyConnectionAuthorization("user-1", db as never);
+
+    await expect(storeSpotifyConnection({ authorization: exactAuthorization, evidence, db: db as never }))
+      .resolves.toEqual({ id: "connection-new-generation" });
+    expect(db.connectedAccount.deleteMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "connection-owned",
+        userId: "user-1",
+        currentRefreshCommandId: "refresh-command-1",
+      }),
+    });
+    expect(db.connectedAccount.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: "user-1", providerAccountId: "spotify-new" }),
+    }));
+    expect(db.connectedAccount.updateMany).not.toHaveBeenCalled();
+  });
+
   it("uses create-on-absence instead of a blind upsert", async () => {
     const db = {
       connectedAccount: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: "connection-new" }),
+        deleteMany: jest.fn(),
         updateMany: jest.fn(),
         findUniqueOrThrow: jest.fn(),
       },

@@ -4,6 +4,11 @@ import crypto from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import {
+  snapshotSpotifyConnectionAuthorization,
+  storeSpotifyConnection,
+  type SpotifyConnectionEvidence,
+} from "@/lib/integrations/spotify";
 
 const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
 
@@ -459,5 +464,48 @@ if (!databaseUrl) describe.skip("Spotify refresh-command PostgreSQL boundary", (
       where: { id: reconnected.id },
       data: { currentRefreshCommandId: command.id },
     })).rejects.toThrow("not owned by the exact attempting command");
+  });
+
+  it("replaces a refresh-owned callback connection without rewriting its history", async () => {
+    const command = await stage();
+    await claim(command.id);
+    await succeed(command.id, "success-before-callback", new Date("2027-01-01T00:00:00.000Z"));
+    const authorization = await db.$transaction(
+      (tx) => snapshotSpotifyConnectionAuthorization(userId, tx),
+      { isolationLevel: "Serializable" },
+    );
+    const previousEncryptionKey = process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY;
+    process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY = "test-only-spotify-encryption-key-32-bytes";
+    const evidence: SpotifyConnectionEvidence = {
+      providerAccountId,
+      accessToken: `callback-access-${runId}`,
+      refreshToken: `callback-refresh-${runId}`,
+      tokenType: "Bearer",
+      scope: "user-follow-read user-top-read",
+      expiresAt: new Date("2028-01-01T00:00:00.000Z"),
+      displayName: "Reconnected Listener",
+      email: `reconnected-${runId}@example.test`,
+    };
+
+    try {
+      const replacement = await db.$transaction(
+        (tx) => storeSpotifyConnection({ authorization, evidence, db: tx }),
+        { isolationLevel: "Serializable" },
+      );
+      expect(replacement.id).not.toBe(connectionId);
+      await expect(db.connectedAccount.findUnique({ where: { id: connectionId } })).resolves.toBeNull();
+      await expect(db.connectedAccount.findUniqueOrThrow({ where: { id: replacement.id } }))
+        .resolves.toMatchObject({
+          userId,
+          providerAccountId,
+          currentRefreshCommandId: null,
+          displayName: "Reconnected Listener",
+        });
+      await expect(db.spotifyRefreshCommand.findUniqueOrThrow({ where: { id: command.id } }))
+        .resolves.toMatchObject({ connectionId, status: "SUCCEEDED" });
+    } finally {
+      if (previousEncryptionKey === undefined) delete process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY;
+      else process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY = previousEncryptionKey;
+    }
   });
 });

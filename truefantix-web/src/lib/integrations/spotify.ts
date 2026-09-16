@@ -311,6 +311,7 @@ export async function snapshotSpotifyConnectionAuthorization(
       refreshTokenEncrypted: true,
       expiresAt: true,
       updatedAt: true,
+      currentRefreshCommandId: true,
     },
   });
   return {
@@ -370,6 +371,7 @@ export async function storeSpotifyConnection({
       refreshTokenEncrypted: true,
       expiresAt: true,
       updatedAt: true,
+      currentRefreshCommandId: true,
     },
   });
   const bindingMatches = authorization.connectedAccountId === null
@@ -396,6 +398,32 @@ export async function storeSpotifyConnection({
       data: {
       userId: authorization.userId,
       provider: SPOTIFY_PROVIDER,
+        ...data,
+        refreshTokenEncrypted: data.refreshTokenEncrypted ?? null,
+      },
+      select: { id: true, displayName: true, email: true },
+    });
+  }
+
+  if (current.currentRefreshCommandId) {
+    const deleted = await db.connectedAccount.deleteMany({
+      where: {
+        id: current.id,
+        userId: authorization.userId,
+        provider: SPOTIFY_PROVIDER,
+        providerAccountId: current.providerAccountId,
+        accessTokenEncrypted: current.accessTokenEncrypted,
+        refreshTokenEncrypted: current.refreshTokenEncrypted,
+        expiresAt: current.expiresAt,
+        updatedAt: current.updatedAt,
+        currentRefreshCommandId: current.currentRefreshCommandId,
+      },
+    });
+    if (deleted.count !== 1) throw new Error("SPOTIFY_CONNECTION_CHANGED");
+    return db.connectedAccount.create({
+      data: {
+        userId: authorization.userId,
+        provider: SPOTIFY_PROVIDER,
         ...data,
         refreshTokenEncrypted: data.refreshTokenEncrypted ?? null,
       },
