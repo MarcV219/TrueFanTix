@@ -36,6 +36,12 @@ type ValidRefreshResult = {
   providerHttpStatus: number;
 };
 
+export type SpotifyRefreshSourceExpectation = {
+  connectionId: string;
+  providerAccountId: string;
+  sourceVersionDigest: string;
+};
+
 export type SpotifyRefreshCommandResult =
   | { status: "NO_CONNECTION" }
   | { status: "IN_PROGRESS"; commandId: string }
@@ -49,13 +55,14 @@ type RefreshOptions = {
   now?: () => Date;
   attemptIdFactory?: () => string;
   providerTimeoutMs?: number;
+  expectedSource?: SpotifyRefreshSourceExpectation;
   testHooks?: {
     afterStageCommitted?: (command: Readonly<StagedRefresh>) => Promise<void> | void;
     afterClaimCommitted?: (command: Readonly<ClaimedRefresh>) => Promise<void> | void;
   };
 };
 
-class SpotifyRefreshSourceChangedError extends Error {}
+export class SpotifyRefreshSourceChangedError extends Error {}
 
 export type SpotifyRefreshAccessChangedCode = "NOT_AUTHENTICATED" | "BANNED" | "NOT_VERIFIED";
 
@@ -222,13 +229,24 @@ async function stageRefresh(
   db: RootDatabase,
   userId: string,
   attemptIdFactory: () => string,
+  expectedSource?: SpotifyRefreshSourceExpectation,
 ): Promise<StagedRefresh | null> {
   return db.$transaction(async (tx) => {
     await lockUser(tx, userId, true);
     const account = await lockConnectionForUser(tx, userId);
     if (!account) return null;
-    const sourceVersionDigest = await connectionDigest(tx, account.id);
-    if (!sourceVersionDigest) throw new SpotifyRefreshSourceChangedError();
+    const currentVersionDigest = await connectionDigest(tx, account.id);
+    if (!currentVersionDigest) throw new SpotifyRefreshSourceChangedError();
+    if (
+      expectedSource
+      && (
+        account.id !== expectedSource.connectionId
+        || account.providerAccountId !== expectedSource.providerAccountId
+      )
+    ) {
+      throw new SpotifyRefreshSourceChangedError();
+    }
+    const sourceVersionDigest = expectedSource?.sourceVersionDigest ?? currentVersionDigest;
 
     let command = await tx.spotifyRefreshCommand.findUnique({
       where: {
@@ -240,6 +258,9 @@ async function stageRefresh(
     });
     if (command) command = await lockCommand(tx, command.id);
     if (!command) {
+      if (currentVersionDigest !== sourceVersionDigest) {
+        throw new SpotifyRefreshSourceChangedError();
+      }
       command = await tx.spotifyRefreshCommand.create({
         data: {
           userId,
@@ -542,7 +563,12 @@ export async function executeSpotifyRefreshCommand(
     throw new Error("SPOTIFY_PROVIDER_TIMEOUT_INVALID");
   }
 
-  const staged = await retryPreProvider(() => stageRefresh(db, userId, attemptIdFactory));
+  const staged = await retryPreProvider(() => stageRefresh(
+    db,
+    userId,
+    attemptIdFactory,
+    options.expectedSource,
+  ));
   if (!staged) return { status: "NO_CONNECTION" };
   const stagedReplay = replayResult(staged);
   if (stagedReplay) return stagedReplay;
