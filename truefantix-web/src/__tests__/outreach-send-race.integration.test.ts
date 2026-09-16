@@ -833,6 +833,100 @@ if (!databaseUrl) describe.skip("outreach send PostgreSQL claim boundary", () =>
     })).rejects.toThrow();
   });
 
+  it("advances late delivery evidence without regressing the reply lifecycle", async () => {
+    for (const mode of ["legacy-reply", "selected-reply"] as const) {
+      const { recipientIds, emails } = await fixture();
+      const providerMessageId = `outreach-reply-${mode}-${runId}`;
+      const repliedAt = new Date("2026-09-16T14:35:00.000Z");
+      await prisma.outreachRecipient.update({
+        where: { id: recipientIds[0] },
+        data: { status: "SENT", providerMessageId },
+      });
+
+      if (mode === "selected-reply") {
+        await recordOutreachDeliveryEvent({
+          svixId: `outreach-reply-delivered-${runId}`,
+          type: "email.delivered",
+          providerMessageId,
+          deliveryAttemptId: null,
+          normalizedEmail: emails[0],
+          occurredAt: new Date("2026-09-16T14:34:00.000Z"),
+          detail: null,
+          nextStatus: "DELIVERED",
+          suppressionReason: null,
+          contactUpdate: null,
+        });
+      }
+      await prisma.outreachRecipient.update({
+        where: { id: recipientIds[0] },
+        data: { status: "REPLIED", repliedAt },
+      });
+
+      const bounceSvixId = `outreach-reply-bounced-${mode}-${runId}`;
+      const bouncedAt = new Date("2026-09-16T14:36:00.000Z");
+      await recordOutreachDeliveryEvent({
+        svixId: bounceSvixId,
+        type: "email.bounced",
+        providerMessageId,
+        deliveryAttemptId: null,
+        normalizedEmail: emails[0],
+        occurredAt: bouncedAt,
+        detail: "late synthetic bounce",
+        nextStatus: "BOUNCED",
+        suppressionReason: null,
+        contactUpdate: { engagementStage: "BOUNCED", followUpAt: null },
+      });
+
+      await expect(prisma.outreachRecipient.findUniqueOrThrow({
+        where: { id: recipientIds[0] },
+      })).resolves.toMatchObject({
+        status: "REPLIED",
+        repliedAt,
+        error: "late synthetic bounce",
+        deliveryStatusPriority: 4,
+        deliveryStatusOccurredAt: bouncedAt,
+        deliveryStatusSvixId: bounceSvixId,
+      });
+      await expect(prisma.outreachRecipient.update({
+        where: { id: recipientIds[0] },
+        data: { status: "BOUNCED" },
+      })).rejects.toThrow();
+
+      const complaintSvixId = `outreach-reply-complaint-${mode}-${runId}`;
+      const complainedAt = new Date("2026-09-16T14:37:00.000Z");
+      await prisma.outreachEmailEvent.create({
+        data: {
+          svixId: complaintSvixId,
+          type: "email.complained",
+          providerMessageId,
+          recipientId: recipientIds[0],
+          email: emails[0],
+          occurredAt: complainedAt,
+          detail: null,
+        },
+      });
+      await expect(prisma.outreachRecipient.update({
+        where: { id: recipientIds[0] },
+        data: {
+          status: "REPLIED",
+          repliedAt: new Date("2026-09-16T14:38:00.000Z"),
+          error: null,
+          deliveryStatusPriority: 5,
+          deliveryStatusOccurredAt: complainedAt,
+          deliveryStatusSvixId: complaintSvixId,
+        },
+      })).rejects.toThrow();
+      await expect(prisma.outreachRecipient.findUniqueOrThrow({
+        where: { id: recipientIds[0] },
+      })).resolves.toMatchObject({
+        status: "REPLIED",
+        repliedAt,
+        deliveryStatusPriority: 4,
+        deliveryStatusSvixId: bounceSvixId,
+      });
+    }
+  });
+
   it("refuses non-ASCII Svix identity before persistence", async () => {
     const { recipientIds, emails } = await fixture();
     const providerMessageId = `outreach-non-ascii-provider-${runId}`;

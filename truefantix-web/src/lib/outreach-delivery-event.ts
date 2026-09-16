@@ -40,6 +40,7 @@ type LockedRecipient = Readonly<{
   deliveryAttemptId: string | null;
   providerMessageId: string | null;
   status: string;
+  repliedAt: Date | null;
   deliveryStatusPriority: number | null;
   deliveryStatusOccurredAt: Date | null;
   deliveryStatusSvixId: string | null;
@@ -120,7 +121,11 @@ async function applyDeliveryEvent(
     await tx.outreachRecipient.update({
       where: { id: recipient.id },
       data: {
-        status: input.nextStatus,
+        // Reply ingestion is a later, independent lifecycle projection. Keep
+        // it visible while still advancing the selected delivery evidence.
+        status: recipient.status === "REPLIED" && recipient.repliedAt
+          ? "REPLIED"
+          : input.nextStatus,
         error: input.detail,
         deliveryStatusPriority: statusPriority[input.nextStatus] ?? 0,
         deliveryStatusOccurredAt: input.occurredAt,
@@ -215,6 +220,7 @@ export async function recordOutreachDeliveryEvent(input: OutreachDeliveryEventIn
         deliveryAttemptId: true,
         providerMessageId: true,
         status: true,
+        repliedAt: true,
         deliveryStatusPriority: true,
         deliveryStatusOccurredAt: true,
         deliveryStatusSvixId: true,
