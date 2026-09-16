@@ -89,7 +89,15 @@ if (!databaseUrl) describe.skip("legacy seller-account PostgreSQL boundary", () 
       });
       await tx.user.update({
         where: { id: userId },
-        data: { sellerId, isBanned: false, canSell: false, emailVerifiedAt: verifiedAt, phoneVerifiedAt: verifiedAt },
+        data: {
+          sellerId,
+          isBanned: false,
+          canSell: false,
+          emailVerifiedAt: verifiedAt,
+          phoneVerifiedAt: verifiedAt,
+          termsVersion: null,
+          privacyVersion: null,
+        },
       });
     });
   }
@@ -127,7 +135,7 @@ if (!databaseUrl) describe.skip("legacy seller-account PostgreSQL boundary", () 
       return persistSellerStatusProjectionInTransaction(
         tx,
         current,
-        { kind: "ACCOUNT", userId, sellerId, stripeAccountId: providerAccountId },
+        { userId, sellerId, stripeAccountId: providerAccountId },
         projection,
       );
     }, { isolationLevel: "Serializable" });
@@ -228,6 +236,53 @@ if (!databaseUrl) describe.skip("legacy seller-account PostgreSQL boundary", () 
     });
     await expect(db.user.findUniqueOrThrow({ where: { id: userId } }))
       .resolves.toMatchObject({ canSell: false });
+  });
+
+  it.each([
+    ["account binding", async () => {
+      await db.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.seller.update({
+          where: { id: sellerId },
+          data: { stripeAccountId: `${providerAccountId}_changed` },
+        });
+      });
+    }],
+    ["ordinary persona", async () => {
+      await db.user.update({
+        where: { id: userId },
+        data: { termsVersion: "primary-staging-only" },
+      });
+    }],
+    ["user-to-seller binding", async () => {
+      await db.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        await tx.user.update({ where: { id: userId }, data: { sellerId: null } });
+      });
+    }],
+  ])("leaves every projection byte unchanged after a %s change before Tx2", async (_label, mutate) => {
+    await installLinkedAccount();
+    await mutate();
+    const sellerBefore = await db.seller.findUniqueOrThrow({ where: { id: sellerId } });
+    const userBefore = await db.user.findUniqueOrThrow({ where: { id: userId } });
+
+    await expect(persistStatus({
+      detailsSubmitted: true,
+      chargesEnabled: true,
+      payoutsEnabled: true,
+    })).rejects.toBeInstanceOf(SellerAccountAuthorizationChangedError);
+
+    await expect(db.seller.findUniqueOrThrow({ where: { id: sellerId } })).resolves.toMatchObject({
+      stripeAccountId: sellerBefore.stripeAccountId,
+      stripeDetailsSubmitted: sellerBefore.stripeDetailsSubmitted,
+      stripeChargesEnabled: sellerBefore.stripeChargesEnabled,
+      stripePayoutsEnabled: sellerBefore.stripePayoutsEnabled,
+      status: sellerBefore.status,
+      statusUpdatedAt: sellerBefore.statusUpdatedAt,
+      statusReason: sellerBefore.statusReason,
+    });
+    await expect(db.user.findUniqueOrThrow({ where: { id: userId } }))
+      .resolves.toMatchObject({ canSell: userBefore.canSell });
   });
 
   it("reuses only the exact frozen authorization", async () => {

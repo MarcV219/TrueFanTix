@@ -16,8 +16,8 @@ jest.mock("stripe", () => jest.fn().mockImplementation(() => ({
 
 jest.mock("@/lib/prisma", () => ({
   prisma: {
-    user: { findUnique: jest.fn(), update: jest.fn() },
-    seller: { update: jest.fn() },
+    user: { findUnique: jest.fn(), updateMany: jest.fn() },
+    seller: { updateMany: jest.fn() },
     $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   },
@@ -28,8 +28,8 @@ jest.mock("@/lib/auth/session", () => ({
 }));
 
 const mockedPrisma = prisma as unknown as {
-  user: { findUnique: jest.Mock; update: jest.Mock };
-  seller: { update: jest.Mock };
+  user: { findUnique: jest.Mock; updateMany: jest.Mock };
+  seller: { updateMany: jest.Mock };
   $queryRaw: jest.Mock;
   $transaction: jest.Mock;
 };
@@ -89,8 +89,8 @@ describe("seller onboarding staging-persona boundary", () => {
         }
       },
     );
-    mockedPrisma.seller.update.mockResolvedValue({});
-    mockedPrisma.user.update.mockResolvedValue({});
+    mockedPrisma.seller.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.user.updateMany.mockResolvedValue({ count: 1 });
     mockRetrieve.mockImplementation(async () => {
       timeline.push("provider:retrieve");
       expect(transactionDepth).toBe(0);
@@ -141,9 +141,9 @@ describe("seller onboarding staging-persona boundary", () => {
       "transaction:start",
       "transaction:commit",
     ]);
-    expect(mockedPrisma.seller.update).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.seller.update).toHaveBeenCalledWith({
-      where: { id: ordinaryUser.seller.id },
+    expect(mockedPrisma.seller.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.seller.updateMany).toHaveBeenCalledWith({
+      where: { id: ordinaryUser.seller.id, stripeAccountId: ordinaryUser.seller.stripeAccountId },
       data: expect.objectContaining({
         stripeDetailsSubmitted: true,
         stripeChargesEnabled: true,
@@ -151,16 +151,15 @@ describe("seller onboarding staging-persona boundary", () => {
         status: "APPROVED",
       }),
     });
-    expect(mockedPrisma.user.update).toHaveBeenCalledWith({
-      where: { id: ordinaryUser.id },
+    expect(mockedPrisma.user.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: ordinaryUser.id, sellerId: ordinaryUser.seller.id }),
       data: { canSell: true },
     });
   });
 
   it("refuses a restored managed user before provider access or seller mutation", async () => {
     mockedPrisma.user.findUnique
-      .mockResolvedValueOnce(ordinaryUser)
-      .mockResolvedValueOnce({ sellerId: ordinaryUser.seller.id, seller: ordinaryUser.seller })
+      .mockResolvedValueOnce({ sellerId: null, seller: null })
       .mockResolvedValueOnce(managedUser);
 
     const response = await GET();
@@ -170,22 +169,22 @@ describe("seller onboarding staging-persona boundary", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "STAGING_CONSOLE_ONLY" });
     expect(mockRetrieve).not.toHaveBeenCalled();
     expect(mockListExternalAccounts).not.toHaveBeenCalled();
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
-    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
   });
 
-  it("reclassifies a serialization abort after persona restoration", async () => {
-    mockedPrisma.user.findUnique.mockResolvedValue(managedUser);
+  it("fails a Tx1 serialization abort without a second identity read or provider access", async () => {
     mockedPrisma.$transaction.mockRejectedValue(
       Object.assign(new Error("serialization failure"), { code: "P2034" }),
     );
 
     const response = await GET();
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({ error: "STAGING_CONSOLE_ONLY" });
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: "SERVER_ERROR" });
+    expect(mockedPrisma.user.findUnique).not.toHaveBeenCalled();
     expect(mockRetrieve).not.toHaveBeenCalled();
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
   });
 
   it("does not cross the provider boundary when authorization rolls back after its callback", async () => {
@@ -201,8 +200,8 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(response.status).toBe(500);
     expect(mockRetrieve).not.toHaveBeenCalled();
     expect(mockListExternalAccounts).not.toHaveBeenCalled();
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
-    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
   });
 
   it("does not persist or repeat provider reads when the persistence transaction aborts", async () => {
@@ -226,8 +225,8 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(response.status).toBe(500);
     expect(mockRetrieve).toHaveBeenCalledTimes(1);
     expect(mockListExternalAccounts).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
-    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
   });
 
   it("does not persist provider status after the seller account binding changes", async () => {
@@ -245,8 +244,8 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(response.status).toBe(500);
     expect(mockRetrieve).toHaveBeenCalledTimes(1);
     expect(mockListExternalAccounts).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
-    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
   });
 
   it("does not persist provider status after the identity becomes managed", async () => {
@@ -262,8 +261,8 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(response.status).toBe(403);
     expect(mockRetrieve).toHaveBeenCalledTimes(1);
     expect(mockListExternalAccounts).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
-    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
   });
 
   it("rejects mismatched returned account evidence before external-account reads or persistence", async () => {
@@ -278,8 +277,8 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(response.status).toBe(500);
     expect(mockListExternalAccounts).not.toHaveBeenCalled();
     expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
-    expect(mockedPrisma.user.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
   });
 
   it("rejects deleted account evidence before external-account reads or persistence", async () => {
@@ -290,7 +289,7 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(response.status).toBe(500);
     expect(mockListExternalAccounts).not.toHaveBeenCalled();
     expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
   });
 
   it("does not initialize Stripe when the current ordinary identity has no seller account", async () => {
@@ -305,7 +304,7 @@ describe("seller onboarding staging-persona boundary", () => {
       stripe: { hasAccount: false },
     });
     expect(mockRetrieve).not.toHaveBeenCalled();
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
   });
 
   it("returns the existing configuration refusal only after an authorized account snapshot", async () => {
@@ -317,7 +316,7 @@ describe("seller onboarding staging-persona boundary", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "STRIPE_NOT_CONFIGURED" });
     expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
     expect(mockRetrieve).not.toHaveBeenCalled();
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
   });
 
   it("refuses an unverified current identity before provider configuration or access", async () => {
@@ -329,7 +328,7 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ error: "NOT_VERIFIED" });
     expect(mockRetrieve).not.toHaveBeenCalled();
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
   });
 
   it("returns unauthorized without starting authorization or provider access", async () => {
@@ -350,7 +349,7 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({ error: "UNAUTHORIZED" });
     expect(mockRetrieve).not.toHaveBeenCalled();
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
   });
 
   it("retains the server-error response for an unrelated provider failure", async () => {
@@ -360,6 +359,29 @@ describe("seller onboarding staging-persona boundary", () => {
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({ error: "SERVER_ERROR" });
-    expect(mockedPrisma.seller.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not persist when the external-account provider read fails", async () => {
+    mockListExternalAccounts.mockRejectedValue(new Error("external accounts unavailable"));
+
+    const response = await GET();
+
+    expect(response.status).toBe(500);
+    expect(mockRetrieve).toHaveBeenCalledTimes(1);
+    expect(mockListExternalAccounts).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the projection path when the exact seller fence matches no row", async () => {
+    mockedPrisma.seller.updateMany.mockResolvedValue({ count: 0 });
+
+    const response = await GET();
+
+    expect(response.status).toBe(500);
+    expect(mockedPrisma.seller.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
   });
 });

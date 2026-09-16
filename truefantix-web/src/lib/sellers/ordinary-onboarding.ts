@@ -65,18 +65,14 @@ export type SellerLinkAuthorizationSnapshot = {
 };
 
 export type SellerStatusAuthorizationResult =
-  | { kind: "NO_ACCOUNT" }
+  | "NO_ACCOUNT"
   | {
-      kind: "ACCOUNT";
       userId: string;
       sellerId: string;
       stripeAccountId: string;
     };
 
-export type SellerStatusAuthorizationSnapshot = Extract<
-  SellerStatusAuthorizationResult,
-  { kind: "ACCOUNT" }
->;
+export type SellerStatusAuthorizationSnapshot = Exclude<SellerStatusAuthorizationResult, "NO_ACCOUNT">;
 
 export type SellerStatusProjection = {
   detailsSubmitted: boolean;
@@ -287,50 +283,7 @@ export async function runOrdinarySellerOnboardingOperation<T>(
   operation: (tx: Tx, current: CurrentSellerOnboardingUser) => Promise<T>,
 ): Promise<T> {
   try {
-    return await prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
-        const binding = await tx.user.findUnique({
-          where: { id: userId },
-          select: { sellerId: true, seller: { select: { id: true } } },
-        });
-        const lockedSellerId = binding?.sellerId ?? binding?.seller?.id ?? null;
-        if (lockedSellerId) {
-          await tx.$queryRaw`SELECT "id" FROM "Seller" WHERE "id" = ${lockedSellerId} FOR UPDATE`;
-        }
-        const current = await tx.user.findUnique({
-          where: { id: userId },
-          select: {
-            id: true,
-            email: true,
-            emailVerifiedAt: true,
-            phone: true,
-            phoneVerifiedAt: true,
-            firstName: true,
-            lastName: true,
-            streetAddress1: true,
-            streetAddress2: true,
-            city: true,
-            region: true,
-            postalCode: true,
-            country: true,
-            termsVersion: true,
-            privacyVersion: true,
-            isBanned: true,
-            canSell: true,
-            seller: { select: { id: true, stripeAccountId: true } },
-          },
-        });
-
-        if (!current || current.isBanned) throw new SellerOnboardingAccountNotFoundError();
-        if (isPrimaryStagingManagedUser(current)) throw new ManagedAccountSellerOnboardingError();
-        if (lockedSellerId !== (current.seller?.id ?? null)) {
-          throw new SellerAccountAuthorizationChangedError("Seller binding changed during authorization");
-        }
-        return operation(tx, current);
-      },
-      { isolationLevel: "Serializable", timeout: 120_000 },
-    );
+    return await runOrdinarySellerOnboardingTransaction(userId, operation);
   } catch (error) {
     if (error instanceof ManagedAccountSellerOnboardingError) throw error;
     const current = await prisma.user.findUnique({
@@ -342,6 +295,56 @@ export async function runOrdinarySellerOnboardingOperation<T>(
     }
     throw error;
   }
+}
+
+async function runOrdinarySellerOnboardingTransaction<T>(
+  userId: string,
+  operation: (tx: Tx, current: CurrentSellerOnboardingUser) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+      const binding = await tx.user.findUnique({
+        where: { id: userId },
+        select: { sellerId: true, seller: { select: { id: true } } },
+      });
+      const lockedSellerId = binding?.sellerId ?? binding?.seller?.id ?? null;
+      if (lockedSellerId) {
+        await tx.$queryRaw`SELECT "id" FROM "Seller" WHERE "id" = ${lockedSellerId} FOR UPDATE`;
+      }
+      const current = await tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          emailVerifiedAt: true,
+          phone: true,
+          phoneVerifiedAt: true,
+          firstName: true,
+          lastName: true,
+          streetAddress1: true,
+          streetAddress2: true,
+          city: true,
+          region: true,
+          postalCode: true,
+          country: true,
+          termsVersion: true,
+          privacyVersion: true,
+          isBanned: true,
+          canSell: true,
+          seller: { select: { id: true, stripeAccountId: true } },
+        },
+      });
+
+      if (!current || current.isBanned) throw new SellerOnboardingAccountNotFoundError();
+      if (isPrimaryStagingManagedUser(current)) throw new ManagedAccountSellerOnboardingError();
+      if (lockedSellerId !== (current.seller?.id ?? null)) {
+        throw new SellerAccountAuthorizationChangedError("Seller binding changed during authorization");
+      }
+      return operation(tx, current);
+    },
+    { isolationLevel: "Serializable", timeout: 120_000 },
+  );
 }
 
 export async function stageLegacySellerAccountCommand(tx: Tx, input: SellerAccountAuthorization) {
@@ -629,11 +632,10 @@ export async function authorizeSellerLinkSnapshot(
 export async function authorizeSellerStatusSnapshot(
   userId: string,
 ): Promise<SellerStatusAuthorizationResult> {
-  return runOrdinarySellerOnboardingOperation(userId, async (_tx, current) => {
+  return runOrdinarySellerOnboardingTransaction(userId, async (_tx, current) => {
     assertCurrentVerified(current);
-    if (!current.seller?.stripeAccountId) return { kind: "NO_ACCOUNT" };
+    if (!current.seller?.stripeAccountId) return "NO_ACCOUNT";
     return {
-      kind: "ACCOUNT",
       userId: current.id,
       sellerId: current.seller.id,
       stripeAccountId: current.seller.stripeAccountId,
@@ -645,7 +647,7 @@ export async function persistSellerStatusSnapshot(
   snapshot: SellerStatusAuthorizationSnapshot,
   projection: SellerStatusProjection,
 ) {
-  return runOrdinarySellerOnboardingOperation(snapshot.userId, (tx, current) =>
+  return runOrdinarySellerOnboardingTransaction(snapshot.userId, (tx, current) =>
     persistSellerStatusProjectionInTransaction(tx, current, snapshot, projection));
 }
 
@@ -669,8 +671,8 @@ export async function persistSellerStatusProjectionInTransaction(
   }
 
   const fullyEnabled = projection.detailsSubmitted && projection.payoutsEnabled;
-  await tx.seller.update({
-    where: { id: snapshot.sellerId },
+  const sellerUpdate = await tx.seller.updateMany({
+    where: { id: snapshot.sellerId, stripeAccountId: snapshot.stripeAccountId },
     data: {
       stripeDetailsSubmitted: projection.detailsSubmitted,
       stripeChargesEnabled: projection.chargesEnabled,
@@ -682,11 +684,27 @@ export async function persistSellerStatusProjectionInTransaction(
       } : {}),
     },
   });
+  if (sellerUpdate.count !== 1) {
+    throw new SellerAccountAuthorizationChangedError(
+      "Seller account binding changed during status persistence",
+    );
+  }
 
   if (fullyEnabled && !current.canSell) {
-    await tx.user.update({
-      where: { id: snapshot.userId },
+    const userUpdate = await tx.user.updateMany({
+      where: {
+        id: snapshot.userId,
+        sellerId: snapshot.sellerId,
+        isBanned: false,
+        emailVerifiedAt: { not: null },
+        phoneVerifiedAt: { not: null },
+      },
       data: { canSell: true },
     });
+    if (userUpdate.count !== 1) {
+      throw new SellerAccountAuthorizationChangedError(
+        "Seller identity changed during status persistence",
+      );
+    }
   }
 }

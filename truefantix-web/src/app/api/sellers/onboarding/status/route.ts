@@ -33,8 +33,23 @@ function isActiveCapability(value: unknown) {
   return String(value ?? "").toLowerCase() === "active";
 }
 
-function stringArray(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+function boundedString(value: unknown, maxLength = 256) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= maxLength ? normalized : null;
+}
+
+function boundedStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 100).flatMap((item) => {
+    const normalized = boundedString(item);
+    return normalized === null ? [] : [normalized];
+  });
+}
+
+function normalizedCapability(value: unknown) {
+  const normalized = boundedString(value, 64);
+  return normalized?.toLowerCase() ?? null;
 }
 
 function boundedAccountEvidence(account: unknown, expectedAccountId: string) {
@@ -71,17 +86,15 @@ function boundedAccountEvidence(account: unknown, expectedAccountId: string) {
     payoutsEnabled,
     fullyEnabled: detailsSubmitted && payoutsEnabled,
     capabilities: {
-      card_payments: typeof capabilities.card_payments === "string" ? capabilities.card_payments : null,
-      transfers: typeof capabilities.transfers === "string" ? capabilities.transfers : null,
+      card_payments: normalizedCapability(capabilities.card_payments),
+      transfers: normalizedCapability(capabilities.transfers),
     },
     requirements: requirements
       ? {
-          currently_due: stringArray(requirements.currently_due),
-          eventually_due: stringArray(requirements.eventually_due),
-          past_due: stringArray(requirements.past_due),
-          disabled_reason: typeof requirements.disabled_reason === "string"
-            ? requirements.disabled_reason
-            : null,
+          currently_due: boundedStringArray(requirements.currently_due),
+          eventually_due: boundedStringArray(requirements.eventually_due),
+          past_due: boundedStringArray(requirements.past_due),
+          disabled_reason: boundedString(requirements.disabled_reason),
         }
       : null,
   };
@@ -95,15 +108,17 @@ function boundedExternalAccountEvidence(value: unknown) {
   if (!Array.isArray(data)) {
     throw new SellerAccountAuthorizationChangedError("Stripe returned malformed external-account evidence");
   }
-  const accounts = data.flatMap((item) => {
+  const accounts = data.slice(0, 100).flatMap((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
     const account = item as Record<string, unknown>;
-    if (typeof account.id !== "string") return [];
+    const id = boundedString(account.id, 128);
+    if (!id) return [];
     return [{
-      id: account.id,
-      object: typeof account.object === "string" ? account.object : undefined,
-      currency: typeof account.currency === "string" ? account.currency : null,
-      available_payout_methods: stringArray(account.available_payout_methods),
+      id,
+      object: boundedString(account.object, 32) ?? undefined,
+      currency: boundedString(account.currency, 16)?.toLowerCase() ?? null,
+      available_payout_methods: boundedStringArray(account.available_payout_methods)
+        .map((method) => method.toLowerCase()),
     }];
   });
   const destination = instantPayoutDestination(accounts, "CAD");
@@ -122,7 +137,7 @@ export async function GET() {
     }
 
     const authorization = await authorizeSellerStatusSnapshot(userId);
-    if (authorization.kind === "NO_ACCOUNT") {
+    if (authorization === "NO_ACCOUNT") {
       return noStoreJson(
         {
           ok: true,
