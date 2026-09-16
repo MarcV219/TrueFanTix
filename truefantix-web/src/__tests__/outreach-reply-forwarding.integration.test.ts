@@ -496,6 +496,13 @@ if (!databaseUrl) describe.skip("outreach reply forwarding PostgreSQL boundary",
       `)).rejects.toThrow(/expired outreach reply forward claim/);
       await expect(client.query(`
         UPDATE "OutreachReplyForwardIntent"
+        SET status = 'FAILED', "failureCode" = 'RESEND_FORWARD_REJECTED',
+            "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
+            "updatedAt" = (statement_timestamp() AT TIME ZONE 'UTC')
+        WHERE id = 'upgrade-expired-result'
+      `)).rejects.toThrow(/expired outreach reply forward claim/);
+      await expect(client.query(`
+        UPDATE "OutreachReplyForwardIntent"
         SET status = 'RECONCILIATION_REQUIRED',
             "failureCode" = 'RESEND_FORWARD_TIMEOUT',
             "completedAt" = (statement_timestamp() AT TIME ZONE 'UTC'),
