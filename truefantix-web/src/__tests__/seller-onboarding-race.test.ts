@@ -352,6 +352,19 @@ describe("seller onboarding staging-persona boundary", () => {
     expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
   });
 
+  it("preserves the unauthorized response when the current database identity is missing", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue(null);
+
+    const response = await GET();
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: "UNAUTHORIZED" });
+    expect(mockRetrieve).not.toHaveBeenCalled();
+    expect(mockListExternalAccounts).not.toHaveBeenCalled();
+    expect(mockedPrisma.seller.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
   it("retains the server-error response for an unrelated provider failure", async () => {
     mockRetrieve.mockRejectedValue(new Error("provider unavailable"));
 
