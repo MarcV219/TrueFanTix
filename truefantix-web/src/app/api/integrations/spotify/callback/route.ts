@@ -20,6 +20,7 @@ const STATE_COOKIE = "tft_spotify_oauth_state";
 
 function redirect(status: string) {
   const response = NextResponse.redirect(spotifyAccountRedirectUrl(status));
+  response.headers.set("Cache-Control", "private, no-store");
   response.cookies.set(STATE_COOKIE, "", { path: "/", maxAge: 0 });
   return response;
 }
@@ -41,6 +42,7 @@ function stagingConsoleOnlyError() {
 export async function GET(req: Request) {
   const gate = await requireUser(req);
   if (!gate.ok) {
+    gate.res.headers.set("Cache-Control", "private, no-store");
     gate.res.cookies.set(STATE_COOKIE, "", { path: "/", maxAge: 0 });
     return gate.res;
   }

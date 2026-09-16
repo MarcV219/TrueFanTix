@@ -363,6 +363,7 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(307);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(mockedExchangeSpotifyCode).toHaveBeenCalledWith("code-1");
     expect(mockedGetSpotifyConnectionEvidence).toHaveBeenCalledWith({ access_token: "token" });
     expect(mockedStoreSpotifyConnection).toHaveBeenCalledWith({
@@ -446,6 +447,7 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(307);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("location")).toBe(
       "https://trusted.example/account/notifications?spotify=denied",
     );
@@ -465,6 +467,7 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(401);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("set-cookie")).toContain("tft_spotify_oauth_state=");
     expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
     expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
