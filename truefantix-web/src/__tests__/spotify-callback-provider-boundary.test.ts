@@ -173,9 +173,15 @@ describe("Spotify callback provider evidence boundary", () => {
     ["wrong", { "content-type": "text/plain" }],
     ["missing", undefined],
   ])("rejects a successful token response with a %s JSON media type", async (_label, headers) => {
-    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+    const body = JSON.stringify({
       access_token: "provider-access-token",
-    }), { status: 200, headers }));
+    });
+    const response = new Response(headers ? body : new TextEncoder().encode(body), {
+      status: 200,
+      headers,
+    });
+    if (!headers) expect(response.headers.get("content-type")).toBeNull();
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(response);
 
     await expect(exchangeSpotifyCode("one-time-code"))
       .rejects.toEqual(new Error("SPOTIFY_OAUTH_PROVIDER_FAILED"));
