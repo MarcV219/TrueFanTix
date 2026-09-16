@@ -242,6 +242,23 @@ describe("seller onboarding provider boundaries", () => {
     expect(mockAccountUpdate).not.toHaveBeenCalled();
   });
 
+  it("does no onboarding-link provider work after an explicit snapshot callback rollback", async () => {
+    mockedAuthorizeStart.mockResolvedValue({
+      kind: "ACCOUNT_READY", sellerId: "seller-1", stripeAccountId: "acct_old",
+    });
+    mockedAuthorizeLink.mockRejectedValue(new Error("synthetic snapshot callback rollback"));
+    const diagnostic = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await startOnboarding(request("/api/sellers/onboarding/start"));
+
+    expect(response.status).toBe(500);
+    expect(mockAccountLinkCreate).not.toHaveBeenCalled();
+    expect(diagnostic).toHaveBeenCalledWith(
+      "POST /api/sellers/onboarding/start failed:",
+      expect.objectContaining({ message: "synthetic snapshot callback rollback" }),
+    );
+  });
+
   it.each([
     ["P2034 serialization abort", Object.assign(new Error("serialization failure"), { code: "P2034" })],
     ["callback rollback", new Error("force authorization callback rollback")],
