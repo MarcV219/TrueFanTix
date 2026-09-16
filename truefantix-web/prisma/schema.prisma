@@ -83,6 +83,14 @@ enum LegacyPayoutCommandStatus {
   FAILED
 }
 
+enum LegacySellerAccountCommandStatus {
+  NOT_SENT
+  ATTEMPTING
+  RECONCILIATION_REQUIRED
+  SUCCEEDED
+  FAILED
+}
+
 enum EventSelloutStatus {
   NOT_SOLD_OUT
   SOLD_OUT
@@ -414,26 +422,28 @@ model User {
   referralReceived Referral?  @relation("Referred")
 
   // Isolated primary-ticketing foundation.
-  primaryOrganizersCreated         PrimaryOrganizer[]                @relation("PrimaryOrganizerCreatedBy")
-  primaryOrganizersApproved        PrimaryOrganizer[]                @relation("PrimaryOrganizerApprovedBy")
-  primaryOrganizerMemberships      PrimaryOrganizerMembership[]      @relation("PrimaryMembershipUser")
-  primaryMembershipInvitationsSent PrimaryOrganizerMembership[]      @relation("PrimaryMembershipInvitedBy")
-  primaryOrganizerInvitationsSent  PrimaryOrganizerInvitation[]      @relation("PrimaryInvitationInvitedBy")
-  primaryEventAssignmentsMade      PrimaryEventStaffAssignment[]     @relation("PrimaryAssignmentAssignedBy")
-  primaryEventAssignmentsRevoked   PrimaryEventStaffAssignment[]     @relation("PrimaryAssignmentRevokedBy")
-  primaryEventsApproved            PrimaryEvent[]                    @relation("PrimaryEventApprovedBy")
-  primaryInventoryReservations     PrimaryInventoryReservation[]     @relation("PrimaryReservationBuyer")
-  primaryOrders                    PrimaryOrder[]                    @relation("PrimaryOrderBuyer")
-  primaryPaymentAttempts           PrimaryPaymentAttempt[]           @relation("PrimaryPaymentAttemptBuyer")
-  primaryAuditEvents               PrimaryAuditEvent[]               @relation("PrimaryAuditActor")
-  primaryAdmissionScans            PrimaryAdmissionScan[]            @relation("PrimaryAdmissionScanOperator")
-  primaryRefundsRequested          PrimaryRefund[]                   @relation("PrimaryRefundRequester")
-  primaryRefundAttemptsAuthorized  PrimaryRefundProviderAttempt[]    @relation("PrimaryRefundAttemptAuthorizer")
-  primaryCancellationsRequested    PrimaryEventCancellation[]        @relation("PrimaryCancellationRequester")
-  primaryRevocationsCreated        PrimaryAdmissionRevocation[]      @relation("PrimaryRevocationActor")
-  primaryCheckedInRefundApprovals  PrimaryCheckedInRefundApproval[]  @relation("PrimaryCheckedInRefundApprover")
-  primaryObligationWaiverApprovals PrimaryObligationWaiverApproval[] @relation("PrimaryObligationWaiverApprover")
-  legacyDisputeRefundsAuthorized   LegacyDisputeRefundIntent[]       @relation("LegacyDisputeRefundAuthorizer")
+  primaryOrganizersCreated              PrimaryOrganizer[]                @relation("PrimaryOrganizerCreatedBy")
+  primaryOrganizersApproved             PrimaryOrganizer[]                @relation("PrimaryOrganizerApprovedBy")
+  primaryOrganizerMemberships           PrimaryOrganizerMembership[]      @relation("PrimaryMembershipUser")
+  primaryMembershipInvitationsSent      PrimaryOrganizerMembership[]      @relation("PrimaryMembershipInvitedBy")
+  primaryOrganizerInvitationsSent       PrimaryOrganizerInvitation[]      @relation("PrimaryInvitationInvitedBy")
+  primaryEventAssignmentsMade           PrimaryEventStaffAssignment[]     @relation("PrimaryAssignmentAssignedBy")
+  primaryEventAssignmentsRevoked        PrimaryEventStaffAssignment[]     @relation("PrimaryAssignmentRevokedBy")
+  primaryEventsApproved                 PrimaryEvent[]                    @relation("PrimaryEventApprovedBy")
+  primaryInventoryReservations          PrimaryInventoryReservation[]     @relation("PrimaryReservationBuyer")
+  primaryOrders                         PrimaryOrder[]                    @relation("PrimaryOrderBuyer")
+  primaryPaymentAttempts                PrimaryPaymentAttempt[]           @relation("PrimaryPaymentAttemptBuyer")
+  primaryAuditEvents                    PrimaryAuditEvent[]               @relation("PrimaryAuditActor")
+  primaryAdmissionScans                 PrimaryAdmissionScan[]            @relation("PrimaryAdmissionScanOperator")
+  primaryRefundsRequested               PrimaryRefund[]                   @relation("PrimaryRefundRequester")
+  primaryRefundAttemptsAuthorized       PrimaryRefundProviderAttempt[]    @relation("PrimaryRefundAttemptAuthorizer")
+  primaryCancellationsRequested         PrimaryEventCancellation[]        @relation("PrimaryCancellationRequester")
+  primaryRevocationsCreated             PrimaryAdmissionRevocation[]      @relation("PrimaryRevocationActor")
+  primaryCheckedInRefundApprovals       PrimaryCheckedInRefundApproval[]  @relation("PrimaryCheckedInRefundApprover")
+  primaryObligationWaiverApprovals      PrimaryObligationWaiverApproval[] @relation("PrimaryObligationWaiverApprover")
+  legacyDisputeRefundsAuthorized        LegacyDisputeRefundIntent[]       @relation("LegacyDisputeRefundAuthorizer")
+  legacySellerAccountCommand            LegacySellerAccountCommand?       @relation("LegacySellerAccountUser")
+  legacySellerAccountCommandsAuthorized LegacySellerAccountCommand[]      @relation("LegacySellerAccountActor")
 
   @@index([role])
   @@index([createdAt])
@@ -1338,6 +1348,7 @@ model Seller {
   payouts                      Payout[]
   legacyPayoutTransferCommands LegacyPayoutTransferCommand[]
   legacyInstantPayoutCommands  LegacyInstantPayoutCommand[]
+  legacySellerAccountCommand   LegacySellerAccountCommand?
   metrics                      SellerMetrics?
   user                         User?
 
@@ -1881,6 +1892,56 @@ model LegacyInstantPayoutCommand {
 
   @@index([status, authorizedAt])
   @@index([sellerId, authorizedAt])
+}
+
+model LegacySellerAccountCommand {
+  id                         String                           @id @default(cuid())
+  userId                     String                           @unique
+  sellerId                   String                           @unique
+  actorUserId                String
+  authorizedCanSell          Boolean
+  firstName                  String
+  lastName                   String
+  email                      String
+  phone                      String
+  streetAddress1             String
+  streetAddress2             String?
+  city                       String
+  region                     String
+  postalCode                 String
+  country                    String
+  accountType                String
+  requestedCapabilities      Json
+  payoutScheduleInterval     String
+  payoutDelayDays            String
+  businessProfileMcc         String
+  businessProfileUrl         String
+  businessProfileDescription String
+  providerMetadata           Json
+  commandDigest              String
+  idempotencyKey             String                           @unique
+  status                     LegacySellerAccountCommandStatus @default(NOT_SENT)
+  dispatchStartedAt          DateTime?
+  providerAccountId          String?                          @unique
+  providerAccountType        String?
+  providerCountry            String?
+  providerCapabilities       Json?
+  providerReturnedMetadata   Json?
+  providerDetailsSubmitted   Boolean?
+  providerChargesEnabled     Boolean?
+  providerPayoutsEnabled     Boolean?
+  failureReason              String?
+  authorizedAt               DateTime                         @default(now())
+  completedAt                DateTime?
+  createdAt                  DateTime                         @default(now())
+  updatedAt                  DateTime                         @updatedAt
+
+  user   User   @relation("LegacySellerAccountUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor  User   @relation("LegacySellerAccountActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, authorizedAt])
+  @@index([actorUserId, authorizedAt])
 }
 
 model LegacyPaymentIntentCommand {

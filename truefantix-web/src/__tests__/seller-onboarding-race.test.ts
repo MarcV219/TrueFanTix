@@ -91,7 +91,7 @@ describe("seller onboarding staging-persona boundary", () => {
     const response = await GET();
 
     expect(response.status).toBe(200);
-    expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: "Serializable",
       timeout: 120_000,
@@ -108,6 +108,7 @@ describe("seller onboarding staging-persona boundary", () => {
   it("refuses a restored managed user before provider access or seller mutation", async () => {
     mockedPrisma.user.findUnique
       .mockResolvedValueOnce(ordinaryUser)
+      .mockResolvedValueOnce({ sellerId: ordinaryUser.seller.id, seller: ordinaryUser.seller })
       .mockResolvedValueOnce(managedUser);
 
     const response = await GET();

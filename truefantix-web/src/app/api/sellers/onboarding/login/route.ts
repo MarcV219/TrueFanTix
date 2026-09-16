@@ -1,13 +1,19 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
+import {
+  ManagedAccountSellerOnboardingError,
+  SellerAccountAuthorizationChangedError,
+  SellerAccountMissingError,
+  SellerOnboardingVerificationError,
+  authorizeSellerLinkSnapshot,
+} from "@/lib/sellers/ordinary-onboarding";
 
-function noStoreJson(body: any, init?: ResponseInit) {
+function noStoreJson(body: unknown, init?: ResponseInit) {
   const res = NextResponse.json(body, init);
-  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.headers.set("Cache-Control", "private, no-store, no-cache, must-revalidate, proxy-revalidate");
   res.headers.set("Pragma", "no-cache");
   res.headers.set("Expires", "0");
   return res;
@@ -29,26 +35,6 @@ export async function POST(req: Request) {
     const rateLimit = await applyRateLimit(req, "seller:onboarding:login");
     if (!rateLimit.ok) return rateLimit.response;
 
-    const user = await prisma.user.findUnique({
-      where: { id: gate.user.id },
-      include: { seller: true },
-    });
-
-    if (!user || user.isBanned) {
-      return noStoreJson({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
-    }
-
-    if (!user.seller?.stripeAccountId) {
-      return noStoreJson(
-        {
-          ok: false,
-          error: "STRIPE_ACCOUNT_MISSING",
-          message: "Start seller verification before opening the Stripe dashboard.",
-        },
-        { status: 409 }
-      );
-    }
-
     const stripe = await getStripe();
     if (!stripe) {
       return noStoreJson(
@@ -57,17 +43,52 @@ export async function POST(req: Request) {
           error: "STRIPE_NOT_CONFIGURED",
           message: "Seller verification is temporarily unavailable while Stripe setup is completed.",
         },
-        { status: 503 }
+        { status: 503 },
       );
     }
 
-    const link = await stripe.accounts.createLoginLink(user.seller.stripeAccountId);
+    // The authorization transaction resolves before createLoginLink and no
+    // transaction client or mutable ORM object crosses this boundary.
+    const snapshot = await authorizeSellerLinkSnapshot(gate.user.id, "LOGIN");
+    const link = await stripe.accounts.createLoginLink(snapshot.stripeAccountId);
     return noStoreJson({ ok: true, url: link.url }, { status: 200 });
-  } catch (err: any) {
-    console.error("POST /api/sellers/onboarding/login failed:", err);
+  } catch (error: any) {
+    if (error instanceof ManagedAccountSellerOnboardingError) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403 },
+      );
+    }
+    if (error instanceof SellerOnboardingVerificationError) {
+      return noStoreJson(
+        { ok: false, error: "NOT_VERIFIED", message: "Please verify your email and phone number." },
+        { status: 403 },
+      );
+    }
+    if (error instanceof SellerAccountMissingError) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "STRIPE_ACCOUNT_MISSING",
+          message: "Start seller verification before opening the Stripe dashboard.",
+        },
+        { status: 409 },
+      );
+    }
+    if (error instanceof SellerAccountAuthorizationChangedError) {
+      return noStoreJson(
+        { ok: false, error: "SELLER_ONBOARDING_AUTHORIZATION_CHANGED", retrySafe: false },
+        { status: 409 },
+      );
+    }
+    console.error("POST /api/sellers/onboarding/login failed:", error);
     return noStoreJson(
-      { ok: false, error: "SERVER_ERROR", message: String(err?.message ?? err) },
-      { status: 500 }
+      { ok: false, error: "SERVER_ERROR", message: String(error?.message ?? error) },
+      { status: 500 },
     );
   }
 }

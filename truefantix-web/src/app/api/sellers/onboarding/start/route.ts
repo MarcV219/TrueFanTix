@@ -1,13 +1,28 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
+import {
+  ManagedAccountSellerOnboardingError,
+  SellerAccountAuthorizationChangedError,
+  SellerAccountMissingError,
+  SellerAccountReconciliationRequiredError,
+  SellerOnboardingVerificationError,
+  authorizeSellerAccountStart,
+  authorizeSellerLinkSnapshot,
+  canonicalSellerOnboardingOrigin,
+  claimLegacySellerAccountCommand,
+  finalizeLegacySellerAccountCommand,
+  markSellerAccountReconciliationRequired,
+  resolveSellerAccountCommand,
+  sellerAccountCreateParams,
+  sellerAccountProviderEvidence,
+} from "@/lib/sellers/ordinary-onboarding";
 
-function noStoreJson(body: any, init?: ResponseInit) {
+function noStoreJson(body: unknown, init?: ResponseInit) {
   const res = NextResponse.json(body, init);
-  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.headers.set("Cache-Control", "private, no-store, no-cache, must-revalidate, proxy-revalidate");
   res.headers.set("Pragma", "no-cache");
   res.headers.set("Expires", "0");
   return res;
@@ -15,85 +30,22 @@ function noStoreJson(body: any, init?: ResponseInit) {
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) {
-    return null;
-  }
+  if (!key) return null;
   const mod: any = await import("stripe");
   const StripeCtor = mod?.default ?? mod;
   return new StripeCtor(key, { apiVersion: "2024-06-20" });
 }
 
-/**
- * Normalize country to ISO-3166-1 alpha-2 for Stripe.
- * Default to CA if unknown (safe for your current market).
- */
-function normalizeCountry(country?: string | null): string {
-  if (!country) return "CA";
-
-  const c = country.trim().toUpperCase();
-
-  if (c === "CA" || c === "CANADA") return "CA";
-  if (c === "US" || c === "USA" || c === "UNITED STATES" || c === "UNITED STATES OF AMERICA")
-    return "US";
-
-  // If already looks like a 2-letter code, trust it
-  if (/^[A-Z]{2}$/.test(c)) return c;
-
-  // Safe fallback
-  return "CA";
-}
-
-function sellerDisplayName(user: { firstName: string; lastName: string }) {
-  return `${user.firstName} ${user.lastName}`.trim();
-}
-
-function stripeAccountPrefill(user: {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  phone: string;
-  streetAddress1: string;
-  streetAddress2?: string | null;
-  city: string;
-  region: string;
-  postalCode: string;
-  country: string;
-}, seller: { id: string }, origin: string) {
-  const country = normalizeCountry(user.country);
-  const address = {
-    line1: user.streetAddress1 || undefined,
-    line2: user.streetAddress2 || undefined,
-    city: user.city || undefined,
-    state: user.region || undefined,
-    postal_code: user.postalCode || undefined,
-    country,
-  };
-
-  return {
-    email: user.email,
-    business_type: "individual",
-    business_profile: {
-      // Stripe still calls this section "Business details" for individual
-      // accounts. Prefill the two commercial-activity fields so personal
-      // ticket sellers do not have to choose an industry or supply a website.
-      mcc: "7922",
-      url: `${origin}/seller/${encodeURIComponent(seller.id)}`,
-      product_description: "Individual seller listing personal event tickets at or below face value through the TrueFanTix marketplace.",
+function reconciliationResponse() {
+  return noStoreJson(
+    {
+      ok: false,
+      error: "SELLER_ACCOUNT_RECONCILIATION_REQUIRED",
+      message: "Seller verification needs operations review before it can continue.",
+      retrySafe: false,
     },
-    individual: {
-      first_name: user.firstName,
-      last_name: user.lastName,
-      email: user.email,
-      phone: user.phone || undefined,
-      address,
-    },
-    metadata: {
-      userId: user.id,
-      sellerId: seller.id,
-      platform: "TrueFanTix",
-    },
-  };
+    { status: 409 },
+  );
 }
 
 export async function POST(req: Request) {
@@ -104,29 +56,6 @@ export async function POST(req: Request) {
     const rateLimit = await applyRateLimit(req, "seller:onboarding:start");
     if (!rateLimit.ok) return rateLimit.response;
 
-    const userId = gate.user.id;
-    const origin = new URL(req.url).origin;
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { seller: true },
-    });
-
-    if (!user || user.isBanned) {
-      return noStoreJson({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
-    }
-
-    if (!user.emailVerifiedAt || !user.phoneVerifiedAt) {
-      return noStoreJson(
-        {
-          ok: false,
-          error: "NOT_VERIFIED",
-          message: "Verify your email and phone before starting seller verification.",
-        },
-        { status: 403 }
-      );
-    }
-
     const stripe = await getStripe();
     if (!stripe) {
       return noStoreJson(
@@ -135,80 +64,101 @@ export async function POST(req: Request) {
           error: "STRIPE_NOT_CONFIGURED",
           message: "Seller verification is temporarily unavailable while Stripe setup is completed.",
         },
-        { status: 503 }
+        { status: 503 },
       );
     }
 
-    // Ensure seller record exists
-    let seller = user.seller;
+    const origin = canonicalSellerOnboardingOrigin();
+    const authorization = await authorizeSellerAccountStart(gate.user.id, origin);
+    if (authorization.kind === "COMMAND") {
+      const claimed = await claimLegacySellerAccountCommand(authorization.command.id);
+      if (!claimed) {
+        await resolveSellerAccountCommand(authorization.command.id);
+      } else {
+        let account: Record<string, unknown>;
+        try {
+          account = await stripe.accounts.create(
+            sellerAccountCreateParams(claimed),
+            { idempotencyKey: claimed.idempotencyKey },
+          );
+        } catch {
+          await markSellerAccountReconciliationRequired(
+            claimed.id,
+            "PROVIDER_OUTCOME_UNKNOWN",
+          ).catch(() => undefined);
+          return reconciliationResponse();
+        }
 
-    if (!seller) {
-      seller = await prisma.seller.create({
-        data: {
-          name: sellerDisplayName(user),
-          status: "PENDING",
-          statusUpdatedAt: new Date(),
-          user: { connect: { id: user.id } },
-        },
-      });
+        const evidence = sellerAccountProviderEvidence(account);
+        if (!evidence) {
+          await markSellerAccountReconciliationRequired(
+            claimed.id,
+            "PROVIDER_EVIDENCE_INCOMPLETE",
+          ).catch(() => undefined);
+          return reconciliationResponse();
+        }
 
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { sellerId: seller.id },
-      });
-    }
-
-    // Create Stripe account if needed
-    if (!seller.stripeAccountId) {
-      const country = normalizeCountry(user.country);
-      const prefill = stripeAccountPrefill(user, seller, origin);
-
-      const account = await stripe.accounts.create({
-        type: "express",
-        country,
-        ...prefill,
-        capabilities: {
-          transfers: { requested: true },
-        },
-        settings: {
-          payouts: { schedule: { interval: "daily", delay_days: "minimum" } },
-        },
-        metadata: {
-          userId: user.id,
-          sellerId: seller.id,
-        },
-      });
-
-      seller = await prisma.seller.update({
-        where: { id: seller.id },
-        data: {
-          stripeAccountId: account.id,
-          stripeDetailsSubmitted: !!account.details_submitted,
-          stripeChargesEnabled: !!account.charges_enabled,
-          stripePayoutsEnabled: !!account.payouts_enabled,
-        },
-      });
-    } else {
-      try {
-        await stripe.accounts.update(seller.stripeAccountId, stripeAccountPrefill(user, seller, origin));
-      } catch (err) {
-        console.warn("Could not prefill existing Stripe connected account:", err);
+        try {
+          await finalizeLegacySellerAccountCommand(claimed.id, evidence);
+        } catch {
+          await markSellerAccountReconciliationRequired(
+            claimed.id,
+            "PROVIDER_SUCCESS_LOCAL_FINALIZATION_FAILED",
+            evidence,
+          ).catch(() => undefined);
+          return reconciliationResponse();
+        }
       }
     }
 
+    // This transaction commits before accountLinks.create. Only the primitive
+    // snapshot below crosses the provider boundary.
+    const snapshot = await authorizeSellerLinkSnapshot(gate.user.id, "ONBOARDING", origin);
     const link = await stripe.accountLinks.create({
-      account: seller.stripeAccountId!,
-      refresh_url: `${origin}/account?stripe=refresh`,
-      return_url: `${origin}/account?stripe=return`,
+      account: snapshot.stripeAccountId,
+      refresh_url: snapshot.refreshUrl!,
+      return_url: snapshot.returnUrl!,
       type: "account_onboarding",
     });
-
     return noStoreJson({ ok: true, url: link.url }, { status: 200 });
-  } catch (err: any) {
-    console.error("POST /api/sellers/onboarding/start failed:", err);
+  } catch (error: any) {
+    if (error instanceof ManagedAccountSellerOnboardingError) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "STAGING_CONSOLE_ONLY",
+          message: "This managed account is restricted to the staging console.",
+        },
+        { status: 403 },
+      );
+    }
+    if (error instanceof SellerOnboardingVerificationError) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "NOT_VERIFIED",
+          message: "Verify your email and phone before starting seller verification.",
+        },
+        { status: 403 },
+      );
+    }
+    if (error instanceof SellerAccountReconciliationRequiredError) return reconciliationResponse();
+    if (error instanceof SellerAccountAuthorizationChangedError) {
+      return noStoreJson(
+        {
+          ok: false,
+          error: "SELLER_ONBOARDING_AUTHORIZATION_CHANGED",
+          message: "Seller verification details changed after authorization and need review.",
+          retrySafe: false,
+        },
+        { status: 409 },
+      );
+    }
+    if (error instanceof SellerAccountMissingError) return reconciliationResponse();
+    console.error("POST /api/sellers/onboarding/start failed:", error);
     return noStoreJson(
-      { ok: false, error: "SERVER_ERROR", message: String(err?.message ?? err) },
-      { status: 500 }
+      { ok: false, error: "SERVER_ERROR", message: String(error?.message ?? error) },
+      { status: 500 },
     );
   }
 }
