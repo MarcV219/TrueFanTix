@@ -120,7 +120,7 @@ describe("Spotify callback provider evidence boundary", () => {
     jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
       id: "spotify-listener-1",
       ignored: "x".repeat(65_536),
-    }), { status: 200 }));
+    }), { status: 200, headers: { "content-type": "application/json" } }));
 
     await expect(getSpotifyConnectionEvidence({ access_token: "access-token" }))
       .rejects.toThrow("SPOTIFY_OAUTH_PROVIDER_FAILED");
@@ -132,7 +132,10 @@ describe("Spotify callback provider evidence boundary", () => {
       pull: () => new Promise(() => undefined),
       cancel,
     });
-    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, { status: 200 }));
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
 
     await expect(getSpotifyConnectionEvidence(
       { access_token: "access-token" },
@@ -147,7 +150,10 @@ describe("Spotify callback provider evidence boundary", () => {
       start: (controller) => controller.enqueue(Uint8Array.from([0xc3, 0x28])),
       cancel,
     });
-    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, { status: 200 }));
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
 
     await expect(getSpotifyConnectionEvidence({ access_token: "access-token" }))
       .rejects.toEqual(new Error("SPOTIFY_OAUTH_PROVIDER_FAILED"));
@@ -158,6 +164,15 @@ describe("Spotify callback provider evidence boundary", () => {
     jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
       error: "provider-secret-detail",
     }), { status: 429 }));
+
+    await expect(exchangeSpotifyCode("one-time-code"))
+      .rejects.toEqual(new Error("SPOTIFY_OAUTH_PROVIDER_FAILED"));
+  });
+
+  it("rejects a successful token response without a JSON media type", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      access_token: "provider-access-token",
+    }), { status: 200, headers: { "content-type": "text/plain" } }));
 
     await expect(exchangeSpotifyCode("one-time-code"))
       .rejects.toEqual(new Error("SPOTIFY_OAUTH_PROVIDER_FAILED"));

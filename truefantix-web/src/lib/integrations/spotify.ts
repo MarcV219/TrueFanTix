@@ -173,6 +173,12 @@ function providerTimeout(value: number | undefined) {
   return value;
 }
 
+function isJsonContentType(value: string | null) {
+  if (!value) return false;
+  const mediaType = value.split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType === "application/json" || Boolean(mediaType?.startsWith("application/") && mediaType.endsWith("+json"));
+}
+
 async function boundedProviderJson(
   url: typeof TOKEN_URL | `${typeof API_BASE}/me`,
   init: RequestInit,
@@ -199,13 +205,11 @@ async function boundedProviderJson(
   });
   const operation = (async () => {
     const response = await fetchImpl(url, { ...init, signal: controller.signal });
-    if (!response.ok) {
-      controller.abort();
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error("SPOTIFY_OAUTH_PROVIDER_REJECTED");
-    }
     reader = response.body?.getReader() ?? null;
-    if (!reader) throw new Error("SPOTIFY_OAUTH_PROVIDER_INVALID");
+    if (!response.ok || !isJsonContentType(response.headers.get("content-type")) || !reader) {
+      await cancelActiveStream();
+      throw new Error("SPOTIFY_OAUTH_PROVIDER_INVALID");
+    }
     const decoder = new TextDecoder("utf-8", { fatal: true });
     let raw = "";
     let bytes = 0;
