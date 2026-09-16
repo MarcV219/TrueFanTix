@@ -90,6 +90,7 @@ function requireReservationState(reservation: Prisma.PrimaryInventoryReservation
   const committedState = reservation.status === "PAYMENT_COMMITTED" && reservation.paymentCommittedAt !== null && reservation.reconciliationAfter !== null
     && reservation.paymentCommittedAt.getTime() >= reservation.createdAt.getTime()
     && reservation.paymentCommittedAt.getTime() <= reservation.expiresAt.getTime()
+    && reservation.paymentCommittedAt.getTime() <= now.getTime()
     && reservation.reconciliationAfter.getTime() - reservation.paymentCommittedAt.getTime() === 120_000
     && reservation.commitIdempotencyKey === `${scope.base}:commit`;
   if (

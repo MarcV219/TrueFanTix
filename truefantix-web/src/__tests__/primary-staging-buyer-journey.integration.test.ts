@@ -283,4 +283,28 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: `${base}-payment` } })).resolves.toMatchObject({ status: "PENDING_PROVIDER", providerIntentId: null });
     await expect(db.primaryAdmissionTicket.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
   });
+
+  it("rejects future-dated reservation commitment before provider mutation", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    for (const expected of ["HELD", "ORDER_CREATED", "PAYMENT_PROCESSING"]) {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: expected });
+    }
+    const reservation = await db.primaryInventoryReservation.findUniqueOrThrow({ where: { id: `${base}-reservation` } });
+    const futureCommit = new Date(Date.now() + 60_000);
+    expect(futureCommit.getTime()).toBeLessThan(reservation.expiresAt.getTime());
+    await db.primaryInventoryReservation.update({
+      where: { id: reservation.id },
+      data: { paymentCommittedAt: futureCommit, reconciliationAfter: new Date(futureCommit.getTime() + 120_000) },
+    });
+    await db.$executeRawUnsafe(`ALTER TABLE "PrimaryOrder" DISABLE TRIGGER "PrimaryOrder_snapshot_immutable"`);
+    try {
+      await db.primaryOrder.update({ where: { id: `${base}-order` }, data: { paymentProcessingAt: futureCommit } });
+    } finally {
+      await db.$executeRawUnsafe(`ALTER TABLE "PrimaryOrder" ENABLE TRIGGER "PrimaryOrder_snapshot_immutable"`);
+    }
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_RESERVATION_INVALID" });
+    await expect(db.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: `${base}-payment` } })).resolves.toMatchObject({ status: "PENDING_PROVIDER", providerIntentId: null, providerCreatedAt: null });
+    await expect(db.primaryAdmissionTicket.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+  });
 });
