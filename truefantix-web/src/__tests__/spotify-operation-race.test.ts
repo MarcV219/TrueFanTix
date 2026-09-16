@@ -511,7 +511,7 @@ describe("Spotify staging-persona operation boundary", () => {
 
   it("uses the configured redirect origin and clears state on provider denial", async () => {
     const response = await spotifyCallback(
-      new Request("https://hostile.example/api/integrations/spotify/callback?error=access_denied", {
+      new Request("https://hostile.example/api/integrations/spotify/callback?error=access_denied&state=expected-state", {
         headers: {
           host: "hostile.example",
           origin: "https://hostile.example",
@@ -524,6 +524,22 @@ describe("Spotify staging-persona operation boundary", () => {
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
       "https://trusted.example/account/notifications?spotify=denied",
+    );
+    expectPrivateStateCleared(response);
+    expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", ""],
+    ["mismatched", "&state=wrong-state"],
+  ])("rejects provider denial with %s callback state", async (_label, stateQuery) => {
+    const response = await spotifyCallback(
+      request(`/api/integrations/spotify/callback?error=access_denied${stateQuery}`),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://trusted.example/account/notifications?spotify=invalid_state",
     );
     expectPrivateStateCleared(response);
     expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();

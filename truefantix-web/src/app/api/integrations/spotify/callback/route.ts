@@ -49,16 +49,16 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const error = url.searchParams.get("error");
-  if (error) return redirect("denied");
-
   const code = url.searchParams.get("code")?.trim();
   const state = url.searchParams.get("state")?.trim();
   const jar = await cookies();
   const cookieState = jar.get(STATE_COOKIE)?.value;
 
-  if (!code || !state || !cookieState || state !== cookieState) {
+  if (!state || !cookieState || state !== cookieState) {
     return redirect("invalid_state");
   }
+  if (error) return redirect("denied");
+  if (!code) return redirect("invalid_state");
 
   try {
     const authorization = await runOrdinarySpotifyTransaction<SpotifyConnectionAuthorization>(

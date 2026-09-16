@@ -347,10 +347,30 @@ export async function getSpotifyConnectionEvidence(
   token: unknown,
   options: SpotifyProviderOptions = {},
 ): Promise<SpotifyConnectionEvidence> {
-  if (!token || typeof token !== "object") throw new Error("Spotify returned an invalid token response.");
+  if (!token || typeof token !== "object" || Array.isArray(token)) {
+    throw new Error("Spotify returned an invalid token response.");
+  }
   const value = token as Record<string, unknown>;
   const accessToken = boundedProviderSecret(value.access_token, 16_384);
   if (!accessToken) throw new Error("Spotify returned an invalid access token.");
+  const refreshToken = boundedProviderSecret(value.refresh_token, 16_384);
+  if (!refreshToken) throw new Error("Spotify returned an invalid refresh token.");
+  const tokenType = boundedProviderText(value.token_type, 128);
+  if (tokenType?.toLowerCase() !== "bearer") {
+    throw new Error("Spotify returned an invalid token type.");
+  }
+  const expiresIn = typeof value.expires_in === "number" && Number.isInteger(value.expires_in)
+    && value.expires_in > 0 && value.expires_in <= 31_536_000
+    ? value.expires_in
+    : null;
+  if (expiresIn === null) throw new Error("Spotify returned an invalid token expiry.");
+  const scope = value.scope === undefined
+    ? SCOPES.join(" ")
+    : boundedProviderText(value.scope, 2_048);
+  const grantedScopes = new Set(scope?.split(/\s+/).filter(Boolean) ?? []);
+  if (!scope || SCOPES.some((requiredScope) => !grantedScopes.has(requiredScope))) {
+    throw new Error("Spotify returned insufficient token scope.");
+  }
 
   const me: unknown = await spotifyApi(accessToken, "/me", options);
   if (!me || typeof me !== "object") throw new Error("Spotify returned an invalid account response.");
@@ -358,20 +378,13 @@ export async function getSpotifyConnectionEvidence(
   const providerAccountId = boundedProviderText(account.id, 512);
   if (!providerAccountId) throw new Error("Spotify returned an invalid account identity.");
 
-  const expiresIn = typeof value.expires_in === "number" && Number.isFinite(value.expires_in)
-    ? value.expires_in
-    : null;
-  const expiresAt = expiresIn !== null && expiresIn >= 0 && expiresIn <= 31_536_000
-    ? new Date(Date.now() + expiresIn * 1000)
-    : null;
-
   return {
     providerAccountId,
     accessToken,
-    refreshToken: boundedProviderSecret(value.refresh_token, 16_384),
-    tokenType: boundedProviderText(value.token_type, 128) ?? "Bearer",
-    scope: boundedProviderText(value.scope, 2_048) ?? SCOPES.join(" "),
-    expiresAt,
+    refreshToken,
+    tokenType: "Bearer",
+    scope,
+    expiresAt: new Date(Date.now() + expiresIn * 1000),
     displayName: boundedProviderText(account.display_name, 1_024),
     email: boundedProviderText(account.email, 1_024),
   };

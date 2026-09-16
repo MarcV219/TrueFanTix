@@ -81,8 +81,8 @@ describe("Spotify callback provider evidence boundary", () => {
     const result = await getSpotifyConnectionEvidence({
       access_token: "access-token",
       refresh_token: "refresh-token",
-      token_type: "Bearer",
-      scope: "user-follow-read",
+      token_type: "bearer",
+      scope: "user-follow-read user-top-read",
       expires_in: 3600,
       ignored: "provider field",
     });
@@ -98,7 +98,7 @@ describe("Spotify callback provider evidence boundary", () => {
       accessToken: "access-token",
       refreshToken: "refresh-token",
       tokenType: "Bearer",
-      scope: "user-follow-read",
+      scope: "user-follow-read user-top-read",
       expiresAt: expect.any(Date),
       displayName: "Listener",
       email: "listener@example.test",
@@ -112,7 +112,13 @@ describe("Spotify callback provider evidence boundary", () => {
       display_name: "Listener",
     }), { status: 200, headers: { "content-type": "application/json" } }));
 
-    await expect(getSpotifyConnectionEvidence({ access_token: "access-token" }))
+    await expect(getSpotifyConnectionEvidence({
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      token_type: "Bearer",
+      scope: "user-follow-read user-top-read",
+      expires_in: 3600,
+    }))
       .rejects.toThrow("invalid account identity");
   });
 
@@ -122,7 +128,13 @@ describe("Spotify callback provider evidence boundary", () => {
       ignored: "x".repeat(65_536),
     }), { status: 200, headers: { "content-type": "application/json" } }));
 
-    await expect(getSpotifyConnectionEvidence({ access_token: "access-token" }))
+    await expect(getSpotifyConnectionEvidence({
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      token_type: "Bearer",
+      scope: "user-follow-read user-top-read",
+      expires_in: 3600,
+    }))
       .rejects.toThrow("SPOTIFY_OAUTH_PROVIDER_FAILED");
   });
 
@@ -138,7 +150,13 @@ describe("Spotify callback provider evidence boundary", () => {
     }));
 
     await expect(getSpotifyConnectionEvidence(
-      { access_token: "access-token" },
+      {
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        token_type: "Bearer",
+        scope: "user-follow-read user-top-read",
+        expires_in: 3600,
+      },
       { timeoutMs: 10 },
     )).rejects.toThrow("SPOTIFY_OAUTH_PROVIDER_FAILED");
     expect(cancel).toHaveBeenCalledTimes(1);
@@ -155,7 +173,13 @@ describe("Spotify callback provider evidence boundary", () => {
       headers: { "content-type": "application/json" },
     }));
 
-    await expect(getSpotifyConnectionEvidence({ access_token: "access-token" }))
+    await expect(getSpotifyConnectionEvidence({
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      token_type: "Bearer",
+      scope: "user-follow-read user-top-read",
+      expires_in: 3600,
+    }))
       .rejects.toEqual(new Error("SPOTIFY_OAUTH_PROVIDER_FAILED"));
     expect(cancel).toHaveBeenCalledTimes(1);
   });
@@ -167,6 +191,33 @@ describe("Spotify callback provider evidence boundary", () => {
 
     await expect(exchangeSpotifyCode("one-time-code"))
       .rejects.toEqual(new Error("SPOTIFY_OAUTH_PROVIDER_FAILED"));
+  });
+
+  it.each([
+    ["array body", []],
+    ["missing refresh token", {
+      access_token: "access-token", token_type: "Bearer", scope: "user-follow-read user-top-read", expires_in: 3600,
+    }],
+    ["wrong token type", {
+      access_token: "access-token", refresh_token: "refresh-token", token_type: "MAC", scope: "user-follow-read user-top-read", expires_in: 3600,
+    }],
+    ["missing token type", {
+      access_token: "access-token", refresh_token: "refresh-token", scope: "user-follow-read user-top-read", expires_in: 3600,
+    }],
+    ["partial scope", {
+      access_token: "access-token", refresh_token: "refresh-token", token_type: "Bearer", scope: "user-follow-read", expires_in: 3600,
+    }],
+    ["zero expiry", {
+      access_token: "access-token", refresh_token: "refresh-token", token_type: "Bearer", scope: "user-follow-read user-top-read", expires_in: 0,
+    }],
+    ["fractional expiry", {
+      access_token: "access-token", refresh_token: "refresh-token", token_type: "Bearer", scope: "user-follow-read user-top-read", expires_in: 3_600.5,
+    }],
+  ])("rejects %s token evidence before the account provider read", async (_label, token) => {
+    const fetchSpy = jest.spyOn(global, "fetch");
+
+    await expect(getSpotifyConnectionEvidence(token)).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it.each([
