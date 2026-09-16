@@ -3,13 +3,14 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { sendOutreachEmail } from "@/lib/outreach-email";
-import { defaultOutreachFollowUpAt, normalizeEmail, recentContactCutoff, unsubscribeUrl } from "@/lib/outreach";
+import { defaultOutreachFollowUpAt, normalizeEmail, unsubscribeUrl } from "@/lib/outreach";
 import {
   outreachHtmlDocument,
   outreachLegalFooterText,
 } from "@/lib/outreach-rich-text";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
+import { claimOutreachRecipient, settleOutreachCampaign } from "@/lib/outreach-send";
 
 export async function POST(
   req: Request,
@@ -21,7 +22,7 @@ export async function POST(
   const body = await req.json().catch(() => null);
   const campaign = await prisma.outreachCampaign.findUnique({
     where: { id },
-    select: { id: true, name: true, status: true, allowRecentContact: true },
+    select: { id: true, name: true, status: true },
   });
   if (!campaign)
     return NextResponse.json(
@@ -44,10 +45,12 @@ export async function POST(
     where: { campaignId: id, status: "PENDING" },
     orderBy: { createdAt: "asc" },
     take: limit,
-    include: { contact: true },
+    select: { id: true },
   });
-  if (!recipients.length)
-    return NextResponse.json({ ok: true, sent: 0, failed: 0, remaining: 0 });
+  if (!recipients.length) {
+    const settlement = await settleOutreachCampaign(id);
+    return NextResponse.json({ ok: true, sent: 0, failed: 0, remaining: settlement.pending });
+  }
   await prisma.outreachCampaign.update({
     where: { id },
     data: {
@@ -58,37 +61,11 @@ export async function POST(
   });
   let sent = 0,
     failed = 0;
-  for (const recipient of recipients) {
+  for (const candidate of recipients) {
+    const claim = await claimOutreachRecipient(id, candidate.id);
+    if (claim.status !== "CLAIMED") continue;
+    const recipient = claim.recipient;
     const email = normalizeEmail(recipient.emailSnapshot);
-    const suppression = await prisma.outreachSuppression.findUnique({
-      where: { normalizedEmail: email },
-      select: { reason: true },
-    });
-    if (suppression || recipient.contact.unsubscribedAt) {
-      await prisma.outreachRecipient.update({
-        where: { id: recipient.id },
-        data: {
-          status: "SUPPRESSED",
-          error: suppression?.reason || "UNSUBSCRIBED",
-        },
-      });
-      continue;
-    }
-    if (
-      !campaign.allowRecentContact &&
-      recipient.contact.lastContactedAt &&
-      recipient.contact.lastContactedAt >= recentContactCutoff()
-    ) {
-      await prisma.outreachRecipient.update({
-        where: { id: recipient.id },
-        data: { status: "SKIPPED_RECENT", error: "CONTACTED_WITHIN_30_DAYS" },
-      });
-      continue;
-    }
-    await prisma.outreachRecipient.update({
-      where: { id: recipient.id },
-      data: { status: "SENDING", error: null },
-    });
     try {
       const optOutUrl = unsubscribeUrl(email);
       const result = await sendOutreachEmail({
@@ -133,17 +110,8 @@ export async function POST(
       failed++;
     }
   }
-  const remaining = await prisma.outreachRecipient.count({
-    where: { campaignId: id, status: "PENDING" },
-  });
-  if (!remaining)
-    await prisma.outreachCampaign.update({
-      where: { id },
-      data: {
-        status: failed ? "COMPLETED_WITH_ERRORS" : "COMPLETED",
-        completedAt: new Date(),
-      },
-    });
+  const settlement = await settleOutreachCampaign(id);
+  const remaining = settlement.pending;
   await auditLog({
     action: "ADMIN_OUTREACH_SEND",
     userId: gate.user.id,

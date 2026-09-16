@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { Resend, type WebhookEventPayload } from "resend";
 import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/outreach";
+import { recordOutreachDeliveryEvent } from "@/lib/outreach-delivery-event";
 
 const trackedTypes = new Set([
   "email.sent",
@@ -25,8 +26,6 @@ const recipientStatuses: Record<string, string> = {
   "email.failed": "FAILED",
   "email.suppressed": "SUPPRESSED",
 };
-const statusPriority: Record<string, number> = { PENDING: 0, SENDING: 0, SENT: 1, DELIVERY_DELAYED: 2, DELIVERED: 3, FAILED: 3, BOUNCED: 4, SUPPRESSED: 4, COMPLAINED: 5 };
-
 function detailFor(event: WebhookEventPayload) {
   if (event.type === "email.bounced") return event.data.bounce.message;
   if (event.type === "email.failed") return event.data.failed.reason;
@@ -43,7 +42,7 @@ function suppressionReason(type: string) {
 
 export function contactUpdateForDeliveryEvent(type: string) {
   return type === "email.bounced"
-    ? { engagementStage: "BOUNCED", followUpAt: null }
+    ? { engagementStage: "BOUNCED" as const, followUpAt: null }
     : null;
 }
 
@@ -70,7 +69,10 @@ export async function POST(req: Request) {
   if (!trackedTypes.has(event.type) || !("email_id" in event.data)) return NextResponse.json({ ok: true, ignored: true });
   const svixId = req.headers.get("svix-id")!;
   const providerMessageId = event.data.email_id;
-  const recipient = await prisma.outreachRecipient.findFirst({ where: { providerMessageId }, select: { id: true, contactId: true, emailSnapshot: true, status: true } });
+  const recipient = await prisma.outreachRecipient.findFirst({
+    where: { providerMessageId },
+    select: { id: true, emailSnapshot: true },
+  });
   // The Resend account also sends transactional mail. Ignore events that do not
   // match a message sent by the isolated Outreach system.
   if (!recipient) return NextResponse.json({ ok: true, ignored: true });
@@ -81,25 +83,21 @@ export async function POST(req: Request) {
   const occurredAt = new Date(event.created_at);
 
   try {
-    await prisma.$transaction(async (tx) => {
-      await tx.outreachEmailEvent.create({ data: { svixId, type: event.type, providerMessageId, recipientId: recipient.id, email, occurredAt, detail } });
-      const nextStatus = recipientStatuses[event.type];
-      if ((statusPriority[nextStatus] || 0) >= (statusPriority[recipient.status] || 0)) {
-        await tx.outreachRecipient.update({ where: { id: recipient.id }, data: { status: nextStatus, error: detail } });
-      }
-      const contactUpdate = contactUpdateForDeliveryEvent(event.type);
-      if (contactUpdate) {
-        await tx.outreachContact.update({ where: { id: recipient.contactId }, data: contactUpdate });
-      }
-      if (reason) {
-        await tx.outreachSuppression.upsert({
-          where: { normalizedEmail: email },
-          create: { normalizedEmail: email, email, reason, source: "RESEND_WEBHOOK", notes: detail },
-          update: { reason, source: "RESEND_WEBHOOK", notes: detail },
-        });
-        await tx.outreachRecipient.updateMany({ where: { emailSnapshot: { equals: email, mode: "insensitive" }, status: "PENDING" }, data: { status: "SUPPRESSED", error: reason } });
-      }
+    const result = await recordOutreachDeliveryEvent({
+      svixId,
+      type: event.type,
+      providerMessageId,
+      recipientId: recipient.id,
+      normalizedEmail: email,
+      occurredAt,
+      detail,
+      nextStatus: recipientStatuses[event.type],
+      suppressionReason: reason,
+      contactUpdate: contactUpdateForDeliveryEvent(event.type),
     });
+    if (result === "IDENTITY_CHANGED") {
+      return NextResponse.json({ ok: true, ignored: true });
+    }
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return NextResponse.json({ ok: true, duplicate: true });
     throw error;

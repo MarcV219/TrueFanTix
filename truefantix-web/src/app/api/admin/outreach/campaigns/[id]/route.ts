@@ -107,7 +107,21 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (!eligible.length)
     return NextResponse.json({ ok: false, error: "No selected contacts are currently sendable." }, { status: 400 });
 
-  await prisma.$transaction(async (tx) => {
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "OutreachCampaign" WHERE "id" = ${id} FOR UPDATE
+    `;
+    const current = await tx.outreachCampaign.findUnique({
+      where: { id },
+      select: { status: true, recipients: { select: { status: true } } },
+    });
+    if (
+      !current
+      || current.status !== "DRAFT"
+      || current.recipients.some((recipient) => recipient.status !== "PENDING")
+    ) {
+      return false;
+    }
     await tx.outreachRecipient.deleteMany({ where: { campaignId: id, status: "PENDING" } });
     await tx.outreachCampaign.update({
       where: { id },
@@ -128,7 +142,14 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         },
       },
     });
+    return true;
   });
+  if (!updated) {
+    return NextResponse.json(
+      { ok: false, error: "Only a completely unsent draft campaign can be edited." },
+      { status: 409 },
+    );
+  }
   await auditLog({
     action: "ADMIN_OUTREACH_CAMPAIGN_UPDATE",
     userId: gate.user.id,

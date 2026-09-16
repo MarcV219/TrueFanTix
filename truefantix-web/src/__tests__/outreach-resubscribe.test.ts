@@ -3,6 +3,7 @@ jest.mock("@/lib/prisma", () => ({ prisma: {
   outreachSuppression: { findUnique: jest.fn(), deleteMany: jest.fn() },
   outreachResubscribeRequest: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
   outreachContact: { updateMany: jest.fn() },
+  $queryRaw: jest.fn(),
   $transaction: jest.fn(),
 } }));
 jest.mock("@/lib/email", () => ({ sendEmail: jest.fn() }));
@@ -23,6 +24,8 @@ describe("outreach double opt-in re-subscribe flow", () => {
     jest.clearAllMocks();
     process.env.APP_ORIGIN = "https://truefantix.ca";
     sendEmailMock.mockResolvedValue({ ok: true, provider: "RESEND" });
+    prismaMock.$queryRaw.mockResolvedValue([{ locked: "" }]);
+    prismaMock.$transaction.mockImplementation(async (work: (tx: typeof prismaMock) => unknown) => work(prismaMock));
   });
 
   it("shows the public request form", async () => {
@@ -50,7 +53,6 @@ describe("outreach double opt-in re-subscribe flow", () => {
     prismaMock.outreachResubscribeRequest.update.mockReturnValue({ operation: "confirm" });
     prismaMock.outreachSuppression.deleteMany.mockReturnValue({ operation: "unsuppress" });
     prismaMock.outreachContact.updateMany.mockReturnValue({ operation: "consent" });
-    prismaMock.$transaction.mockResolvedValue([]);
     const response = await POST(new Request("https://truefantix.ca/resubscribe/outreach", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },

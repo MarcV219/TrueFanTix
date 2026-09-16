@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
 import { normalizeEmail, outreachOrigin } from "@/lib/outreach";
 import { applyRateLimit, getClientIp } from "@/lib/rate-limit";
+import { lockOutreachEligibility } from "@/lib/outreach-eligibility-lock";
 
 const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
 const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -43,11 +44,12 @@ export async function POST(req: Request) {
       return page("Confirmation link unavailable", '<p>This confirmation link is invalid, expired, or already used.</p><p><a href="/resubscribe/outreach">Request a new confirmation email</a></p>');
     }
     const evidence = `Express consent confirmed through the TrueFanTix double opt-in re-subscribe page at ${now.toISOString()}.`;
-    await prisma.$transaction([
-      prisma.outreachResubscribeRequest.update({ where: { id: request.id }, data: { confirmedAt: now } }),
-      prisma.outreachSuppression.deleteMany({ where: { normalizedEmail: request.normalizedEmail } }),
-      prisma.outreachContact.updateMany({ where: { normalizedEmail: request.normalizedEmail }, data: { unsubscribedAt: null, consentBasis: "EXPRESS_CONSENT", consentEvidence: evidence } }),
-    ]);
+    await prisma.$transaction(async (tx) => {
+      await lockOutreachEligibility(tx, request.normalizedEmail);
+      await tx.outreachResubscribeRequest.update({ where: { id: request.id }, data: { confirmedAt: now } });
+      await tx.outreachSuppression.deleteMany({ where: { normalizedEmail: request.normalizedEmail } });
+      await tx.outreachContact.updateMany({ where: { normalizedEmail: request.normalizedEmail }, data: { unsubscribedAt: null, consentBasis: "EXPRESS_CONSENT", consentEvidence: evidence } });
+    });
     return page("You are re-subscribed", "<p>Your express consent has been recorded and your email address can receive relevant TrueFanTix outreach again.</p><p>You may unsubscribe again at any time using the link in any outreach email.</p>");
   }
 

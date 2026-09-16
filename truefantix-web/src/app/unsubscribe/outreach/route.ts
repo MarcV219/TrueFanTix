@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { emailFromUnsubscribeToken } from "@/lib/outreach";
+import { lockOutreachEligibility } from "@/lib/outreach-eligibility-lock";
 
 const textHeaders = { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" };
 const htmlHeaders = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
@@ -33,10 +34,11 @@ export async function POST(req: Request) {
   const email = emailFromUnsubscribeToken(tokenFrom(req));
   if (!email) return new NextResponse("This unsubscribe link is invalid.", { status: 400, headers: textHeaders });
   const unsubscribedAt = new Date();
-  await prisma.$transaction([
-    prisma.outreachSuppression.upsert({ where: { normalizedEmail: email }, create: { normalizedEmail: email, email, reason: "UNSUBSCRIBED", source: "LINK" }, update: { reason: "UNSUBSCRIBED", source: "LINK" } }),
-    prisma.outreachContact.updateMany({ where: { normalizedEmail: email }, data: { unsubscribedAt } }),
-    prisma.outreachRecipient.updateMany({ where: { emailSnapshot: { equals: email, mode: "insensitive" }, status: "PENDING" }, data: { status: "SUPPRESSED", error: "UNSUBSCRIBED" } }),
-  ]);
+  await prisma.$transaction(async (tx) => {
+    await lockOutreachEligibility(tx, email);
+    await tx.outreachSuppression.upsert({ where: { normalizedEmail: email }, create: { normalizedEmail: email, email, reason: "UNSUBSCRIBED", source: "LINK" }, update: { reason: "UNSUBSCRIBED", source: "LINK" } });
+    await tx.outreachContact.updateMany({ where: { normalizedEmail: email }, data: { unsubscribedAt } });
+    await tx.outreachRecipient.updateMany({ where: { emailSnapshot: { equals: email, mode: "insensitive" }, status: "PENDING" }, data: { status: "SUPPRESSED", error: "UNSUBSCRIBED" } });
+  });
   return new NextResponse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribed from TrueFanTix outreach</title></head><body style="font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;color:#0f172a;margin:0;padding:32px"><main style="max-width:560px;margin:48px auto;background:white;border:1px solid #e2e8f0;border-radius:14px;padding:28px"><h1>You have been unsubscribed</h1><p>You will not receive further promotional outreach from TrueFanTix at this address.</p><p>If you change your mind later, use our <a href="/resubscribe/outreach">re-subscribe page</a>. Re-subscribing requires confirmation by email.</p></main></body></html>`, { headers: htmlHeaders });
 }
