@@ -100,6 +100,12 @@ function request(path: string, method = "GET", body?: unknown) {
   });
 }
 
+function expectPrivateStateCleared(response: Response) {
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  expect(response.headers.get("set-cookie")).toContain("tft_spotify_oauth_state=");
+  expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+}
+
 describe("Spotify staging-persona operation boundary", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -363,7 +369,10 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(307);
-    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("location")).toBe(
+      "https://trusted.example/account/notifications?spotify=connected",
+    );
+    expectPrivateStateCleared(response);
     expect(mockedExchangeSpotifyCode).toHaveBeenCalledWith("code-1");
     expect(mockedGetSpotifyConnectionEvidence).toHaveBeenCalledWith({ access_token: "token" });
     expect(mockedStoreSpotifyConnection).toHaveBeenCalledWith({
@@ -394,7 +403,7 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(response.headers.get("cache-control")).toContain("no-store");
+    expectPrivateStateCleared(response);
     expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
     expect(mockedGetSpotifyConnectionEvidence).not.toHaveBeenCalled();
     expect(mockedStoreSpotifyConnection).not.toHaveBeenCalled();
@@ -414,6 +423,7 @@ describe("Spotify staging-persona operation boundary", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toContain("spotify=failed");
+    expectPrivateStateCleared(response);
     expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
     expect(mockedGetSpotifyConnectionEvidence).not.toHaveBeenCalled();
     expect(mockedStoreSpotifyConnection).not.toHaveBeenCalled();
@@ -429,6 +439,7 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(403);
+    expectPrivateStateCleared(response);
     expect(mockedExchangeSpotifyCode).toHaveBeenCalledTimes(1);
     expect(mockedGetSpotifyConnectionEvidence).toHaveBeenCalledTimes(1);
     expect(mockedStoreSpotifyConnection).not.toHaveBeenCalled();
@@ -447,13 +458,40 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(307);
-    expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("location")).toBe(
       "https://trusted.example/account/notifications?spotify=denied",
     );
-    expect(response.headers.get("set-cookie")).toContain("tft_spotify_oauth_state=");
-    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+    expectPrivateStateCleared(response);
     expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
+  });
+
+  it("keeps malformed callback state private while clearing the state cookie", async () => {
+    const response = await spotifyCallback(
+      request("/api/integrations/spotify/callback?code=code-1&state=wrong-state"),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://trusted.example/account/notifications?spotify=invalid_state",
+    );
+    expectPrivateStateCleared(response);
+    expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
+  });
+
+  it("keeps a callback configuration failure private while preserving the failed redirect", async () => {
+    mockedExchangeSpotifyCode.mockRejectedValueOnce(new Error("Invalid Spotify callback URI."));
+
+    const response = await spotifyCallback(
+      request("/api/integrations/spotify/callback?code=code-1&state=expected-state"),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://trusted.example/account/notifications?spotify=failed",
+    );
+    expectPrivateStateCleared(response);
+    expect(mockedGetSpotifyConnectionEvidence).not.toHaveBeenCalled();
+    expect(mockedStoreSpotifyConnection).not.toHaveBeenCalled();
   });
 
   it("clears callback state when the current request is unauthenticated", async () => {
@@ -467,9 +505,7 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(response.headers.get("cache-control")).toBe("private, no-store");
-    expect(response.headers.get("set-cookie")).toContain("tft_spotify_oauth_state=");
-    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+    expectPrivateStateCleared(response);
     expect(mockedExchangeSpotifyCode).not.toHaveBeenCalled();
   });
 
