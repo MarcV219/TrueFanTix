@@ -631,7 +631,7 @@ async function finalFence<T>(
       && rows[0]?.digest === credential.versionDigest
       && account.expiresAt?.toISOString() === credential.expiresAt
       && Number.isFinite(checkedAt.getTime())
-      && account.expiresAt.getTime() >= checkedAt.getTime() + EXPIRY_LEEWAY_MS
+      && account.expiresAt.getTime() > checkedAt.getTime() + EXPIRY_LEEWAY_MS
       && (
         snapshotExpiresAt === null
         || (Number.isFinite(snapshotExpiresAt.getTime()) && snapshotExpiresAt > checkedAt)

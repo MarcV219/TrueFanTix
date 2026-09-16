@@ -108,6 +108,42 @@ if (!databaseUrl) describe.skip("Spotify artist credential acquisition", () => {
     }), { status: 200 });
   }
 
+  function observeSnapshotTransactionQueries() {
+    let completedQueries: number | null = null;
+    const observedDb = new Proxy(serviceDb, {
+      get(target, property, receiver) {
+        if (property !== "$transaction") return Reflect.get(target, property, receiver);
+        return async (callback: (tx: unknown) => Promise<unknown>, options: unknown) => (
+          serviceDb.$transaction(async (tx) => {
+            completedQueries = 0;
+            const observedTx = new Proxy(tx, {
+              get(transaction, transactionProperty, transactionReceiver) {
+                if (transactionProperty !== "$queryRaw") {
+                  return Reflect.get(transaction, transactionProperty, transactionReceiver);
+                }
+                return async (...args: unknown[]) => {
+                  const result = await Reflect.apply(
+                    transaction.$queryRaw as unknown as (...values: unknown[]) => Promise<unknown>,
+                    transaction,
+                    args,
+                  );
+                  completedQueries = (completedQueries ?? 0) + 1;
+                  return result;
+                };
+              },
+            });
+            try {
+              return await callback(observedTx);
+            } finally {
+              completedQueries = null;
+            }
+          }, options as never)
+        );
+      },
+    }) as typeof prisma;
+    return { observedDb, completedQueries: () => completedQueries };
+  }
+
   beforeEach(async () => {
     await forceReset();
   });
@@ -160,6 +196,32 @@ if (!databaseUrl) describe.skip("Spotify artist credential acquisition", () => {
     expect(result.status === "READY" && Object.isFrozen(result.credential)).toBe(true);
   });
 
+  it("samples validity after the locked snapshot reads and refreshes at exact leeway equality", async () => {
+    await installFixture({ expiresAt: new Date("2026-09-16T05:01:00.000Z") });
+    const observed = observeSnapshotTransactionQueries();
+    const observedClockQueryCounts: Array<number | null> = [];
+    const refreshCommand = jest.fn(async () => ({
+      status: "RECONNECT_REQUIRED" as const,
+      commandId: "credential-expired-after-locks",
+    }));
+
+    await expect(acquireSpotifyArtistReadCredential(userId, {
+      db: observed.observedDb,
+      env,
+      now: () => {
+        observedClockQueryCounts.push(observed.completedQueries());
+        return new Date(operationNow);
+      },
+      refreshCommand,
+    })).resolves.toEqual({
+      status: "RECONNECT_REQUIRED",
+      commandId: "credential-expired-after-locks",
+    });
+
+    expect(observedClockQueryCounts).toEqual([3]);
+    expect(refreshCommand).toHaveBeenCalledTimes(1);
+  });
+
   it("refreshes only after Tx1 commits and reacquires the committed result instead of using the transient token", async () => {
     await installFixture({ expiresAt: new Date("2026-09-16T04:00:00.000Z") });
     const fetchImpl = jest.fn(async () => successResponse()) as unknown as typeof fetch;
@@ -195,6 +257,43 @@ if (!databaseUrl) describe.skip("Spotify artist credential acquisition", () => {
     expect(account.currentRefreshCommandId).toBe(command.id);
     expect(command.status).toBe("SUCCEEDED");
     expect(result.status === "READY" && result.credential.versionDigest).toBe(command.resultVersionDigest);
+  });
+
+  it("rechecks the refreshed projection expiry from inside the locked reacquisition transaction", async () => {
+    await installFixture({ expiresAt: new Date("2026-09-16T04:00:00.000Z") });
+    const fetchImpl = jest.fn(async () => successResponse()) as unknown as typeof fetch;
+    const observed = observeSnapshotTransactionQueries();
+    const observedClockQueryCounts: Array<number | null> = [];
+    const acquisitionTimes = [
+      new Date(operationNow),
+      new Date("2026-09-16T05:59:00.000Z"),
+    ];
+    const refreshCommand = jest.fn(async (_requestedUserId, refreshOptions) => (
+      executeSpotifyRefreshCommand(userId, {
+        db: serviceDb,
+        env,
+        fetchImpl,
+        now: () => new Date(operationNow),
+        attemptIdFactory: () => `spotify-artist-expiry-${runId}`,
+        expectedSource: refreshOptions.expectedSource,
+      })
+    ));
+
+    await expect(acquireSpotifyArtistReadCredential(userId, {
+      db: observed.observedDb,
+      env,
+      now: () => {
+        observedClockQueryCounts.push(observed.completedQueries());
+        return acquisitionTimes.shift() ?? new Date("2026-09-16T05:59:00.000Z");
+      },
+      refreshCommand,
+    })).resolves.toEqual({
+      status: "RECONNECT_REQUIRED",
+      commandId: expect.any(String),
+    });
+
+    expect(observedClockQueryCounts).toEqual([3, 4]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("replays a concurrent durable success and performs exactly one provider request", async () => {

@@ -8,6 +8,8 @@ import {
   importSpotifyArtistSnapshot,
   readSpotifyArtistSnapshot,
 } from "@/lib/integrations/spotify-artist-read";
+import { acquireSpotifyArtistReadCredential } from "@/lib/integrations/spotify-artist-credential";
+import { executeSpotifyRefreshCommand } from "@/lib/integrations/spotify-refresh-command";
 import {
   drainSpotifyCatalogRequestDeliveries,
   recoverSpotifyCatalogRequestDeliveries,
@@ -46,6 +48,7 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
       await tx.notificationPreference.deleteMany({ where: { userId } });
       await tx.catalogRequest.deleteMany({ where: { userId } });
       await tx.connectedAccount.deleteMany({ where: { userId } });
+      await tx.spotifyRefreshCommand.deleteMany({ where: { userId } });
       await tx.user.deleteMany({ where: { id: { in: [userId, alternateUserId] } } });
       await tx.catalogEntity.deleteMany({ where: { id: catalogEntityId } });
     });
@@ -87,6 +90,98 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
     expect(result.status === "READY" && result.snapshotToken).toMatch(/^v1\./);
     expect(JSON.stringify(result)).not.toContain("provider-access-token");
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it("performs no artist-provider read when an ordinary credential is exactly at the leeway boundary", async () => {
+    await db.connectedAccount.update({
+      where: { id: connectionId },
+      data: { expiresAt: new Date(now.getTime() + 60_000) },
+    });
+    const artistFetch = jest.fn() as unknown as typeof fetch;
+    const matcher = jest.fn();
+
+    await expect(readSpotifyArtistSnapshot(userId, {
+      db: serviceDb,
+      env,
+      fetchImpl: artistFetch,
+      catalogMatcher: matcher,
+      now: () => new Date(now),
+    })).resolves.toEqual({ status: "RECONNECT_REQUIRED" });
+
+    expect(artistFetch).not.toHaveBeenCalled();
+    expect(matcher).not.toHaveBeenCalled();
+  });
+
+  it("performs no artist-provider read when a refreshed projection reaches exact leeway equality", async () => {
+    await db.connectedAccount.update({
+      where: { id: connectionId },
+      data: { expiresAt: new Date(now.getTime() - 60_000) },
+    });
+    const refreshEnv = {
+      ...env,
+      SPOTIFY_CLIENT_ID: "synthetic-client-id",
+      SPOTIFY_CLIENT_SECRET: "synthetic-client-secret",
+    } as NodeJS.ProcessEnv;
+    const refreshFetch = jest.fn(async () => response({
+      access_token: "refreshed-access-token",
+      refresh_token: "refreshed-refresh-token",
+      token_type: "Bearer",
+      scope: "user-follow-read user-top-read",
+      expires_in: 3_600,
+    })) as unknown as typeof fetch;
+    const artistFetch = jest.fn() as unknown as typeof fetch;
+    const matcher = jest.fn();
+    const acquisitionTimes = [new Date(now), new Date(now.getTime() + 59 * 60_000)];
+    const acquireCredential: typeof acquireSpotifyArtistReadCredential = (requestedUserId, options = {}) => (
+      acquireSpotifyArtistReadCredential(requestedUserId, {
+        ...options,
+        env: refreshEnv,
+        now: () => acquisitionTimes.shift() ?? new Date(now.getTime() + 59 * 60_000),
+        refreshCommand: (refreshUserId, refreshOptions) => {
+          if (!refreshOptions?.expectedSource) throw new Error("missing expected refresh source");
+          return executeSpotifyRefreshCommand(refreshUserId, {
+            db: serviceDb,
+            env: refreshEnv,
+            fetchImpl: refreshFetch,
+            now: () => new Date(now),
+            attemptIdFactory: () => `artist-read-expiry-${suffix}`,
+            expectedSource: refreshOptions.expectedSource,
+          });
+        },
+      })
+    );
+
+    await expect(readSpotifyArtistSnapshot(userId, {
+      db: serviceDb,
+      env: refreshEnv,
+      fetchImpl: artistFetch,
+      catalogMatcher: matcher,
+      acquireCredential,
+      now: () => new Date(now),
+    })).resolves.toMatchObject({ status: "RECONNECT_REQUIRED" });
+
+    expect(refreshFetch).toHaveBeenCalledTimes(1);
+    expect(artistFetch).not.toHaveBeenCalled();
+    expect(matcher).not.toHaveBeenCalled();
+  });
+
+  it("fails the final fence at exact credential-leeway equality", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const clocks = [
+      new Date(now),
+      new Date("2026-09-16T13:59:00.000Z"),
+    ];
+
+    await expect(readSpotifyArtistSnapshot(userId, {
+      db: serviceDb,
+      env,
+      fetchImpl,
+      now: () => clocks.shift() ?? new Date("2026-09-16T13:59:00.000Z"),
+    })).resolves.toEqual({ status: "DRIFTED" });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
   it("atomically imports the selected matched and unmatched artists after the exact final fence", async () => {

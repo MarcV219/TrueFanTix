@@ -152,13 +152,13 @@ async function connectionDigest(tx: Transaction, connectionId: string) {
 }
 
 function requiresRefresh(expiresAt: Date | null, now: Date) {
-  return !expiresAt || expiresAt.getTime() < now.getTime() + EXPIRY_LEEWAY_MS;
+  return !expiresAt || expiresAt.getTime() <= now.getTime() + EXPIRY_LEEWAY_MS;
 }
 
 async function initialSnapshot(
   db: RootDatabase,
   userId: string,
-  now: Date,
+  now: () => Date,
 ): Promise<CredentialSnapshot | null> {
   return db.$transaction(async (tx) => {
     await lockOrdinaryUser(tx, userId);
@@ -184,7 +184,11 @@ async function initialSnapshot(
     if (!account || account.userId !== userId || account.provider !== SPOTIFY_PROVIDER) return null;
     const versionDigest = await connectionDigest(tx, account.id);
     if (!versionDigest) throw new Error("SPOTIFY_ARTIST_CREDENTIAL_UNAVAILABLE");
-    const refreshRequired = requiresRefresh(account.expiresAt, now);
+    const checkedAt = now();
+    if (!Number.isFinite(checkedAt.getTime())) {
+      throw new Error("SPOTIFY_ARTIST_CREDENTIAL_UNAVAILABLE");
+    }
+    const refreshRequired = requiresRefresh(account.expiresAt, checkedAt);
     return Object.freeze({
       userId,
       connectionId: account.id,
@@ -203,7 +207,7 @@ async function refreshedSnapshot(
   db: RootDatabase,
   source: CredentialSnapshot,
   commandId: string,
-  now: Date,
+  now: () => Date,
 ): Promise<CredentialSnapshot | null> {
   return db.$transaction(async (tx) => {
     await lockOrdinaryUser(tx, source.userId);
@@ -224,6 +228,8 @@ async function refreshedSnapshot(
     const command = await tx.spotifyRefreshCommand.findUnique({ where: { id: commandId } });
     if (!account || !command) return null;
     const versionDigest = await connectionDigest(tx, account.id);
+    const checkedAt = now();
+    if (!Number.isFinite(checkedAt.getTime())) return null;
     const bindingMatches = account.userId === source.userId
       && account.provider === SPOTIFY_PROVIDER
       && account.providerAccountId === source.providerAccountId
@@ -237,7 +243,7 @@ async function refreshedSnapshot(
       && command.resultVersionDigest !== null
       && command.resultVersionDigest === versionDigest
       && command.resultExpiresAt?.toISOString() === account.expiresAt?.toISOString();
-    if (!bindingMatches || !versionDigest || requiresRefresh(account.expiresAt, now)) return null;
+    if (!bindingMatches || !versionDigest || requiresRefresh(account.expiresAt, checkedAt)) return null;
     return Object.freeze({
       userId: source.userId,
       connectionId: account.id,
@@ -289,7 +295,7 @@ export async function acquireSpotifyArtistReadCredential(
   const db = options.db ?? prisma;
   const env = options.env ?? process.env;
   const now = options.now ?? (() => new Date());
-  const source = await initialSnapshot(db, userId, now());
+  const source = await initialSnapshot(db, userId, now);
   await options.hooks?.afterInitialSnapshotCommitted?.(source);
   if (!source) return Object.freeze({ status: "NO_CONNECTION" });
   if (!source.refreshRequired) return readyCredential(source, env);
@@ -325,7 +331,7 @@ export async function acquireSpotifyArtistReadCredential(
     return Object.freeze({ status: "RECONNECT_REQUIRED", commandId: refreshed.commandId });
   }
 
-  const committed = await refreshedSnapshot(db, source, refreshed.commandId, now());
+  const committed = await refreshedSnapshot(db, source, refreshed.commandId, now);
   await options.hooks?.afterRefreshedSnapshotCommitted?.(committed);
   if (!committed) {
     return Object.freeze({ status: "RECONNECT_REQUIRED", commandId: refreshed.commandId });
