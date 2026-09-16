@@ -229,6 +229,37 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
     await expect(db.spotifyCatalogRequestDeliveryIntent.count({ where: { userId } })).resolves.toBe(0);
   });
 
+  it("rechecks snapshot expiry after the final authorization locks are acquired", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, {
+      db: serviceDb,
+      env,
+      fetchImpl,
+      now: () => new Date(now),
+    });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const clocks = [
+      new Date(now.getTime() + 4 * 60_000 + 59_000),
+      new Date(now.getTime() + 5 * 60_000 + 1_000),
+    ];
+
+    await expect(importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, {
+      db: serviceDb,
+      env,
+      now: () => clocks.shift() ?? clocks[clocks.length - 1] ?? new Date(now),
+    })).resolves.toEqual({ status: "DRIFTED" });
+
+    await expect(db.notificationPreference.count({ where: { userId } })).resolves.toBe(0);
+    await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(0);
+    await expect(db.spotifyCatalogRequestDeliveryIntent.count({ where: { userId } })).resolves.toBe(0);
+  });
+
   it("replays pending unmatched requests without duplicate reservations and never reopens reviewed rows", async () => {
     const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
       ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })

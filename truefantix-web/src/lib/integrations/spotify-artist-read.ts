@@ -305,6 +305,7 @@ function openSnapshot(token: string, expectedUserId: string, now: Date, env: Nod
     providerAccountId: row.providerAccountId as string,
     versionDigest: row.versionDigest as string,
     expiresAt: row.credentialExpiresAt as string,
+    snapshotExpiresAt: row.expiresAt as string,
     refreshCommandId: row.refreshCommandId as string | null,
     artists: Object.freeze(artists),
   });
@@ -603,8 +604,8 @@ async function finalFence<T>(
   db: RootDatabase,
   credential: Pick<SpotifyArtistReadCredential,
     "userId" | "connectionId" | "providerAccountId" | "versionDigest" | "expiresAt" | "refreshCommandId"
-  >,
-  now: Date,
+  > & Readonly<{ snapshotExpiresAt?: string }>,
+  now: () => Date,
   work: (tx: Transaction) => Promise<T>,
 ) {
   return db.$transaction(async (tx) => {
@@ -619,13 +620,22 @@ async function finalFence<T>(
       SELECT spotify_connected_account_version_digest(account_row) AS digest
       FROM "ConnectedAccount" account_row WHERE account_row.id = ${credential.connectionId}
     `;
+    const checkedAt = now();
+    const snapshotExpiresAt = credential.snapshotExpiresAt
+      ? new Date(credential.snapshotExpiresAt)
+      : null;
     const valid = account.userId === credential.userId
       && account.provider === "spotify"
       && account.providerAccountId === credential.providerAccountId
       && account.currentRefreshCommandId === credential.refreshCommandId
       && rows[0]?.digest === credential.versionDigest
       && account.expiresAt?.toISOString() === credential.expiresAt
-      && account.expiresAt.getTime() >= now.getTime() + EXPIRY_LEEWAY_MS;
+      && Number.isFinite(checkedAt.getTime())
+      && account.expiresAt.getTime() >= checkedAt.getTime() + EXPIRY_LEEWAY_MS
+      && (
+        snapshotExpiresAt === null
+        || (Number.isFinite(snapshotExpiresAt.getTime()) && snapshotExpiresAt > checkedAt)
+      );
     if (!valid) return Object.freeze({ valid: false as const });
     return Object.freeze({ valid: true as const, value: await work(tx) });
   }, { isolationLevel: "Serializable", timeout: 120_000 });
@@ -693,9 +703,9 @@ export async function readSpotifyArtistSnapshot(
   const loaded = await loadSpotifyArtistSnapshot(userId, options);
   if (loaded.status !== "READY") return loaded;
   try {
-    const fencedAt = now();
-    const fenced = await finalFence(db, loaded.credential, fencedAt, async () => undefined);
+    const fenced = await finalFence(db, loaded.credential, now, async () => undefined);
     if (!fenced.valid) return Object.freeze({ status: "DRIFTED" });
+    const fencedAt = now();
     const snapshotToken = sealSnapshot(
       loaded.credential,
       loaded.artists,
@@ -743,7 +753,7 @@ export async function importSpotifyArtistSnapshot(
   }
 
   try {
-    const fenced = await finalFence(db, loaded, openedAt, async (tx) => {
+    const fenced = await finalFence(db, loaded, now, async (tx) => {
       const imported = [];
       const requested = [];
       const importedIds = new Set<string>();
