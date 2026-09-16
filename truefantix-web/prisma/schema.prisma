@@ -91,6 +91,19 @@ enum LegacySellerAccountCommandStatus {
   FAILED
 }
 
+enum SpotifyRefreshCommandStatus {
+  PENDING
+  ATTEMPTING
+  SUCCEEDED
+  RECONNECT_REQUIRED
+}
+
+enum SpotifyProviderContactStatus {
+  NOT_CONTACTED
+  CONTACTED
+  CONTACT_UNCERTAIN
+}
+
 enum EventSelloutStatus {
   NOT_SOLD_OUT
   SOLD_OUT
@@ -397,6 +410,7 @@ model User {
   notificationPreferences NotificationPreference[]
   catalogRequests         CatalogRequest[]
   connectedAccounts       ConnectedAccount[]
+  spotifyRefreshCommands  SpotifyRefreshCommand[]
   notifications           Notification[]
 
   // Audit logging
@@ -2303,10 +2317,45 @@ model ConnectedAccount {
   displayName String?
   email       String?
 
+  currentRefreshCommandId String?                @unique
+  currentRefreshCommand   SpotifyRefreshCommand? @relation("SpotifyCurrentRefreshCommand", fields: [currentRefreshCommandId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([provider, providerAccountId])
   @@unique([userId, provider])
   @@index([userId])
   @@index([provider])
+}
+
+model SpotifyRefreshCommand {
+  id                    String                       @id @default(cuid())
+  userId                String
+  connectionId          String
+  provider              String
+  providerAccountId     String
+  sourceVersionDigest   String
+  sourceExpiresAt       DateTime?
+  sourceUpdatedAt       DateTime
+  attemptId             String                       @unique
+  terminalAttemptId     String?
+  status                SpotifyRefreshCommandStatus  @default(PENDING)
+  providerContactStatus SpotifyProviderContactStatus @default(NOT_CONTACTED)
+  providerHttpStatus    Int?
+  resultVersionDigest   String?
+  resultExpiresAt       DateTime?
+  refreshTokenRotated   Boolean?
+  failureCode           String?
+  authorizedAt          DateTime                     @default(now())
+  claimedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+
+  user              User              @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  currentConnection ConnectedAccount? @relation("SpotifyCurrentRefreshCommand")
+
+  @@unique([connectionId, sourceVersionDigest])
+  @@index([userId, createdAt])
+  @@index([status, authorizedAt])
 }
 
 model Notification {
