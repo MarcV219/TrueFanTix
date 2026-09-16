@@ -94,6 +94,7 @@ function request(path: string) {
       Host: "hostile.example",
       Origin: "https://hostile.example",
       "X-Forwarded-Host": "forwarded-hostile.example",
+      "X-Forwarded-Proto": "http",
     },
   });
 }
@@ -225,6 +226,40 @@ describe("seller onboarding provider boundaries", () => {
     expect(mockAccountLinkCreate).not.toHaveBeenCalled();
   });
 
+  it("does no onboarding-link provider work when the committed snapshot wrapper rejects with P2034", async () => {
+    mockedAuthorizeStart.mockResolvedValue({
+      kind: "ACCOUNT_READY", sellerId: "seller-1", stripeAccountId: "acct_old",
+    });
+    mockedAuthorizeLink.mockRejectedValue(
+      Object.assign(new Error("post-callback serialization failure"), { code: "P2034" }),
+    );
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await startOnboarding(request("/api/sellers/onboarding/start"));
+
+    expect(response.status).toBe(500);
+    expect(mockAccountLinkCreate).not.toHaveBeenCalled();
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["P2034 serialization abort", Object.assign(new Error("serialization failure"), { code: "P2034" })],
+    ["callback rollback", new Error("force authorization callback rollback")],
+  ])("does not create an onboarding link after committed-account snapshot %s", async (_label, failure) => {
+    mockedAuthorizeStart.mockResolvedValue({
+      kind: "ACCOUNT_READY", sellerId: "seller-1", stripeAccountId: "acct_ready",
+    });
+    mockedAuthorizeLink.mockRejectedValue(failure);
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await startOnboarding(request("/api/sellers/onboarding/start"));
+
+    expect(response.status).toBe(500);
+    expect(mockAccountCreate).not.toHaveBeenCalled();
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
+    expect(mockAccountLinkCreate).not.toHaveBeenCalled();
+  });
+
   it("creates a login link only after its current account snapshot resolves", async () => {
     let snapshotResolved = false;
     mockedAuthorizeLink.mockImplementation(async () => {
@@ -253,6 +288,63 @@ describe("seller onboarding provider boundaries", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ error: "STRIPE_ACCOUNT_MISSING" });
+    expect(mockLoginLinkCreate).not.toHaveBeenCalled();
+  });
+
+  it("does no login-link provider work after post-callback P2034 retry exhaustion", async () => {
+    mockedAuthorizeLink.mockRejectedValue(
+      Object.assign(new Error("post-callback serialization failure"), { code: "P2034" }),
+    );
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await createLoginLink(request("/api/sellers/onboarding/login"));
+
+    expect(response.status).toBe(500);
+    expect(mockLoginLinkCreate).not.toHaveBeenCalled();
+  });
+
+  it("uses only the configured canonical origin and performs no local work after an ephemeral link call", async () => {
+    mockedAuthorizeStart.mockResolvedValue({
+      kind: "ACCOUNT_READY", sellerId: "seller-1", stripeAccountId: "acct_exact_authorized",
+    });
+    mockedAuthorizeLink.mockResolvedValue({
+      userId: "user-1",
+      sellerId: "seller-1",
+      stripeAccountId: "acct_exact_authorized",
+      linkKind: "ONBOARDING",
+      refreshUrl: "https://seller-onboarding.test.invalid/account?stripe=refresh",
+      returnUrl: "https://seller-onboarding.test.invalid/account?stripe=return",
+    });
+    mockAccountLinkCreate.mockImplementation(async (input) => {
+      expect(input).toEqual({
+        account: "acct_exact_authorized",
+        refresh_url: "https://seller-onboarding.test.invalid/account?stripe=refresh",
+        return_url: "https://seller-onboarding.test.invalid/account?stripe=return",
+        type: "account_onboarding",
+      });
+      return { url: "https://provider.example/onboard" };
+    });
+
+    const response = await startOnboarding(request("/api/sellers/onboarding/start"));
+
+    expect(response.status).toBe(200);
+    expect(mockedOrigin).toHaveBeenCalledWith();
+    expect(mockedClaim).not.toHaveBeenCalled();
+    expect(mockedFinalize).not.toHaveBeenCalled();
+    expect(mockedReconcile).not.toHaveBeenCalled();
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["P2034 serialization abort", Object.assign(new Error("serialization failure"), { code: "P2034" })],
+    ["callback rollback", new Error("force authorization callback rollback")],
+  ])("does not create a login link after snapshot %s", async (_label, failure) => {
+    mockedAuthorizeLink.mockRejectedValue(failure);
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await createLoginLink(request("/api/sellers/onboarding/login"));
+
+    expect(response.status).toBe(500);
     expect(mockLoginLinkCreate).not.toHaveBeenCalled();
   });
 
