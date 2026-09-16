@@ -147,6 +147,7 @@ function Body({ user }: { user: MeUser }) {
   const [spotifyConnected, setSpotifyConnected] = React.useState<boolean | null>(null);
   const [spotifyPanelOpen, setSpotifyPanelOpen] = React.useState(false);
   const [spotifyArtists, setSpotifyArtists] = React.useState<SpotifyArtistCandidate[]>([]);
+  const [spotifySnapshotToken, setSpotifySnapshotToken] = React.useState<string | null>(null);
   const [selectedSpotifyIds, setSelectedSpotifyIds] = React.useState<Set<string>>(new Set());
   const [preferenceSectionsOpen, setPreferenceSectionsOpen] = React.useState<Record<PreferenceType, boolean>>({
     ARTIST: true,
@@ -416,6 +417,7 @@ function Body({ user }: { user: MeUser }) {
 
   async function loadSpotifyArtists() {
     setSpotifyLoading(true);
+    setSpotifySnapshotToken(null);
     setError(null);
     setOk(null);
     try {
@@ -425,7 +427,10 @@ function Body({ user }: { user: MeUser }) {
       }
       setSpotifyConnected(Boolean(data.connected));
       const artists = Array.isArray(data.artists) ? (data.artists as SpotifyArtistCandidate[]) : [];
+      const snapshotToken = typeof data.snapshotToken === "string" ? data.snapshotToken : null;
+      if (data.connected && !snapshotToken) throw new Error("Spotify artist snapshot is unavailable. Try again.");
       setSpotifyArtists(artists);
+      setSpotifySnapshotToken(snapshotToken);
       setSelectedSpotifyIds(new Set(artists.map((artist) => artist.spotifyId)));
       setSpotifyPanelOpen(true);
       if (!data.connected) {
@@ -446,6 +451,11 @@ function Body({ user }: { user: MeUser }) {
       setOk(null);
       return;
     }
+    if (!spotifySnapshotToken) {
+      setError("Refresh Spotify artists before importing.");
+      setOk(null);
+      return;
+    }
 
     setSpotifyLoading(true);
     setError(null);
@@ -454,7 +464,11 @@ function Body({ user }: { user: MeUser }) {
       const { res, data } = await fetchJson("/api/integrations/spotify/artists", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spotifyIds: Array.from(selectedSpotifyIds), includeUnmatched: true }),
+        body: JSON.stringify({
+          snapshotToken: spotifySnapshotToken,
+          spotifyIds: Array.from(selectedSpotifyIds),
+          includeUnmatched: true,
+        }),
       });
       if (!res.ok || !data?.ok) {
         throw new Error(String(data?.message || data?.error || "Could not import Spotify artists."));
@@ -488,6 +502,7 @@ function Body({ user }: { user: MeUser }) {
       }
       setSpotifyConnected(false);
       setSpotifyArtists([]);
+      setSpotifySnapshotToken(null);
       setSelectedSpotifyIds(new Set());
       setOk("Spotify disconnected. Imported notification favorites remain in your list unless you remove them.");
     } catch (e: any) {

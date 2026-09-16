@@ -407,11 +407,12 @@ model User {
   verificationCodes VerificationCode[]
 
   // Notification system relations
-  notificationPreferences NotificationPreference[]
-  catalogRequests         CatalogRequest[]
-  connectedAccounts       ConnectedAccount[]
-  spotifyRefreshCommands  SpotifyRefreshCommand[]
-  notifications           Notification[]
+  notificationPreferences              NotificationPreference[]
+  catalogRequests                      CatalogRequest[]
+  spotifyCatalogRequestDeliveryIntents SpotifyCatalogRequestDeliveryIntent[]
+  connectedAccounts                    ConnectedAccount[]
+  spotifyRefreshCommands               SpotifyRefreshCommand[]
+  notifications                        Notification[]
 
   // Audit logging
   auditLogs AuditLog[]
@@ -2290,11 +2291,57 @@ model CatalogRequest {
 
   fulfilledPreferenceId String?
   reviewedAt            DateTime?
+  spotifyDeliveryItem   SpotifyCatalogRequestDeliveryItem?
 
   @@unique([userId, requestedType, requestedValue])
   @@index([status, createdAt])
   @@index([requestedType, requestedValue])
   @@index([resolvedCatalogEntityId])
+}
+
+model SpotifyCatalogRequestDeliveryIntent {
+  id                String                              @id @default(cuid())
+  userId            String
+  user              User                                @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipient         String
+  subject           String
+  textBody          String
+  htmlBody          String
+  payloadJson       Json
+  envelopeDigest    String
+  idempotencyKey    String                              @unique
+  status            String                              @default("PENDING")
+  provider          String?
+  attemptCount      Int                                 @default(0)
+  firstAttemptAt    DateTime?
+  availableAt       DateTime                            @default(now())
+  processingAt      DateTime?
+  leaseExpiresAt    DateTime?
+  claimToken        String?
+  dispatchStartedAt DateTime?
+  providerResult    String?
+  lastError         String?
+  deliveredAt       DateTime?
+  createdAt         DateTime                            @default(now())
+  updatedAt         DateTime                            @updatedAt
+  items             SpotifyCatalogRequestDeliveryItem[]
+
+  @@index([status, availableAt, createdAt])
+  @@index([status, leaseExpiresAt])
+  @@index([userId, createdAt])
+}
+
+model SpotifyCatalogRequestDeliveryItem {
+  id               String                              @id @default(cuid())
+  intentId         String
+  intent           SpotifyCatalogRequestDeliveryIntent @relation(fields: [intentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  catalogRequestId String                              @unique
+  catalogRequest   CatalogRequest                      @relation(fields: [catalogRequestId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  requestedValue   String
+  createdAt        DateTime                            @default(now())
+
+  @@unique([intentId, catalogRequestId])
+  @@index([intentId, createdAt])
 }
 
 model ConnectedAccount {

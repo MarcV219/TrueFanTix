@@ -8,6 +8,7 @@ import {
   importSpotifyArtistSnapshot,
   readSpotifyArtistSnapshot,
 } from "@/lib/integrations/spotify-artist-read";
+import { drainSpotifyCatalogRequestDeliveries } from "@/lib/integrations/spotify-catalog-request-delivery";
 import { prisma } from "@/lib/prisma";
 
 const databaseUrl = process.env.PRIMARY_INTEGRATION_DATABASE_URL;
@@ -20,6 +21,7 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
   const serviceDb = db as unknown as typeof prisma;
   const suffix = `${Date.now()}-${process.pid}`;
   const userId = `artist-read-user-${suffix}`;
+  const alternateUserId = `artist-read-alternate-user-${suffix}`;
   const connectionId = `artist-read-connection-${suffix}`;
   const catalogEntityId = `artist-read-catalog-${suffix}`;
   const secret = "artist-read-integration-encryption-key";
@@ -36,10 +38,12 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
   async function reset() {
     await db.$transaction(async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.spotifyCatalogRequestDeliveryItem.deleteMany({ where: { intent: { userId } } });
+      await tx.spotifyCatalogRequestDeliveryIntent.deleteMany({ where: { userId } });
       await tx.notificationPreference.deleteMany({ where: { userId } });
       await tx.catalogRequest.deleteMany({ where: { userId } });
       await tx.connectedAccount.deleteMany({ where: { userId } });
-      await tx.user.deleteMany({ where: { id: userId } });
+      await tx.user.deleteMany({ where: { id: { in: [userId, alternateUserId] } } });
       await tx.catalogEntity.deleteMany({ where: { id: catalogEntityId } });
     });
   }
@@ -64,7 +68,7 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
   beforeEach(async () => { await reset(); await fixture(); });
   afterAll(async () => { await reset(); await db.$disconnect(); await pool.end(); });
 
-  it("uses only fixed endpoints and returns a frozen token-free snapshot after the final fence", async () => {
+  it("uses only fixed endpoints and returns a frozen snapshot with an opaque token after the final fence", async () => {
     const urls: string[] = [];
     const fetchImpl = jest.fn(async (input: RequestInfo | URL) => {
       const url = String(input); urls.push(url);
@@ -76,7 +80,8 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
     expect(urls).toHaveLength(4);
     expect(urls.every((url) => url.startsWith("https://api.spotify.com/v1/me/"))).toBe(true);
     expect(matcher).toHaveBeenCalledWith(Object.freeze([{ spotifyId: "artist-1", name: "Artist One" }]));
-    expect(result).toEqual({ status: "READY", artists: [{ spotifyId: "artist-1", name: "Artist One", popularity: 80, source: "followed", spotifyUrl: null, imageUrl: null, match: null }] });
+    expect(result).toMatchObject({ status: "READY", artists: [{ spotifyId: "artist-1", name: "Artist One", popularity: 80, source: "followed", spotifyUrl: null, imageUrl: null, match: null }] });
+    expect(result.status === "READY" && result.snapshotToken).toMatch(/^v1\./);
     expect(JSON.stringify(result)).not.toContain("provider-access-token");
     expect(Object.isFrozen(result)).toBe(true);
   });
@@ -96,10 +101,13 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
         ], next: null, cursors: { after: null } } })
       : response({ items: [], next: null })) as unknown as typeof fetch;
 
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
     const result = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
       spotifyIds: Object.freeze(["artist-matched", "artist-unmatched"]),
       includeUnmatched: true,
-    }, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    }, { db: serviceDb, env, fetchImpl: jest.fn() as unknown as typeof fetch, now: () => new Date(now) });
 
     expect(result).toMatchObject({
       status: "READY",
@@ -109,6 +117,7 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
     expect(Object.isFrozen(result)).toBe(true);
     await expect(db.notificationPreference.count({ where: { userId } })).resolves.toBe(1);
     await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(1);
+    await expect(db.spotifyCatalogRequestDeliveryIntent.count({ where: { userId } })).resolves.toBe(1);
   });
 
   it("rejects mixed and wholly unknown selections without writing a partial import", async () => {
@@ -116,12 +125,16 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
       ? response({ artists: { items: [{ id: "artist-known", name: "Known Artist" }], next: null, cursors: { after: null } } })
       : response({ items: [], next: null })) as unknown as typeof fetch;
 
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
     await expect(importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
       spotifyIds: Object.freeze(["artist-known", "artist-unknown"]),
       includeUnmatched: true,
     }, { db: serviceDb, env, fetchImpl, now: () => new Date(now) }))
       .rejects.toThrow("SPOTIFY_ARTIST_SELECTION_STALE");
     await expect(importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
       spotifyIds: Object.freeze(["artist-unknown"]),
       includeUnmatched: true,
     }, { db: serviceDb, env, fetchImpl, now: () => new Date(now) }))
@@ -134,19 +147,20 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
     const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
       ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
       : response({ items: [], next: null })) as unknown as typeof fetch;
-    const matcher = jest.fn(async () => {
-      await db.connectedAccount.update({
-        where: { id: connectionId },
-        data: { expiresAt: new Date("2026-09-16T15:00:00.000Z") },
-      });
-      return [null];
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    await db.connectedAccount.update({
+      where: { id: connectionId },
+      data: { expiresAt: new Date("2026-09-16T15:00:00.000Z") },
     });
-
+    const postFetch = jest.fn();
     await expect(importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
       spotifyIds: null,
       includeUnmatched: true,
-    }, { db: serviceDb, env, fetchImpl, catalogMatcher: matcher, now: () => new Date(now) }))
+    }, { db: serviceDb, env, fetchImpl: postFetch as unknown as typeof fetch, now: () => new Date(now) }))
       .resolves.toEqual({ status: "DRIFTED" });
+    expect(postFetch).not.toHaveBeenCalled();
     await expect(db.notificationPreference.count({ where: { userId } })).resolves.toBe(0);
     await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(0);
   });
@@ -165,27 +179,302 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
           { id: "artist-matched", name: "Matched Artist" },
         ], next: null, cursors: { after: null } } })
       : response({ items: [], next: null })) as unknown as typeof fetch;
-    const matcher = jest.fn(async () => {
-      const match = {
-        catalogEntityId,
-        canonicalName: "Matched Artist",
-        provider: "spotify",
-        providerId: "artist-matched",
-      };
-      await db.catalogEntity.update({
-        where: { id: catalogEntityId },
-        data: { providerId: "artist-replaced" },
-      });
-      return [null, match];
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    await db.catalogEntity.update({
+      where: { id: catalogEntityId },
+      data: { providerId: "artist-replaced" },
     });
-
     await expect(importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
       spotifyIds: null,
       includeUnmatched: true,
-    }, { db: serviceDb, env, fetchImpl, catalogMatcher: matcher, now: () => new Date(now) }))
+    }, { db: serviceDb, env, now: () => new Date(now) }))
       .rejects.toThrow("SPOTIFY_ARTIST_CATALOG_DRIFT");
     await expect(db.notificationPreference.count({ where: { userId } })).resolves.toBe(0);
     await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(0);
+  });
+
+  it("rejects tampered and expired snapshot tokens before provider I/O or writes", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const postFetch = jest.fn();
+    const tampered = `${snapshot.snapshotToken.slice(0, -1)}${snapshot.snapshotToken.endsWith("A") ? "B" : "A"}`;
+
+    await expect(importSpotifyArtistSnapshot(userId, {
+      snapshotToken: tampered,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, fetchImpl: postFetch as unknown as typeof fetch, now: () => new Date(now) }))
+      .rejects.toThrow("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+    await expect(importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, {
+      db: serviceDb,
+      env,
+      fetchImpl: postFetch as unknown as typeof fetch,
+      now: () => new Date(now.getTime() + 6 * 60_000),
+    })).rejects.toThrow("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+
+    expect(postFetch).not.toHaveBeenCalled();
+    await expect(db.catalogRequest.count({ where: { userId } })).resolves.toBe(0);
+    await expect(db.spotifyCatalogRequestDeliveryIntent.count({ where: { userId } })).resolves.toBe(0);
+  });
+
+  it("replays pending unmatched requests without duplicate reservations and never reopens reviewed rows", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const selection = { snapshotToken: snapshot.snapshotToken, spotifyIds: null, includeUnmatched: true } as const;
+
+    const first = await importSpotifyArtistSnapshot(userId, selection, { db: serviceDb, env, now: () => new Date(now) });
+    const replay = await importSpotifyArtistSnapshot(userId, selection, { db: serviceDb, env, now: () => new Date(now) });
+    expect(first.status === "READY" && first.deliveryIntentIds).toEqual(
+      replay.status === "READY" ? replay.deliveryIntentIds : [],
+    );
+    await expect(db.spotifyCatalogRequestDeliveryIntent.count({ where: { userId } })).resolves.toBe(1);
+    await expect(db.spotifyCatalogRequestDeliveryItem.count({ where: { intent: { userId } } })).resolves.toBe(1);
+
+    const request = await db.catalogRequest.findFirstOrThrow({ where: { userId } });
+    await db.catalogRequest.update({
+      where: { id: request.id },
+      data: { status: "REJECTED", adminNotes: "reviewed", reviewedAt: now },
+    });
+    const terminalReplay = await importSpotifyArtistSnapshot(userId, selection, { db: serviceDb, env, now: () => new Date(now) });
+    expect(terminalReplay).toMatchObject({ status: "READY", requested: [{ status: "REJECTED" }], deliveryIntentIds: [] });
+    await expect(db.catalogRequest.findUniqueOrThrow({ where: { id: request.id } })).resolves.toMatchObject({
+      status: "REJECTED",
+      adminNotes: "reviewed",
+      reviewedAt: now,
+    });
+  });
+
+  it("claims one durable delivery under concurrent drains and never replays a delivered email", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const imported = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    if (imported.status !== "READY") throw new Error("expected ready import");
+    const send = jest.fn(async () => ({ ok: true, provider: "RESEND" as const, providerResult: "accepted" }));
+    const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+
+    await Promise.all([
+      drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send }),
+      drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send }),
+    ]);
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
+      .resolves.toMatchObject({ status: "DELIVERED", attemptCount: 1, provider: "RESEND" });
+  });
+
+  it("quarantines an ambiguous sender exception and does not call the provider again", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const imported = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    if (imported.status !== "READY") throw new Error("expected ready import");
+    const send = jest.fn(async () => { throw new Error("ambiguous transport failure"); });
+    const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        attemptCount: 1,
+        provider: "RESEND",
+        dispatchStartedAt: expect.any(Date),
+      });
+  });
+
+  it("enforces immutable delivery envelopes, membership, lifecycle, and terminal history in PostgreSQL", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const imported = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    if (imported.status !== "READY") throw new Error("expected ready import");
+    const intent = await db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } });
+    const item = await db.spotifyCatalogRequestDeliveryItem.findFirstOrThrow({ where: { intentId: intent.id } });
+    const request = await db.catalogRequest.findUniqueOrThrow({ where: { id: item.catalogRequestId } });
+    await db.user.create({ data: {
+      id: alternateUserId,
+      email: `artist-read-alternate-${suffix}@example.test`,
+      passwordHash: "synthetic",
+      firstName: "Alternate",
+      lastName: "Owner",
+      emailVerifiedAt: now,
+      phone: `+1554${String(Date.now()).slice(-7)}`,
+      phoneVerifiedAt: now,
+      streetAddress1: "2 Test Lane",
+      city: "Toronto",
+      region: "ON",
+      postalCode: "M5V 1A2",
+      country: "CA",
+    } });
+
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intent.id }, data: { subject: "forged envelope" },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intent.id }, data: { status: "DELIVERED" },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intent.id }, data: { status: "PROCESSING", provider: "RESEND" },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryItem.update({
+      where: { id: item.id }, data: { requestedValue: "forged membership" },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryItem.delete({ where: { id: item.id } })).rejects.toThrow();
+    await expect(db.catalogRequest.update({
+      where: { id: request.id }, data: { requestedValue: "Forged Artist" },
+    })).rejects.toThrow();
+    await expect(db.catalogRequest.update({
+      where: { id: request.id }, data: { requestedType: "TEAM" },
+    })).rejects.toThrow();
+    await expect(db.catalogRequest.update({
+      where: { id: request.id }, data: { userId: alternateUserId },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.delete({ where: { id: intent.id } })).rejects.toThrow();
+    await expect(db.$executeRawUnsafe('TRUNCATE TABLE "SpotifyCatalogRequestDeliveryItem"')).rejects.toThrow();
+    await expect(db.$executeRawUnsafe('TRUNCATE TABLE "SpotifyCatalogRequestDeliveryIntent"')).rejects.toThrow();
+
+    const send = jest.fn(async () => ({ ok: true, provider: "RESEND" as const, providerResult: "accepted" }));
+    const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+    const delivered = await db.spotifyCatalogRequestDeliveryIntent.findUniqueOrThrow({ where: { id: intent.id } });
+    expect(delivered).toMatchObject({
+      status: "DELIVERED",
+      provider: "RESEND",
+      attemptCount: 1,
+      firstAttemptAt: expect.any(Date),
+      dispatchStartedAt: expect.any(Date),
+      deliveredAt: expect.any(Date),
+    });
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intent.id }, data: { status: "PENDING" },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intent.id }, data: { provider: "SENDGRID" },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intent.id }, data: { dispatchStartedAt: null },
+    })).rejects.toThrow();
+
+    await expect(db.catalogRequest.update({
+      where: { id: request.id },
+      data: { status: "REJECTED", adminNotes: "reviewed", reviewedAt: now },
+    })).resolves.toMatchObject({
+      userId,
+      requestedType: "ARTIST",
+      requestedValue: "Unmatched Artist",
+      status: "REJECTED",
+      adminNotes: "reviewed",
+    });
+
+    const teamRequest = await db.catalogRequest.create({ data: {
+      userId,
+      requestedType: "TEAM",
+      requestedValue: "Team Request",
+      status: "PENDING",
+    } });
+    await expect(db.$transaction(async (tx) => {
+      const forgedIntent = await tx.spotifyCatalogRequestDeliveryIntent.create({ data: {
+        userId,
+        recipient: "admin@truefantix.com",
+        subject: "forged",
+        textBody: "forged",
+        htmlBody: "forged",
+        payloadJson: { requestIds: [teamRequest.id], names: [teamRequest.requestedValue] },
+        envelopeDigest: "0".repeat(64),
+        idempotencyKey: `spotify-catalog:${"1".repeat(64)}`,
+      } });
+      await tx.spotifyCatalogRequestDeliveryItem.create({ data: {
+        intentId: forgedIntent.id,
+        catalogRequestId: teamRequest.id,
+        requestedValue: teamRequest.requestedValue,
+      } });
+    })).rejects.toThrow();
+  });
+
+  it("quarantines an expired pre-dispatch claim without inventing dispatch evidence", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const imported = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    if (imported.status !== "READY") throw new Error("expected ready import");
+    const intentId = imported.deliveryIntentIds[0];
+    const processingAt = new Date(Date.now() - 30 * 60_000);
+    const leaseExpiresAt = new Date(Date.now() - 15 * 60_000);
+    await db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intentId },
+      data: {
+        status: "PROCESSING",
+        provider: "RESEND",
+        processingAt,
+        leaseExpiresAt,
+        claimToken: "expired-pre-dispatch-claim",
+      },
+    });
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intentId }, data: { claimToken: "forged-claim" },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intentId }, data: { provider: "SENDGRID" },
+    })).rejects.toThrow();
+    await expect(db.spotifyCatalogRequestDeliveryIntent.update({
+      where: { id: intentId }, data: { leaseExpiresAt: new Date(Date.now() + 15 * 60_000) },
+    })).rejects.toThrow();
+
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, {
+      env: { NODE_ENV: "test" } as NodeJS.ProcessEnv,
+      send: jest.fn(),
+    });
+
+    await expect(db.spotifyCatalogRequestDeliveryIntent.findUniqueOrThrow({ where: { id: intentId } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        provider: "RESEND",
+        attemptCount: 0,
+        firstAttemptAt: null,
+        dispatchStartedAt: null,
+        providerResult: null,
+        lastError: "Expired Spotify catalog delivery claim requires provider reconciliation",
+      });
   });
 
   it("rejects a hostile pagination URL without following it or invoking catalog matching", async () => {
@@ -220,7 +509,7 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
       ? response({ artists: { items: [], next: null, cursors: { after: "final-cursor" } } })
       : response({ items: [], next: null })) as unknown as typeof fetch;
     await expect(readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) }))
-      .resolves.toEqual({ status: "READY", artists: [] });
+      .resolves.toMatchObject({ status: "READY", artists: [], snapshotToken: expect.stringMatching(/^v1\./) });
   });
 
   it("rejects oversized catalog output without entering the final fence", async () => {

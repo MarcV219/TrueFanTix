@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
@@ -9,6 +10,7 @@ import {
 import { SpotifyRefreshAccessChangedError } from "@/lib/integrations/spotify-refresh-command";
 import { ManagedAccountSpotifyOperationError } from "@/lib/integrations/ordinary-spotify-user";
 import { isPrimaryStagingManagedUser } from "@/lib/primary/staging-console";
+import { stageSpotifyCatalogRequestDelivery } from "@/lib/integrations/spotify-catalog-request-delivery";
 
 const SPOTIFY_ORIGIN = "https://api.spotify.com";
 const FOLLOWED_PATH = "/v1/me/following";
@@ -23,6 +25,9 @@ const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 256;
 const MAX_URL_LENGTH = 2_048;
 const EXPIRY_LEEWAY_MS = 60_000;
+const SNAPSHOT_TTL_MS = 5 * 60_000;
+const MAX_SNAPSHOT_PLAINTEXT_BYTES = 524_288;
+const MAX_SNAPSHOT_TOKEN_LENGTH = 720_000;
 
 type RootDatabase = typeof prisma;
 type Transaction = Prisma.TransactionClient;
@@ -53,9 +58,10 @@ export type SpotifyArtistReadItem = ArtistPrimitive & Readonly<{
 export type SpotifyArtistReadResult =
   | Readonly<{ status: Exclude<SpotifyArtistCredentialResult["status"], "READY"> }>
   | Readonly<{ status: "DRIFTED" }>
-  | Readonly<{ status: "READY"; artists: readonly SpotifyArtistReadItem[] }>;
+  | Readonly<{ status: "READY"; artists: readonly SpotifyArtistReadItem[]; snapshotToken: string }>;
 
 export type SpotifyArtistImportSelection = Readonly<{
+  snapshotToken: string;
   spotifyIds: readonly string[] | null;
   includeUnmatched: boolean;
 }>;
@@ -77,6 +83,7 @@ export type SpotifyArtistImportResult =
         requestedValue: string;
         status: string;
       }>[];
+      deliveryIntentIds: readonly string[];
     }>;
 
 type RawCatalogMatch = Readonly<Pick<
@@ -98,6 +105,25 @@ type ArtistReadOptions = {
   catalogMatcher?: CatalogMatcher;
 };
 
+type SnapshotArtist = Readonly<{
+  spotifyId: string;
+  name: string;
+  match: Readonly<{ catalogEntityId: string; evidenceDigest: string }> | null;
+}>;
+
+type SnapshotPayload = Readonly<{
+  version: 1;
+  userId: string;
+  connectionId: string;
+  providerAccountId: string;
+  versionDigest: string;
+  credentialExpiresAt: string;
+  refreshCommandId: string | null;
+  issuedAt: string;
+  expiresAt: string;
+  artists: readonly SnapshotArtist[];
+}>;
+
 function boundedText(value: unknown, maxLength: number) {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
@@ -113,6 +139,175 @@ function boundedHttpsUrl(value: unknown) {
   } catch {
     return null;
   }
+}
+
+function cleanSecret(value: string | undefined) {
+  return value?.trim().replace(/^['"]+|['"]+$/g, "").trim();
+}
+
+function snapshotKey(env: NodeJS.ProcessEnv) {
+  const secret = cleanSecret(env.SPOTIFY_TOKEN_ENCRYPTION_KEY) || cleanSecret(env.SESSION_SECRET);
+  if (!secret || secret.length < 32) throw new Error("SPOTIFY_ARTIST_SNAPSHOT_UNAVAILABLE");
+  return crypto.createHash("sha256").update("truefantix:spotify-artist-snapshot:v1\0").update(secret).digest();
+}
+
+function catalogEvidenceDigest(match: RawCatalogMatch) {
+  return crypto.createHash("sha256").update([
+    match.catalogEntityId,
+    match.canonicalName,
+    match.provider,
+    match.providerId,
+  ].map((value) => `${Buffer.byteLength(value, "utf8")}:${value}`).join("")).digest("hex");
+}
+
+function sealSnapshot(
+  credential: SpotifyArtistReadCredential,
+  artists: readonly SpotifyArtistReadItem[],
+  issuedAt: Date,
+  env: NodeJS.ProcessEnv,
+) {
+  const credentialExpiry = new Date(credential.expiresAt);
+  const expiresAt = new Date(Math.min(
+    issuedAt.getTime() + SNAPSHOT_TTL_MS,
+    credentialExpiry.getTime() - EXPIRY_LEEWAY_MS,
+  ));
+  if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= issuedAt) {
+    throw new Error("SPOTIFY_ARTIST_SNAPSHOT_EXPIRED");
+  }
+  const payload: SnapshotPayload = Object.freeze({
+    version: 1,
+    userId: credential.userId,
+    connectionId: credential.connectionId,
+    providerAccountId: credential.providerAccountId,
+    versionDigest: credential.versionDigest,
+    credentialExpiresAt: credential.expiresAt,
+    refreshCommandId: credential.refreshCommandId,
+    issuedAt: issuedAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    artists: Object.freeze(artists.map((artist) => Object.freeze({
+      spotifyId: artist.spotifyId,
+      name: artist.name,
+      match: artist.match ? Object.freeze({
+        catalogEntityId: artist.match.catalogEntityId,
+        evidenceDigest: catalogEvidenceDigest(artist.match),
+      }) : null,
+    }))),
+  });
+  const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
+  if (plaintext.byteLength > MAX_SNAPSHOT_PLAINTEXT_BYTES) {
+    throw new Error("SPOTIFY_ARTIST_SNAPSHOT_TOO_LARGE");
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", snapshotKey(env), iv);
+  cipher.setAAD(Buffer.from("truefantix:spotify-artist-snapshot:v1", "utf8"));
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const token = [
+    "v1",
+    iv.toString("base64url"),
+    cipher.getAuthTag().toString("base64url"),
+    encrypted.toString("base64url"),
+  ].join(".");
+  if (token.length > MAX_SNAPSHOT_TOKEN_LENGTH) throw new Error("SPOTIFY_ARTIST_SNAPSHOT_TOO_LARGE");
+  return token;
+}
+
+function openSnapshot(token: string, expectedUserId: string, now: Date, env: NodeJS.ProcessEnv) {
+  if (!token || token.length > MAX_SNAPSHOT_TOKEN_LENGTH) {
+    throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+  }
+  const [version, ivRaw, tagRaw, encryptedRaw, extra] = token.split(".");
+  if (version !== "v1" || !ivRaw || !tagRaw || !encryptedRaw || extra !== undefined) {
+    throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+  }
+  let decoded: unknown;
+  try {
+    const iv = Buffer.from(ivRaw, "base64url");
+    const tag = Buffer.from(tagRaw, "base64url");
+    const encrypted = Buffer.from(encryptedRaw, "base64url");
+    if (iv.byteLength !== 12 || tag.byteLength !== 16 || encrypted.byteLength > MAX_SNAPSHOT_PLAINTEXT_BYTES + 16) {
+      throw new Error();
+    }
+    const decipher = crypto.createDecipheriv("aes-256-gcm", snapshotKey(env), iv);
+    decipher.setAAD(Buffer.from("truefantix:spotify-artist-snapshot:v1", "utf8"));
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    if (plaintext.byteLength > MAX_SNAPSHOT_PLAINTEXT_BYTES) throw new Error();
+    decoded = JSON.parse(plaintext.toString("utf8"));
+  } catch {
+    throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+  }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+  }
+  const row = decoded as Record<string, unknown>;
+  const allowedKeys = [
+    "artists", "connectionId", "credentialExpiresAt", "expiresAt", "issuedAt",
+    "providerAccountId", "refreshCommandId", "userId", "version", "versionDigest",
+  ].sort();
+  const issuedAt = typeof row.issuedAt === "string" ? new Date(row.issuedAt) : new Date(NaN);
+  const expiresAt = typeof row.expiresAt === "string" ? new Date(row.expiresAt) : new Date(NaN);
+  const credentialExpiresAt = typeof row.credentialExpiresAt === "string"
+    ? new Date(row.credentialExpiresAt) : new Date(NaN);
+  if (
+    Object.keys(row).sort().join(",") !== allowedKeys.join(",")
+    || row.version !== 1
+    || row.userId !== expectedUserId
+    || !boundedText(row.connectionId, MAX_ID_LENGTH)
+    || !boundedText(row.providerAccountId, MAX_ID_LENGTH)
+    || !boundedText(row.versionDigest, 128)
+    || (row.refreshCommandId !== null && !boundedText(row.refreshCommandId, MAX_ID_LENGTH))
+    || !Number.isFinite(issuedAt.getTime())
+    || !Number.isFinite(expiresAt.getTime())
+    || !Number.isFinite(credentialExpiresAt.getTime())
+    || issuedAt > now
+    || expiresAt <= now
+    || expiresAt.getTime() > issuedAt.getTime() + SNAPSHOT_TTL_MS
+    || expiresAt.getTime() > credentialExpiresAt.getTime() - EXPIRY_LEEWAY_MS
+    || !Array.isArray(row.artists)
+    || row.artists.length > MAX_TOTAL_ITEMS
+  ) {
+    throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+  }
+  const ids = new Set<string>();
+  const artists = (row.artists as unknown[]).map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+    }
+    const artist = value as Record<string, unknown>;
+    const spotifyId = boundedText(artist.spotifyId, MAX_ID_LENGTH);
+    const name = boundedText(artist.name, MAX_NAME_LENGTH);
+    if (Object.keys(artist).sort().join(",") !== "match,name,spotifyId" || !spotifyId || !name || ids.has(spotifyId)) {
+      throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+    }
+    ids.add(spotifyId);
+    let match: SnapshotArtist["match"] = null;
+    if (artist.match !== null) {
+      if (!artist.match || typeof artist.match !== "object" || Array.isArray(artist.match)) {
+        throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+      }
+      const rawMatch = artist.match as Record<string, unknown>;
+      const catalogEntityId = boundedText(rawMatch.catalogEntityId, MAX_ID_LENGTH);
+      if (
+        Object.keys(rawMatch).sort().join(",") !== "catalogEntityId,evidenceDigest"
+        || !catalogEntityId
+        || typeof rawMatch.evidenceDigest !== "string"
+        || !/^[0-9a-f]{64}$/.test(rawMatch.evidenceDigest)
+      ) {
+        throw new Error("SPOTIFY_ARTIST_SNAPSHOT_INVALID");
+      }
+      match = Object.freeze({ catalogEntityId, evidenceDigest: rawMatch.evidenceDigest });
+    }
+    return Object.freeze({ spotifyId, name, match });
+  });
+  return Object.freeze({
+    userId: expectedUserId,
+    connectionId: row.connectionId as string,
+    providerAccountId: row.providerAccountId as string,
+    versionDigest: row.versionDigest as string,
+    expiresAt: row.credentialExpiresAt as string,
+    refreshCommandId: row.refreshCommandId as string | null,
+    artists: Object.freeze(artists),
+  });
 }
 
 function parseArtist(value: unknown, source: ArtistPrimitive["source"]): ArtistPrimitive {
@@ -406,7 +601,9 @@ function isSerializationFailure(error: unknown) {
 
 async function finalFence<T>(
   db: RootDatabase,
-  credential: SpotifyArtistReadCredential,
+  credential: Pick<SpotifyArtistReadCredential,
+    "userId" | "connectionId" | "providerAccountId" | "versionDigest" | "expiresAt" | "refreshCommandId"
+  >,
   now: Date,
   work: (tx: Transaction) => Promise<T>,
 ) {
@@ -496,16 +693,26 @@ export async function readSpotifyArtistSnapshot(
   const loaded = await loadSpotifyArtistSnapshot(userId, options);
   if (loaded.status !== "READY") return loaded;
   try {
-    const fenced = await finalFence(db, loaded.credential, now(), async () => undefined);
+    const fencedAt = now();
+    const fenced = await finalFence(db, loaded.credential, fencedAt, async () => undefined);
     if (!fenced.valid) return Object.freeze({ status: "DRIFTED" });
+    const snapshotToken = sealSnapshot(
+      loaded.credential,
+      loaded.artists,
+      fencedAt,
+      options.env ?? process.env,
+    );
+    return Object.freeze({ status: "READY", artists: loaded.artists, snapshotToken });
   } catch (error) {
     if (isSerializationFailure(error)) return Object.freeze({ status: "DRIFTED" });
     throw error;
   }
-  return Object.freeze({ status: "READY", artists: loaded.artists });
 }
 
 function validateSelection(selection: SpotifyArtistImportSelection) {
+  if (typeof selection.snapshotToken !== "string" || !selection.snapshotToken) {
+    throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
+  }
   if (typeof selection.includeUnmatched !== "boolean") throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
   if (selection.spotifyIds === null) return null;
   if (!Array.isArray(selection.spotifyIds) || selection.spotifyIds.length > MAX_TOTAL_ITEMS) {
@@ -528,15 +735,15 @@ export async function importSpotifyArtistSnapshot(
   const selectedIds = validateSelection(selection);
   const db = options.db ?? prisma;
   const now = options.now ?? (() => new Date());
-  const loaded = await loadSpotifyArtistSnapshot(userId, options);
-  if (loaded.status !== "READY") return loaded;
+  const openedAt = now();
+  const loaded = openSnapshot(selection.snapshotToken, userId, openedAt, options.env ?? process.env);
   const selected = Object.freeze(loaded.artists.filter((artist) => !selectedIds || selectedIds.has(artist.spotifyId)));
   if (selectedIds && selected.length !== selectedIds.size) {
     throw new Error("SPOTIFY_ARTIST_SELECTION_STALE");
   }
 
   try {
-    const fenced = await finalFence(db, loaded.credential, now(), async (tx) => {
+    const fenced = await finalFence(db, loaded, openedAt, async (tx) => {
       const imported = [];
       const requested = [];
       const importedIds = new Set<string>();
@@ -551,9 +758,12 @@ export async function importSpotifyArtistSnapshot(
           if (
             !entity
             || entity.type !== "ARTIST"
-            || entity.canonicalName !== artist.match.canonicalName
-            || entity.provider !== artist.match.provider
-            || entity.providerId !== artist.match.providerId
+            || catalogEvidenceDigest({
+              catalogEntityId: entity.id,
+              canonicalName: entity.canonicalName,
+              provider: entity.provider,
+              providerId: entity.providerId,
+            }) !== artist.match.evidenceDigest
           ) {
             throw new Error("SPOTIFY_ARTIST_CATALOG_DRIFT");
           }
@@ -589,12 +799,7 @@ export async function importSpotifyArtistSnapshot(
               notes: "Imported from Spotify; needs catalog review.",
               status: "PENDING",
             },
-            update: {
-              notes: "Imported from Spotify; needs catalog review.",
-              status: "PENDING",
-              adminNotes: null,
-              reviewedAt: null,
-            },
+            update: {},
             select: { id: true, requestedValue: true, status: true },
           });
           if (!requestedIds.has(request.id)) {
@@ -603,9 +808,11 @@ export async function importSpotifyArtistSnapshot(
           }
         }
       }
+      const deliveryIntentIds = await stageSpotifyCatalogRequestDelivery(tx, userId, requested);
       return Object.freeze({
         imported: Object.freeze(imported),
         requested: Object.freeze(requested),
+        deliveryIntentIds,
       });
     });
     if (!fenced.valid) return Object.freeze({ status: "DRIFTED" });

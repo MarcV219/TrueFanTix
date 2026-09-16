@@ -1,13 +1,8 @@
 export const runtime = "nodejs";
 
-import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/guards";
-import {
-  sendEmail,
-  type EmailPayload,
-  type EmailSendResult,
-} from "@/lib/email";
+import { drainSpotifyCatalogRequestDeliveries } from "@/lib/integrations/spotify-catalog-request-delivery";
 import {
   importSpotifyArtistSnapshot,
   readSpotifyArtistSnapshot,
@@ -18,26 +13,10 @@ import {
 import { SpotifyRefreshAccessChangedError } from "@/lib/integrations/spotify-refresh-command";
 import { ManagedAccountSpotifyOperationError } from "@/lib/integrations/ordinary-spotify-user";
 
-const ADMIN_EMAIL = "admin@truefantix.com";
-const MAX_REQUEST_BYTES = 16_384;
+const MAX_REQUEST_BYTES = 786_432;
 const MAX_SELECTED_ARTISTS = 350;
 const MAX_SPOTIFY_ID_LENGTH = 128;
-
-async function sendEmailWithProviderEvidence(
-  payload: EmailPayload,
-): Promise<EmailSendResult> {
-  try {
-    return await sendEmail(payload);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown email error";
-    return {
-      ok: false,
-      provider: "CONSOLE",
-      providerResult: "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE",
-      error: `EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: ${message}`,
-    };
-  }
-}
+const MAX_SNAPSHOT_TOKEN_LENGTH = 720_000;
 
 function privateJson(body: unknown, status: number) {
   const response = NextResponse.json(body, { status });
@@ -95,7 +74,14 @@ async function parseSelection(req: Request): Promise<SpotifyArtistImportSelectio
     throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
   }
   const row = body as Record<string, unknown>;
-  if (Object.keys(row).some((key) => key !== "spotifyIds" && key !== "includeUnmatched")) {
+  if (Object.keys(row).some((key) => !["snapshotToken", "spotifyIds", "includeUnmatched"].includes(key))) {
+    throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
+  }
+  if (
+    typeof row.snapshotToken !== "string"
+    || !row.snapshotToken
+    || row.snapshotToken.length > MAX_SNAPSHOT_TOKEN_LENGTH
+  ) {
     throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
   }
   if (row.includeUnmatched !== undefined && typeof row.includeUnmatched !== "boolean") {
@@ -114,52 +100,16 @@ async function parseSelection(req: Request): Promise<SpotifyArtistImportSelectio
       if (!normalized || normalized.length > MAX_SPOTIFY_ID_LENGTH) {
         throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
       }
+      if (unique.has(normalized)) throw new Error("SPOTIFY_ARTIST_SELECTION_INVALID");
       unique.add(normalized);
     }
     spotifyIds = Object.freeze([...unique]);
   }
-  return Object.freeze({ spotifyIds, includeUnmatched: row.includeUnmatched !== false });
-}
-
-async function notifyAdminOfUnmatched({
-  names,
-  requestIds,
-}: {
-  names: string[];
-  requestIds: string[];
-}) {
-  if (names.length === 0) return;
-  const subject = `Spotify catalog requests: ${names.length} artist${names.length === 1 ? "" : "s"}`;
-  const text = `A TrueFanTix user imported Spotify artists that need catalog review.
-
-Artists:
-${names.map((name) => `- ${name}`).join("\n")}
-
-Review pending catalog requests in /admin/catalog-requests and fulfill them to add the artists to the user's notification favorites.`;
-
-  const html = `
-<!DOCTYPE html>
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.5; color: #111827;">
-  <h2>Spotify catalog requests</h2>
-  <p>A TrueFanTix user imported Spotify artists that need catalog review.</p>
-  <ul>${names.map((name) => `<li>${name.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</li>`).join("")}</ul>
-  <p>Review pending catalog requests in <code>/admin/catalog-requests</code> and fulfill them to add the artists to the user's notification favorites.</p>
-</body>
-</html>`;
-
-  const requestIdentity = [...new Set(requestIds)].sort().join("\n");
-  const idempotencyKey = `spotify-catalog:${createHash("sha256")
-    .update(requestIdentity)
-    .digest("hex")}`;
-  const result = await sendEmailWithProviderEvidence({
-    to: ADMIN_EMAIL,
-    subject,
-    text,
-    html,
-    idempotencyKey,
+  return Object.freeze({
+    snapshotToken: row.snapshotToken,
+    spotifyIds,
+    includeUnmatched: row.includeUnmatched !== false,
   });
-  if (!result.ok) console.error("Spotify unmatched artist admin email failed:", result.error);
 }
 
 function accessChangedError(error: SpotifyRefreshAccessChangedError) {
@@ -214,7 +164,12 @@ export async function GET(req: Request) {
     const transient = transientResult(result, false);
     if (transient) return transient;
     if (result.status !== "READY") throw new Error("SPOTIFY_ARTIST_RESULT_INVALID");
-    return privateJson({ ok: true, connected: true, artists: result.artists }, 200);
+    return privateJson({
+      ok: true,
+      connected: true,
+      artists: result.artists,
+      snapshotToken: result.snapshotToken,
+    }, 200);
   } catch (error) {
     if (error instanceof ManagedAccountSpotifyOperationError) return stagingConsoleOnlyError();
     if (error instanceof SpotifyRefreshAccessChangedError) return accessChangedError(error);
@@ -237,10 +192,11 @@ export async function POST(req: Request) {
     if (transient) return transient;
     if (result.status !== "READY") throw new Error("SPOTIFY_ARTIST_RESULT_INVALID");
 
-    await notifyAdminOfUnmatched({
-      names: result.requested.map((request) => request.requestedValue),
-      requestIds: result.requested.map((request) => request.id),
-    });
+    try {
+      await drainSpotifyCatalogRequestDeliveries(result.deliveryIntentIds);
+    } catch {
+      console.error("Spotify catalog request delivery drain failed");
+    }
 
     return privateJson(
       { ok: true, imported: result.imported, requested: result.requested },
@@ -255,7 +211,10 @@ export async function POST(req: Request) {
         400,
       );
     }
-    if (error instanceof Error && error.message === "SPOTIFY_ARTIST_SELECTION_STALE") {
+    if (
+      error instanceof Error
+      && ["SPOTIFY_ARTIST_SELECTION_STALE", "SPOTIFY_ARTIST_SNAPSHOT_INVALID"].includes(error.message)
+    ) {
       return privateJson(
         { ok: false, error: "SPOTIFY_SELECTION_STALE", message: "Refresh Spotify artists and try again." },
         409,

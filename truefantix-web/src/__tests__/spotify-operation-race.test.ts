@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth/guards";
 import { sendEmail } from "@/lib/email";
+import { drainSpotifyCatalogRequestDeliveries } from "@/lib/integrations/spotify-catalog-request-delivery";
 import {
   disconnectSpotify,
   exchangeSpotifyCode,
@@ -37,6 +38,9 @@ jest.mock("@/lib/prisma", () => ({
 
 jest.mock("@/lib/auth/guards", () => ({ requireUser: jest.fn() }));
 jest.mock("@/lib/email", () => ({ sendEmail: jest.fn() }));
+jest.mock("@/lib/integrations/spotify-catalog-request-delivery", () => ({
+  drainSpotifyCatalogRequestDeliveries: jest.fn(),
+}));
 jest.mock("next/headers", () => ({ cookies: jest.fn() }));
 jest.mock("@/lib/integrations/spotify-artist-read", () => ({
   importSpotifyArtistSnapshot: jest.fn(),
@@ -64,6 +68,9 @@ const mockedPrisma = prisma as unknown as {
 const mockedRequireUser = requireUser as jest.MockedFunction<typeof requireUser>;
 const mockedCookies = cookies as jest.MockedFunction<typeof cookies>;
 const mockedSendEmail = sendEmail as jest.MockedFunction<typeof sendEmail>;
+const mockedDrainSpotifyCatalogRequestDeliveries = drainSpotifyCatalogRequestDeliveries as jest.MockedFunction<
+  typeof drainSpotifyCatalogRequestDeliveries
+>;
 const mockedDisconnectSpotify = disconnectSpotify as jest.MockedFunction<typeof disconnectSpotify>;
 const mockedExchangeSpotifyCode = exchangeSpotifyCode as jest.MockedFunction<typeof exchangeSpotifyCode>;
 const mockedGetSpotifyConnectionEvidence = getSpotifyConnectionEvidence as jest.MockedFunction<
@@ -128,8 +135,9 @@ describe("Spotify staging-persona operation boundary", () => {
     );
     mockedHasSpotifyConnection.mockResolvedValue(true);
     mockedDisconnectSpotify.mockResolvedValue(undefined);
-    mockedImportSpotifyArtistSnapshot.mockResolvedValue({ status: "READY", imported: [], requested: [] });
-    mockedReadSpotifyArtistSnapshot.mockResolvedValue({ status: "READY", artists: [] });
+    mockedImportSpotifyArtistSnapshot.mockResolvedValue({ status: "READY", imported: [], requested: [], deliveryIntentIds: [] });
+    mockedReadSpotifyArtistSnapshot.mockResolvedValue({ status: "READY", artists: [], snapshotToken: "snapshot-token" });
+    mockedDrainSpotifyCatalogRequestDeliveries.mockResolvedValue({ claimed: 0, delivered: 0, failed: 0, reconciliationRequired: 0 });
     mockedExchangeSpotifyCode.mockResolvedValue({ access_token: "token" });
     mockedSnapshotSpotifyConnectionAuthorization.mockResolvedValue({
       userId: "user-1",
@@ -192,7 +200,7 @@ describe("Spotify staging-persona operation boundary", () => {
     expect(mockedReadSpotifyArtistSnapshot).not.toHaveBeenCalled();
   });
 
-  it("passes a bounded selection to the import boundary and emails only after committed output", async () => {
+  it("passes an exact bounded snapshot selection and drains only durable post-commit delivery work", async () => {
     const sequence: string[] = [];
     mockedImportSpotifyArtistSnapshot.mockImplementationOnce(async () => {
       sequence.push("import-committed");
@@ -200,16 +208,18 @@ describe("Spotify staging-persona operation boundary", () => {
         status: "READY",
         imported: [{ id: "preference-1", type: "ARTIST", value: "Matched Artist", status: "ACTIVE", catalogEntityId: "entity-1" }],
         requested: [{ id: "request-1", requestedValue: "Unknown Artist", status: "PENDING" }],
+        deliveryIntentIds: ["intent-1"],
       };
     });
-    mockedSendEmail.mockImplementationOnce(async () => {
-      sequence.push("email-attempted");
-      return { ok: true, provider: "CONSOLE", providerResult: "LOGGED" };
+    mockedDrainSpotifyCatalogRequestDeliveries.mockImplementationOnce(async () => {
+      sequence.push("delivery-drained");
+      return { claimed: 1, delivered: 1, failed: 0, reconciliationRequired: 0 };
     });
 
     const response = await importArtists(
       request("/api/integrations/spotify/artists", "POST", {
-        spotifyIds: ["artist-1", "artist-1", "artist-2"],
+        snapshotToken: "snapshot-token",
+        spotifyIds: ["artist-1", "artist-2"],
         includeUnmatched: true,
       }),
     );
@@ -217,19 +227,18 @@ describe("Spotify staging-persona operation boundary", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(mockedImportSpotifyArtistSnapshot).toHaveBeenCalledWith("user-1", {
+      snapshotToken: "snapshot-token",
       spotifyIds: ["artist-1", "artist-2"],
       includeUnmatched: true,
     });
-    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
-    expect(mockedSendEmail).toHaveBeenCalledWith(expect.objectContaining({
-      idempotencyKey: expect.stringMatching(/^spotify-catalog:[a-f0-9]{64}$/),
-    }));
-    expect(sequence).toEqual(["import-committed", "email-attempted"]);
+    expect(mockedDrainSpotifyCatalogRequestDeliveries).toHaveBeenCalledWith(["intent-1"]);
+    expect(sequence).toEqual(["import-committed", "delivery-drained"]);
   });
 
   it("rejects unknown or hostile selection fields before the import boundary", async () => {
     const response = await importArtists(
       request("/api/integrations/spotify/artists", "POST", {
+        snapshotToken: "snapshot-token",
         spotifyIds: ["artist-1"],
         includeUnmatched: true,
         nested: { arbitrary: ["work"] },
@@ -241,6 +250,23 @@ describe("Spotify staging-persona operation boundary", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "INVALID_REQUEST" });
     expect(mockedImportSpotifyArtistSnapshot).not.toHaveBeenCalled();
     expect(mockedSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing snapshot token and duplicate Spotify ids instead of normalizing them", async () => {
+    const missing = await importArtists(
+      request("/api/integrations/spotify/artists", "POST", { spotifyIds: ["artist-1"] }),
+    );
+    const duplicate = await importArtists(
+      request("/api/integrations/spotify/artists", "POST", {
+        snapshotToken: "snapshot-token",
+        spotifyIds: ["artist-1", " artist-1 "],
+      }),
+    );
+
+    expect(missing.status).toBe(400);
+    expect(duplicate.status).toBe(400);
+    expect(mockedImportSpotifyArtistSnapshot).not.toHaveBeenCalled();
+    expect(mockedDrainSpotifyCatalogRequestDeliveries).not.toHaveBeenCalled();
   });
 
   it("keeps refresh and drift outcomes private and does not disguise them as empty success", async () => {
@@ -276,6 +302,7 @@ describe("Spotify staging-persona operation boundary", () => {
           providerId: "artist-1",
         },
       }],
+      snapshotToken: "snapshot-token",
     });
 
     const response = await getArtists(request("/api/integrations/spotify/artists"));
@@ -289,7 +316,7 @@ describe("Spotify staging-persona operation boundary", () => {
   it("returns a bounded stale-selection conflict without email", async () => {
     mockedImportSpotifyArtistSnapshot.mockRejectedValueOnce(new Error("SPOTIFY_ARTIST_SELECTION_STALE"));
     const response = await importArtists(
-      request("/api/integrations/spotify/artists", "POST", { spotifyIds: ["missing"] }),
+      request("/api/integrations/spotify/artists", "POST", { snapshotToken: "snapshot-token", spotifyIds: ["missing"] }),
     );
 
     expect(response.status).toBe(409);
@@ -305,12 +332,13 @@ describe("Spotify staging-persona operation boundary", () => {
       status: "READY",
       imported: [],
       requested: [{ id: "request-1", requestedValue: "Unknown Artist", status: "PENDING" }],
+      deliveryIntentIds: ["intent-1"],
     });
-    mockedSendEmail.mockRejectedValueOnce(new Error("synthetic providerless failure"));
+    mockedDrainSpotifyCatalogRequestDeliveries.mockRejectedValueOnce(new Error("synthetic drain failure"));
 
     try {
       const response = await importArtists(
-        request("/api/integrations/spotify/artists", "POST", { includeUnmatched: true }),
+        request("/api/integrations/spotify/artists", "POST", { snapshotToken: "snapshot-token", includeUnmatched: true }),
       );
 
       expect(response.status).toBe(200);
@@ -320,8 +348,7 @@ describe("Spotify staging-persona operation boundary", () => {
       });
       expect(mockedImportSpotifyArtistSnapshot).toHaveBeenCalledTimes(1);
       expect(console.error).toHaveBeenCalledWith(
-        "Spotify unmatched artist admin email failed:",
-        "EXCEPTION_WITHOUT_PROVIDER_EVIDENCE: synthetic providerless failure",
+        "Spotify catalog request delivery drain failed",
       );
     } finally {
       if (previousResendApiKey === undefined) {
@@ -338,7 +365,7 @@ describe("Spotify staging-persona operation boundary", () => {
     );
 
     const response = await importArtists(
-      request("/api/integrations/spotify/artists", "POST", { includeUnmatched: true }),
+      request("/api/integrations/spotify/artists", "POST", { snapshotToken: "snapshot-token", includeUnmatched: true }),
     );
 
     expect(response.status).toBe(500);
@@ -349,7 +376,7 @@ describe("Spotify staging-persona operation boundary", () => {
     mockedImportSpotifyArtistSnapshot.mockRejectedValueOnce(new ManagedAccountSpotifyOperationError());
 
     const response = await importArtists(
-      request("/api/integrations/spotify/artists", "POST", { includeUnmatched: true }),
+      request("/api/integrations/spotify/artists", "POST", { snapshotToken: "snapshot-token", includeUnmatched: true }),
     );
 
     expect(response.status).toBe(403);
