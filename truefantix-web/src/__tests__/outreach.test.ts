@@ -1,5 +1,11 @@
 /** @jest-environment node */
-import { outreachReplyAddress, outreachSender, sendOutreachEmail } from "@/lib/outreach-email";
+import {
+  OutreachEmailOutcomeUncertainError,
+  OutreachEmailRejectedError,
+  outreachReplyAddress,
+  outreachSender,
+  sendOutreachEmail,
+} from "@/lib/outreach-email";
 import { contactMergeVars, defaultOutreachFollowUpAt, emailFromUnsubscribeToken, isGenericOutreachEmail, normalizeEmail, outreachContactLabel, recentContactCutoff, renderMerge, unsubscribeToken, wasRecentlyContacted } from "@/lib/outreach";
 import { completeQuebecCollaborationHtml, outreachHtmlDocument, outreachHtmlToText, quebecCollaborationSubject, sanitizeOutreachHtml } from "@/lib/outreach-rich-text";
 import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
@@ -79,11 +85,48 @@ describe("outreach security and personalization", () => {
 
   it("sends through Resend with reply-to and one-click unsubscribe headers", async () => {
     const request=jest.spyOn(global,"fetch").mockResolvedValue(new Response(JSON.stringify({id:"email_123"}),{status:200,headers:{"Content-Type":"application/json"}}));
-    await expect(sendOutreachEmail({to:"person@example.com",subject:"Hello",text:"Message",unsubscribeUrl:"https://truefantix.com/unsubscribe/outreach?token=x"})).resolves.toEqual({provider:"RESEND",messageId:"email_123"});
+    await expect(sendOutreachEmail({to:"person@example.com",subject:"Hello",text:"Message",unsubscribeUrl:"https://truefantix.com/unsubscribe/outreach?token=x",idempotencyKey:"attempt-123"})).resolves.toEqual({provider:"RESEND",messageId:"email_123"});
     const payload=JSON.parse(String(request.mock.calls[0][1]?.body));
     expect(payload.from).toBe("Marc at TrueFanTix <marc@truefantix.com>");
     expect(payload.reply_to).toBe("marc@truefantix.com");
     expect(payload.headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+    expect(payload.tags).toEqual([{ name: "truefantix_outreach_attempt", value: "attempt-123" }]);
+    expect(new Headers(request.mock.calls[0][1]?.headers).get("Idempotency-Key")).toBe("attempt-123");
+  });
+
+  it("distinguishes an explicit provider rejection from an accepted response with missing identity", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ message: "synthetic rejection" }), {
+      status: 422,
+      headers: { "Content-Type": "application/json" },
+    }));
+    await expect(sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    })).rejects.toBeInstanceOf(OutreachEmailRejectedError);
+
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response("{}", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    await expect(sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    })).rejects.toBeInstanceOf(OutreachEmailOutcomeUncertainError);
+
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ message: "synthetic outage" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    }));
+    await expect(sendOutreachEmail({
+      to: "person@example.com",
+      subject: "Hello",
+      text: "Message",
+      unsubscribeUrl: "https://truefantix.com/unsubscribe/outreach?token=x",
+    })).rejects.toBeInstanceOf(OutreachEmailOutcomeUncertainError);
   });
 
   it("preserves safe rich text and removes unsafe pasted Word markup", () => {

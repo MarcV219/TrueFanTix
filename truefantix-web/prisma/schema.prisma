@@ -2809,9 +2809,10 @@ model OutreachRecipient {
   bodyTextSnapshot  String
   bodyHtmlSnapshot  String?
   status            String               @default("PENDING")
+  deliveryAttemptId String?              @unique
   gmailMessageId    String?
   gmailThreadId     String?
-  providerMessageId String?
+  providerMessageId String?              @unique
   providerResult    String?
   error             String?
   sentAt            DateTime?
@@ -2824,7 +2825,28 @@ model OutreachRecipient {
   @@index([status, createdAt])
   @@index([contactId, sentAt])
   @@index([gmailThreadId])
-  @@index([providerMessageId])
+}
+
+model OutreachQuarantinedEmailEvent {
+  id                String   @id @default(cuid())
+  createdAt         DateTime @default(now())
+  svixId            String   @unique
+  type              String
+  providerMessageId String
+  deliveryAttemptId String?
+  email             String
+  occurredAt        DateTime
+  detail            String?
+  reason            String
+  deleteAfter       DateTime
+
+  @@index([deleteAfter])
+  @@index([providerMessageId, occurredAt])
+}
+
+model OutreachEmailEventTombstone {
+  svixId    String   @id
+  createdAt DateTime @default(now())
 }
 
 model OutreachReply {

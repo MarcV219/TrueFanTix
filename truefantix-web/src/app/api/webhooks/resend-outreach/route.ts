@@ -3,9 +3,9 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { Resend, type WebhookEventPayload } from "resend";
-import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/outreach";
 import { recordOutreachDeliveryEvent } from "@/lib/outreach-delivery-event";
+import { settleOutreachCampaign } from "@/lib/outreach-send";
 
 const trackedTypes = new Set([
   "email.sent",
@@ -69,15 +69,12 @@ export async function POST(req: Request) {
   if (!trackedTypes.has(event.type) || !("email_id" in event.data)) return NextResponse.json({ ok: true, ignored: true });
   const svixId = req.headers.get("svix-id")!;
   const providerMessageId = event.data.email_id;
-  const recipient = await prisma.outreachRecipient.findFirst({
-    where: { providerMessageId },
-    select: { id: true, emailSnapshot: true },
-  });
-  // The Resend account also sends transactional mail. Ignore events that do not
-  // match a message sent by the isolated Outreach system.
-  if (!recipient) return NextResponse.json({ ok: true, ignored: true });
-
-  const email = normalizeEmail(event.data.to[0] || recipient.emailSnapshot);
+  const tags = "tags" in event.data ? event.data.tags : undefined;
+  const taggedAttempt = tags?.truefantix_outreach_attempt;
+  const deliveryAttemptId = typeof taggedAttempt === "string" && taggedAttempt.length <= 128
+    ? taggedAttempt
+    : null;
+  const email = normalizeEmail(event.data.to[0] || "");
   const reason = suppressionReason(event.type);
   const detail = detailFor(event)?.slice(0, 1000) || null;
   const occurredAt = new Date(event.created_at);
@@ -87,7 +84,7 @@ export async function POST(req: Request) {
       svixId,
       type: event.type,
       providerMessageId,
-      recipientId: recipient.id,
+      deliveryAttemptId,
       normalizedEmail: email,
       occurredAt,
       detail,
@@ -95,9 +92,12 @@ export async function POST(req: Request) {
       suppressionReason: reason,
       contactUpdate: contactUpdateForDeliveryEvent(event.type),
     });
-    if (result === "IDENTITY_CHANGED") {
-      return NextResponse.json({ ok: true, ignored: true });
+    if (result.campaignId) {
+      await settleOutreachCampaign(result.campaignId);
     }
+    if (result.status === "DUPLICATE") return NextResponse.json({ ok: true, duplicate: true });
+    if (result.status === "QUARANTINED") return NextResponse.json({ ok: true, quarantined: true });
+    if (result.status === "IGNORED") return NextResponse.json({ ok: true, ignored: true });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return NextResponse.json({ ok: true, duplicate: true });
     throw error;

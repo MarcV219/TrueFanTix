@@ -2,15 +2,22 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { sendOutreachEmail } from "@/lib/outreach-email";
-import { defaultOutreachFollowUpAt, normalizeEmail, unsubscribeUrl } from "@/lib/outreach";
+import { OutreachEmailRejectedError, sendOutreachEmail } from "@/lib/outreach-email";
+import { normalizeEmail, unsubscribeUrl } from "@/lib/outreach";
 import {
   outreachHtmlDocument,
   outreachLegalFooterText,
 } from "@/lib/outreach-rich-text";
 import { auditLog, createAuditContext } from "@/lib/audit";
 import { MAX_OUTREACH_CAMPAIGN_CONTACTS } from "@/lib/outreach-config";
-import { claimOutreachRecipient, settleOutreachCampaign } from "@/lib/outreach-send";
+import {
+  claimOutreachRecipient,
+  finalizeOutreachRecipientAcceptance,
+  markOutreachRecipientOutcomeUncertain,
+  preserveAcceptedOutreachForReconciliation,
+  rejectOutreachRecipientAttempt,
+  settleOutreachCampaign,
+} from "@/lib/outreach-send";
 
 export async function POST(
   req: Request,
@@ -49,7 +56,13 @@ export async function POST(
   });
   if (!recipients.length) {
     const settlement = await settleOutreachCampaign(id);
-    return NextResponse.json({ ok: true, sent: 0, failed: 0, remaining: settlement.pending });
+    return NextResponse.json({
+      ok: true,
+      sent: 0,
+      failed: 0,
+      reconciliationRequired: settlement.reconciliationRequired,
+      remaining: settlement.pending + settlement.sending + settlement.reconciliationRequired,
+    });
   }
   await prisma.outreachCampaign.update({
     where: { id },
@@ -60,15 +73,23 @@ export async function POST(
     },
   });
   let sent = 0,
-    failed = 0;
+    failed = 0,
+    reconciliationRequired = 0;
   for (const candidate of recipients) {
     const claim = await claimOutreachRecipient(id, candidate.id);
     if (claim.status !== "CLAIMED") continue;
     const recipient = claim.recipient;
     const email = normalizeEmail(recipient.emailSnapshot);
+    const identity = Object.freeze({
+      recipientId: recipient.id,
+      contactId: recipient.contactId,
+      normalizedEmail: email,
+      deliveryAttemptId: recipient.deliveryAttemptId,
+    });
+    let result: Awaited<ReturnType<typeof sendOutreachEmail>>;
     try {
       const optOutUrl = unsubscribeUrl(email);
-      const result = await sendOutreachEmail({
+      result = await sendOutreachEmail({
         to: recipient.emailSnapshot,
         subject: recipient.subjectSnapshot,
         text: `${recipient.bodyTextSnapshot}\n\n${outreachLegalFooterText}\nUnsubscribe: ${optOutUrl}`,
@@ -76,49 +97,58 @@ export async function POST(
           ? outreachHtmlDocument(recipient.bodyHtmlSnapshot, optOutUrl)
           : undefined,
         unsubscribeUrl: optOutUrl,
+        idempotencyKey: recipient.deliveryAttemptId,
       });
-      const sentAt = new Date();
-      await prisma.$transaction([
-        prisma.outreachRecipient.update({
-          where: { id: recipient.id },
-          data: {
-            status: "SENT",
-            sentAt,
-            providerMessageId: result.messageId,
-            providerResult: `${result.provider}_ACCEPTED`,
-          },
-        }),
-        prisma.outreachContact.update({
-          where: { id: recipient.contactId },
-          data: {
-            lastContactedAt: sentAt,
-            followUpAt: defaultOutreachFollowUpAt(sentAt),
-            engagementStage: "CONTACTED",
-          },
-        }),
-      ]);
-      sent++;
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message.slice(0, 500)
-          : "Gmail send failed.";
-      await prisma.outreachRecipient.update({
-        where: { id: recipient.id },
-        data: { status: "FAILED", error: message },
-      });
-      failed++;
+          : "Outreach provider outcome is unknown.";
+      if (error instanceof OutreachEmailRejectedError) {
+        const rejection = await rejectOutreachRecipientAttempt(identity, message);
+        if (rejection === "ALREADY_RESOLVED") sent++;
+        else if (rejection === "FAILED") failed++;
+        else reconciliationRequired++;
+      } else {
+        const uncertain = await markOutreachRecipientOutcomeUncertain(identity, message);
+        if (uncertain === "ALREADY_RESOLVED") sent++;
+        else reconciliationRequired++;
+      }
+      continue;
+    }
+    try {
+      await finalizeOutreachRecipientAcceptance(identity, result.messageId);
+      sent++;
+    } catch (error) {
+      const message = error instanceof Error
+        ? `Provider acceptance requires reconciliation: ${error.message}`.slice(0, 500)
+        : "Provider acceptance requires reconciliation.";
+      try {
+        const preserved = await preserveAcceptedOutreachForReconciliation(
+          identity,
+          result.messageId,
+          message,
+        );
+        if (preserved === "ALREADY_RESOLVED") {
+          sent++;
+          continue;
+        }
+      } catch {
+        // The committed SENDING claim remains irreversible and cannot be selected
+        // for another provider dispatch even if this evidence write also fails.
+      }
+      reconciliationRequired++;
     }
   }
   const settlement = await settleOutreachCampaign(id);
-  const remaining = settlement.pending;
+  const remaining = settlement.pending + settlement.sending + settlement.reconciliationRequired;
   await auditLog({
     action: "ADMIN_OUTREACH_SEND",
     userId: gate.user.id,
     targetType: "OutreachCampaign",
     targetId: id,
-    metadata: { sent, failed, remaining },
+    metadata: { sent, failed, reconciliationRequired, remaining },
     ...createAuditContext(req),
   });
-  return NextResponse.json({ ok: true, sent, failed, remaining });
+  return NextResponse.json({ ok: true, sent, failed, reconciliationRequired, remaining });
 }
