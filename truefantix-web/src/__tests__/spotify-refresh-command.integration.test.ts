@@ -261,6 +261,14 @@ if (!databaseUrl) describe.skip("Spotify refresh-command PostgreSQL boundary", (
   it.each([
     ["pre-contact provider rejection", "NOT_CONTACTED", "PROVIDER_REJECTED", null, null, null],
     ["uncertain pre-contact failure", "CONTACT_UNCERTAIN", "REFRESH_INPUT_UNAVAILABLE", null, null, null],
+    [
+      "uncertain outcome with result evidence",
+      "CONTACT_UNCERTAIN",
+      "PROVIDER_OUTCOME_UNCERTAIN",
+      null,
+      new Date("2027-01-01T00:00:00.000Z"),
+      false,
+    ],
     ["HTTP-200 provider rejection", "CONTACTED", "PROVIDER_REJECTED", 200, null, null],
     ["HTTP-500 invalid success envelope", "CONTACTED", "PROVIDER_INVALID_RESPONSE", 500, null, null],
     ["incomplete local-finalization evidence", "CONTACTED", "LOCAL_FINALIZATION_FAILED", 200, null, null],

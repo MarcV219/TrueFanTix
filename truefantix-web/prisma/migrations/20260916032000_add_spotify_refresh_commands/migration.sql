@@ -204,7 +204,9 @@ BEGIN
       OR (NEW."providerContactStatus" = 'NOT_CONTACTED' AND (
         NEW."providerHttpStatus" IS NOT NULL OR NEW."resultExpiresAt" IS NOT NULL OR NEW."refreshTokenRotated" IS NOT NULL
       ))
-      OR (NEW."providerContactStatus" = 'CONTACT_UNCERTAIN' AND NEW."providerHttpStatus" IS NOT NULL)
+      OR (NEW."providerContactStatus" = 'CONTACT_UNCERTAIN' AND (
+        NEW."providerHttpStatus" IS NOT NULL OR NEW."resultExpiresAt" IS NOT NULL OR NEW."refreshTokenRotated" IS NOT NULL
+      ))
       OR (NEW."providerContactStatus" = 'CONTACTED' AND NEW."providerHttpStatus" IS NULL)
       OR (NEW."providerContactStatus" = 'NOT_CONTACTED'
         AND NEW."failureCode" NOT IN ('REFRESH_INPUT_UNAVAILABLE', 'SOURCE_VERSION_CHANGED'))
