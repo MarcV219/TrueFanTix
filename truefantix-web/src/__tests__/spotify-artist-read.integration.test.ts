@@ -310,6 +310,111 @@ if (!databaseUrl) describe.skip("bounded Spotify artist read", () => {
       });
   });
 
+  it.each(["NETWORK_ERROR", "PROVIDER_ERROR"])(
+    "quarantines ambiguous returned provider result %s instead of recording a false terminal failure",
+    async (providerResult) => {
+      const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+        ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+        : response({ items: [], next: null })) as unknown as typeof fetch;
+      const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+      if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+      const imported = await importSpotifyArtistSnapshot(userId, {
+        snapshotToken: snapshot.snapshotToken,
+        spotifyIds: null,
+        includeUnmatched: true,
+      }, { db: serviceDb, env, now: () => new Date(now) });
+      if (imported.status !== "READY") throw new Error("expected ready import");
+      const send = jest.fn(async () => ({
+        ok: false,
+        provider: "RESEND" as const,
+        providerResult,
+        error: "raw provider-derived transport detail must not be persisted",
+      }));
+      const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+
+      await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+      await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+
+      expect(send).toHaveBeenCalledTimes(1);
+      await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
+        .resolves.toMatchObject({
+          status: "RECONCILIATION_REQUIRED",
+          attemptCount: 1,
+          provider: "RESEND",
+          providerResult,
+          lastError: "Email provider outcome requires reconciliation",
+        });
+    },
+  );
+
+  it("records an explicit provider HTTP rejection as terminal without replay", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const imported = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    if (imported.status !== "READY") throw new Error("expected ready import");
+    const send = jest.fn(async () => ({
+      ok: false,
+      provider: "RESEND" as const,
+      providerResult: "HTTP 422",
+      error: "raw provider rejection detail must not be persisted",
+    }));
+    const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
+      .resolves.toMatchObject({
+        status: "FAILED",
+        attemptCount: 1,
+        provider: "RESEND",
+        providerResult: "HTTP 422",
+        lastError: "Email provider rejected delivery",
+      });
+  });
+
+  it("quarantines an HTTP 500 provider outcome without replay", async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
+      ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })
+      : response({ items: [], next: null })) as unknown as typeof fetch;
+    const snapshot = await readSpotifyArtistSnapshot(userId, { db: serviceDb, env, fetchImpl, now: () => new Date(now) });
+    if (snapshot.status !== "READY") throw new Error("expected ready snapshot");
+    const imported = await importSpotifyArtistSnapshot(userId, {
+      snapshotToken: snapshot.snapshotToken,
+      spotifyIds: null,
+      includeUnmatched: true,
+    }, { db: serviceDb, env, now: () => new Date(now) });
+    if (imported.status !== "READY") throw new Error("expected ready import");
+    const send = jest.fn(async () => ({
+      ok: false,
+      provider: "RESEND" as const,
+      providerResult: "HTTP 500",
+      error: "raw provider error detail must not be persisted",
+    }));
+    const deliveryEnv = { NODE_ENV: "test", RESEND_API_KEY: "synthetic-resend-key" } as NodeJS.ProcessEnv;
+
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+    await drainSpotifyCatalogRequestDeliveries(imported.deliveryIntentIds, serviceDb, { env: deliveryEnv, send });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    await expect(db.spotifyCatalogRequestDeliveryIntent.findFirstOrThrow({ where: { userId } }))
+      .resolves.toMatchObject({
+        status: "RECONCILIATION_REQUIRED",
+        attemptCount: 1,
+        provider: "RESEND",
+        providerResult: "HTTP 500",
+        lastError: "Email provider outcome requires reconciliation",
+      });
+  });
+
   it("enforces immutable delivery envelopes, membership, lifecycle, and terminal history in PostgreSQL", async () => {
     const fetchImpl = jest.fn(async (input: RequestInfo | URL) => String(input).includes("/following")
       ? response({ artists: { items: [{ id: "artist-unmatched", name: "Unmatched Artist" }], next: null, cursors: { after: null } } })

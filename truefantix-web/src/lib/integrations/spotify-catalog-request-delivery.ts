@@ -184,6 +184,34 @@ type DeliveryOptions = {
   send?: (payload: Parameters<typeof sendEmail>[0]) => Promise<EmailSendResult>;
 };
 
+function boundedProviderResult(value: string | undefined, fallback: string) {
+  const normalized = value?.trim();
+  return normalized ? normalized.slice(0, 2_000) : fallback;
+}
+
+function classifyProviderResult(result: EmailSendResult) {
+  if (result.ok) {
+    return Object.freeze({
+      status: "DELIVERED" as const,
+      providerResult: boundedProviderResult(result.providerResult, "ACCEPTED"),
+      lastError: null,
+    });
+  }
+  const providerResult = boundedProviderResult(result.providerResult, "AMBIGUOUS_PROVIDER_OUTCOME");
+  if (/^HTTP 4[0-9]{2}$/.test(providerResult)) {
+    return Object.freeze({
+      status: "FAILED" as const,
+      providerResult,
+      lastError: "Email provider rejected delivery",
+    });
+  }
+  return Object.freeze({
+    status: "RECONCILIATION_REQUIRED" as const,
+    providerResult,
+    lastError: "Email provider outcome requires reconciliation",
+  });
+}
+
 async function databaseNow(db: Pick<typeof prisma, "$queryRaw">) {
   const [row] = await db.$queryRaw<Array<{ now: Date }>>`
     SELECT statement_timestamp() AT TIME ZONE 'UTC' AS now
@@ -297,28 +325,29 @@ export async function drainSpotifyCatalogRequestDeliveries(
       if (result.provider !== provider) {
         throw new Error(`Spotify catalog delivery provider changed from ${provider} to ${result.provider}`);
       }
-      const finalStatus = result.ok ? "DELIVERED" : "FAILED";
+      const outcome = classifyProviderResult(result);
       const updated = await db.spotifyCatalogRequestDeliveryIntent.updateMany({
         where: { id: row.id, status: "PROCESSING", provider, attemptCount: 1, claimToken, leaseExpiresAt },
         data: {
-          status: finalStatus,
-          deliveredAt: result.ok ? await databaseNow(db) : null,
+          status: outcome.status,
+          deliveredAt: outcome.status === "DELIVERED" ? await databaseNow(db) : null,
           processingAt: null,
           leaseExpiresAt: null,
           claimToken: null,
-          providerResult: result.providerResult ?? (result.ok ? "ACCEPTED" : "REJECTED"),
-          lastError: result.ok ? null : (result.error ?? "Email provider rejected delivery").slice(0, 2_000),
+          providerResult: outcome.providerResult,
+          lastError: outcome.lastError,
         },
       });
       if (updated.count !== 1) {
         reconciliationRequired += 1;
-      } else if (result.ok) {
+      } else if (outcome.status === "DELIVERED") {
         delivered += 1;
-      } else {
+      } else if (outcome.status === "FAILED") {
         failed += 1;
+      } else {
+        reconciliationRequired += 1;
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown Spotify catalog delivery error";
+    } catch {
       const recovered = await db.spotifyCatalogRequestDeliveryIntent.updateMany({
         where: {
           id: row.id,
@@ -333,7 +362,9 @@ export async function drainSpotifyCatalogRequestDeliveries(
           processingAt: null,
           leaseExpiresAt: null,
           claimToken: null,
-          lastError: `${dispatched ? "Post-dispatch" : "Pre-dispatch"} Spotify catalog delivery failure: ${message}`.slice(0, 2_000),
+          lastError: dispatched
+            ? "Post-dispatch Spotify catalog delivery outcome requires reconciliation"
+            : "Pre-dispatch Spotify catalog delivery failure requires reconciliation",
         },
       });
       reconciliationRequired += recovered.count;
