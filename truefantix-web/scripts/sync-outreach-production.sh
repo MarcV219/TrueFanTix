@@ -3,6 +3,7 @@ set -euo pipefail
 
 app_dir="/home/marc/.openclaw/workspace/TrueFanTix/truefantix-web"
 database_url_override="${OUTREACH_DATABASE_URL:-}"
+private_mirror_env="/home/marc/truefantix/secrets/private-mirror-db.env"
 temp_dir="$(mktemp -d)"
 cleanup() {
   rm -f "$temp_dir/production.env"
@@ -26,6 +27,18 @@ set -a
 # shellcheck disable=SC1090
 source "$temp_dir/production.env"
 set +a
+if [[ "$database_url_override" == "postgresql://truefantix_mirror@127.0.0.1:55432/truefantix_mirror" ]]; then
+  if [[ ! -r "$private_mirror_env" ]]; then
+    echo "Missing private mirror database credential: $private_mirror_env" >&2
+    exit 1
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$private_mirror_env"
+  set +a
+  : "${PRIVATE_MIRROR_DATABASE_PASSWORD:?Missing PRIVATE_MIRROR_DATABASE_PASSWORD}"
+  database_url_override="postgresql://truefantix_mirror:${PRIVATE_MIRROR_DATABASE_PASSWORD}@127.0.0.1:55432/truefantix_mirror"
+fi
 if [[ -n "$database_url_override" ]]; then
   export DATABASE_URL="$database_url_override"
 fi
