@@ -26,6 +26,11 @@ import {
   reseedPrimaryStagingRefundScenario,
   runPrimaryStagingRefundAction,
 } from "@/lib/primary/staging-refund-console";
+import {
+  advancePrimaryStagingBuyerJourney,
+  getPrimaryStagingBuyerJourney,
+  reseedPrimaryStagingBuyerJourney,
+} from "@/lib/primary/staging-buyer-journey";
 
 jest.mock("@/lib/prisma", () => ({
   prisma: {
@@ -62,6 +67,13 @@ jest.mock("@/lib/primary/staging-refund-console", () => ({
   PrimaryStagingRefundError: jest.requireActual("@/lib/primary/staging-refund-console").PrimaryStagingRefundError,
 }));
 
+jest.mock("@/lib/primary/staging-buyer-journey", () => ({
+  advancePrimaryStagingBuyerJourney: jest.fn(),
+  getPrimaryStagingBuyerJourney: jest.fn(),
+  reseedPrimaryStagingBuyerJourney: jest.fn(),
+  PrimaryStagingBuyerError: jest.requireActual("@/lib/primary/staging-buyer-journey").PrimaryStagingBuyerError,
+}));
+
 jest.mock("@/lib/primary/organizer-service", () => ({
   ...jest.requireActual("@/lib/primary/organizer-service"),
   PrimaryOrganizerService: jest.fn(),
@@ -89,6 +101,9 @@ const mockedRefundState = getPrimaryStagingRefundState as jest.MockedFunction<ty
 const mockedRecordRefundRejection = recordPrimaryStagingRefundRejection as jest.MockedFunction<typeof recordPrimaryStagingRefundRejection>;
 const mockedReseed = reseedPrimaryStagingRefundScenario as jest.MockedFunction<typeof reseedPrimaryStagingRefundScenario>;
 const mockedRefundAction = runPrimaryStagingRefundAction as jest.MockedFunction<typeof runPrimaryStagingRefundAction>;
+const mockedBuyerState = getPrimaryStagingBuyerJourney as jest.MockedFunction<typeof getPrimaryStagingBuyerJourney>;
+const mockedReseedBuyerJourney = reseedPrimaryStagingBuyerJourney as jest.MockedFunction<typeof reseedPrimaryStagingBuyerJourney>;
+const mockedAdvanceBuyerJourney = advancePrimaryStagingBuyerJourney as jest.MockedFunction<typeof advancePrimaryStagingBuyerJourney>;
 const mockedDeleteSession = deleteCurrentSession as jest.MockedFunction<typeof deleteCurrentSession>;
 const mockedEstablishPersonaSession = establishPrimaryStagingPersonaSession as jest.MockedFunction<typeof establishPrimaryStagingPersonaSession>;
 const mockedEnsurePersona = ensurePrimaryStagingPersona as jest.MockedFunction<typeof ensurePrimaryStagingPersona>;
@@ -118,6 +133,7 @@ describe("primary staging console API boundary", () => {
     mockedPrisma.primaryOrganizer.findMany.mockResolvedValue([]);
     mockedPrisma.primaryAuditEvent.findMany.mockResolvedValue([]);
     mockedRefundState.mockResolvedValue(null);
+    mockedBuyerState.mockResolvedValue(null);
     mockedRecordRefundRejection.mockResolvedValue(undefined);
     process.env.SESSION_SECRET = "staging-test-session-secret-longer-than-thirty-two-characters";
   });
@@ -197,6 +213,23 @@ describe("primary staging console API boundary", () => {
     expect(refund.status).toBe(200);
     expect(mockedReseed).toHaveBeenCalledWith(prisma, expect.objectContaining({ email: adminActor.email, role: "ADMIN" }));
     expect(mockedRefundAction).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: adminActor.id }), "approveCheckedRefund", expect.objectContaining({ reason: "Synthetic evidence" }));
+  });
+
+  it("allows only empty buyer-journey commands and routes them with the authenticated staging actor", async () => {
+    mockedActor.mockResolvedValue(adminActor);
+    mockedReseedBuyerJourney.mockResolvedValue({ generation: 4 });
+    mockedAdvanceBuyerJourney.mockResolvedValue({ step: "HELD" });
+    const request = (body: Record<string, unknown>) => new Request("https://preview.example/api/staging/primary/actions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    await expect(postAction(request({ action: "reseedBuyerJourney" }))).resolves.toMatchObject({ status: 200 });
+    await expect(postAction(request({ action: "advanceBuyerJourney" }))).resolves.toMatchObject({ status: 200 });
+    expect(mockedReseedBuyerJourney).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: adminActor.id, email: adminActor.email, role: "ADMIN" }));
+    expect(mockedAdvanceBuyerJourney).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: adminActor.id, email: adminActor.email, role: "ADMIN" }));
+
+    const unexpected = await postAction(request({ action: "advanceBuyerJourney", eventId: "caller-selected" }));
+    expect(unexpected.status).toBe(409);
+    await expect(unexpected.json()).resolves.toEqual({ ok: false, error: "STAGING_ACTION_UNEXPECTED_INPUT" });
+    expect(mockedAdvanceBuyerJourney).toHaveBeenCalledTimes(1);
   });
 
   it("rejects unexpected reseed input before creating or mutating synthetic state", async () => {

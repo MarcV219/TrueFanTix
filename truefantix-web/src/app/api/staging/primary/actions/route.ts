@@ -26,6 +26,7 @@ import {
   reseedPrimaryStagingRefundScenario,
   runPrimaryStagingRefundAction,
 } from "@/lib/primary/staging-refund-console";
+import { advancePrimaryStagingBuyerJourney, PrimaryStagingBuyerError, reseedPrimaryStagingBuyerJourney } from "@/lib/primary/staging-buyer-journey";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -58,6 +59,8 @@ const ACTION_INPUTS: Record<string, ReadonlySet<string>> = {
     "action", "organizerId", "eventId", "ticketTypeId", "name", "description", "allocatedQuantity",
     "status", "minimumPerOrder", "maximumPerOrder", "currency", "basePriceMinor",
   ]),
+  reseedBuyerJourney: new Set(["action"]),
+  advanceBuyerJourney: new Set(["action"]),
 };
 
 const REFUND_ACTIONS = new Set([
@@ -168,9 +171,8 @@ export async function POST(req: Request) {
     if (isDomainAction) assertActionInput(action, body);
     if (isRefundAction) assertPrimaryStagingRefundActionInput(action, body);
 
-    if (isRefundAction) {
-      refundActor = { id: actorUser.id, email: actorUser.email, role: actorUser.role };
-    }
+    const stagingActor = { id: actorUser.id, email: actorUser.email, role: actorUser.role };
+    if (isRefundAction) refundActor = stagingActor;
     if (action === "reseedRefundScenarios") {
       await ensurePrimaryStagingPersona("organizer");
       const result = await reseedPrimaryStagingRefundScenario(prisma, refundActor!);
@@ -180,6 +182,8 @@ export async function POST(req: Request) {
       const result = await runPrimaryStagingRefundAction(prisma, refundActor!, action, body);
       return noStore(NextResponse.json({ ok: true, result }));
     }
+    if (action === "reseedBuyerJourney") return noStore(NextResponse.json({ ok: true, result: await reseedPrimaryStagingBuyerJourney(prisma, stagingActor) }));
+    if (action === "advanceBuyerJourney") return noStore(NextResponse.json({ ok: true, result: await advancePrimaryStagingBuyerJourney(prisma, stagingActor) }));
 
     const actor = { id: actorUser.id, role: actorUser.role };
     const requestId = `staging-console:${randomUUID()}`;
@@ -313,6 +317,7 @@ export async function POST(req: Request) {
       if (refundActor) await recordPrimaryStagingRefundRejection(prisma, refundActor, requestedAction, error.code, error.generation).catch(() => undefined);
       return jsonError(409, error.code);
     }
+    if (error instanceof PrimaryStagingBuyerError) return jsonError(409, error.code);
     if (refundActor && requestedAction !== "unknown") {
       await recordPrimaryStagingRefundRejection(prisma, refundActor, requestedAction, "PERSISTENCE_REJECTED").catch(() => undefined);
     }
