@@ -103,18 +103,20 @@ function requireReservationState(reservation: Prisma.PrimaryInventoryReservation
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_RESERVATION_INVALID");
 }
 
-function requireOrderState(order: Prisma.PrimaryOrderGetPayload<{ include: { lines: true; components: true } }>, scope: ReturnType<typeof ids>, buyerId: string, hasPayment: boolean) {
+function requireOrderState(order: Prisma.PrimaryOrderGetPayload<{ include: { lines: true; components: true } }>, scope: ReturnType<typeof ids>, buyerId: string, hasPayment: boolean, reservationCreatedAt: Date, now: Date) {
   const line = order.lines[0];
   const components = [...order.components].sort((left, right) => left.position - right.position);
   if (
     order.organizerId !== ORGANIZER_ID || order.eventId !== scope.eventId || order.buyerUserId !== buyerId || order.reservationId !== scope.reservationId
     || (hasPayment ? !["PENDING_PAYMENT", "PAYMENT_PROCESSING", "PAID"].includes(order.status) : order.status !== "PENDING_PAYMENT")
     || order.currency !== "CAD" || order.faceValueSubtotalMinor !== 3500 || order.grossTotalMinor !== 3800 || order.createIdempotencyKey !== `${scope.base}:order`
+    || order.createdAt.getTime() < reservationCreatedAt.getTime() || order.createdAt.getTime() > now.getTime()
     || order.lines.length !== 1 || !line || line.id !== scope.lineId || line.orderId !== scope.orderId || line.ticketTypeId !== scope.ticketTypeId || line.reservationId !== scope.reservationId
     || line.quantity !== 1 || line.ticketTypeNameSnapshot !== "General admission" || line.unitFaceValueMinor !== 3500 || line.faceValueSubtotalMinor !== 3500 || line.currency !== "CAD"
+    || line.createdAt.getTime() < order.createdAt.getTime() || line.createdAt.getTime() > now.getTime()
     || components.length !== 2
-    || components[0]?.id !== `${scope.base}-face` || components[0]?.orderId !== scope.orderId || components[0]?.orderLineId !== scope.lineId || components[0]?.code !== "FACE_VALUE" || components[0]?.label !== "Face value" || components[0]?.kind !== "FACE_VALUE" || components[0]?.amountMinor !== 3500 || components[0]?.currency !== "CAD" || components[0]?.allocationBaseMinor !== 3500 || components[0]?.allocationRemainderUnits !== 0 || components[0]?.position !== 0
-    || components[1]?.id !== `${scope.base}-fee` || components[1]?.orderId !== scope.orderId || components[1]?.orderLineId !== scope.lineId || components[1]?.code !== "ORGANIZER_FEE" || components[1]?.label !== "Synthetic organizer fee" || components[1]?.kind !== "MANDATORY_FEE" || components[1]?.amountMinor !== 300 || components[1]?.currency !== "CAD" || components[1]?.allocationBaseMinor !== 300 || components[1]?.allocationRemainderUnits !== 0 || components[1]?.position !== 1
+    || components[0]?.id !== `${scope.base}-face` || components[0]?.orderId !== scope.orderId || components[0]?.orderLineId !== scope.lineId || components[0]?.code !== "FACE_VALUE" || components[0]?.label !== "Face value" || components[0]?.kind !== "FACE_VALUE" || components[0]?.amountMinor !== 3500 || components[0]?.currency !== "CAD" || components[0]?.allocationBaseMinor !== 3500 || components[0]?.allocationRemainderUnits !== 0 || components[0]?.position !== 0 || components[0]?.createdAt.getTime() < line.createdAt.getTime() || components[0]?.createdAt.getTime() > now.getTime()
+    || components[1]?.id !== `${scope.base}-fee` || components[1]?.orderId !== scope.orderId || components[1]?.orderLineId !== scope.lineId || components[1]?.code !== "ORGANIZER_FEE" || components[1]?.label !== "Synthetic organizer fee" || components[1]?.kind !== "MANDATORY_FEE" || components[1]?.amountMinor !== 300 || components[1]?.currency !== "CAD" || components[1]?.allocationBaseMinor !== 300 || components[1]?.allocationRemainderUnits !== 0 || components[1]?.position !== 1 || components[1]?.createdAt.getTime() < line.createdAt.getTime() || components[1]?.createdAt.getTime() > now.getTime()
   ) throw new PrimaryStagingBuyerError("STAGING_BUYER_ORDER_INVALID");
 }
 
@@ -204,7 +206,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       return { step: "ORDER_CREATED" };
     }
     const payment = await tx.primaryPaymentAttempt.findUnique({ where: { orderId: scope.orderId }, include: { providerEvents: true, exceptions: true } });
-    requireOrderState(order, scope, buyer.id, Boolean(payment));
+    requireOrderState(order, scope, buyer.id, Boolean(payment), reservation.createdAt, now);
     if (!payment) {
       await tx.primaryInventoryReservation.update({ where: { id: scope.reservationId }, data: { status: "PAYMENT_COMMITTED", paymentCommittedAt: now, reconciliationAfter: new Date(now.getTime() + 120_000), commitIdempotencyKey: `${scope.base}:commit` } });
       await tx.primaryOrder.update({ where: { id: scope.orderId }, data: { status: "PAYMENT_PROCESSING", prepareIdempotencyKey: `${scope.base}:prepare`, prepareReconciliationDelayMs: 120000, paymentProcessingAt: now } });
