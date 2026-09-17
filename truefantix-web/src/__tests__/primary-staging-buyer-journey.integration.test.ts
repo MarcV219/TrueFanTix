@@ -28,6 +28,27 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_JOURNEY_COMPLETE" });
   });
 
+  it("retries a transient serializable abort and reports bounded retry exhaustion without mutation", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    const transient = jest.spyOn(db, "$transaction").mockRejectedValueOnce({ code: "P2034" });
+    try {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: "HELD" });
+    } finally {
+      transient.mockRestore();
+    }
+    await expect(db.primaryInventoryReservation.count({ where: { eventId: `${base}-event` } })).resolves.toBe(1);
+
+    const exhausted = jest.spyOn(db, "$transaction").mockRejectedValue({ code: "P2034" });
+    try {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_TRANSACTION_RETRY_EXHAUSTED" });
+      expect(exhausted).toHaveBeenCalledTimes(5);
+    } finally {
+      exhausted.mockRestore();
+    }
+    await expect(db.primaryOrder.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
+  });
+
   it("fails closed on reserved fixture drift and lets an admin reseed restore it", async () => {
     await reseedPrimaryStagingBuyerJourney(db, admin);
     const buyer = await db.user.findUniqueOrThrow({ where: { email: "buyer@primary-staging.example.invalid" } });

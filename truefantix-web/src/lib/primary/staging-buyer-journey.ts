@@ -17,6 +17,22 @@ export class PrimaryStagingBuyerError extends Error {
   constructor(readonly code: string) { super(code); this.name = "PrimaryStagingBuyerError"; }
 }
 
+function retryableTransactionError(error: unknown) {
+  return String(error).includes("40001") || (typeof error === "object" && error !== null && "code" in error && error.code === "P2034");
+}
+
+async function withTransactionRetry<T>(operation: () => Promise<T>) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try { return await operation(); }
+    catch (error) {
+      if (attempt < 4 && retryableTransactionError(error)) continue;
+      if (retryableTransactionError(error)) throw new PrimaryStagingBuyerError("STAGING_BUYER_TRANSACTION_RETRY_EXHAUSTED");
+      throw error;
+    }
+  }
+  throw new PrimaryStagingBuyerError("STAGING_BUYER_TRANSACTION_RETRY_EXHAUSTED");
+}
+
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function ids(generation: number) {
   const base = `${EVENT_PREFIX}${generation}`;
@@ -188,7 +204,7 @@ export async function reseedPrimaryStagingBuyerJourney(db: PrismaClient, actor: 
 }
 
 export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor: Actor) {
-  return db.$transaction(async (tx) => {
+  return withTransactionRetry(() => db.$transaction(async (tx) => {
     requireAdmin(actor); await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(746836292)");
     const currentGeneration = await generation(tx); if (!currentGeneration) throw new PrimaryStagingBuyerError("STAGING_BUYER_SCENARIO_REQUIRED");
     const scope = ids(currentGeneration); const now = new Date(); const buyer = await requireSyntheticFixture(tx, actor); await requireScenarioRoot(tx, scope, actor);
@@ -235,7 +251,7 @@ export async function advancePrimaryStagingBuyerJourney(db: PrismaClient, actor:
       return { step: "CHECKED_IN" };
     }
     throw new PrimaryStagingBuyerError("STAGING_BUYER_JOURNEY_COMPLETE");
-  }, { isolationLevel: "Serializable" });
+  }, { isolationLevel: "Serializable" }));
 }
 
 export async function getPrimaryStagingBuyerJourney(db: PrismaClient) {
