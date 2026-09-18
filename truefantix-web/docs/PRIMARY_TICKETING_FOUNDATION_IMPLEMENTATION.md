@@ -272,7 +272,8 @@ Verification on 2026-09-10 used a newly provisioned disposable PostgreSQL 16 dat
 - Admission validation binds the deterministic ticket and credential to the authoritative paid lifecycle and current transaction clock. Issuance before payment or in the future, and future-dated accepted scans, fail closed before any new scan or check-in mutation.
 - The synthetic payment chain requires an empty provider-event and exception history. Unexpected webhook-like provenance or payment-exception evidence fails closed before admission issuance or check-in.
 - Payment-attempt creation must follow the order's authoritative preparation timestamp without being future-dated relative to the transaction clock, and synthetic provider attachment must likewise follow attempt creation without being future-dated. Chronology drift fails before provider attachment, payment success, or admission mutation.
-- Buyer-journey advance retries a bounded five times on PostgreSQL serialization aborts before returning a stable retry-exhausted rejection. A failed retry commits no purchase transition, and a recovered retry advances exactly once under the existing advisory lock.
+- Buyer-journey advance retries a bounded five times on PostgreSQL serialization aborts. It also retries only the observed `PrimaryInventoryReservation` primary-key `P2002` shape, which can represent a recovered duplicate synthetic-hold creation; every other uniqueness violation fails directly. A failed retry commits no purchase transition, and a recovered retry advances exactly once under the existing advisory lock.
+- Concurrent advances are serialized under that same advisory lock into distinct durable next steps; they cannot create duplicate synthetic holds or orders.
 
 ### Refund, cancellation, and revocation design gate
 

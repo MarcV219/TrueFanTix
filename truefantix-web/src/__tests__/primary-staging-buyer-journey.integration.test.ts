@@ -49,6 +49,70 @@ else describe("primary staging buyer journey PostgreSQL integration", () => {
     await expect(db.primaryOrder.count({ where: { eventId: `${base}-event` } })).resolves.toBe(0);
   });
 
+  it("retries only the observed synthetic-hold primary-key race and leaves exhaustion unmutated", async () => {
+    const racedSeed = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const racedBase = `staging-buyer-g${racedSeed.generation}`;
+    await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: "HELD" });
+    const existing = await db.primaryInventoryReservation.findUniqueOrThrow({ where: { id: `${racedBase}-reservation` } });
+    let holdPrimaryKeyError: unknown;
+    try {
+      await db.primaryInventoryReservation.create({ data: { id: existing.id, organizerId: existing.organizerId, eventId: existing.eventId, ticketTypeId: existing.ticketTypeId, buyerUserId: existing.buyerUserId, quantity: existing.quantity, expiresAt: existing.expiresAt, createIdempotencyKey: `${racedBase}:duplicate-hold` } });
+    } catch (error) {
+      holdPrimaryKeyError = error;
+    }
+    expect(holdPrimaryKeyError).toMatchObject({ code: "P2002", meta: { modelName: "PrimaryInventoryReservation" }, message: expect.stringContaining("PrimaryInventoryReservation_pkey") });
+
+    const retrySeed = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const retryBase = `staging-buyer-g${retrySeed.generation}`;
+    const transient = jest.spyOn(db, "$transaction").mockRejectedValueOnce(holdPrimaryKeyError);
+    try {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).resolves.toEqual({ step: "HELD" });
+      expect(transient).toHaveBeenCalledTimes(2);
+    } finally {
+      transient.mockRestore();
+    }
+    await expect(db.primaryInventoryReservation.count({ where: { eventId: `${retryBase}-event` } })).resolves.toBe(1);
+    await expect(db.primaryOrder.count({ where: { eventId: `${retryBase}-event` } })).resolves.toBe(0);
+
+    const exhaustedSeed = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const exhaustedBase = `staging-buyer-g${exhaustedSeed.generation}`;
+    const exhausted = jest.spyOn(db, "$transaction").mockRejectedValue(holdPrimaryKeyError);
+    try {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toMatchObject({ code: "STAGING_BUYER_TRANSACTION_RETRY_EXHAUSTED" });
+      expect(exhausted).toHaveBeenCalledTimes(5);
+    } finally {
+      exhausted.mockRestore();
+    }
+    await expect(db.primaryInventoryReservation.count({ where: { eventId: `${exhaustedBase}-event` } })).resolves.toBe(0);
+    await expect(db.primaryOrder.count({ where: { eventId: `${exhaustedBase}-event` } })).resolves.toBe(0);
+  });
+
+  it("does not normalize an unrelated uniqueness violation", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const unrelated = { code: "P2002", meta: { modelName: "PrimaryOrder" }, message: "Unique constraint failed on the constraint: `PrimaryOrder_pkey`" };
+    const transaction = jest.spyOn(db, "$transaction").mockRejectedValueOnce(unrelated);
+    try {
+      await expect(advancePrimaryStagingBuyerJourney(db, admin)).rejects.toBe(unrelated);
+      expect(transaction).toHaveBeenCalledTimes(1);
+    } finally {
+      transaction.mockRestore();
+    }
+    await expect(db.primaryInventoryReservation.count({ where: { eventId: `staging-buyer-g${seeded.generation}-event` } })).resolves.toBe(0);
+  });
+
+  it("serializes concurrent advances into distinct durable journey transitions", async () => {
+    const seeded = await reseedPrimaryStagingBuyerJourney(db, admin);
+    const base = `staging-buyer-g${seeded.generation}`;
+    const results = await Promise.all([
+      advancePrimaryStagingBuyerJourney(db, admin),
+      advancePrimaryStagingBuyerJourney(db, admin),
+    ]);
+
+    expect(results.map((result) => result.step).sort()).toEqual(["HELD", "ORDER_CREATED"]);
+    await expect(db.primaryInventoryReservation.count({ where: { eventId: `${base}-event` } })).resolves.toBe(1);
+    await expect(db.primaryOrder.count({ where: { eventId: `${base}-event` } })).resolves.toBe(1);
+  });
+
   it("fails closed on reserved fixture drift and lets an admin reseed restore it", async () => {
     await reseedPrimaryStagingBuyerJourney(db, admin);
     const buyer = await db.user.findUniqueOrThrow({ where: { email: "buyer@primary-staging.example.invalid" } });

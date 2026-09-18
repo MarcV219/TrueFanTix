@@ -17,8 +17,13 @@ export class PrimaryStagingBuyerError extends Error {
   constructor(readonly code: string) { super(code); this.name = "PrimaryStagingBuyerError"; }
 }
 
+function retryableSyntheticHoldUniquenessError(error: unknown) {
+  if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "P2002" || !("message" in error) || typeof error.message !== "string" || !("meta" in error) || typeof error.meta !== "object" || error.meta === null || !("modelName" in error.meta)) return false;
+  return error.meta.modelName === "PrimaryInventoryReservation" && error.message.includes("PrimaryInventoryReservation_pkey");
+}
+
 function retryableTransactionError(error: unknown) {
-  return String(error).includes("40001") || (typeof error === "object" && error !== null && "code" in error && error.code === "P2034");
+  return String(error).includes("40001") || (typeof error === "object" && error !== null && "code" in error && (error.code === "P2034" || retryableSyntheticHoldUniquenessError(error)));
 }
 
 async function withTransactionRetry<T>(operation: () => Promise<T>) {
