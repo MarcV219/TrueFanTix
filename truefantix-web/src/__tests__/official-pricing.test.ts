@@ -37,16 +37,19 @@ function mockTicketmasterResponse(events: TicketmasterEventFixture[]) {
 describe("official pricing lookup", () => {
   const originalTicketmasterKey = process.env.TICKETMASTER_API_KEY;
   const originalBraveKey = process.env.BRAVE_API_KEY;
+  const originalBraveFallback = process.env.BRAVE_SEARCH_FALLBACK_ENABLED;
 
   beforeEach(() => {
     process.env.TICKETMASTER_API_KEY = "test-ticketmaster-key";
     process.env.BRAVE_API_KEY = "test-brave-key";
+    process.env.BRAVE_SEARCH_FALLBACK_ENABLED = "true";
     jest.restoreAllMocks();
   });
 
   afterAll(() => {
     process.env.TICKETMASTER_API_KEY = originalTicketmasterKey;
     process.env.BRAVE_API_KEY = originalBraveKey;
+    process.env.BRAVE_SEARCH_FALLBACK_ENABLED = originalBraveFallback;
   });
 
   it("rejects Ticketmaster matches when the submitted venue name is wrong", async () => {
@@ -211,6 +214,11 @@ describe("official pricing lookup", () => {
         json: async () => ({ _embedded: { events: [] } }),
       } as Response)
       .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({}),
+      } as Response)
+      .mockResolvedValueOnce({
         ok: true,
         status: 200,
         json: async () => ({
@@ -266,7 +274,7 @@ describe("official pricing lookup", () => {
     expect(result.soldOut).toBe(true);
     expect(result.soldOutSource).toBe("ticketmaster-resale-only");
     expect(result.officialFaceValueCents).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("confirms non-Ticketmaster events from official venue web results when Ticketmaster has no match", async () => {
@@ -276,6 +284,11 @@ describe("official pricing lookup", () => {
         ok: true,
         status: 200,
         json: async () => ({ _embedded: { events: [] } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({}),
       } as Response)
       .mockResolvedValueOnce({
         ok: true,

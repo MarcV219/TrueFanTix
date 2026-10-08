@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
+import { paidBraveFallbackEnabled, searchWeb } from "@/lib/searchProvider";
 
 export type WebVenueCandidate = {
   type: "VENUE";
@@ -353,7 +354,7 @@ async function fetchOpenStreetMapVenueCandidates(query: string, limit: number): 
 
 async function fetchBraveVenueCandidates(query: string, limit: number): Promise<WebVenueCandidate[]> {
   const key = process.env.BRAVE_API_KEY?.trim();
-  if (!key || query.length < 3 || limit <= 0) return [];
+  if (!key || !paidBraveFallbackEnabled() || query.length < 3 || limit <= 0) return [];
 
   const searches = [`"${query}" venue address`, `"${query}" official venue`, `${query} live music venue address`];
   const out: WebVenueCandidate[] = [];
@@ -412,17 +413,52 @@ async function fetchBraveVenueCandidates(query: string, limit: number): Promise<
   return out.slice(0, limit);
 }
 
+async function fetchLocalVenueCandidates(query: string, limit: number): Promise<WebVenueCandidate[]> {
+  if (query.length < 3 || limit <= 0) return [];
+  const searches = [`"${query}" venue address`, `"${query}" official venue`, `${query} live music venue address`];
+  const out: WebVenueCandidate[] = [];
+  for (const search of searches) {
+    if (out.length >= limit) break;
+    const rows = await searchWeb(search, 8);
+    for (const row of rows) {
+      const url = cleanText(row.url);
+      const title = cleanText(row.title);
+      const description = cleanText(row.description);
+      const name = titleToVenueName(title || query, query);
+      const host = hostname(url);
+      const searchable = [title, description, url].join(" ");
+      const overlap = nameOverlap(query, searchable);
+      if (!url || !name || overlap < 0.5) continue;
+      const candidate: WebVenueCandidate = {
+        type: "VENUE",
+        label: name,
+        canonicalName: name,
+        provider: "web-search",
+        providerId: stableId([url, name, query]),
+        sourceUrl: url,
+        sourceName: host || row.source || "Web search",
+        confidence: 60 + Math.round(overlap * 20) + (host.includes(normalizedName(query).replace(/\s+/g, "")) ? 10 : 0),
+        metadata: { title, description, search, host, engine: row.source },
+      };
+      candidate.subtitle = subtitle(candidate) || description || candidate.sourceName;
+      out.push(await enrichWebVenueCandidate(candidate, query));
+    }
+  }
+  return out.slice(0, limit);
+}
+
 export async function searchWebVenueCandidates({ query, limit = 8 }: { query: string; limit?: number }) {
   const q = cleanText(query);
   const max = Math.min(Math.max(limit, 1), 20);
   if (q.length < 2) return [];
 
-  const [osm, brave] = await Promise.all([
+  const [osm, local, brave] = await Promise.all([
     fetchOpenStreetMapVenueCandidates(q, max),
+    fetchLocalVenueCandidates(q, max),
     fetchBraveVenueCandidates(q, max),
   ]);
 
-  return dedupeCandidates([...osm, ...brave], q, max);
+  return dedupeCandidates([...osm, ...local, ...brave], q, max);
 }
 
 export async function saveWebVenueCandidate(candidate: WebVenueCandidate) {

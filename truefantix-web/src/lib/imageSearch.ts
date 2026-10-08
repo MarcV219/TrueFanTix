@@ -1,5 +1,6 @@
 // Image fetching utility for TrueFanTix tickets
-// Uses Brave Image Search API to find images for artists, teams, shows
+// Uses the local SearXNG service to find images for artists, teams, and shows.
+import { paidBraveFallbackEnabled, searchImages as searchSearxngImages } from "@/lib/searchProvider";
 
 const PLACEHOLDER_IMAGES: Record<string, string> = {
   'sports-basketball': '/basketball-placeholder.jpg',
@@ -221,10 +222,10 @@ function tokenOverlapScore(query: string, haystack: string): number {
 /**
  * Search for images using Brave Search API
  */
-async function searchImages(query: string): Promise<string[]> {
+async function searchImagesWithBrave(query: string): Promise<string[]> {
   try {
     const apiKey = process.env.BRAVE_API_KEY;
-    if (!apiKey) {
+    if (!apiKey || !paidBraveFallbackEnabled()) {
       console.log('No Brave API key configured, using placeholder');
       return [];
     }
@@ -301,6 +302,30 @@ async function searchImages(query: string): Promise<string[]> {
   }
 }
 
+async function searchImages(query: string): Promise<string[]> {
+  const localResults = await searchSearxngImages(query, 20);
+  const candidates = localResults
+    .map((r) => {
+      const url = r.imageUrl;
+      if (!url || isBlockedUrl(url)) return null;
+      const metaText = [r.title, r.description, r.url, url].filter(Boolean).join(" ");
+      const overlap = tokenOverlapScore(query, metaText);
+      let score = Math.round(overlap * 20);
+      if (isReliableUrl(url)) score += 10;
+      if (url.includes("wikipedia.org") || url.includes("wikimedia.org")) score += 5;
+      if (url.startsWith("https://")) score += 1;
+      return { url, score, overlap };
+    })
+    .filter((item): item is { url: string; score: number; overlap: number } => item !== null)
+    .sort((a, b) => b.score - a.score);
+
+  const strict = candidates.filter((item) => item.overlap >= 0.2);
+  if (strict.length) return strict.map((item) => item.url);
+  if (candidates.length) return candidates.map((item) => item.url);
+
+  return searchImagesWithBrave(query);
+}
+
 /**
  * Get image for a ticket
  */
@@ -315,7 +340,7 @@ export async function getTicketImage(
     return imageCache.get(cacheKey)!;
   }
 
-  // 1) Brave search (automated for all events)
+  // 1) Free local metasearch. Paid Brave fallback is opt-in and normally off.
   const query = getImageSearchQuery(ticketTitle, eventType);
   const imageUrls = await searchImages(query);
 

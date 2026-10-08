@@ -4,7 +4,7 @@ import Footer from "@/components/Footer";
 import TicketImage from "@/components/TicketImage";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
-import { getTicketImage, getPlaceholderImage } from "@/lib/imageSearch";
+import { getPlaceholderImage } from "@/lib/imageSearch";
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
 import { formatMoney, normalizeCurrency, venueInfoFromLocation } from "@/lib/ticketsView";
 import { searchProviderCatalog } from "@/lib/catalog/provider-catalog";
@@ -264,9 +264,10 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   // Get seller-selected event category from listing evidence, matching card behavior.
   const eventTypeInfo = getEventTypeInfoFromType(evidence?.manualEventType ?? evidence?.inferredEventType, ticket.title);
   
-  // Fetch dynamic image
-  const dynamicImage = await getTicketImage(ticket.title, eventTypeInfo.type);
-  const imageToShow = dynamicImage.startsWith("http") ? dynamicImage : getPlaceholderImage(eventTypeInfo.type);
+  // Listing creation/update persists the selected image. Reuse it on every page view
+  // so rendering a popular ticket never triggers another search request.
+  const storedImage = String(ticket.image || "").trim();
+  const imageToShow = storedImage || getPlaceholderImage(eventTypeInfo.type);
   const eventUrl = absoluteUrl(`/tickets/${ticket.id}`);
   const eventJsonLd = {
     "@context": "https://schema.org",

@@ -33,6 +33,7 @@ const mockedUpsert = prisma.catalogEntity.upsert as jest.Mock;
 describe("web venue search", () => {
   beforeEach(() => {
     process.env.BRAVE_API_KEY = "brave-test-key";
+    process.env.BRAVE_SEARCH_FALLBACK_ENABLED = "true";
     mockedFetch.mockReset();
     mockedUpsert.mockReset();
     global.fetch = mockedFetch;

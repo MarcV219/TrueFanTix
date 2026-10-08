@@ -1,3 +1,5 @@
+import { paidBraveFallbackEnabled, searchWeb } from "@/lib/searchProvider";
+
 type TicketLike = {
   title: string;
   date: string;
@@ -294,19 +296,26 @@ function sellerEventTime(ticket: TicketLike): string | null {
 
 async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSnapshot | null> {
   const brave = process.env.BRAVE_API_KEY;
-  if (!brave) return null;
   const ticketmasterKey = process.env.TICKETMASTER_API_KEY;
 
   const q = `${normalizeTitle(ticket.title)} ${ticket.date} ${ticket.venue} official tickets`;
-  const sp = new URLSearchParams({ q, count: "10", country: "US", search_lang: "en" });
-  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${sp.toString()}`, {
-    headers: { Accept: "application/json", "X-Subscription-Token": brave },
-    cache: "no-store",
-  });
-  if (!res.ok) return null;
-
-  const data: any = await res.json();
-  const results: any[] = data?.web?.results ?? [];
+  let results: any[] = (await searchWeb(q, 10)).map((row) => ({
+    title: row.title,
+    description: row.description,
+    url: row.url,
+  }));
+  if (!results.length && brave && paidBraveFallbackEnabled()) {
+    const sp = new URLSearchParams({ q, count: "10", country: "US", search_lang: "en" });
+    const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${sp.toString()}`, {
+      headers: { Accept: "application/json", "X-Subscription-Token": brave },
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      results = data?.web?.results ?? [];
+    }
+  }
+  if (!results.length) return null;
   const ymd = toYmd(ticket.date);
   const city = venueCity(ticket.venue).toLowerCase();
   const requestedVenueName = venueName(ticket.venue);
