@@ -12,6 +12,15 @@ import type { NextRequest } from "next/server";
  * Everything else redirects back to /coming-soon.
  */
 export function proxy(req: NextRequest) {
+  const hostname = req.nextUrl.hostname.toLowerCase();
+  if (hostname === "truefantix.ca" || hostname === "www.truefantix.ca") {
+    const canonicalUrl = req.nextUrl.clone();
+    canonicalUrl.protocol = "https:";
+    canonicalUrl.hostname = "www.truefantix.com";
+    canonicalUrl.port = "";
+    return NextResponse.redirect(canonicalUrl, 301);
+  }
+
   const comingSoon = process.env.COMING_SOON_MODE === "1";
   if (!comingSoon) return NextResponse.next();
 
