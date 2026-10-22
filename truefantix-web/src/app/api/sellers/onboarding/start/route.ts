@@ -47,6 +47,16 @@ function sellerDisplayName(user: { firstName: string; lastName: string }) {
   return `${user.firstName} ${user.lastName}`.trim();
 }
 
+function getAppOrigin(req: Request): string | null {
+  // Prefer the server-only runtime origin. The request URL can contain the
+  // mirror's loopback address, and NEXT_PUBLIC_APP_URL may be build-time
+  // inlined when the artifact is moved between environments.
+  const configured = process.env.APP_ORIGIN || process.env.NEXT_PUBLIC_APP_URL;
+  if (configured) return configured.replace(/\/$/, "");
+  if (process.env.NODE_ENV !== "production") return new URL(req.url).origin;
+  return null;
+}
+
 function stripeAccountPrefill(user: {
   id: string;
   email: string;
@@ -105,7 +115,13 @@ export async function POST(req: Request) {
     if (!rateLimit.ok) return rateLimit.response;
 
     const userId = gate.user.id;
-    const origin = new URL(req.url).origin;
+    const origin = getAppOrigin(req);
+    if (!origin) {
+      return noStoreJson(
+        { ok: false, error: "SERVER_MISCONFIGURED", message: "Application origin is not configured." },
+        { status: 503 }
+      );
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
