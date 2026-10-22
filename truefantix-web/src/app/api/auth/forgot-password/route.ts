@@ -26,7 +26,10 @@ function generateResetToken(): string {
 }
 
 function getAppOrigin(req: Request): string | null {
-  const configured = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_ORIGIN;
+  // APP_ORIGIN is server-only and remains a runtime value. NEXT_PUBLIC_APP_URL
+  // can be inlined by Next.js at build time, so it must not override the
+  // production origin when a build artifact is moved between environments.
+  const configured = process.env.APP_ORIGIN || process.env.NEXT_PUBLIC_APP_URL;
   if (configured) return configured.replace(/\/$/, "");
   if (process.env.NODE_ENV !== "production") return new URL(req.url).origin;
   return null;
