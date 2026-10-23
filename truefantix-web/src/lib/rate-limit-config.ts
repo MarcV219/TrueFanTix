@@ -27,7 +27,10 @@ export const RateLimitConfigs: Record<string, RateLimitConfig> = {
   "verify:phone:confirm": { limit: 10, windowMs: 5 * 60 * 1000 }, // 10 attempts per 5 minutes per user
 
   // --- Tickets --- //
-  "tickets:create": { limit: 10, windowMs: 60 * 60 * 1000 }, // 10 ticket listings per hour per seller
+  // The seller UI creates one record per seat. A single supported submission can
+  // therefore issue up to 20 POSTs. Keep enough headroom for validation retries
+  // without cutting a legitimate multi-seat submission off partway through.
+  "tickets:create": { limit: 100, windowMs: 60 * 60 * 1000 }, // five maximum-size submissions per hour per seller
   "tickets:purchase": { limit: 5, windowMs: 5 * 60 * 1000 }, // 5 purchases per 5 minutes per buyer
   "tickets:search": { limit: 60, windowMs: 60 * 1000 }, // 60 searches per minute (can be higher, heavy traffic)
   "tickets:view": { limit: 200, windowMs: 60 * 1000 }, // 200 views per minute per IP for a specific ticket

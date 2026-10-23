@@ -1573,6 +1573,9 @@ function Body({ me }: { me: MeUser }) {
 
     setBusy(true);
     try {
+      const createdTickets: Array<{ id: string; position: number }> = [];
+      const failures: Array<{ position: number; message: string }> = [];
+
       for (let i = 0; i < quantity; i += 1) {
         const seatInfo = seatingForSubmit[i];
         const body: CreateTicketBody = {
@@ -1612,9 +1615,25 @@ function Body({ me }: { me: MeUser }) {
             (data && (data.message || data.error)) ||
             (details && details.length ? details[0] : null) ||
             `Create listing ${i + 1} of ${quantity} failed (${res.status}).`;
-          setError(String(msg));
-          return;
+          failures.push({ position: i + 1, message: String(msg) });
+          continue;
         }
+
+        if (typeof data?.ticket?.id === "string") {
+          createdTickets.push({ id: data.ticket.id, position: i + 1 });
+        }
+      }
+
+      if (failures.length) {
+        setRefreshKey((k) => k + 1);
+        const failedPositions = failures.map((failure) => failure.position).join(", ");
+        const firstFailure = failures[0]?.message || "Unknown listing error.";
+        setError(
+          `${createdTickets.length} of ${quantity} tickets were created. ` +
+          `Ticket${failures.length === 1 ? "" : "s"} ${failedPositions} failed: ${firstFailure} ` +
+          "The successful tickets remain listed; retry only the failed ticket numbers."
+        );
+        return;
       }
 
       setListingSuccessMessage(
