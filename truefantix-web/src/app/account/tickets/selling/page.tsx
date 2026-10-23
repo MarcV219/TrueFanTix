@@ -1123,6 +1123,7 @@ function Body({ me }: { me: MeUser }) {
   const [sellerConfirmedReceiptValues, setSellerConfirmedReceiptValues] = React.useState(false);
 
   const [busy, setBusy] = React.useState(false);
+  const [submitIntent, setSubmitIntent] = React.useState<"listing" | "support-review" | null>(null);
   const [requestBusy, setRequestBusy] = React.useState<"title" | "venue" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
@@ -1572,9 +1573,11 @@ function Body({ me }: { me: MeUser }) {
     }
 
     setBusy(true);
+    setSubmitIntent(requestManualReview ? "support-review" : "listing");
     try {
       const createdTickets: Array<{ id: string; position: number }> = [];
       const failures: Array<{ position: number; message: string }> = [];
+      let failedPricingConfirmation: PricingConfirmation = null;
 
       for (let i = 0; i < quantity; i += 1) {
         const seatInfo = seatingForSubmit[i];
@@ -1609,7 +1612,7 @@ function Body({ me }: { me: MeUser }) {
         });
 
         if (!res.ok) {
-          setPricingConfirmation((data?.pricingConfirmation ?? null) as PricingConfirmation);
+          failedPricingConfirmation = (data?.pricingConfirmation ?? failedPricingConfirmation) as PricingConfirmation;
           const details = Array.isArray(data?.details) ? data.details : null;
           const msg =
             (data && (data.message || data.error)) ||
@@ -1625,6 +1628,7 @@ function Body({ me }: { me: MeUser }) {
       }
 
       if (failures.length) {
+        setPricingConfirmation(failedPricingConfirmation);
         setRefreshKey((k) => k + 1);
         const failedPositions = failures.map((failure) => failure.position).join(", ");
         const firstFailure = failures[0]?.message || "Unknown listing error.";
@@ -1669,6 +1673,7 @@ function Body({ me }: { me: MeUser }) {
       setError(err?.message ?? "Create listing failed.");
     } finally {
       setBusy(false);
+      setSubmitIntent(null);
     }
   }
 
@@ -1762,7 +1767,7 @@ function Body({ me }: { me: MeUser }) {
               onClick={() => submit(undefined, true)}
               style={{ justifySelf: "start", padding: "8px 11px", borderRadius: 8, border: "1px solid rgba(37,99,235,0.35)", background: "white", color: "rgba(30,64,175,1)", fontWeight: 900 }}
             >
-              {busy ? "Submitting…" : "Request support review"}
+              {submitIntent === "support-review" ? "Submitting support review…" : "Request support review"}
             </button>
           </div>
 
