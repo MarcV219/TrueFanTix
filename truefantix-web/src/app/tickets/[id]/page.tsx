@@ -25,6 +25,7 @@ async function getTicket(id: string) {
       currency: true,
       faceValueCents: true,
       adminFeePaidCents: true,
+      buyerAdminFeeWaived: true,
       verificationEvidence: true,
       image: true,
       venue: true,
@@ -87,6 +88,7 @@ async function getTicket(id: string) {
     currency: normalizeCurrency((ticket as any).currency),
     faceValueCents: ticket.faceValueCents ? Number(ticket.faceValueCents) : null,
     adminFeePaidCents: Number(ticket.adminFeePaidCents ?? 0),
+    buyerAdminFeeWaived: ticket.buyerAdminFeeWaived === true,
     verificationEvidence: ticket.verificationEvidence ?? null,
     createdAt: ticket.createdAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
@@ -480,7 +482,9 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
                   <div className="mt-8">
                     <PurchaseButton ticketId={ticket.id} price={`${formatMoney(price, currency)} ${currency}`} />
                     <p className="text-sm text-gray-500 mt-2 text-center">
-                      + 8.75% admin fee ($5.00 minimum per order). No tax is currently collected on the admin fee.
+                      {ticket.buyerAdminFeeWaived
+                        ? "TrueFanTix admin fee waived for this ticket."
+                        : "+ 8.75% admin fee ($5.00 minimum per order). No tax is currently collected on the admin fee."}
                     </p>
                   </div>
                 </div>

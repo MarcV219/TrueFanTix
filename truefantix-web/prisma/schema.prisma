@@ -341,6 +341,13 @@ model Ticket {
   adminFeePaidCents Int    @default(0)
   currency          String @default("CAD")
 
+  // Admin-controlled waiver of TrueFanTix's buyer admin fee. This does not
+  // alter the seller's listing price or original eligible fees.
+  buyerAdminFeeWaived         Boolean   @default(false)
+  buyerAdminFeeWaiverReason   String?
+  buyerAdminFeeWaivedAt       DateTime?
+  buyerAdminFeeWaivedByUserId String?
+
   image String
   venue String
 

@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { apiFetch } from "@/lib/api-fetch";
 
 function money(cents: number | null | undefined, currency = "CAD") {
   if (cents == null) return "-";
@@ -32,6 +33,8 @@ export default function AdminTicketDetailPage() {
   const [ticket, setTicket] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [waiverReason, setWaiverReason] = React.useState("");
+  const [savingWaiver, setSavingWaiver] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -51,6 +54,30 @@ export default function AdminTicketDetailPage() {
   React.useEffect(() => {
     load();
   }, [load]);
+
+  async function setFeeWaiver(waived: boolean) {
+    if (waived && waiverReason.trim().length < 3) {
+      setError("Enter a short reason before waiving the fee.");
+      return;
+    }
+    setSavingWaiver(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/admin/tickets/${encodeURIComponent(id)}/fee-waiver`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ waived, reason: waived ? waiverReason.trim() : null }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.message || json?.error || "Failed to update fee waiver.");
+      setWaiverReason("");
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "Failed to update fee waiver.");
+    } finally {
+      setSavingWaiver(false);
+    }
+  }
 
   const receiptProof = ticket?.receiptReview ?? null;
   const ocr = receiptProof?.ocr ?? null;
@@ -90,12 +117,38 @@ export default function AdminTicketDetailPage() {
               <Field label="Price" value={money(ticket.priceCents, ticket.currency)} />
               <Field label="Face Value" value={money(ticket.faceValueCents, ticket.currency)} />
               <Field label="Eligible Fees" value={money(ticket.adminFeePaidCents, ticket.currency)} />
+              <Field label="TrueFanTix Buyer Fee" value={ticket.buyerAdminFeeWaived ? "WAIVED" : "Standard 8.75% ($5 minimum)"} />
               <Field label="Max List Price" value={ticket.faceValueCents == null ? "-" : money(ticket.faceValueCents + Math.max(0, ticket.adminFeePaidCents || 0), ticket.currency)} />
               <Field label="Auto Verification" value={`${ticket.verificationProvider || "-"} ${ticket.verificationScore != null ? `(${ticket.verificationScore})` : ""}`} />
               <Field label="Created" value={new Date(ticket.createdAt).toLocaleString()} />
               <Field label="Vendor / Transfer" value={`${ticket.primaryVendor || "-"} / ${ticket.transferMethod || "-"}`} />
             </div>
             {ticket.verificationReason ? <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(255,251,235,1)" }}>{ticket.verificationReason}</div> : null}
+          </section>
+
+          <section style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 8, background: "white", padding: 14 }}>
+            <h2 style={{ margin: "0 0 10px", fontSize: 20 }}>TrueFanTix buyer fee waiver</h2>
+            {ticket.buyerAdminFeeWaived ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ padding: 10, borderRadius: 8, background: "rgba(236,253,245,1)", color: "rgba(6,95,70,1)" }}>
+                  <strong>Fee waived.</strong> {ticket.buyerAdminFeeWaiverReason || "No reason recorded."}
+                </div>
+                <button disabled={savingWaiver || ticket.status !== "AVAILABLE"} onClick={() => setFeeWaiver(false)} style={{ width: "fit-content", padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(185,28,28,0.35)", background: "white", color: "rgba(153,27,27,1)", fontWeight: 800 }}>
+                  {savingWaiver ? "Saving..." : "Revoke fee waiver"}
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                <label style={{ display: "grid", gap: 6, maxWidth: 680 }}>
+                  <span style={{ fontWeight: 800 }}>Reason (required)</span>
+                  <textarea value={waiverReason} onChange={(event) => setWaiverReason(event.target.value)} maxLength={500} rows={3} placeholder="Example: Community partner promotion" style={{ padding: 10, borderRadius: 8, border: "1px solid rgba(0,0,0,0.18)" }} />
+                </label>
+                <button disabled={savingWaiver || ticket.status !== "AVAILABLE"} onClick={() => setFeeWaiver(true)} style={{ width: "fit-content", padding: "10px 14px", borderRadius: 8, border: 0, background: "rgba(6,74,147,1)", color: "white", fontWeight: 800 }}>
+                  {savingWaiver ? "Saving..." : "Waive TrueFanTix fee"}
+                </button>
+              </div>
+            )}
+            {ticket.status !== "AVAILABLE" ? <div style={{ marginTop: 8, opacity: 0.7 }}>Fee waivers are locked after a ticket is reserved, sold, or withdrawn.</div> : null}
           </section>
 
           <section style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 8, background: "white", padding: 14 }}>

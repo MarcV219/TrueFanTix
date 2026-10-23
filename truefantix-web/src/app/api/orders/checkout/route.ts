@@ -7,7 +7,7 @@ import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
 import { calculateAdminFeeTax, getTaxRateForVenue } from "@/lib/tax-rates";
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
-import { calculateBuyerAdminFeeCents } from "@/lib/checkout-fees";
+import { calculateTicketSelectionAdminFeeCents } from "@/lib/checkout-fees";
 
 const RESERVATION_MINUTES = 15;
 const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1;
@@ -280,7 +280,7 @@ export async function POST(req: Request) {
         (sum: number, t: { priceCents: number }) => sum + t.priceCents,
         0
       );
-      const adminFeeCents = calculateBuyerAdminFeeCents(amountCents);
+      const adminFeeCents = calculateTicketSelectionAdminFeeCents(tickets);
       const taxRate = getTaxRateForVenue(tickets[0]?.event?.venue ?? tickets[0]?.venue);
       const adminFeeTax = calculateAdminFeeTax(adminFeeCents, taxRate);
       const totalCents = amountCents + adminFeeCents + adminFeeTax.taxCents;

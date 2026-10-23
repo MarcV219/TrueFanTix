@@ -13,3 +13,13 @@ export function calculateBuyerAdminFeeCents(ticketSubtotalCents: number): number
 
   return Math.max(MINIMUM_BUYER_ADMIN_FEE_CENTS, percentageFeeCents);
 }
+
+export function calculateTicketSelectionAdminFeeCents(
+  tickets: Array<{ priceCents: number; buyerAdminFeeWaived?: boolean }>
+): number {
+  const feeEligibleSubtotalCents = tickets.reduce(
+    (sum, ticket) => sum + (ticket.buyerAdminFeeWaived ? 0 : Math.max(0, Math.trunc(ticket.priceCents))),
+    0
+  );
+  return feeEligibleSubtotalCents > 0 ? calculateBuyerAdminFeeCents(feeEligibleSubtotalCents) : 0;
+}

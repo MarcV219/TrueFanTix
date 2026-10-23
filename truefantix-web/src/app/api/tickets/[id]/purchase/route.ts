@@ -8,9 +8,7 @@ import { checkRateLimit, getClientIp, rateLimitError } from "@/lib/rate-limit";
 import { schemas } from "@/lib/validation";
 import { calculateAdminFeeTax, getTaxRateForVenue } from "@/lib/tax-rates";
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
-
-const ADMIN_FEE_BPS = 875; // 8.75%
-const BPS_DENOMINATOR = 10_000;
+import { calculateTicketSelectionAdminFeeCents } from "@/lib/checkout-fees";
 
 const RESERVATION_MINUTES = 15;
 const ACCESS_TOKEN_COST_PER_SOLDOUT_PURCHASE = 1;
@@ -263,7 +261,7 @@ export async function POST(req: Request, ctx: Ctx) {
         };
       }
 
-      const adminFeeCents = Math.round((ticket.priceCents * ADMIN_FEE_BPS) / BPS_DENOMINATOR);
+      const adminFeeCents = calculateTicketSelectionAdminFeeCents([ticket]);
       const currency = normalizeCurrency((ticket as any).currency);
       const taxRate = getTaxRateForVenue(ticket.event?.venue ?? ticket.venue);
       const adminFeeTax = calculateAdminFeeTax(adminFeeCents, taxRate);
