@@ -1,3 +1,5 @@
+import { configuredOpenAiModel } from "@/lib/openai/modelConfig";
+
 export type ReceiptSeat = {
   section: string | null;
   row: string | null;
@@ -337,7 +339,12 @@ export async function analyzeReceiptProof({
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return unavailable("missing-openai-api-key");
 
-  const model = process.env.OPENAI_RECEIPT_OCR_MODEL?.trim() || "gpt-5.5";
+  const model = configuredOpenAiModel(
+    process.env.OPENAI_RECEIPT_OCR_MODEL,
+    process.env.OPENAI_DOCUMENT_REVIEW_MODEL,
+    process.env.OPENAI_MODEL,
+  );
+  if (!model) return unavailable("missing-openai-model");
   const schema = {
     type: "object",
     additionalProperties: false,

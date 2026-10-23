@@ -25,9 +25,11 @@ const openAiResponse = {
 
 describe("receipt OCR upload formats", () => {
   const originalApiKey = process.env.OPENAI_API_KEY;
+  const originalModel = process.env.OPENAI_RECEIPT_OCR_MODEL;
 
   beforeEach(() => {
     process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENAI_RECEIPT_OCR_MODEL = "test-model";
     jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       json: async () => openAiResponse,
@@ -37,6 +39,19 @@ describe("receipt OCR upload formats", () => {
   afterEach(() => {
     jest.restoreAllMocks();
     process.env.OPENAI_API_KEY = originalApiKey;
+    process.env.OPENAI_RECEIPT_OCR_MODEL = originalModel;
+  });
+
+  it("removes literal escaped newlines from the configured model", async () => {
+    process.env.OPENAI_RECEIPT_OCR_MODEL = "test-model\\n";
+
+    await analyzeReceiptProof({
+      receiptDataUrl: "data:image/png;base64,aW1hZ2U=",
+      receiptFileName: "receipt.png",
+    });
+
+    const payload = JSON.parse(String((global.fetch as jest.Mock).mock.calls[0][1].body));
+    expect(payload.model).toBe("test-model");
   });
 
   it("sends supported image uploads as input_image", async () => {

@@ -24,14 +24,17 @@ function mockOpenAi(payload: Record<string, unknown>) {
 
 describe("transfer proof review", () => {
   const originalApiKey = process.env.OPENAI_API_KEY;
+  const originalModel = process.env.OPENAI_TRANSFER_PROOF_MODEL;
 
   beforeEach(() => {
     process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENAI_TRANSFER_PROOF_MODEL = "test-model";
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
     process.env.OPENAI_API_KEY = originalApiKey;
+    process.env.OPENAI_TRANSFER_PROOF_MODEL = originalModel;
   });
 
   it("accepts clear matching transfer proof", async () => {
