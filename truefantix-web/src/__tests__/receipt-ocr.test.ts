@@ -54,6 +54,26 @@ describe("receipt OCR upload formats", () => {
     expect(payload.model).toBe("test-model");
   });
 
+  it("shares one provider review across concurrent tickets using the same receipt", async () => {
+    const input = {
+      receiptDataUrl: "data:image/png;base64,c2hhcmVkLXJlY2VpcHQ=",
+      receiptFileName: "shared-receipt.png",
+      expectedEventTitle: "Shared Event",
+      expectedVenue: "Shared Venue",
+      expectedEventDate: "2026-11-28 7:30 PM",
+    };
+
+    const [first, second, third] = await Promise.all([
+      analyzeReceiptProof(input),
+      analyzeReceiptProof(input),
+      analyzeReceiptProof(input),
+    ]);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(first).toEqual(second);
+    expect(second).toEqual(third);
+  });
+
   it("sends supported image uploads as input_image", async () => {
     await analyzeReceiptProof({
       receiptDataUrl: "data:image/png;base64,aW1hZ2U=",

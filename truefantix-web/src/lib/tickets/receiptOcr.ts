@@ -1,4 +1,5 @@
 import { configuredOpenAiModel } from "@/lib/openai/modelConfig";
+import { createHash } from "node:crypto";
 
 export type ReceiptSeat = {
   section: string | null;
@@ -74,8 +75,35 @@ function isPdfDataUrl(value: string) {
   return /^data:application\/pdf;base64,/i.test(value);
 }
 
-function receiptInputContent(receiptDataUrl: string, receiptFileName?: string | null) {
+async function extractPdfText(receiptDataUrl: string): Promise<string | null> {
+  try {
+    const encoded = receiptDataUrl.split(",", 2)[1];
+    if (!encoded) return null;
+
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: Buffer.from(encoded, "base64") });
+    try {
+      const result = await parser.getText();
+      const text = result.text.replace(/\u0000/g, "").replace(/[ \t]+/g, " ").trim();
+      return text.length >= 40 ? text.slice(0, 60_000) : null;
+    } finally {
+      await parser.destroy();
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function receiptInputContent(receiptDataUrl: string, receiptFileName?: string | null) {
   if (isPdfDataUrl(receiptDataUrl)) {
+    const extractedText = await extractPdfText(receiptDataUrl);
+    if (extractedText) {
+      return {
+        type: "input_text",
+        text: `Locally extracted text from ${receiptFileName || "receipt.pdf"}:\n\n${extractedText}`,
+      };
+    }
+
     return {
       type: "input_file",
       filename: receiptFileName || "receipt.pdf",
@@ -324,7 +352,7 @@ function outputText(data: unknown): string {
   return pieces.join("\n");
 }
 
-export async function analyzeReceiptProof({
+async function analyzeReceiptProofUncached({
   receiptDataUrl,
   receiptFileName,
   expectedEventTitle,
@@ -429,7 +457,7 @@ export async function analyzeReceiptProof({
                   "Return null for missing fields. Amounts must be integer cents. " +
                   "For faceValueCents, use ticket face value only. For serviceFeesCents and totalServiceFeesCents, include every non-face-value amount visibly paid: service fees, order processing fees, processing fees, facility fees, delivery fees, convenience fees, admin fees, HST, GST, PST, QST, sales tax, and similar fee or tax lines. Prefer per-ticket values; also fill totals when visible. For totalPaidCents, use the grand total paid across all tickets including ticket price, fees, and taxes.",
               },
-              receiptInputContent(receiptDataUrl, receiptFileName),
+              await receiptInputContent(receiptDataUrl, receiptFileName),
             ],
           },
         ],
@@ -459,4 +487,57 @@ export async function analyzeReceiptProof({
     const message = err instanceof Error ? err.message : "unknown";
     return unavailable(`receipt-ocr-error:${message}`);
   }
+}
+
+type CachedReceiptReview = {
+  expiresAt: number;
+  promise: Promise<ReceiptOcrReview>;
+};
+
+const receiptReviewCache = new Map<string, CachedReceiptReview>();
+const SUCCESS_CACHE_MS = 15 * 60 * 1000;
+const FAILURE_CACHE_MS = 30 * 1000;
+const MAX_CACHE_ENTRIES = 100;
+
+function receiptReviewCacheKey(input: AnalyzeReceiptInput): string {
+  return createHash("sha256")
+    .update(input.receiptDataUrl ?? "")
+    .update("\0")
+    .update(input.receiptFileName ?? "")
+    .update("\0")
+    .update(input.expectedEventTitle ?? "")
+    .update("\0")
+    .update(input.expectedVenue ?? "")
+    .update("\0")
+    .update(input.expectedEventDate ?? "")
+    .digest("hex");
+}
+
+export async function analyzeReceiptProof(input: AnalyzeReceiptInput): Promise<ReceiptOcrReview> {
+  const now = Date.now();
+  const key = receiptReviewCacheKey(input);
+  const cached = receiptReviewCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.promise;
+  if (cached) receiptReviewCache.delete(key);
+
+  const promise = analyzeReceiptProofUncached(input);
+  receiptReviewCache.set(key, { expiresAt: Number.POSITIVE_INFINITY, promise });
+
+  void promise.then((review) => {
+    const ttl = process.env.NODE_ENV === "test"
+      ? 0
+      : review.status === "unavailable" || review.status === "unsupported"
+        ? FAILURE_CACHE_MS
+        : SUCCESS_CACHE_MS;
+    const current = receiptReviewCache.get(key);
+    if (current?.promise === promise) current.expiresAt = Date.now() + ttl;
+  });
+
+  while (receiptReviewCache.size > MAX_CACHE_ENTRIES) {
+    const oldest = receiptReviewCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    receiptReviewCache.delete(oldest);
+  }
+
+  return promise;
 }
