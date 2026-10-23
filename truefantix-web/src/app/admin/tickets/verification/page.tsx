@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import { apiFetch } from "@/lib/api-fetch";
 
 type QueueTicket = {
   id: string;
@@ -120,7 +121,7 @@ export default function TicketVerificationAdminPage() {
   async function decide(ticketId: string, verificationStatus: "VERIFIED" | "REJECTED" | "NEEDS_REVIEW") {
     setBusyId(ticketId);
     try {
-      const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/verify`, {
+      const res = await apiFetch(`/api/tickets/${encodeURIComponent(ticketId)}/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ verificationStatus, verificationProvider: "admin-queue" }),
