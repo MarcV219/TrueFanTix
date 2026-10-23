@@ -85,7 +85,7 @@ describe("admin ticket verification queue", () => {
       "/api/tickets/ticket-1/verify",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ verificationStatus: "VERIFIED", verificationProvider: "admin-queue" }),
+        body: JSON.stringify({ status: "VERIFIED", provider: "admin-queue" }),
       }),
     );
   });

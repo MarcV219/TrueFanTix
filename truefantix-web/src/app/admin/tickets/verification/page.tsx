@@ -124,7 +124,7 @@ export default function TicketVerificationAdminPage() {
       const res = await apiFetch(`/api/tickets/${encodeURIComponent(ticketId)}/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ verificationStatus, verificationProvider: "admin-queue" }),
+        body: JSON.stringify({ status: verificationStatus, provider: "admin-queue" }),
       });
       const data = await res.json();
       if (!res.ok || !data?.ok) {
