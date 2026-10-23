@@ -1579,7 +1579,13 @@ function Body({ me }: { me: MeUser }) {
       const failures: Array<{ position: number; message: string }> = [];
       let failedPricingConfirmation: PricingConfirmation = null;
 
-      for (let i = 0; i < quantity; i += 1) {
+      // Creating every ticket serially made a 10-ticket submission take close to
+      // a minute because receipt/OCR verification is intentionally expensive.
+      // Mobile browsers can suspend or discard that long-running page task,
+      // leaving a partial batch with no request ever sent for the remaining
+      // tickets. Process bounded waves instead: this keeps the server load
+      // controlled while ensuring a normal 20-ticket batch completes promptly.
+      const createOne = async (i: number) => {
         const seatInfo = seatingForSubmit[i];
         const body: CreateTicketBody = {
           title: t,
@@ -1612,18 +1618,45 @@ function Body({ me }: { me: MeUser }) {
         });
 
         if (!res.ok) {
-          failedPricingConfirmation = (data?.pricingConfirmation ?? failedPricingConfirmation) as PricingConfirmation;
           const details = Array.isArray(data?.details) ? data.details : null;
           const msg =
             (data && (data.message || data.error)) ||
             (details && details.length ? details[0] : null) ||
             `Create listing ${i + 1} of ${quantity} failed (${res.status}).`;
-          failures.push({ position: i + 1, message: String(msg) });
-          continue;
+          return {
+            ok: false as const,
+            position: i + 1,
+            message: String(msg),
+            pricingConfirmation: (data?.pricingConfirmation ?? null) as PricingConfirmation,
+          };
         }
 
-        if (typeof data?.ticket?.id === "string") {
-          createdTickets.push({ id: data.ticket.id, position: i + 1 });
+        if (typeof data?.ticket?.id !== "string") {
+          return {
+            ok: false as const,
+            position: i + 1,
+            message: `Create listing ${i + 1} of ${quantity} returned no ticket ID.`,
+            pricingConfirmation: null,
+          };
+        }
+
+        return { ok: true as const, id: data.ticket.id, position: i + 1 };
+      };
+
+      const submissionIndexes = Array.from({ length: quantity }, (_, index) => index);
+      const waveSize = 5;
+      for (let start = 0; start < submissionIndexes.length; start += waveSize) {
+        const results = await Promise.all(
+          submissionIndexes.slice(start, start + waveSize).map(createOne)
+        );
+
+        for (const result of results) {
+          if (result.ok) {
+            createdTickets.push({ id: result.id, position: result.position });
+          } else {
+            failures.push({ position: result.position, message: result.message });
+            failedPricingConfirmation = result.pricingConfirmation ?? failedPricingConfirmation;
+          }
         }
       }
 
