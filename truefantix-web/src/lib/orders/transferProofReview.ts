@@ -449,7 +449,7 @@ export async function analyzeTransferProof({
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return unavailable("missing-openai-api-key");
 
-  const model = process.env.OPENAI_TRANSFER_PROOF_MODEL || process.env.OPENAI_RECEIPT_OCR_MODEL || "gpt-5.5";
+  const model = process.env.OPENAI_TRANSFER_PROOF_MODEL?.trim() || process.env.OPENAI_RECEIPT_OCR_MODEL?.trim() || "gpt-5.5";
   const schema = {
     type: "object",
     additionalProperties: false,

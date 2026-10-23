@@ -1,4 +1,4 @@
-import { fetchOfficialSnapshot } from "@/lib/officialPricing";
+import { fetchOfficialSnapshot, likelyOfficialEventWebResult, officialWebResultMatchesTicket, textHasDate } from "@/lib/officialPricing";
 
 const ticketmasterEvent = {
   name: "Toronto Raptors vs Boston Celtics",
@@ -321,5 +321,24 @@ describe("official pricing lookup", () => {
     expect(result.officialEventTime).toBe("7:00 PM");
     expect(result.officialVenueName).toBe("Duke's Live Music");
     expect(result.sourceUrl).toBe("https://www.dukeslivemusic.com/2026-shows/danny-michel");
+  });
+
+  it("recognizes a local multi-date event from an organizer social result", () => {
+    expect(textHasDate("November 27 & 28, 2026", "2026-11-28")).toBe(true);
+    expect(likelyOfficialEventWebResult({
+      url: "https://www.facebook.com/wearebravado/",
+      text: "We Are Bravado | Barrie ON Bravado! Presents: Wrapped in Wonder. November 27 & 28, 2026 at Collier Street United Church. Tickets are on sale now.",
+      title: "Bravado! Presents: Wrapped in Wonder (Adult)",
+      venue: "Collier Street United Church",
+    })).toBe(true);
+    expect(officialWebResultMatchesTicket({
+      url: "https://www.facebook.com/wearebravado/",
+      text: "We Are Bravado | Barrie ON Bravado! Presents: Wrapped in Wonder. November 27 & 28, 2026 at Collier Street United Church. Tickets are on sale now.",
+      ticket: {
+        title: "Bravado! Presents: Wrapped in Wonder (Adult)",
+        date: "2026-11-28 7:30 PM",
+        venue: "Collier Street United Church",
+      },
+    })).toBe(true);
   });
 });

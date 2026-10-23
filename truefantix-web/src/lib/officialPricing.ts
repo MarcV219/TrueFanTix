@@ -53,6 +53,8 @@ function venueName(venue: string): string {
 
 function toYmd(input: string | null | undefined): string | null {
   if (!input) return null;
+  const direct = input.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
+  if (direct) return direct;
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 10);
@@ -177,10 +179,27 @@ function dateSearchTokens(input: string | null | undefined): string[] {
   ].map((token) => token.toLowerCase());
 }
 
-function textHasDate(text: string, input: string | null | undefined): boolean {
+export function textHasDate(text: string, input: string | null | undefined): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ");
   const tokens = dateSearchTokens(input);
-  return tokens.length > 0 && tokens.some((token) => normalized.includes(token));
+  if (tokens.length > 0 && tokens.some((token) => normalized.includes(token))) return true;
+
+  const ymd = toYmd(input);
+  if (!ymd) return false;
+  const [year, , day] = ymd.split("-");
+  const d = new Date(`${ymd}T00:00:00Z`);
+  const monthNames = [
+    d.toLocaleString("en-US", { month: "short", timeZone: "UTC" }),
+    d.toLocaleString("en-US", { month: "long", timeZone: "UTC" }),
+  ];
+  const requestedDay = String(Number(day));
+  return monthNames.some((monthName) => {
+    const escapedMonth = monthName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(
+      `\\b${escapedMonth}\\s+\\d{1,2}\\s*(?:&|and|[-–—])\\s*${requestedDay}\\s*,?\\s*${year}\\b`,
+      "i"
+    ).test(normalized);
+  });
 }
 
 function overlap(a: string, b: string): number {
@@ -214,6 +233,7 @@ function trustedPrimaryDomain(u: string): boolean {
     "axs.",
     "broadwaydirect.",
     "telecharge.",
+    "eventbrite.",
     "seatgeek.com/mls", // team/venue official surfaces only
     "mlb.com",
     "nba.com",
@@ -223,21 +243,43 @@ function trustedPrimaryDomain(u: string): boolean {
   return allow.some((d) => h.includes(d));
 }
 
-function likelyOfficialEventWebResult({ url, text, title, venue }: { url: string; text: string; title: string; venue: string }) {
+export function likelyOfficialEventWebResult({ url, text, title, venue }: { url: string; text: string; title: string; venue: string }) {
   const host = hostFromUrl(url);
   if (!host) return false;
-  if (/\b(facebook|instagram|reddit|youtube|x\.com|twitter|tiktok)\b/.test(host)) return false;
 
   const normalizedText = text.toLowerCase();
   const titleScore = overlap(normalizeTitle(title), text);
   const requestedVenueName = venueName(venue);
   const venueScore = requestedVenueName ? overlap(requestedVenueName, text) : 1;
   const hasEventLanguage = /\b(ticket|tickets|show|concert|event|performance|live music|admission|seat|seating|doors)\b/.test(normalizedText);
+  const isSocialHost = /\b(facebook|instagram|x\.com|twitter|tiktok)\b/.test(host);
+  if (/\b(reddit|youtube)\b/.test(host)) return false;
+  if (isSocialHost) return titleScore >= 0.75 && venueScore >= 0.7 && hasEventLanguage;
   const hostLooksRelevant =
     overlap(requestedVenueName, host.replace(/\./g, " ")) >= 0.5 ||
     overlap(normalizeTitle(title), host.replace(/\./g, " ")) >= 0.5;
 
   return titleScore >= 0.6 && venueScore >= 0.6 && hasEventLanguage && (hostLooksRelevant || venueScore >= 0.8);
+}
+
+export function officialWebResultMatchesTicket({
+  url,
+  text,
+  ticket,
+}: {
+  url: string;
+  text: string;
+  ticket: TicketLike;
+}) {
+  const requestedVenueName = venueName(ticket.venue);
+  const city = venueCity(ticket.venue).toLowerCase();
+  return (
+    overlap(normalizeTitle(ticket.title), text) >= 0.6 &&
+    textHasDate(text, toYmd(ticket.date)) &&
+    (!city || text.toLowerCase().includes(city)) &&
+    (!requestedVenueName || overlap(requestedVenueName, text) >= 0.6) &&
+    (trustedPrimaryDomain(url) || likelyOfficialEventWebResult({ url, text, title: ticket.title, venue: ticket.venue }))
+  );
 }
 
 function ticketmasterEventIdFromUrl(u: string): string | null {
@@ -317,21 +359,13 @@ async function fallbackPrimaryWebConfirm(ticket: TicketLike): Promise<OfficialSn
   }
   if (!results.length) return null;
   const ymd = toYmd(ticket.date);
-  const city = venueCity(ticket.venue).toLowerCase();
   const requestedVenueName = venueName(ticket.venue);
-
   for (const r of results) {
     const url = String(r?.url || "");
 
     const text = `${r?.title || ""} ${r?.description || ""} ${url}`;
-    const score = overlap(normalizeTitle(ticket.title), text);
-    const hasDate = textHasDate(text, ymd);
-    const hasCity = !city || text.toLowerCase().includes(city);
-    const hasVenue = !requestedVenueName || overlap(requestedVenueName, text) >= 0.6;
-    const trusted = trustedPrimaryDomain(url);
-    const likelyOfficial = likelyOfficialEventWebResult({ url, text, title: ticket.title, venue: ticket.venue });
-
-    if (score >= 0.6 && hasDate && hasCity && hasVenue && (trusted || likelyOfficial)) {
+    if (officialWebResultMatchesTicket({ url, text, ticket })) {
+      const trusted = trustedPrimaryDomain(url);
       const sellout = webTextSoldOutSignal(text);
       const ticketmasterEventId = ticketmasterEventIdFromUrl(url);
 
