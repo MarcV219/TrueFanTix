@@ -1,7 +1,7 @@
 import type { Prisma, UserRole } from "@prisma/client";
 import { recordPrimaryAuditAndOutbox } from "./audit-outbox";
 import { PrimaryAccessError } from "./authorization";
-import type { PrimaryPreflightCapability } from "./config";
+import { assertPrimaryPreflightCapability, type PrimaryPreflightCapability } from "./config";
 import { PrimaryDomainError } from "./organizer-service";
 
 type Tx = Prisma.TransactionClient;
@@ -24,6 +24,13 @@ export function createPrimaryOrderInternalCapabilityForTests(): PrimaryOrderInte
   const capability = Object.freeze({ kind: "PrimaryOrderInternalCapability" as const });
   internalCapabilities.add(capability);
   return capability;
+}
+
+export function createPrimaryOrderInternalCapability(capability: PrimaryPreflightCapability): PrimaryOrderInternalCapability {
+  assertPrimaryPreflightCapability(capability);
+  const internal = Object.freeze({ kind: "PrimaryOrderInternalCapability" as const });
+  internalCapabilities.add(internal);
+  return internal;
 }
 
 function assertInternal(capability: PrimaryOrderInternalCapability) {

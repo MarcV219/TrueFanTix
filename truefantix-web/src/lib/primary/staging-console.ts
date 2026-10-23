@@ -14,9 +14,11 @@ import { requirePrimaryPreflight } from "./config";
 export const STAGING_ORGANIZER_EMAIL = "organizer@primary-staging.example.invalid";
 export const STAGING_ADMIN_EMAIL = "admin@primary-staging.example.invalid";
 export const STAGING_REFUND_BUYER_EMAIL = "refund-buyer@primary-staging.example.invalid";
+export const STAGING_BUYER_EMAIL = "pilot-buyer@primary-staging.example.invalid";
 export const STAGING_ORGANIZER_PHONE = "+15550001001";
 export const STAGING_ADMIN_PHONE = "+15550001002";
 export const STAGING_REFUND_BUYER_PHONE = "+15550001004";
+export const STAGING_BUYER_PHONE = "+15550001006";
 
 const STAGING_USERS = {
   organizer: {
@@ -32,6 +34,13 @@ const STAGING_USERS = {
     firstName: "Staging",
     lastName: "Reviewer",
     phone: STAGING_ADMIN_PHONE,
+  },
+  buyer: {
+    email: STAGING_BUYER_EMAIL,
+    role: "USER" as UserRole,
+    firstName: "Synthetic",
+    lastName: "Buyer",
+    phone: STAGING_BUYER_PHONE,
   },
 } as const;
 
@@ -136,12 +145,12 @@ export function requirePrimaryStagingConsole(env: NodeJS.ProcessEnv = process.en
 
 export function isPrimaryStagingSyntheticEmail(email: string) {
   const normalized = email.trim().toLowerCase();
-  return [STAGING_ORGANIZER_EMAIL, STAGING_ADMIN_EMAIL, STAGING_REFUND_BUYER_EMAIL].includes(normalized);
+  return [STAGING_ORGANIZER_EMAIL, STAGING_ADMIN_EMAIL, STAGING_REFUND_BUYER_EMAIL, STAGING_BUYER_EMAIL].includes(normalized);
 }
 
 export function isPrimaryStagingSyntheticPhone(phone: string) {
   const normalized = phone.trim().replace(/[^\d+]/g, "");
-  return [STAGING_ORGANIZER_PHONE, STAGING_ADMIN_PHONE, STAGING_REFUND_BUYER_PHONE].includes(normalized);
+  return [STAGING_ORGANIZER_PHONE, STAGING_ADMIN_PHONE, STAGING_REFUND_BUYER_PHONE, STAGING_BUYER_PHONE].includes(normalized);
 }
 
 export function isPrimaryStagingManagedUser(user: {
@@ -161,11 +170,11 @@ export function primaryStagingManagedUserWhere(): Prisma.UserWhereInput {
     OR: [
       {
         email: {
-          in: [STAGING_ORGANIZER_EMAIL, STAGING_ADMIN_EMAIL, STAGING_REFUND_BUYER_EMAIL],
+          in: [STAGING_ORGANIZER_EMAIL, STAGING_ADMIN_EMAIL, STAGING_REFUND_BUYER_EMAIL, STAGING_BUYER_EMAIL],
           mode: "insensitive",
         },
       },
-      { phone: { in: [STAGING_ORGANIZER_PHONE, STAGING_ADMIN_PHONE, STAGING_REFUND_BUYER_PHONE] } },
+      { phone: { in: [STAGING_ORGANIZER_PHONE, STAGING_ADMIN_PHONE, STAGING_REFUND_BUYER_PHONE, STAGING_BUYER_PHONE] } },
       { termsVersion: STAGING_LEGAL_VERSION },
       { privacyVersion: STAGING_LEGAL_VERSION },
     ],
@@ -355,7 +364,9 @@ export async function requirePrimaryStagingActor() {
   });
 
   if (!user || !isExpectedStagingPersona(user.email, user.role)) return null;
-  const persona = user.email.trim().toLowerCase() === STAGING_ADMIN_EMAIL ? "admin" : "organizer";
+  const persona = user.email.trim().toLowerCase() === STAGING_ADMIN_EMAIL
+    ? "admin"
+    : user.email.trim().toLowerCase() === STAGING_BUYER_EMAIL ? "buyer" : "organizer";
   const exactFields = {
     ...STAGING_PROFILE,
     email: STAGING_USERS[persona].email,

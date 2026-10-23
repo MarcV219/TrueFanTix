@@ -25,7 +25,8 @@ export type PrimaryProviderEvent = {
 };
 
 export interface PrimaryStripeAdapter {
-  createUnconfirmedIntent(input: { amountMinor: number; currency: string; metadata: Record<string, string>; idempotencyKey: string }): Promise<{ id: string; createdAt: Date }>;
+  createUnconfirmedIntent(input: { amountMinor: number; currency: string; metadata: Record<string, string>; idempotencyKey: string }): Promise<{ id: string; createdAt: Date; clientSecret?: string | null }>;
+  retrieveIntent?(intentId: string): Promise<{ id: string; clientSecret: string | null }>;
   verifyWebhook(rawBody: string | Buffer, signature: string, webhookSecret: string): PrimaryProviderEvent;
 }
 
@@ -37,6 +38,13 @@ export function requirePrimaryStripeTestConfig(capability: PrimaryPreflightCapab
   const config = Object.freeze({ secretKey, webhookSecret });
   stripeConfigs.add(config);
   return config;
+}
+
+export function requirePrimaryStripePublishableTestKey(capability: PrimaryPreflightCapability, env: NodeJS.ProcessEnv = process.env) {
+  assertPrimaryPreflightCapability(capability);
+  const key = env.PRIMARY_STRIPE_PUBLISHABLE_KEY?.trim() ?? "";
+  if (!key.startsWith("pk_test_") || key.startsWith("pk_live_")) throw new PrimaryDomainError("STRIPE_TEST_PREFLIGHT_REQUIRED");
+  return key;
 }
 
 function assertStripeConfig(config: StripeConfig) {
@@ -51,7 +59,11 @@ export class StripeTestModeAdapter implements PrimaryStripeAdapter {
   }
   async createUnconfirmedIntent(input: { amountMinor: number; currency: string; metadata: Record<string, string>; idempotencyKey: string }) {
     const intent = await this.stripe.paymentIntents.create({ amount: input.amountMinor, currency: input.currency.toLowerCase(), metadata: input.metadata, confirm: false }, { idempotencyKey: input.idempotencyKey });
-    return { id: intent.id, createdAt: new Date(intent.created * 1000) };
+    return { id: intent.id, createdAt: new Date(intent.created * 1000), clientSecret: intent.client_secret };
+  }
+  async retrieveIntent(intentId: string) {
+    const intent = await this.stripe.paymentIntents.retrieve(intentId);
+    return { id: intent.id, clientSecret: intent.client_secret };
   }
   verifyWebhook(rawBody: string | Buffer, signature: string, webhookSecret: string): PrimaryProviderEvent {
     const event = this.stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
@@ -90,17 +102,20 @@ export class PrimaryPaymentService {
       await this.audit(tx, created, "PAYMENT_ATTEMPT_CREATED", idempotencyKey);
       return created;
     }, { isolationLevel: "Serializable" });
-    if (attempt.providerIntentId) return attempt;
+    if (attempt.providerIntentId) {
+      const provider = this.adapter.retrieveIntent ? await this.adapter.retrieveIntent(attempt.providerIntentId) : null;
+      return { ...attempt, clientSecret: provider?.clientSecret ?? null };
+    }
     const metadata = { primaryOrderId: attempt.orderId, organizerId: attempt.organizerId, eventId: attempt.eventId, reservationId: attempt.reservationId };
     try {
       const provider = await this.adapter.createUnconfirmedIntent({ amountMinor: attempt.expectedAmountMinor, currency: attempt.currency, metadata, idempotencyKey: `primary:${attempt.id}` });
       return await this.db.$transaction(async (tx) => {
         const current = await tx.primaryPaymentAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
         if (current.providerIntentId && current.providerIntentId !== provider.id) throw new PrimaryDomainError("PROVIDER_ID_CONFLICT");
-        if (current.providerIntentId) return current;
+        if (current.providerIntentId) return { ...current, clientSecret: provider.clientSecret ?? null };
         const updated = await tx.primaryPaymentAttempt.update({ where: { id: current.id }, data: { providerIntentId: provider.id, providerCreatedAt: provider.createdAt, status: "PROCESSING" } });
         await this.audit(tx, updated, "PAYMENT_PROVIDER_INTENT_ATTACHED", `${idempotencyKey}:provider`);
-        return updated;
+        return { ...updated, clientSecret: provider.clientSecret ?? null };
       }, { isolationLevel: "Serializable" });
     } catch (error) {
       await this.db.$transaction(async (tx) => {

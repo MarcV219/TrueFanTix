@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 type Actor = { id: string; email: string; firstName: string | null; lastName: string | null; role: "USER" | "ADMIN" };
 type TicketType = {
@@ -108,7 +109,7 @@ export default function PrimaryStagingConsole() {
 
   useEffect(() => { void loadSession(); }, [loadSession]);
 
-  async function switchPersona(persona: "organizer" | "admin" | "none") {
+  async function switchPersona(persona: "organizer" | "admin" | "buyer" | "none") {
     setBusy(true);
     try {
       const response = await fetch("/api/staging/primary/session", {
@@ -232,6 +233,7 @@ export default function PrimaryStagingConsole() {
             </label>
             <button className={`${buttonClass} self-end`} disabled={busy || accessToken.length < 32} onClick={() => void switchPersona("organizer")}>Use organizer</button>
             <button className={`${buttonClass} self-end`} disabled={busy || accessToken.length < 32} onClick={() => void switchPersona("admin")}>Use admin</button>
+            <button className={`${buttonClass} self-end`} disabled={busy || accessToken.length < 32} onClick={() => void switchPersona("buyer")}>Use buyer</button>
           </div>
         ) : (
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
@@ -241,7 +243,7 @@ export default function PrimaryStagingConsole() {
         )}
       </section>
 
-      {actor?.role === "USER" && (
+      {actor?.email === "organizer@primary-staging.example.invalid" && (
         <>
           <form onSubmit={createOrganizer} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-xl font-semibold">1. Create organizer</h2>
@@ -287,6 +289,14 @@ export default function PrimaryStagingConsole() {
             <button className={`${buttonClass} mt-4`} disabled={busy || !ticketEventId}>Create ticket type</button>
           </form>
         </>
+      )}
+
+      {actor?.email === "pilot-buyer@primary-staging.example.invalid" && (
+        <section className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm">
+          <h2 className="text-xl font-semibold">Primary ticket pilot storefront</h2>
+          <p className="mt-2 text-sm text-slate-600">You are using the isolated synthetic buyer. Payments use Stripe test mode only.</p>
+          <Link className={`${buttonClass} mt-4 inline-block`} href="/primary/events">Browse primary events</Link>
+        </section>
       )}
 
       {actor && state && (

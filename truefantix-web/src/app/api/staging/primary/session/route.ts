@@ -44,7 +44,7 @@ export async function POST(req: Request) {
     if (
       !body
       || Object.keys(body).some((key) => key !== "persona")
-      || !["organizer", "admin", "none"].includes(body.persona ?? "")
+      || !["organizer", "admin", "buyer", "none"].includes(body.persona ?? "")
     ) {
       return noStore(NextResponse.json({ ok: false, error: "INVALID_PERSONA" }, { status: 400 }));
     }

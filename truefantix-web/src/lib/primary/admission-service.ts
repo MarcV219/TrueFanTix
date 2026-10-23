@@ -16,6 +16,13 @@ export function createPrimaryAdmissionInternalCapabilityForTests(): PrimaryAdmis
   const capability = Object.freeze({ kind: "PrimaryAdmissionInternalCapability" as const }); internalCapabilities.add(capability); return capability;
 }
 
+export function createPrimaryAdmissionInternalCapability(capability: PrimaryPreflightCapability): PrimaryAdmissionInternalCapability {
+  assertPrimaryPreflightCapability(capability);
+  const internal = Object.freeze({ kind: "PrimaryAdmissionInternalCapability" as const });
+  internalCapabilities.add(internal);
+  return internal;
+}
+
 function assertInternal(value: PrimaryAdmissionInternalCapability) {
   if (!internalCapabilities.has(value)) throw new PrimaryDomainError("ADMISSION_INTERNAL_BOUNDARY_FORBIDDEN");
 }
