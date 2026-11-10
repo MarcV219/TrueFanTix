@@ -59,7 +59,7 @@ export default function EventTicketGroupCard<T extends TicketCardView>({
     }, new Map<string, number>())
   ).sort((a, b) => b[1] - a[1]);
   const selectedCount = tickets.filter((ticket) => selectedTicketIds.includes(ticket.id)).length;
-  const image = String(lead.dynamicImage || lead.image || lead.placeholderImage || DEFAULT_IMAGE);
+  const image = String(lead.image || lead.placeholderImage || DEFAULT_IMAGE);
   const imageSrc = image.startsWith("http://") || image.startsWith("https://") ? image : `${image}?v=2`;
 
   return (

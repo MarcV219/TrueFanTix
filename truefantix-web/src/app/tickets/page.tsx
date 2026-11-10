@@ -352,10 +352,10 @@ export default function TicketsPage() {
         
         const normalized: Ticket[] = rawTickets.map((t: any) => mapApiTicketToCard(t) as Ticket);
 
+        // Ticket images are selected and persisted when the listing is created.
+        // Keep the persisted record authoritative so the card and detail page
+        // always show the same event identity and image.
         setTickets(normalized);
-        
-        // Fetch dynamic images for tickets
-        fetchImagesForTickets(normalized);
       } catch (e: any) {
         setError(e?.message ?? "Failed to load tickets");
       } finally {
@@ -489,39 +489,6 @@ export default function TicketsPage() {
       window.clearTimeout(timer);
     };
   }, [searchQuery]);
-
-  // Fetch dynamic images for tickets
-  async function fetchImagesForTickets(ticketList: Ticket[]) {
-    // Fetch one image per logical event key so identical events stay visually consistent.
-    const keyFor = (t: Ticket) => `${t.title}|||${t.date}|||${t.venue}|||${t.eventType}`;
-    const uniqueKeys = Array.from(new Set(ticketList.map(keyFor)));
-    const imageByKey = new Map<string, string>();
-
-    await Promise.all(
-      uniqueKeys.map(async (key) => {
-        const [title, , , eventType] = key.split("|||");
-        try {
-          const res = await fetch(
-            `/api/tickets/image?title=${encodeURIComponent(title)}&eventType=${encodeURIComponent(eventType)}`
-          );
-          if (!res.ok) return;
-          const data = await res.json();
-          if (data.imageUrl && !data.isPlaceholder) {
-            imageByKey.set(key, data.imageUrl);
-          }
-        } catch {
-          // Keep fallback image for this key.
-        }
-      })
-    );
-
-    const updatedTickets = ticketList.map((ticket) => {
-      const img = imageByKey.get(keyFor(ticket));
-      return img ? { ...ticket, dynamicImage: img } : ticket;
-    });
-
-    setTickets(updatedTickets);
-  }
 
   const selectedSuggestionCoords = React.useMemo(() => {
     if (!selectedSearchSuggestion || !["CITY", "VENUE"].includes(selectedSearchSuggestion.type)) return null;

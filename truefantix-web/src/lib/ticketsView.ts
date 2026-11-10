@@ -75,7 +75,6 @@ export type TicketCardView = {
   eventTypeLabel: string;
   isSoldOut: boolean;
   placeholderImage: string;
-  dynamicImage?: string;
   isAboveConfirmedFaceValue: boolean;
   isPastEvent: boolean;
   isValidationMismatch: boolean;

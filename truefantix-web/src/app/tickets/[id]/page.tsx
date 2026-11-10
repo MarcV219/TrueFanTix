@@ -204,8 +204,8 @@ export async function generateMetadata({ params }: TicketPageProps): Promise<Met
     return { title: "Ticket unavailable", robots: { index: false, follow: false } };
   }
 
-  const eventTitle = ticket.event?.title || ticket.title;
-  const venue = ticket.event?.venue || ticket.venue;
+  const eventTitle = ticket.title;
+  const venue = ticket.venue;
   const currency = normalizeCurrency(ticket.currency);
   const price = formatMoney(ticket.priceCents / 100, currency);
   const title = `${eventTitle} Tickets at ${venue}`;
@@ -262,8 +262,10 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   const isBelowFaceValue = maxFairListPrice && price < maxFairListPrice;
   const isFaceValue = maxFairListPrice && price === maxFairListPrice;
   const isSoldOut = event?.selloutStatus === "SOLD_OUT";
-  const eventTitle = event?.title || ticket.title;
-  const eventVenue = event?.venue || ticket.venue;
+  // The clicked ticket record is the display authority. Event relations supply
+  // verified enrichment only; they must never change the listing's identity.
+  const eventTitle = ticket.title;
+  const eventVenue = ticket.venue;
   const eventDisplayTitle = eventTitleWithVenue(eventTitle, eventVenue);
   const venueLocation = await resolveVenueLocation(eventVenue);
   const venueInfo = venueInfoFromLocation(eventVenue, venueLocation);
@@ -279,7 +281,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   const eventUrl = absoluteUrl(`/tickets/${ticket.id}`);
   const eventJsonLd = buildEventStructuredData({
     name: eventTitle,
-    startDate: schemaDate(event?.date || ticket.date),
+    startDate: schemaDate(ticket.date),
     endDate: event?.endDate,
     description: event?.description,
     organizerName: event?.organizerName,

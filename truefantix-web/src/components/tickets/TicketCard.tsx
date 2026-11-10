@@ -24,7 +24,7 @@ export default function TicketCard({
       <div className="relative">
         <img
           src={(() => {
-            const raw = String(ticket.dynamicImage || ticket.image || ticket.placeholderImage || DEFAULT_IMAGE);
+            const raw = String(ticket.image || ticket.placeholderImage || DEFAULT_IMAGE);
             if (raw.startsWith("http://") || raw.startsWith("https://")) {
               return raw;
             }
