@@ -35,6 +35,8 @@ export default function AdminTicketDetailPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [waiverReason, setWaiverReason] = React.useState("");
   const [savingWaiver, setSavingWaiver] = React.useState(false);
+  const [savingSeo, setSavingSeo] = React.useState(false);
+  const [seo, setSeo] = React.useState({ description: "", organizerName: "", performerName: "", endDate: "", seoSourceUrl: "" });
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -44,6 +46,13 @@ export default function AdminTicketDetailPage() {
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.message || json?.error || "Failed to load listing.");
       setTicket(json.ticket);
+      setSeo({
+        description: json.ticket.event?.description || "",
+        organizerName: json.ticket.event?.organizerName || "",
+        performerName: json.ticket.event?.performerName || "",
+        endDate: json.ticket.event?.endDate || "",
+        seoSourceUrl: json.ticket.event?.seoSourceUrl || "",
+      });
     } catch (err: any) {
       setError(err?.message || "Failed to load listing.");
     } finally {
@@ -76,6 +85,27 @@ export default function AdminTicketDetailPage() {
       setError(err?.message || "Failed to update fee waiver.");
     } finally {
       setSavingWaiver(false);
+    }
+  }
+
+  async function saveEventSeo(event: React.FormEvent) {
+    event.preventDefault();
+    if (!ticket?.event?.id) return;
+    setSavingSeo(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/admin/events/${encodeURIComponent(ticket.event.id)}/seo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(seo),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.message || json?.error || "Failed to save event search details.");
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "Failed to save event search details.");
+    } finally {
+      setSavingSeo(false);
     }
   }
 
@@ -149,6 +179,22 @@ export default function AdminTicketDetailPage() {
               </div>
             )}
             {ticket.status !== "AVAILABLE" ? <div style={{ marginTop: 8, opacity: 0.7 }}>Fee waivers are locked after a ticket is reserved, sold, or withdrawn.</div> : null}
+          </section>
+
+          <section style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 8, background: "white", padding: 14 }}>
+            <h2 style={{ margin: "0 0 6px", fontSize: 20 }}>Verified event search details</h2>
+            <p style={{ margin: "0 0 12px", opacity: 0.75 }}>Only enter facts confirmed by the official source. Blank facts are omitted from Google markup rather than guessed.</p>
+            {ticket.event?.id ? (
+              <form onSubmit={saveEventSeo} style={{ display: "grid", gap: 10 }}>
+                <label style={{ display: "grid", gap: 5 }}><strong>Description</strong><textarea rows={3} maxLength={2000} value={seo.description} onChange={(e) => setSeo({ ...seo, description: e.target.value })} /></label>
+                <label style={{ display: "grid", gap: 5 }}><strong>Organizer</strong><input maxLength={200} value={seo.organizerName} onChange={(e) => setSeo({ ...seo, organizerName: e.target.value })} /></label>
+                <label style={{ display: "grid", gap: 5 }}><strong>Performer / team</strong><input maxLength={200} value={seo.performerName} onChange={(e) => setSeo({ ...seo, performerName: e.target.value })} /></label>
+                <label style={{ display: "grid", gap: 5 }}><strong>Official end date/time</strong><input placeholder="2026-12-01T21:00:00-05:00" maxLength={100} value={seo.endDate} onChange={(e) => setSeo({ ...seo, endDate: e.target.value })} /></label>
+                <label style={{ display: "grid", gap: 5 }}><strong>Official source URL (required)</strong><input type="url" required maxLength={1000} value={seo.seoSourceUrl} onChange={(e) => setSeo({ ...seo, seoSourceUrl: e.target.value })} /></label>
+                <div style={{ fontSize: 13, opacity: 0.7 }}>Last verified: {ticket.event.seoVerifiedAt ? new Date(ticket.event.seoVerifiedAt).toLocaleString() : "Never"}</div>
+                <button disabled={savingSeo} style={{ width: "fit-content", padding: "10px 14px", borderRadius: 8, border: 0, background: "rgba(6,74,147,1)", color: "white", fontWeight: 800 }}>{savingSeo ? "Saving..." : "Save verified event details"}</button>
+              </form>
+            ) : <div style={{ opacity: 0.75 }}>This listing is not linked to a canonical event yet.</div>}
           </section>
 
           <section style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 8, background: "white", padding: 14 }}>

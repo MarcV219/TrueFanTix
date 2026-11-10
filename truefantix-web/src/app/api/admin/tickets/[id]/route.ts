@@ -64,7 +64,21 @@ export async function GET(req: Request) {
       lastViewedAt: true,
       createdAt: true,
       updatedAt: true,
-      event: { select: { id: true, title: true, venue: true, date: true, selloutStatus: true } },
+      event: {
+        select: {
+          id: true,
+          title: true,
+          venue: true,
+          date: true,
+          description: true,
+          organizerName: true,
+          performerName: true,
+          endDate: true,
+          seoSourceUrl: true,
+          seoVerifiedAt: true,
+          selloutStatus: true,
+        },
+      },
       seller: {
         select: {
           id: true,

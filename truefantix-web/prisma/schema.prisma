@@ -694,10 +694,16 @@ model Payment {
 }
 
 model Event {
-  id    String  @id @default(cuid())
-  title String
-  venue String?
-  date  String?
+  id              String  @id @default(cuid())
+  title           String
+  venue           String?
+  date            String?
+  description     String?
+  organizerName   String?
+  performerName   String?
+  endDate         String?
+  seoSourceUrl    String?
+  seoVerifiedAt   DateTime?
 
   selloutStatus EventSelloutStatus @default(NOT_SOLD_OUT)
 

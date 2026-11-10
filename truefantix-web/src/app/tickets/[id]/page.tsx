@@ -10,6 +10,7 @@ import { formatMoney, normalizeCurrency, venueInfoFromLocation } from "@/lib/tic
 import { searchProviderCatalog } from "@/lib/catalog/provider-catalog";
 import PurchaseButton from "./PurchaseButton";
 import { absoluteUrl, conciseDescription, DEFAULT_SOCIAL_IMAGE, safeJsonLd, schemaDate } from "@/lib/seo";
+import { buildEventStructuredData } from "@/lib/event-structured-data";
 
 interface TicketPageProps {
   params: Promise<{ id: string }>;
@@ -58,6 +59,11 @@ async function getTicket(id: string) {
           title: true,
           venue: true,
           date: true,
+          description: true,
+          organizerName: true,
+          performerName: true,
+          endDate: true,
+          seoVerifiedAt: true,
           selloutStatus: true,
         },
       },
@@ -271,13 +277,16 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
   const storedImage = String(ticket.image || "").trim();
   const imageToShow = storedImage || getPlaceholderImage(eventTypeInfo.type);
   const eventUrl = absoluteUrl(`/tickets/${ticket.id}`);
-  const eventJsonLd = {
-    "@context": "https://schema.org",
-    "@type": "Event",
+  const eventJsonLd = buildEventStructuredData({
     name: eventTitle,
     startDate: schemaDate(event?.date || ticket.date),
-    eventStatus: "https://schema.org/EventScheduled",
-    eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
+    endDate: event?.endDate,
+    description: event?.description,
+    organizerName: event?.organizerName,
+    performerName: event?.performerName,
+    seoVerifiedAt: event?.seoVerifiedAt,
+    fallbackDescription: `Buy verified ${eventTitle} tickets at ${eventVenue} for ${formatMoney(price, currency)} ${currency}. Listed at or below the seller's verified face value on TrueFanTix.`,
+    venueName: eventVenue,
     url: eventUrl,
     image: [imageToShow.startsWith("http") ? imageToShow : absoluteUrl(imageToShow)],
     location: {
@@ -303,7 +312,7 @@ export default async function TicketDetailPage({ params }: TicketPageProps) {
       availability: "https://schema.org/InStock",
       validFrom: ticket.createdAt,
     },
-  };
+  });
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">

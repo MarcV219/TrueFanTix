@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { isTicketEventExpired } from "@/lib/tickets/expiry";
 import { formatMoney, normalizeCurrency } from "@/lib/ticketsView";
 import { absoluteUrl, conciseDescription, DEFAULT_SOCIAL_IMAGE, safeJsonLd, schemaDate } from "@/lib/seo";
+import { buildEventStructuredData } from "@/lib/event-structured-data";
 
 interface EventPageProps {
   params: Promise<{ id: string }>;
@@ -19,6 +20,11 @@ async function getEvent(id: string) {
       title: true,
       venue: true,
       date: true,
+      description: true,
+      organizerName: true,
+      performerName: true,
+      endDate: true,
+      seoVerifiedAt: true,
       updatedAt: true,
       tickets: {
         where: { status: "AVAILABLE" },
@@ -79,28 +85,28 @@ export default async function EventPage({ params }: EventPageProps) {
   const venue = event.venue || listings[0]?.venue || "Venue to be confirmed";
   const date = event.date || listings[0]?.date || "Date to be confirmed";
   const eventUrl = absoluteUrl(`/events/${event.id}`);
-  const eventJsonLd = {
-    "@context": "https://schema.org",
-    "@type": "Event",
+  const eventJsonLd = buildEventStructuredData({
     name: event.title,
     startDate: schemaDate(date),
-    eventStatus: "https://schema.org/EventScheduled",
-    eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
+    endDate: event.endDate,
+    description: event.description,
+    organizerName: event.organizerName,
+    performerName: event.performerName,
+    seoVerifiedAt: event.seoVerifiedAt,
+    fallbackDescription: `Find verified ${event.title} tickets at or below face value on TrueFanTix. Check current availability and event details.`,
+    venueName: venue,
     url: eventUrl,
     image: listings[0]?.image ? [listings[0].image.startsWith("http") ? listings[0].image : absoluteUrl(listings[0].image)] : [absoluteUrl(DEFAULT_SOCIAL_IMAGE)],
-    location: { "@type": "Place", name: venue },
-    ...(listings.length
-      ? {
-          offers: listings.map((ticket) => ({
+    offers: listings.length
+      ? listings.map((ticket) => ({
             "@type": "Offer",
             url: absoluteUrl(`/tickets/${ticket.id}`),
             price: (ticket.priceCents / 100).toFixed(2),
             priceCurrency: normalizeCurrency(ticket.currency),
             availability: "https://schema.org/InStock",
-          })),
-        }
-      : {}),
-  };
+          }))
+      : undefined,
+  });
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
