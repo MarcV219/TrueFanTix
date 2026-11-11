@@ -9,6 +9,7 @@ import {
   PrimaryStagingConsoleUnavailableError,
   requirePrimaryStagingActor,
   requirePrimaryStagingConsole,
+  requirePrimaryStagingMutationGate,
   type StagingPersona,
   verifyPrimaryStagingAccessToken,
 } from "@/lib/primary/staging-console";
@@ -37,7 +38,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    requirePrimaryStagingConsole();
+    requirePrimaryStagingMutationGate();
     const csrf = await enforceOriginAndCsrf(req);
     if (!csrf.ok) return noStore(csrf.res);
     const body = (await req.json().catch(() => null)) as { persona?: StagingPersona | "none" } | null;

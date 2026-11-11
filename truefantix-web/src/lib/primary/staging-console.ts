@@ -143,6 +143,14 @@ export function requirePrimaryStagingConsole(env: NodeJS.ProcessEnv = process.en
   return result.capability;
 }
 
+export function requirePrimaryStagingMutationGate(env: NodeJS.ProcessEnv = process.env) {
+  const capability = requirePrimaryStagingConsole(env);
+  if (env.PRIMARY_STAGING_MUTATIONS_APPROVED?.trim().toLowerCase() !== "true") {
+    throw new PrimaryStagingConsoleUnavailableError("MUTATIONS_NOT_APPROVED");
+  }
+  return capability;
+}
+
 export function isPrimaryStagingSyntheticEmail(email: string) {
   const normalized = email.trim().toLowerCase();
   return [STAGING_ORGANIZER_EMAIL, STAGING_ADMIN_EMAIL, STAGING_REFUND_BUYER_EMAIL, STAGING_BUYER_EMAIL].includes(normalized);

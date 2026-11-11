@@ -3,14 +3,14 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requirePrimaryPreflight } from "@/lib/primary/config";
 import { PrimaryOrderService } from "@/lib/primary/order-service";
 import { PrimaryPaymentService, requirePrimaryStripeTestConfig, StripeTestModeAdapter } from "@/lib/primary/payment-service";
 import { createPrimaryAdmissionInternalCapability, PrimaryAdmissionService, requirePrimaryAdmissionTestConfig } from "@/lib/primary/admission-service";
+import { requirePrimaryStagingMutationGate } from "@/lib/primary/staging-console";
 
 export async function POST(req: Request) {
   try {
-    const capability = requirePrimaryPreflight();
+    const capability = requirePrimaryStagingMutationGate();
     if (capability.environmentId !== "isolated-preview" || process.env.VERCEL_ENV !== "preview") return NextResponse.json({ ok: false }, { status: 404 });
     const stripeConfig = requirePrimaryStripeTestConfig(capability);
     const admissionConfig = requirePrimaryAdmissionTestConfig(capability);

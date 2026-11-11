@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import { isReservationExpired } from "@/lib/tickets/reservation-expiry";
 import { requireVerifiedUser } from "@/lib/auth/guards";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { schemas, validateRequest } from "@/lib/validation";
@@ -129,7 +130,7 @@ export async function POST(req: Request) {
             ticket?.status === "RESERVED" &&
             ticket?.reservedByOrderId === existing.id &&
             ticket?.reservedUntil instanceof Date &&
-            ticket.reservedUntil > now
+            !isReservationExpired(ticket.reservedUntil, now)
           );
         const replayablePaidOrder =
           existing.status === "PAID" && existing.payment?.status === "SUCCEEDED";

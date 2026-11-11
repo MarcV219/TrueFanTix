@@ -12,6 +12,7 @@ import {
   runOrdinaryPurchase,
 } from "@/lib/tickets/ordinary-buyer";
 import { prisma } from "@/lib/prisma";
+import { isReservationExpired } from "@/lib/tickets/reservation-expiry";
 import {
   assertLegacyPaymentIntentProviderEvidence,
   claimLegacyPaymentIntentCommand,
@@ -162,7 +163,7 @@ export async function POST(req: Request) {
         (ticket: any) =>
           ticket.status === "RESERVED" &&
           ticket.reservedByOrderId === orderId &&
-          (!ticket.reservedUntil || ticket.reservedUntil <= now),
+          isReservationExpired(ticket.reservedUntil, now),
       );
 
       if (hasExpiredReservation) {
@@ -198,8 +199,7 @@ export async function POST(req: Request) {
         if (
           ticket.status !== "RESERVED" ||
           ticket.reservedByOrderId !== orderId ||
-          !ticket.reservedUntil ||
-          ticket.reservedUntil <= now
+          isReservationExpired(ticket.reservedUntil, now)
         ) {
           return {
             status: 409,

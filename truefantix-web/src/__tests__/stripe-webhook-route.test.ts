@@ -72,6 +72,47 @@ function makeWebhookRequest(payload: string) {
   });
 }
 
+function makeSuccessTx(returnedOrder: any, intentId: string) {
+  const orderId = returnedOrder.id;
+  const reservedUntil = new Date("2099-01-01T00:00:00.000Z");
+  const candidateItems = returnedOrder.items.length
+    ? returnedOrder.items.map((item: any, index: number) => ({
+        ...item,
+        ticket: {
+          id: item.ticket?.id ?? `ticket-${index}`,
+          ...item.ticket,
+          status: "RESERVED",
+          reservedByOrderId: orderId,
+          reservedUntil,
+        },
+      }))
+    : [{ ticket: { id: "ticket-0", status: "RESERVED", reservedByOrderId: orderId, reservedUntil } }];
+  return {
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    ticket: { updateMany: jest.fn().mockResolvedValue({ count: candidateItems.length }) },
+    order: {
+      findUnique: jest.fn().mockResolvedValue({
+        ...returnedOrder,
+        status: "PENDING",
+        currency: "CAD",
+        totalCents: 12500,
+        items: candidateItems,
+        payment: {
+          id: `payment-${orderId}`,
+          status: "REQUIRES_PAYMENT",
+          provider: "STRIPE",
+          providerRef: intentId,
+          amountCents: 12500,
+          currency: "CAD",
+        },
+      }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      update: jest.fn().mockResolvedValue(returnedOrder),
+    },
+  };
+}
+
 describe("Stripe webhook route", () => {
   const originalEnv = process.env;
 
@@ -108,19 +149,14 @@ describe("Stripe webhook route", () => {
       .mockResolvedValueOnce({ id: "delivery_1" })
       .mockRejectedValueOnce({ code: "P2002" });
 
-    const tx = {
-      payment: { upsert: jest.fn().mockResolvedValue({}) },
-      order: {
-        update: jest.fn().mockResolvedValue({
+    const tx = makeSuccessTx({
           id: "order_123",
           amountCents: 10000,
           totalCents: 12500,
           items: [],
           buyerSeller: null,
           seller: null,
-        }),
-      },
-    };
+        }, "pi_test");
     mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
 
     const first = await POST(makeWebhookRequest(JSON.stringify(event)));
@@ -132,8 +168,89 @@ describe("Stripe webhook route", () => {
     expect(second.status).toBe(200);
     expect(mockedPrisma.eventDelivery.create).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(tx.payment.upsert).toHaveBeenCalledTimes(1);
+    expect(tx.payment.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.order.update).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["intent", (candidate: any) => { candidate.payment.providerRef = "pi_foreign"; }],
+    ["amount", (candidate: any) => { candidate.totalCents = 12499; }],
+    ["currency", (candidate: any) => { candidate.currency = "USD"; }],
+    ["status", (candidate: any) => { candidate.status = "CANCELLED"; }],
+    ["reservation", (candidate: any) => { candidate.items[0].ticket.reservedByOrderId = "other-order"; }],
+    ["expiry", (candidate: any) => { candidate.items[0].ticket.reservedUntil = new Date("2020-01-01T00:00:00.000Z"); }],
+  ])("quarantines a success webhook with mismatched %s evidence without writes", async (_field, mutate) => {
+    const orderId = `order-success-conflict-${_field}`;
+    const intentId = `pi-success-conflict-${_field}`;
+    const event = {
+      id: `evt-success-conflict-${_field}`,
+      type: "payment_intent.succeeded",
+      data: { object: { id: intentId, amount: 12500, currency: "cad", metadata: { orderId } } },
+    };
+    mockConstructEvent.mockReturnValue(event);
+    mockedPrisma.eventDelivery.create.mockResolvedValue({ id: `delivery-${_field}` });
+    const tx = makeSuccessTx({
+      id: orderId,
+      amountCents: 10000,
+      totalCents: 12500,
+      items: [{ ticket: { id: "ticket-conflict" } }],
+      buyerSeller: null,
+      seller: null,
+    }, intentId);
+    const candidate = await tx.order.findUnique();
+    mutate(candidate);
+    tx.order.findUnique.mockResolvedValue(candidate);
+    mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
+
+    const response = await POST(makeWebhookRequest(JSON.stringify(event)));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ ok: false, error: "PAYMENT_EVENT_CONFLICT" });
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
+    expect(tx.order.updateMany).not.toHaveBeenCalled();
+    expect(tx.ticket.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("quarantines an out-of-order failed webhook after success without releasing tickets", async () => {
+    const event = {
+      id: "evt-stale-failure",
+      type: "payment_intent.payment_failed",
+      data: { object: { id: "pi-stale", amount: 12500, currency: "cad", metadata: { orderId: "order-paid" } } },
+    };
+    mockConstructEvent.mockReturnValue(event);
+    mockedPrisma.eventDelivery.create.mockResolvedValue({ id: "delivery-stale-failure" });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      order: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "order-paid",
+          status: "PAID",
+          payment: {
+            id: "payment-paid",
+            status: "SUCCEEDED",
+            provider: "STRIPE",
+            providerRef: "pi-current",
+            amountCents: 12500,
+            currency: "CAD",
+          },
+        }),
+        updateMany: jest.fn(),
+      },
+      payment: { updateMany: jest.fn() },
+      ticket: { updateMany: jest.fn() },
+    };
+    mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const response = await POST(makeWebhookRequest(JSON.stringify(event)));
+      expect(response.status).toBe(409);
+      expect(tx.order.updateMany).not.toHaveBeenCalled();
+      expect(tx.payment.updateMany).not.toHaveBeenCalled();
+      expect(tx.ticket.updateMany).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("records each returned email provider instead of inferring it from configuration", async () => {
@@ -156,10 +273,7 @@ describe("Stripe webhook route", () => {
       .mockResolvedValueOnce({ ok: true, provider: "SENDGRID" })
       .mockResolvedValueOnce({ ok: true, provider: "RESEND" });
 
-    const tx = {
-      payment: { upsert: jest.fn().mockResolvedValue({}) },
-      order: {
-        update: jest.fn().mockResolvedValue({
+    const tx = makeSuccessTx({
           id: "order_provider_evidence",
           amountCents: 10000,
           totalCents: 12500,
@@ -167,9 +281,7 @@ describe("Stripe webhook route", () => {
           items: [{ ticket: { title: "Synthetic Event", venue: "Synthetic Venue", date: "2030-01-01" } }],
           buyerSeller: { user: { id: "buyer-provider-evidence", email: "buyer@example.test", firstName: "Buyer" } },
           seller: null,
-        }),
-      },
-    };
+        }, "pi_provider_evidence");
     mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
 
     const response = await POST(makeWebhookRequest(JSON.stringify(event)));
@@ -205,10 +317,7 @@ describe("Stripe webhook route", () => {
       .mockRejectedValueOnce(new Error("synthetic providerless failure"));
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const tx = {
-      payment: { upsert: jest.fn().mockResolvedValue({}) },
-      order: {
-        update: jest.fn().mockResolvedValue({
+    const tx = makeSuccessTx({
           id: "order_providerless_failure",
           amountCents: 10000,
           totalCents: 12500,
@@ -216,9 +325,7 @@ describe("Stripe webhook route", () => {
           items: [{ ticket: { title: "Synthetic Event", venue: "Synthetic Venue", date: "2030-01-01" } }],
           buyerSeller: { user: { id: "buyer-providerless-failure", email: "buyer@example.test", firstName: "Buyer" } },
           seller: null,
-        }),
-      },
-    };
+        }, "pi_providerless_failure");
     mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
 
     try {
@@ -263,10 +370,7 @@ describe("Stripe webhook route", () => {
       .mockResolvedValueOnce({ ok: true, provider: "CONSOLE", providerResult: "LOGGED" });
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const tx = {
-      payment: { upsert: jest.fn().mockResolvedValue({}) },
-      order: {
-        update: jest.fn().mockResolvedValue({
+    const tx = makeSuccessTx({
           id: "order_transactional_providerless_failures",
           amountCents: 10000,
           totalCents: 12500,
@@ -286,9 +390,7 @@ describe("Stripe webhook route", () => {
               firstName: "Seller",
             },
           },
-        }),
-      },
-    };
+        }, "pi_transactional_providerless_failures");
     mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
 
     try {
@@ -344,10 +446,7 @@ describe("Stripe webhook route", () => {
     mockSendEmail.mockResolvedValueOnce({ ok: true, provider: "SENDGRID", providerResult: "accepted-buyer" });
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const tx = {
-      payment: { upsert: jest.fn().mockResolvedValue({}) },
-      order: {
-        update: jest.fn().mockResolvedValue({
+    const tx = makeSuccessTx({
           id: "order_delivery_persistence_failure",
           amountCents: 10000,
           totalCents: 12500,
@@ -361,9 +460,7 @@ describe("Stripe webhook route", () => {
             },
           },
           seller: null,
-        }),
-      },
-    };
+        }, "pi_delivery_persistence_failure");
     mockedPrisma.$transaction.mockImplementation((callback) => callback(tx));
 
     try {

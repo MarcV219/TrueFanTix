@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { getUserIdFromSessionCookie } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { enforceOriginAndCsrf } from "@/lib/security/csrf";
-import { requirePrimaryPreflight } from "./config";
-import { STAGING_BUYER_EMAIL } from "./staging-console";
+import { requirePrimaryStagingMutationGate, STAGING_BUYER_EMAIL } from "./staging-console";
 
 function error(status: number, code: string, message: string) {
   const response = NextResponse.json({ ok: false, error: code, message }, { status });
@@ -14,7 +13,7 @@ function error(status: number, code: string, message: string) {
 export async function requirePrimaryPilotBuyer(req: Request) {
   let capability;
   try {
-    capability = requirePrimaryPreflight();
+    capability = requirePrimaryStagingMutationGate();
   } catch {
     return { ok: false as const, res: error(404, "NOT_FOUND", "Not found.") };
   }

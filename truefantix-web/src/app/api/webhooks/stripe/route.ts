@@ -15,6 +15,7 @@ import { notifySellerTransferRequired, sellerTransferDeadline } from "@/lib/orde
 import { ADMIN_ACTIVITY_EMAIL, sendAdminActivityEmail } from "@/lib/adminActivityEmail";
 import { reportProductionIncident } from "@/lib/productionIncidents";
 import { emailProviderEvidence } from "@/lib/emailProviderConfig";
+import { isReservationExpired } from "@/lib/tickets/reservation-expiry";
 
 async function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -124,25 +125,73 @@ export async function POST(req: Request) {
         }
 
         const updatedOrder = await prisma.$transaction(async (tx: any) => {
-          await tx.payment.upsert({
-            where: { orderId },
-            create: {
-              orderId,
-              amountCents: paymentIntent.amount,
-              currency: paymentIntent.currency.toUpperCase(),
-              status: "SUCCEEDED",
+          const now = new Date();
+          await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+          await tx.$queryRaw`
+            SELECT ticket."id"
+            FROM "Ticket" ticket
+            INNER JOIN "OrderItem" item ON item."ticketId" = ticket."id"
+            WHERE item."orderId" = ${orderId}
+            ORDER BY ticket."id"
+            FOR UPDATE OF ticket
+          `;
+          const candidate = await tx.order.findUnique({
+            where: { id: orderId },
+            include: { items: { include: { ticket: true } }, payment: true },
+          });
+
+          const currency = String(paymentIntent.currency || "").toUpperCase();
+          const reservationsMatch = candidate?.items?.length > 0 && candidate.items.every(
+            ({ ticket }: any) =>
+              ticket.status === "RESERVED" &&
+              ticket.reservedByOrderId === orderId &&
+              ticket.reservedUntil instanceof Date &&
+              !isReservationExpired(ticket.reservedUntil, now),
+          );
+          if (
+            !candidate ||
+            candidate.status !== "PENDING" ||
+            candidate.totalCents !== paymentIntent.amount ||
+            candidate.currency.toUpperCase() !== currency ||
+            !candidate.payment ||
+            candidate.payment.status !== "REQUIRES_PAYMENT" ||
+            candidate.payment.provider !== "STRIPE" ||
+            candidate.payment.providerRef !== paymentIntent.id ||
+            candidate.payment.amountCents !== paymentIntent.amount ||
+            candidate.payment.currency.toUpperCase() !== currency ||
+            !reservationsMatch
+          ) return null;
+
+          const paymentUpdated = await tx.payment.updateMany({
+            where: {
+              id: candidate.payment.id,
+              status: "REQUIRES_PAYMENT",
               provider: "STRIPE",
               providerRef: paymentIntent.id,
+              amountCents: paymentIntent.amount,
+              currency,
             },
-            update: {
-              status: "SUCCEEDED",
-              providerRef: paymentIntent.id,
-            },
+            data: { status: "SUCCEEDED" },
           });
+          const orderUpdated = await tx.order.updateMany({
+            where: { id: orderId, status: "PENDING" },
+            data: { status: "PAID" },
+          });
+          if (paymentUpdated.count !== 1 || orderUpdated.count !== 1) {
+            throw new Error("PAYMENT_SUCCESS_TRANSITION_FENCE_LOST");
+          }
+
+          const ticketsUpdated = await tx.ticket.updateMany({
+            where: { status: "RESERVED", reservedByOrderId: orderId, reservedUntil: { gt: now } },
+            data: { status: "SOLD", soldAt: now, reservedByOrderId: null, reservedUntil: null },
+          });
+          if (ticketsUpdated.count !== candidate.items.length) {
+            throw new Error("PAYMENT_SUCCESS_TICKET_FENCE_LOST");
+          }
 
           const order = await tx.order.update({
             where: { id: orderId },
-            data: { status: "PAID" },
+            data: {},
             include: {
               items: { include: { ticket: true } },
               payment: true,
@@ -153,6 +202,11 @@ export async function POST(req: Request) {
 
           return order;
         });
+
+        if (!updatedOrder) {
+          console.error(`[STRIPE WEBHOOK] Quarantined mismatched success event ${event.id}`);
+          return NextResponse.json({ ok: false, error: "PAYMENT_EVENT_CONFLICT" }, { status: 409 });
+        }
 
         if (updatedOrder.buyerSeller?.user) {
           const buyer = updatedOrder.buyerSeller.user;
@@ -315,27 +369,32 @@ export async function POST(req: Request) {
           break;
         }
 
-        await prisma.$transaction(async (tx: any) => {
-          await tx.payment.upsert({
-            where: { orderId },
-            create: {
-              orderId,
-              amountCents: paymentIntent.amount,
-              currency: paymentIntent.currency.toUpperCase(),
-              status: "FAILED",
-              provider: "STRIPE",
-              providerRef: paymentIntent.id,
-            },
-            update: {
-              status: "FAILED",
-              providerRef: paymentIntent.id,
-            },
+        const failed = await prisma.$transaction(async (tx: any) => {
+          await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+          const candidate = await tx.order.findUnique({
+            where: { id: orderId },
+            include: { payment: true },
           });
+          const currency = String(paymentIntent.currency || "").toUpperCase();
+          if (
+            !candidate || candidate.status !== "PENDING" ||
+            !candidate.payment || candidate.payment.status !== "REQUIRES_PAYMENT" ||
+            candidate.payment.provider !== "STRIPE" || candidate.payment.providerRef !== paymentIntent.id ||
+            candidate.payment.amountCents !== paymentIntent.amount ||
+            candidate.payment.currency.toUpperCase() !== currency
+          ) return false;
 
-          await tx.order.updateMany({
+          const cancelled = await tx.order.updateMany({
             where: { id: orderId, status: "PENDING" },
             data: { status: "CANCELLED" },
           });
+          if (cancelled.count !== 1) throw new Error("PAYMENT_FAILURE_TRANSITION_FENCE_LOST");
+
+          const paymentUpdated = await tx.payment.updateMany({
+            where: { id: candidate.payment.id, status: "REQUIRES_PAYMENT", providerRef: paymentIntent.id },
+            data: { status: "FAILED" },
+          });
+          if (paymentUpdated.count !== 1) throw new Error("PAYMENT_FAILURE_PAYMENT_FENCE_LOST");
 
           await tx.ticket.updateMany({
             where: {
@@ -349,7 +408,13 @@ export async function POST(req: Request) {
             },
           });
           await releaseOrderAccessTokenHolds(tx, orderId);
+          return true;
         });
+
+        if (!failed) {
+          console.error(`[STRIPE WEBHOOK] Quarantined stale/conflicting failure event ${event.id}`);
+          return NextResponse.json({ ok: false, error: "PAYMENT_EVENT_CONFLICT" }, { status: 409 });
+        }
 
         console.log(`[STRIPE WEBHOOK] Payment failed for order ${orderId}`);
         break;

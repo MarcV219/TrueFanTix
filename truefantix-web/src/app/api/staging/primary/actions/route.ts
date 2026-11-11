@@ -17,7 +17,7 @@ import {
   primaryStagingSyntheticContactEmail,
   primaryStagingSyntheticContactPhone,
   requirePrimaryStagingActor,
-  requirePrimaryStagingConsole,
+  requirePrimaryStagingMutationGate,
 } from "@/lib/primary/staging-console";
 import {
   assertPrimaryStagingRefundActionInput,
@@ -155,7 +155,7 @@ export async function POST(req: Request) {
   let refundActor: { id: string; email: string; role: "USER" | "ADMIN" } | null = null;
   let requestedAction = "unknown";
   try {
-    const capability = requirePrimaryStagingConsole();
+    const capability = requirePrimaryStagingMutationGate();
     const csrf = await enforceOriginAndCsrf(req);
     if (!csrf.ok) return noStore(csrf.res);
     const actorUser = await requirePrimaryStagingActor();

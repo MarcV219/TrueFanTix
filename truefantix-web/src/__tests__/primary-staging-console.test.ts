@@ -17,6 +17,7 @@ import {
   primaryStagingSyntheticContactPhone,
   PrimaryStagingConsoleUnavailableError,
   requirePrimaryStagingActor,
+  requirePrimaryStagingMutationGate,
   verifyPrimaryStagingAccessToken,
 } from "@/lib/primary/staging-console";
 
@@ -132,6 +133,20 @@ describe("primary staging console boundary", () => {
     expect(verifyPrimaryStagingAccessToken(accessToken, previewEnv)).toBe(true);
     expect(verifyPrimaryStagingAccessToken(`${accessToken}-wrong`, previewEnv)).toBe(false);
     expect(verifyPrimaryStagingAccessToken(null, previewEnv)).toBe(false);
+  });
+
+  it("keeps every mutation capability closed until explicit approval is present", () => {
+    expect(() => requirePrimaryStagingMutationGate(previewEnv)).toThrow(
+      expect.objectContaining({ reason: "MUTATIONS_NOT_APPROVED" }),
+    );
+    expect(() => requirePrimaryStagingMutationGate({
+      ...previewEnv,
+      PRIMARY_STAGING_MUTATIONS_APPROVED: "false",
+    })).toThrow(expect.objectContaining({ reason: "MUTATIONS_NOT_APPROVED" }));
+    expect(requirePrimaryStagingMutationGate({
+      ...previewEnv,
+      PRIMARY_STAGING_MUTATIONS_APPROVED: "true",
+    })).toMatchObject({ environmentId: "isolated-preview" });
   });
 
   it.each([

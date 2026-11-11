@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     const expiredTickets = await tx.ticket.findMany({
       where: {
         status: "RESERVED",
-        reservedUntil: { lt: now },
+        reservedUntil: { lte: now },
         reservedByOrderId: { not: null },
       },
       select: { id: true, reservedByOrderId: true },
@@ -46,19 +46,28 @@ export async function POST(req: Request) {
     let ordersCancelled = 0;
 
     for (const orderId of orderIds) {
+      await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+      await tx.$queryRaw`
+        SELECT ticket."id"
+        FROM "Ticket" ticket
+        WHERE ticket."reservedByOrderId" = ${orderId}
+        ORDER BY ticket."id"
+        FOR UPDATE OF ticket
+      `;
       const cancelled = await tx.order.updateMany({
         where: { id: orderId, status: "PENDING" },
         data: { status: "CANCELLED" },
       });
 
-      if (cancelled.count === 1) ordersCancelled += 1;
-      if (cancelled.count === 1) await releaseOrderAccessTokenHolds(tx, orderId);
+      if (cancelled.count !== 1) continue;
+      ordersCancelled += 1;
+      await releaseOrderAccessTokenHolds(tx, orderId);
 
       const released = await tx.ticket.updateMany({
         where: {
           status: "RESERVED",
           reservedByOrderId: orderId,
-          reservedUntil: { lt: now },
+          reservedUntil: { lte: now },
         },
         data: {
           status: "AVAILABLE",
