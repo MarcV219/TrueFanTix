@@ -123,6 +123,29 @@ export async function POST(req: Request) {
           };
         }
 
+        const replayablePendingOrder =
+          existing.status === "PENDING" &&
+          existing.items.every(({ ticket }: any) =>
+            ticket?.status === "RESERVED" &&
+            ticket?.reservedByOrderId === existing.id &&
+            ticket?.reservedUntil instanceof Date &&
+            ticket.reservedUntil > now
+          );
+        const replayablePaidOrder =
+          existing.status === "PAID" && existing.payment?.status === "SUCCEEDED";
+
+        if (!replayablePendingOrder && !replayablePaidOrder) {
+          return {
+            ok: false as const,
+            status: 409 as const,
+            body: {
+              ok: false,
+              error: "STALE_IDEMPOTENCY_KEY",
+              message: "This checkout attempt is no longer active. Start a new reservation.",
+            },
+          };
+        }
+
         return {
           ok: true as const,
           status: 200 as const,

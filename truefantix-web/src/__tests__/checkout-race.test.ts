@@ -112,12 +112,18 @@ describe("checkout staging-persona boundary", () => {
     mockedPrisma.user.findUnique.mockResolvedValue(ordinaryUser);
     mockedPrisma.order.findUnique.mockResolvedValue({
       id: "order-1",
+      status: "PENDING",
       buyerSellerId: walletId,
       amountCents: 5000,
       adminFeeCents: 438,
       adminFeeTaxCents: 57,
       totalCents: 5495,
-      items: [{ ticket: { id: ticketId } }],
+      items: [{ ticket: {
+        id: ticketId,
+        status: "RESERVED",
+        reservedByOrderId: "order-1",
+        reservedUntil: new Date("2099-01-01T00:00:00.000Z"),
+      } }],
       payment: null,
     });
 
@@ -131,6 +137,64 @@ describe("checkout staging-persona boundary", () => {
     });
     expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.ticket.findMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["cancelled", { status: "CANCELLED", payment: null, reservedUntil: new Date("2099-01-01T00:00:00.000Z") }],
+    ["expired", { status: "PENDING", payment: null, reservedUntil: new Date("2020-01-01T00:00:00.000Z") }],
+  ])("rejects %s idempotency replay without writes", async (_label, fixture) => {
+    mockedPrisma.user.findUnique.mockResolvedValue(ordinaryUser);
+    mockedPrisma.order.findUnique.mockResolvedValue({
+      id: "order-stale",
+      status: fixture.status,
+      buyerSellerId: walletId,
+      amountCents: 5000,
+      adminFeeCents: 438,
+      adminFeeTaxCents: 57,
+      totalCents: 5495,
+      items: [{ ticket: {
+        id: ticketId,
+        status: "RESERVED",
+        reservedByOrderId: "order-stale",
+        reservedUntil: fixture.reservedUntil,
+      } }],
+      payment: fixture.payment,
+    });
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: "STALE_IDEMPOTENCY_KEY",
+    });
+    expect(mockedPrisma.ticket.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.order.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.ticket.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("replays a completed paid order with matching payment evidence", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue(ordinaryUser);
+    mockedPrisma.order.findUnique.mockResolvedValue({
+      id: "order-paid",
+      status: "PAID",
+      buyerSellerId: walletId,
+      amountCents: 5000,
+      adminFeeCents: 438,
+      adminFeeTaxCents: 57,
+      totalCents: 5495,
+      items: [{ ticket: { id: ticketId, status: "SOLD" } }],
+      payment: { status: "SUCCEEDED" },
+    });
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      replay: true,
+      order: { id: "order-paid" },
+    });
   });
 
   it("refuses an ordinary buying-capability downgrade beneath the lock", async () => {
